@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+:root {
+  --color-bg: #181114;
+  --color-sidebar: #140d10;
+  --color-surface: #302b2f;
+  --color-surface-soft: #241b1d;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-text: #ffffff;
+  --color-muted: #9ca3af;
+  --color-accent: #b8d7dc;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -10,5 +21,6 @@ body,
   margin: 0;
   width: 100%;
   min-height: 100%;
-  background: #181114;
+  background: var(--color-bg);
+  color: var(--color-text);
 }

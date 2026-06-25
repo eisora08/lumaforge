@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Palette,
   Globe,
@@ -11,54 +10,11 @@ import ThemeOption from "../components/settings/ThemeOption";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
 
-import { ThemeId, ThemeOption as ThemeOptionType } from "../types/theme";
-
-const themes: ThemeOptionType[] = [
-  {
-    id: "crimson-dark",
-    name: "Crimson Dark",
-    description: "Tema oscuro premium con tonos vino y acento azul claro.",
-    preview: {
-      background: "#181114",
-      surface: "#302b2f",
-      accent: "#b8d7dc",
-    },
-  },
-  {
-    id: "midnight-blue",
-    name: "Midnight Blue",
-    description: "Estilo launcher nocturno con tonos azules profundos.",
-    preview: {
-      background: "#0f172a",
-      surface: "#1e293b",
-      accent: "#38bdf8",
-    },
-  },
-  {
-    id: "steam-gray",
-    name: "Steam Gray",
-    description: "Inspirado en launchers clásicos con grises elegantes.",
-    preview: {
-      background: "#171a21",
-      surface: "#2a475e",
-      accent: "#66c0f4",
-    },
-  },
-  {
-    id: "oled-black",
-    name: "OLED Black",
-    description: "Negro profundo para pantallas OLED y máximo contraste.",
-    preview: {
-      background: "#000000",
-      surface: "#111111",
-      accent: "#ffffff",
-    },
-  },
-];
+import { themes } from "../theme/themes";
+import { useTheme } from "../context/ThemeContext";
 
 export default function Settings() {
-  const [selectedTheme, setSelectedTheme] =
-    useState<ThemeId>("crimson-dark");
+  const { theme: selectedTheme, setTheme } = useTheme();
 
   return (
     <div className="p-5 lg:p-7 space-y-6">
@@ -73,9 +29,10 @@ export default function Settings() {
         title="Apariencia"
         description="Cambia el estilo visual de LumaForge."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[#b8d7dc]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
           <Palette className="h-4 w-4" />
-          Tema actual: {themes.find((theme) => theme.id === selectedTheme)?.name}
+          Tema actual:{" "}
+          {themes.find((theme) => theme.id === selectedTheme)?.name}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -84,7 +41,7 @@ export default function Settings() {
               key={theme.id}
               theme={theme}
               selected={selectedTheme === theme.id}
-              onSelect={setSelectedTheme}
+              onSelect={setTheme}
             />
           ))}
         </div>
@@ -94,7 +51,7 @@ export default function Settings() {
         title="API"
         description="Configura la conexión con el catálogo de paquetes."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[#b8d7dc]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
           <Globe className="h-4 w-4" />
           Catálogo remoto
         </div>
@@ -118,7 +75,7 @@ export default function Settings() {
         title="Rutas"
         description="Administra rutas detectadas o configuradas manualmente."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[#b8d7dc]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
           <FolderCog className="h-4 w-4" />
           Steam y carpetas internas
         </div>
@@ -154,7 +111,7 @@ export default function Settings() {
         title="Avanzado"
         description="Opciones de mantenimiento, logs y seguridad."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[#b8d7dc]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
           <SlidersHorizontal className="h-4 w-4" />
           Sistema
         </div>
