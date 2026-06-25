@@ -15,12 +15,12 @@ export default function TopBar({ onOpenSidebar }: TopBarProps) {
       <div className="flex items-center gap-3">
         <button
           onClick={onOpenSidebar}
-          className="lg:hidden h-10 w-10 rounded-xl bg-white/[0.05] hover:bg-white/[0.08] flex items-center justify-center"
+          className="lg:hidden h-10 w-10 rounded-xl bg-white/5 hover:bg-white/8 flex items-center justify-center"
         >
           <Menu className="h-5 w-5" />
         </button>
 
-        <div className="hidden md:flex items-center gap-3 h-10 w-[420px] rounded-2xl bg-white/[0.05] border border-white/10 px-4">
+        <div className="hidden md:flex items-center gap-3 h-10 w-105 rounded-2xl bg-white/5 border border-white/10 px-4">
           <Search className="h-4 w-4 text-gray-500" />
           <input
             placeholder="Buscar juegos, paquetes, logs..."
@@ -35,7 +35,7 @@ export default function TopBar({ onOpenSidebar }: TopBarProps) {
           Premium Mode
         </button>
 
-        <button className="h-10 w-10 rounded-xl bg-white/[0.05] hover:bg-white/[0.08] flex items-center justify-center">
+        <button className="h-10 w-10 rounded-xl bg-white/5 hover:bg-white/8 flex items-center justify-center">
           <Bell className="h-5 w-5 text-gray-300" />
         </button>
       </div>

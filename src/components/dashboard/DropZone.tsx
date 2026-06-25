@@ -6,7 +6,7 @@ type DropZoneProps = {
 
 export default function DropZone({ onBrowse }: DropZoneProps) {
   return (
-    <section className="border border-white/15 bg-white/[0.03] rounded-2xl p-8 text-center">
+    <section className="border border-white/15 bg-white/3 rounded-2xl p-8 text-center">
       <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-[#b8d7dc]/10 border border-[#b8d7dc]/20 flex items-center justify-center">
         <UploadCloud className="h-7 w-7 text-[#b8d7dc]" strokeWidth={1.8} />
       </div>

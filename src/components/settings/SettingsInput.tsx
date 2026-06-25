@@ -25,7 +25,7 @@ export default function SettingsInput({
         value={value}
         placeholder={placeholder}
         readOnly
-        className="h-11 w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 text-sm text-gray-200 outline-none placeholder:text-gray-600 focus:border-[#b8d7dc]/40"
+        className="h-11 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-gray-200 outline-none placeholder:text-gray-600 focus:border-[#b8d7dc]/40"
       />
     </label>
   );

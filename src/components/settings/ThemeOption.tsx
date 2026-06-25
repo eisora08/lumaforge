@@ -18,7 +18,7 @@ export default function ThemeOption({
       className={`group rounded-2xl border p-4 text-left transition ${
         selected
           ? "border-[#b8d7dc]/50 bg-[#b8d7dc]/10"
-          : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+          : "border-white/10 bg-white/3 hover:bg-white/6"
       }`}
     >
       <div className="mb-4 flex items-center justify-between">

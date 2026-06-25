@@ -10,7 +10,7 @@ export default function ToggleOption({
   enabled = false,
 }: ToggleOptionProps) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+    <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/3 p-4">
       <div>
         <p className="text-sm font-medium text-white">{label}</p>
 

@@ -40,7 +40,7 @@ export default function ActivityFeed() {
 
           return (
             <div key={activity.title} className="flex gap-3">
-              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.05]">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5">
                 <Icon className={`h-4 w-4 ${activity.color}`} />
               </div>
 

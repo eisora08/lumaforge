@@ -29,7 +29,7 @@ export default function Settings() {
         title="Apariencia"
         description="Cambia el estilo visual de LumaForge."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
           <Palette className="h-4 w-4" />
           Tema actual:{" "}
           {themes.find((theme) => theme.id === selectedTheme)?.name}
@@ -51,7 +51,7 @@ export default function Settings() {
         title="API"
         description="Configura la conexión con el catálogo de paquetes."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
           <Globe className="h-4 w-4" />
           Catálogo remoto
         </div>
@@ -75,7 +75,7 @@ export default function Settings() {
         title="Rutas"
         description="Administra rutas detectadas o configuradas manualmente."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
           <FolderCog className="h-4 w-4" />
           Steam y carpetas internas
         </div>
@@ -111,7 +111,7 @@ export default function Settings() {
         title="Avanzado"
         description="Opciones de mantenimiento, logs y seguridad."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-[var(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
           <SlidersHorizontal className="h-4 w-4" />
           Sistema
         </div>
