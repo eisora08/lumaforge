@@ -18,7 +18,7 @@ export default function AppLayout({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#181114] text-white lg:flex">
+    <div className="min-h-screen bg-(--color-bg) text-(--color-text) lg:flex">
       <Sidebar
         isOpen={isSidebarOpen}
         isCollapsed={isSidebarCollapsed}
@@ -28,10 +28,10 @@ export default function AppLayout({
         onNavigate={onNavigate}
       />
 
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 bg-(--color-bg)">
         <TopBar onOpenSidebar={() => setIsSidebarOpen(true)} />
 
-        <main className="min-h-[calc(100vh-4rem)]">
+        <main className="min-h-[calc(100vh-4rem)] bg-(--color-bg)">
           {children}
         </main>
       </div>

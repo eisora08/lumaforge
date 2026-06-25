@@ -2,7 +2,7 @@ import { Download, Gamepad2, Sparkles } from "lucide-react";
 
 export default function HeroPanel() {
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-(--color-border) bg-gradient-to-br from-(--color-surface) via-(--color-surface-soft) to-(--color-bg) p-7">
+    <section className="relative overflow-hidden rounded-3xl border border-(--color-border) bg-linear-to-br from-(--color-surface) via-(--color-surface-soft) to-(--color-bg) p-7">
       <div className="absolute right-0 top-0 h-56 w-56 rounded-full bg-(--color-accent)/10 blur-3xl" />
       <div className="absolute bottom-0 left-1/3 h-40 w-40 rounded-full bg-purple-500/10 blur-3xl" />
 

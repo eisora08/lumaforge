@@ -24,3 +24,18 @@ body,
   background: var(--color-bg);
   color: var(--color-text);
 }
+
+body {
+  background:
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--color-accent) 14%, transparent),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--color-surface) 35%, transparent),
+      transparent 30%
+    ),
+    var(--color-bg);
+}
