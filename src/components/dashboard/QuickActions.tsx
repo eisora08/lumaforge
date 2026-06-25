@@ -54,7 +54,7 @@ export default function QuickActions() {
           return (
             <button
               key={action.label}
-              className="group rounded-2xl border border-(--color-border) bg-(--color-surface) p-4 text-left transition hover:bg-white/6"
+              className="group rounded-2xl lf-surface border p-4 text-left transition hover:bg-white/6"
             >
               <div
                 className={`mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl border ${action.color}`}

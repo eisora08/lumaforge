@@ -10,7 +10,7 @@ export default function StatCard({
   description,
 }: StatCardProps) {
   return (
-    <div className="rounded-2xl border border-(--color-border) bg-(--color-surface) p-5 shadow-lg">
+    <div className="lf-surface rounded-2xl border p-5">
       <p className="text-xs uppercase tracking-wide text-(--color-muted)">
         {label}
       </p>

@@ -74,23 +74,23 @@ export default function Sidebar({
       )}
 
       <aside
-        className={`fixed lg:static inset-y-0 left-0 z-40 flex flex-col border-r border-(--color-border) bg-(--color-sidebar)/95 backdrop-blur-xl transition-all duration-300 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r lf-shell transition-all duration-300 lg:static ${
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-        } ${isCollapsed ? "lg:w-20" : "lg:w-72"} w-72`}
+        } ${isCollapsed ? "lg:w-20" : "lg:w-72"}`}
       >
-        <div className="h-16 px-4 flex items-center justify-between border-b border-(--color-border)">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="h-10 w-10 shrink-0 rounded-2xl bg-(--color-accent)/10 border border-(--color-accent)/20 flex items-center justify-center">
+        <div className="flex h-16 items-center justify-between border-b border-(--shell-border) px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-(--color-accent)/20 bg-(--color-accent)/10">
               <Flame className="h-5 w-5 text-(--color-accent)" />
             </div>
 
             {!isCollapsed && (
               <div className="min-w-0">
-                <h1 className="text-(--color-text) font-bold leading-none">
+                <h1 className="font-bold leading-none text-(--color-text)">
                   LumaForge
                 </h1>
 
-                <p className="text-[11px] text-(--color-muted) mt-1">
+                <p className="mt-1 text-[11px] text-(--color-muted)">
                   Premium Game Toolkit
                 </p>
               </div>
@@ -99,14 +99,14 @@ export default function Sidebar({
 
           <button
             onClick={onClose}
-            className="lg:hidden h-9 w-9 rounded-xl hover:bg-white/10 flex items-center justify-center text-(--color-muted)"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10 lg:hidden"
           >
             <X className="h-5 w-5" />
           </button>
 
           <button
             onClick={onToggleCollapse}
-            className="hidden lg:flex h-9 w-9 rounded-xl hover:bg-white/10 items-center justify-center text-(--color-muted)"
+            className="hidden h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10 lg:flex"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -121,7 +121,7 @@ export default function Sidebar({
             onNavigate={handleNavigate}
           />
 
-          <div className="my-4 h-px bg-(--color-border)" />
+          <div className="my-4 h-px bg-(--shell-border)" />
 
           <SidebarSection
             title="Sistema"
@@ -132,7 +132,7 @@ export default function Sidebar({
           />
 
           <button
-            className={`mt-3 w-full flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-(--color-muted) hover:text-(--color-text) hover:bg-white/6 ${
+            className={`mt-3 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-(--color-muted) hover:bg-white/6 hover:text-(--color-text) ${
               isCollapsed ? "lg:justify-center" : ""
             }`}
           >
@@ -142,24 +142,24 @@ export default function Sidebar({
           </button>
         </div>
 
-        <div className="p-3 border-t border-(--color-border)">
+        <div className="border-t border-(--shell-border) p-3">
           <div
-            className={`rounded-2xl bg-white/4 border border-(--color-border) p-3 ${
+            className={`lf-surface rounded-2xl border p-3 ${
               isCollapsed ? "hidden lg:block" : ""
             }`}
           >
             {isCollapsed ? (
-              <div className="h-9 w-9 mx-auto rounded-xl bg-emerald-500/10 flex items-center justify-center">
+              <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10">
                 <Boxes className="h-4 w-4 text-emerald-400" />
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2 text-sm text-(--color-text) font-medium">
+                <div className="flex items-center gap-2 text-sm font-medium text-(--color-text)">
                   <Boxes className="h-4 w-4 text-emerald-400" />
                   Sistema listo
                 </div>
 
-                <p className="text-xs text-(--color-muted) mt-1">
+                <p className="mt-1 text-xs text-(--color-muted)">
                   Esperando detección de Steam.
                 </p>
               </>
@@ -167,7 +167,7 @@ export default function Sidebar({
           </div>
 
           {!isCollapsed && (
-            <p className="text-[11px] text-(--color-muted) mt-3 px-1">
+            <p className="mt-3 px-1 text-[11px] text-(--color-muted)">
               v0.1.0 Preview
             </p>
           )}
@@ -195,7 +195,7 @@ function SidebarSection({
   return (
     <div>
       {!isCollapsed && (
-        <p className="px-3 mb-2 text-[11px] uppercase tracking-[0.18em] text-(--color-muted)">
+        <p className="mb-2 px-3 text-[11px] uppercase tracking-[0.18em] text-(--color-muted)">
           {title}
         </p>
       )}
@@ -210,10 +210,10 @@ function SidebarSection({
               key={item.label}
               onClick={() => onNavigate(item.page)}
               title={isCollapsed ? item.label : undefined}
-              className={`w-full flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition group ${
+              className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm transition ${
                 isActive
-                  ? "bg-(--color-accent)/10 text-(--color-text) border border-(--color-accent)/20"
-                  : "text-(--color-muted) hover:text-(--color-text) hover:bg-white/6"
+                  ? "border border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-text)"
+                  : "text-(--color-muted) hover:bg-white/6 hover:text-(--color-text)"
               } ${isCollapsed ? "lg:justify-center" : ""}`}
             >
               <Icon

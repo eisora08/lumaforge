@@ -6,27 +6,40 @@ import {
   useState,
 } from "react";
 
-import { ThemeId } from "../types/theme";
+import { SurfaceMode, ThemeId } from "../types/theme";
 import { themeVariables } from "../theme/themes";
 
 type ThemeContextValue = {
   theme: ThemeId;
+  surfaceMode: SurfaceMode;
   setTheme: (theme: ThemeId) => void;
+  setSurfaceMode: (mode: SurfaceMode) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-const STORAGE_KEY = "lumaforge-theme";
+const THEME_STORAGE_KEY = "lumaforge-theme";
+const SURFACE_STORAGE_KEY = "lumaforge-surface-mode";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(() => {
-    const savedTheme = localStorage.getItem(STORAGE_KEY) as ThemeId | null;
-    return savedTheme || "crimson-dark";
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) as ThemeId | null;
+    return savedTheme || "midnight-blue";
+  });
+
+  const [surfaceMode, setSurfaceModeState] = useState<SurfaceMode>(() => {
+    const savedMode = localStorage.getItem(SURFACE_STORAGE_KEY) as SurfaceMode | null;
+    return savedMode || "solid";
   });
 
   function setTheme(nextTheme: ThemeId) {
     setThemeState(nextTheme);
-    localStorage.setItem(STORAGE_KEY, nextTheme);
+    localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  }
+
+  function setSurfaceMode(nextMode: SurfaceMode) {
+    setSurfaceModeState(nextMode);
+    localStorage.setItem(SURFACE_STORAGE_KEY, nextMode);
   }
 
   useEffect(() => {
@@ -40,12 +53,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     root.dataset.theme = theme;
   }, [theme]);
 
+  useEffect(() => {
+    document.documentElement.dataset.surface = surfaceMode;
+  }, [surfaceMode]);
+
   const value = useMemo(
     () => ({
       theme,
+      surfaceMode,
       setTheme,
+      setSurfaceMode,
     }),
-    [theme]
+    [theme, surfaceMode]
   );
 
   return (

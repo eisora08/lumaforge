@@ -30,7 +30,7 @@ const checks = [
 
 export default function SystemHealth() {
   return (
-    <section className="rounded-2xl border border-(--color-border) bg-(--color-surface) p-5">
+    <section className="rounded-2xl lf-surface border p-5">
       <h2 className="mb-4 font-semibold text-(--color-text)">
         Estado del sistema
       </h2>
@@ -42,7 +42,7 @@ export default function SystemHealth() {
           return (
             <div
               key={check.label}
-              className="rounded-2xl border border-(--color-border) bg-white/4 p-4"
+              className="rounded-2xl border border-(--surface-active-border) bg-white/4 p-4"
             >
               <Icon className="mb-3 h-5 w-5 text-(--color-accent)" />
 

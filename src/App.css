@@ -11,6 +11,94 @@
   --color-accent: #b8d7dc;
 }
 
+/* =========================
+   SURFACE MODE: SOLID
+========================= */
+
+:root[data-surface="solid"] {
+  --page-bg: var(--color-bg);
+
+  --shell-bg: var(--color-sidebar);
+  --shell-border: var(--color-border);
+  --shell-blur: none;
+
+  --surface-active: var(--color-surface);
+  --surface-active-border: var(--color-border);
+  --surface-active-hover: color-mix(
+    in srgb,
+    var(--color-surface) 90%,
+    white 10%
+  );
+  --surface-active-shadow: none;
+  --surface-active-blur: none;
+}
+
+
+/* =========================
+   SURFACE MODE: TINTED
+========================= */
+
+:root[data-surface="tinted"] {
+  --page-bg: color-mix(
+    in srgb,
+    var(--color-bg) 86%,
+    var(--color-accent) 7%
+  );
+
+  --shell-bg: color-mix(
+    in srgb,
+    var(--color-sidebar) 82%,
+    var(--color-accent) 12%
+  );
+  --shell-border: color-mix(
+    in srgb,
+    var(--color-border) 55%,
+    var(--color-accent) 45%
+  );
+  --shell-blur: none;
+
+  --surface-active: color-mix(
+    in srgb,
+    var(--color-surface) 68%,
+    var(--color-accent) 18%
+  );
+  --surface-active-border: color-mix(
+    in srgb,
+    var(--color-border) 40%,
+    var(--color-accent) 60%
+  );
+  --surface-active-hover: color-mix(
+    in srgb,
+    var(--color-surface) 56%,
+    var(--color-accent) 28%
+  );
+  --surface-active-shadow: 0 14px 38px rgba(0, 0, 0, 0.22);
+  --surface-active-blur: none;
+}
+
+
+/* =========================
+   SURFACE MODE: LIQUID GLASS
+========================= */
+
+:root[data-surface="liquid-glass"] {
+  --page-bg: transparent;
+
+  --shell-bg: rgba(255, 255, 255, 0.035);
+  --shell-border: rgba(255, 255, 255, 0.16);
+  --shell-blur: blur(28px);
+
+  --surface-active: rgba(255, 255, 255, 0.045);
+  --surface-active-border: rgba(255, 255, 255, 0.18);
+  --surface-active-hover: rgba(255, 255, 255, 0.09);
+  --surface-active-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+  --surface-active-blur: blur(26px);
+}
+
+
+/* =========================
+   BASE
+========================= */
 * {
   box-sizing: border-box;
 }
@@ -28,14 +116,80 @@ body,
 body {
   background:
     radial-gradient(
-      circle at top left,
-      color-mix(in srgb, var(--color-accent) 14%, transparent),
-      transparent 28%
-    ),
-    radial-gradient(
-      circle at top right,
-      color-mix(in srgb, var(--color-surface) 35%, transparent),
+      circle at 15% 8%,
+      color-mix(in srgb, var(--color-accent) 28%, transparent),
       transparent 30%
     ),
-    var(--color-bg);
+    radial-gradient(
+      circle at 85% 12%,
+      color-mix(in srgb, var(--color-surface) 70%, transparent),
+      transparent 35%
+    ),
+    radial-gradient(
+      circle at 50% 80%,
+      color-mix(in srgb, var(--color-accent) 18%, transparent),
+      transparent 35%
+    ),
+    linear-gradient(
+      135deg,
+      var(--color-bg),
+      color-mix(in srgb, var(--color-bg) 78%, var(--color-surface) 22%)
+    );
+}
+
+/* =========================
+   BACKDROP
+========================= */
+.lf-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at 15% 8%,
+      color-mix(in srgb, var(--color-accent) 28%, transparent),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 85% 12%,
+      color-mix(in srgb, var(--color-surface) 70%, transparent),
+      transparent 35%
+    ),
+    radial-gradient(
+      circle at 50% 80%,
+      color-mix(in srgb, var(--color-accent) 18%, transparent),
+      transparent 35%
+    ),
+    linear-gradient(
+      135deg,
+      var(--color-bg),
+      color-mix(in srgb, var(--color-bg) 78%, var(--color-surface) 22%)
+    );
+}
+
+/* =========================
+   APP SHELL / SURFACES
+========================= */
+.lf-page {
+  background: var(--page-bg);
+}
+
+.lf-shell {
+  background: var(--shell-bg);
+  border-color: var(--shell-border);
+  backdrop-filter: var(--shell-blur);
+  -webkit-backdrop-filter: var(--shell-blur);
+}
+
+.lf-surface {
+  background: var(--surface-active);
+  border-color: var(--surface-active-border);
+  box-shadow: var(--surface-active-shadow);
+  backdrop-filter: var(--surface-active-blur);
+  -webkit-backdrop-filter: var(--surface-active-blur);
+}
+
+.lf-surface-hover:hover {
+  background: var(--surface-active-hover);
 }

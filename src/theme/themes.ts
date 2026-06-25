@@ -1,4 +1,5 @@
-import { ThemeId, ThemeOption } from "../types/theme";
+import { ThemeId, ThemeOption, SurfaceModeOption  } from "../types/theme";
+
 
 export const themes: ThemeOption[] = [
   {
@@ -88,4 +89,22 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-accent": "#ffffff",
   },
 };
-``
+
+
+export const surfaceModes: SurfaceModeOption[] = [
+  {
+    id: "solid",
+    name: "Solid",
+    description: "Superficies sólidas, limpias y con máximo contraste.",
+  },
+  {
+    id: "tinted",
+    name: "Tinted",
+    description: "Superficies con tinte suave del tema activo.",
+  },
+  {
+    id: "liquid-glass",
+    name: "Liquid Glass",
+    description: "Superficies translúcidas con blur y profundidad visual.",
+  },
+];

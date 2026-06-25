@@ -2,8 +2,8 @@ import { Download, Gamepad2, Sparkles } from "lucide-react";
 
 export default function HeroPanel() {
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-(--color-border) bg-linear-to-br from-(--color-surface) via-(--color-surface-soft) to-(--color-bg) p-7">
-      <div className="absolute right-0 top-0 h-56 w-56 rounded-full bg-(--color-accent)/10 blur-3xl" />
+    <section className="lf-surface relative overflow-hidden rounded-3xl border p-7">
+      <div className="absolute right-0 top-0 h-56 w-56 rounded-full bg-(--color-accent)/15 blur-3xl" />
       <div className="absolute bottom-0 left-1/3 h-40 w-40 rounded-full bg-purple-500/10 blur-3xl" />
 
       <div className="relative z-10 max-w-2xl">
@@ -27,7 +27,7 @@ export default function HeroPanel() {
             Explorar paquetes
           </button>
 
-          <button className="inline-flex items-center gap-2 rounded-xl border border-(--color-border) bg-white/6 px-5 py-3 text-sm text-(--color-text) transition hover:bg-white/10">
+          <button className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/6 px-5 py-3 text-sm text-(--color-text) backdrop-blur-xl transition hover:bg-white/10">
             <Gamepad2 className="h-4 w-4" />
             Ver biblioteca
           </button>

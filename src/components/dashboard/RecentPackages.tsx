@@ -18,7 +18,7 @@ export default function RecentPackages() {
         {recentPackages.map((item) => (
           <div
             key={item.name}
-            className="flex h-32 flex-col justify-center rounded-2xl border border-(--color-border) bg-(--color-surface) p-5"
+            className="flex h-32 flex-col justify-center rounded-2xl lf-surface border p-5"
           >
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5">

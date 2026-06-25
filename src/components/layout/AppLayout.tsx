@@ -18,22 +18,26 @@ export default function AppLayout({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   return (
-    <div className="min-h-screen bg-(--color-bg) text-(--color-text) lg:flex">
-      <Sidebar
-        isOpen={isSidebarOpen}
-        isCollapsed={isSidebarCollapsed}
-        activePage={activePage}
-        onClose={() => setIsSidebarOpen(false)}
-        onToggleCollapse={() => setIsSidebarCollapsed((value) => !value)}
-        onNavigate={onNavigate}
-      />
+    <div className="relative h-screen overflow-hidden bg-(--color-bg) text-(--color-text)">
+      <div className="lf-backdrop" />
 
-      <div className="flex-1 min-w-0 bg-(--color-bg)">
-        <TopBar onOpenSidebar={() => setIsSidebarOpen(true)} />
+      <div className="relative z-10 flex h-screen w-full">
+        <Sidebar
+          isOpen={isSidebarOpen}
+          isCollapsed={isSidebarCollapsed}
+          activePage={activePage}
+          onClose={() => setIsSidebarOpen(false)}
+          onToggleCollapse={() => setIsSidebarCollapsed((value) => !value)}
+          onNavigate={onNavigate}
+        />
 
-        <main className="min-h-[calc(100vh-4rem)] bg-(--color-bg)">
-          {children}
-        </main>
+        <div className="flex min-w-0 flex-1 flex-col lf-page">
+          <TopBar onOpenSidebar={() => setIsSidebarOpen(true)} />
+
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            {children}
+          </main>
+        </div>
       </div>
     </div>
   );

@@ -9,12 +9,12 @@ import SettingsSection from "../components/settings/SettingsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
-
-import { themes } from "../theme/themes";
+import SurfaceModeOption from "../components/settings/SurfaceModeOption";
+import { themes, surfaceModes } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
 
 export default function Settings() {
-  const { theme: selectedTheme, setTheme } = useTheme();
+  const { theme: selectedTheme, setTheme, surfaceMode, setSurfaceMode, } = useTheme();
 
   return (
     <div className="p-5 lg:p-7 space-y-6">
@@ -45,6 +45,30 @@ export default function Settings() {
             />
           ))}
         </div>
+
+        <div className="mt-6">
+          <div className="mb-3">
+            <h3 className="font-medium text-(--color-text)">
+              Estilo de superficie
+            </h3>
+
+            <p className="mt-1 text-sm text-(--color-muted)">
+              Define cómo se ven las cards, paneles y contenedores.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {surfaceModes.map((mode) => (
+              <SurfaceModeOption
+                key={mode.id}
+                mode={mode}
+                selected={surfaceMode === mode.id}
+                onSelect={setSurfaceMode}
+              />
+            ))}
+          </div>
+        </div>
+
       </SettingsSection>
 
       <SettingsSection

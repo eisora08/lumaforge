@@ -14,7 +14,8 @@ const activities = [
   },
   {
     title: "Esperando API",
-    description: "La conexión con el catálogo remoto aún no ha sido configurada.",
+    description:
+      "La conexión con el catálogo remoto aún no ha sido configurada.",
     icon: Download,
     color: "text-orange-400",
   },
@@ -28,7 +29,7 @@ const activities = [
 
 export default function ActivityFeed() {
   return (
-    <section className="rounded-2xl border border-(--color-border) bg-(--color-surface) p-5">
+    <section className="lf-surface rounded-2xl border p-5">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-semibold text-(--color-text)">
           Actividad reciente
@@ -47,7 +48,7 @@ export default function ActivityFeed() {
                 <Icon className={`h-4 w-4 ${activity.color}`} />
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-sm font-medium text-(--color-text)">
                   {activity.title}
                 </h3>

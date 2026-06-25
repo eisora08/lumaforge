@@ -4,6 +4,11 @@ export type ThemeId =
   | "steam-gray"
   | "oled-black";
 
+export type SurfaceMode =
+  | "solid"
+  | "tinted"
+  | "liquid-glass";
+
 export type ThemeOption = {
   id: ThemeId;
   name: string;
@@ -13,4 +18,10 @@ export type ThemeOption = {
     surface: string;
     accent: string;
   };
+};
+
+export type SurfaceModeOption = {
+  id: SurfaceMode;
+  name: string;
+  description: string;
 };

@@ -35,7 +35,7 @@ export default function LibraryPreview() {
         {games.map((game, index) => (
           <div
             key={game.title}
-            className="rounded-2xl border border-(--color-border) bg-(--color-surface) p-5"
+            className="rounded-2xl border backdrop-blur-xl border-(--surface-active-border) bg-(--surface-active) p-5"
           >
             <div className="mb-5 flex items-center justify-between">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5">
@@ -59,7 +59,7 @@ export default function LibraryPreview() {
               {game.subtitle}
             </p>
 
-            <button className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white/6 px-4 py-2 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)">
+            <button className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white/6 px-4 py-2 text-sm text-(--color-muted) lf-surface lf-surface-hover hover:bg-white/10 hover:text-(--color-text)">
               <Play className="h-4 w-4" />
               Abrir
             </button>

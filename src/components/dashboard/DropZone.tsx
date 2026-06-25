@@ -21,7 +21,7 @@ export default function DropZone({ onBrowse }: DropZoneProps) {
 
       <button
         onClick={onBrowse}
-        className="mt-5 inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-sm transition"
+        className="lf-surface lf-surface-hover mt-5 inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-sm transition"
       >
         <FolderOpen className="h-4 w-4" />
         Buscar archivos
