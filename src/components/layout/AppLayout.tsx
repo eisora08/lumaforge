@@ -1,12 +1,19 @@
 import { useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
+import { AppPage } from "../../types/navigation";
 
 type AppLayoutProps = {
+  activePage: AppPage;
+  onNavigate: (page: AppPage) => void;
   children: React.ReactNode;
 };
 
-export default function AppLayout({ children }: AppLayoutProps) {
+export default function AppLayout({
+  activePage,
+  onNavigate,
+  children,
+}: AppLayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
@@ -15,8 +22,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
       <Sidebar
         isOpen={isSidebarOpen}
         isCollapsed={isSidebarCollapsed}
+        activePage={activePage}
         onClose={() => setIsSidebarOpen(false)}
         onToggleCollapse={() => setIsSidebarCollapsed((value) => !value)}
+        onNavigate={onNavigate}
       />
 
       <div className="flex-1 min-w-0">
@@ -29,4 +38,3 @@ export default function AppLayout({ children }: AppLayoutProps) {
     </div>
   );
 }
-``
