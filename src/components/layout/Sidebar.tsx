@@ -16,36 +16,54 @@ import {
   Flame,
 } from "lucide-react";
 
+import { AppPage } from "../../types/navigation";
+
 type SidebarProps = {
   isOpen: boolean;
   isCollapsed: boolean;
+  activePage: AppPage;
   onClose: () => void;
   onToggleCollapse: () => void;
+  onNavigate: (page: AppPage) => void;
 };
 
-const mainItems = [
-  { label: "Inicio", icon: Home, active: true },
-  { label: "Biblioteca", icon: Library },
-  { label: "Juegos", icon: Gamepad2 },
-  { label: "Paquetes", icon: PackageSearch },
-  { label: "Descargas", icon: Download },
-  { label: "Logros", icon: Award },
-  { label: "Actividad", icon: Activity },
+const mainItems: {
+  label: string;
+  page: AppPage;
+  icon: React.ElementType;
+}[] = [
+  { label: "Inicio", page: "home", icon: Home },
+  { label: "Biblioteca", page: "library", icon: Library },
+  { label: "Juegos", page: "games", icon: Gamepad2 },
+  { label: "Paquetes", page: "packages", icon: PackageSearch },
+  { label: "Descargas", page: "downloads", icon: Download },
+  { label: "Logros", page: "achievements", icon: Award },
+  { label: "Actividad", page: "activity", icon: Activity },
 ];
 
-const toolItems = [
-  { label: "Verificación", icon: ShieldCheck },
-  { label: "Herramientas", icon: Wrench },
-  { label: "Reiniciar Steam", icon: RotateCcw },
-  { label: "Configuración", icon: Settings },
+const toolItems: {
+  label: string;
+  page: AppPage;
+  icon: React.ElementType;
+}[] = [
+  { label: "Verificación", page: "verification", icon: ShieldCheck },
+  { label: "Herramientas", page: "tools", icon: Wrench },
+  { label: "Configuración", page: "settings", icon: Settings },
 ];
 
 export default function Sidebar({
   isOpen,
   isCollapsed,
+  activePage,
   onClose,
   onToggleCollapse,
+  onNavigate,
 }: SidebarProps) {
+  function handleNavigate(page: AppPage) {
+    onNavigate(page);
+    onClose();
+  }
+
   return (
     <>
       {isOpen && (
@@ -97,7 +115,9 @@ export default function Sidebar({
           <SidebarSection
             title="Principal"
             items={mainItems}
+            activePage={activePage}
             isCollapsed={isCollapsed}
+            onNavigate={handleNavigate}
           />
 
           <div className="my-4 h-px bg-white/10" />
@@ -105,8 +125,19 @@ export default function Sidebar({
           <SidebarSection
             title="Sistema"
             items={toolItems}
+            activePage={activePage}
             isCollapsed={isCollapsed}
+            onNavigate={handleNavigate}
           />
+
+          <button
+            className={`mt-3 w-full flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-gray-400 hover:text-white hover:bg-white/[0.06] ${
+              isCollapsed ? "lg:justify-center" : ""
+            }`}
+          >
+            <RotateCcw className="h-5 w-5 shrink-0 text-gray-500" />
+            {!isCollapsed && <span>Reiniciar Steam</span>}
+          </button>
         </div>
 
         <div className="p-3 border-t border-white/10">
@@ -147,13 +178,21 @@ type SidebarSectionProps = {
   title: string;
   items: {
     label: string;
+    page: AppPage;
     icon: React.ElementType;
-    active?: boolean;
   }[];
+  activePage: AppPage;
   isCollapsed: boolean;
+  onNavigate: (page: AppPage) => void;
 };
 
-function SidebarSection({ title, items, isCollapsed }: SidebarSectionProps) {
+function SidebarSection({
+  title,
+  items,
+  activePage,
+  isCollapsed,
+  onNavigate,
+}: SidebarSectionProps) {
   return (
     <div>
       {!isCollapsed && (
@@ -165,20 +204,24 @@ function SidebarSection({ title, items, isCollapsed }: SidebarSectionProps) {
       <nav className="space-y-1">
         {items.map((item) => {
           const Icon = item.icon;
+          const isActive = activePage === item.page;
 
           return (
             <button
               key={item.label}
+              onClick={() => onNavigate(item.page)}
               title={isCollapsed ? item.label : undefined}
               className={`w-full flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition group ${
-                item.active
+                isActive
                   ? "bg-[#b8d7dc]/10 text-white border border-[#b8d7dc]/15"
                   : "text-gray-400 hover:text-white hover:bg-white/[0.06]"
               } ${isCollapsed ? "lg:justify-center" : ""}`}
             >
               <Icon
                 className={`h-5 w-5 shrink-0 ${
-                  item.active ? "text-[#b8d7dc]" : "text-gray-500 group-hover:text-gray-300"
+                  isActive
+                    ? "text-[#b8d7dc]"
+                    : "text-gray-500 group-hover:text-gray-300"
                 }`}
               />
 
