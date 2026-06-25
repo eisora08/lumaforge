@@ -7,20 +7,31 @@ import {
 
 import SettingsSection from "../components/settings/SettingsSection";
 import ThemeOption from "../components/settings/ThemeOption";
+import SurfaceModeOption from "../components/settings/SurfaceModeOption";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
-import SurfaceModeOption from "../components/settings/SurfaceModeOption";
+
 import { themes, surfaceModes } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
 
 export default function Settings() {
-  const { theme: selectedTheme, setTheme, surfaceMode, setSurfaceMode, } = useTheme();
+  const {
+    theme: selectedTheme,
+    surfaceMode,
+    setTheme,
+    setSurfaceMode,
+  } = useTheme();
+
+  const currentTheme = themes.find((theme) => theme.id === selectedTheme);
 
   return (
-    <div className="p-5 lg:p-7 space-y-6">
+    <div className="space-y-6 p-5 lg:p-7">
       <header>
-        <h1 className="text-3xl font-bold">Configuración</h1>
-        <p className="mt-2 text-gray-400">
+        <h1 className="text-3xl font-bold text-(--color-text)">
+          Configuración
+        </h1>
+
+        <p className="mt-2 text-(--color-muted)">
           Personaliza LumaForge, rutas, API, apariencia y comportamiento.
         </p>
       </header>
@@ -29,13 +40,12 @@ export default function Settings() {
         title="Apariencia"
         description="Cambia el estilo visual de LumaForge."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
           <Palette className="h-4 w-4" />
-          Tema actual:{" "}
-          {themes.find((theme) => theme.id === selectedTheme)?.name}
+          Tema actual: {currentTheme?.name}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {themes.map((theme) => (
             <ThemeOption
               key={theme.id}
@@ -68,19 +78,18 @@ export default function Settings() {
             ))}
           </div>
         </div>
-
       </SettingsSection>
 
       <SettingsSection
         title="API"
         description="Configura la conexión con el catálogo de paquetes."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
           <Globe className="h-4 w-4" />
           Catálogo remoto
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <SettingsInput
             label="Base URL"
             description="URL principal desde donde se consultarán los paquetes."
@@ -99,12 +108,12 @@ export default function Settings() {
         title="Rutas"
         description="Administra rutas detectadas o configuradas manualmente."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
           <FolderCog className="h-4 w-4" />
           Steam y carpetas internas
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <SettingsInput
             label="Steam Root"
             description="Carpeta raíz donde está steam.exe."
@@ -135,12 +144,12 @@ export default function Settings() {
         title="Avanzado"
         description="Opciones de mantenimiento, logs y seguridad."
       >
-        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)]">
+        <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
           <SlidersHorizontal className="h-4 w-4" />
           Sistema
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <ToggleOption
             label="Crear backups automáticamente"
             description="Antes de sobrescribir archivos existentes."

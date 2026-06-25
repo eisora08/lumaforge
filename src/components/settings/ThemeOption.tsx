@@ -15,10 +15,10 @@ export default function ThemeOption({
   return (
     <button
       onClick={() => onSelect(theme.id)}
-      className={`group rounded-2xl border p-4 text-left transition ${
+      className={`rounded-2xl border p-4 text-left transition ${
         selected
-          ? "border-[#b8d7dc]/50 bg-[#b8d7dc]/10"
-          : "border-white/10 bg-white/3 hover:bg-white/6"
+          ? "border-(--color-accent) bg-(--color-accent)/10"
+          : "lf-surface lf-surface-hover"
       }`}
     >
       <div className="mb-4 flex items-center justify-between">
@@ -27,10 +27,12 @@ export default function ThemeOption({
             className="h-7 w-7 rounded-full border border-white/10"
             style={{ background: theme.preview.background }}
           />
+
           <span
             className="h-7 w-7 rounded-full border border-white/10"
             style={{ background: theme.preview.surface }}
           />
+
           <span
             className="h-7 w-7 rounded-full border border-white/10"
             style={{ background: theme.preview.accent }}
@@ -38,14 +40,17 @@ export default function ThemeOption({
         </div>
 
         {selected && (
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#b8d7dc] text-black">
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-(--color-accent) text-black">
             <Check className="h-4 w-4" />
           </div>
         )}
       </div>
 
-      <h3 className="font-medium text-white">{theme.name}</h3>
-      <p className="mt-1 text-xs leading-5 text-gray-400">
+      <h3 className="font-medium text-(--color-text)">
+        {theme.name}
+      </h3>
+
+      <p className="mt-1 text-xs leading-5 text-(--color-muted)">
         {theme.description}
       </p>
     </button>

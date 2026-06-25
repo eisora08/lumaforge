@@ -18,8 +18,8 @@ export default function SurfaceModeOption({
       className={`rounded-2xl border p-4 text-left transition ${
         selected
           ? "border-(--color-accent) bg-(--color-accent)/10"
-          : "border-(--color-border) bg-(--surface-active) hover:bg-(--surface-active-hover)"
-      } ${mode.id === "liquid-glass" ? "backdrop-blur-xl" : ""}`}
+          : "lf-surface lf-surface-hover"
+      }`}
     >
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm font-medium text-(--color-text)">

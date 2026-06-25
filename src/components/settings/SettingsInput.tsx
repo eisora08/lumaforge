@@ -14,10 +14,14 @@ export default function SettingsInput({
   return (
     <label className="block">
       <div className="mb-2">
-        <p className="text-sm font-medium text-white">{label}</p>
+        <p className="text-sm font-medium text-(--color-text)">
+          {label}
+        </p>
 
         {description && (
-          <p className="mt-1 text-xs text-gray-500">{description}</p>
+          <p className="mt-1 text-xs text-(--color-muted)">
+            {description}
+          </p>
         )}
       </div>
 
@@ -25,7 +29,7 @@ export default function SettingsInput({
         value={value}
         placeholder={placeholder}
         readOnly
-        className="h-11 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-gray-200 outline-none placeholder:text-gray-600 focus:border-[#b8d7dc]/40"
+        className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
       />
     </label>
   );
