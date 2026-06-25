@@ -10,25 +10,27 @@ const recentPackages = [
 export default function RecentPackages() {
   return (
     <section>
-      <h2 className="font-semibold mb-3">Paquetes recientes</h2>
+      <h2 className="mb-3 font-semibold text-(--color-text)">
+        Paquetes recientes
+      </h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {recentPackages.map((item) => (
           <div
             key={item.name}
-            className="h-32 rounded-2xl bg-[#302b2f] border border-white/10 p-5 flex flex-col justify-center"
+            className="flex h-32 flex-col justify-center rounded-2xl border border-(--color-border) bg-(--color-surface) p-5"
           >
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-white/5 flex items-center justify-center">
-                <PackageOpen className="h-5 w-5 text-[#b8d7dc]" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5">
+                <PackageOpen className="h-5 w-5 text-(--color-accent)" />
               </div>
 
               <div>
-                <h3 className="font-semibold text-white">
+                <h3 className="font-semibold text-(--color-text)">
                   {item.name}
                 </h3>
 
-                <p className="text-sm text-gray-400 mt-1">
+                <p className="mt-1 text-sm text-(--color-muted)">
                   {item.description}
                 </p>
               </div>

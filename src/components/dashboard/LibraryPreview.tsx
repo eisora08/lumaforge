@@ -22,39 +22,44 @@ export default function LibraryPreview() {
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-semibold text-white">Biblioteca</h2>
+        <h2 className="font-semibold text-(--color-text)">
+          Biblioteca
+        </h2>
 
-        <button className="text-xs text-gray-400 hover:text-white">
+        <button className="text-xs text-(--color-muted) hover:text-(--color-text)">
           Ver todo
         </button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         {games.map((game, index) => (
           <div
             key={game.title}
-            className="rounded-2xl border border-white/10 bg-[#302b2f] p-5"
+            className="rounded-2xl border border-(--color-border) bg-(--color-surface) p-5"
           >
             <div className="mb-5 flex items-center justify-between">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/[0.05]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5">
                 {index === 1 ? (
                   <Star className="h-5 w-5 text-yellow-300" />
                 ) : (
-                  <Gamepad2 className="h-5 w-5 text-[#b8d7dc]" />
+                  <Gamepad2 className="h-5 w-5 text-(--color-accent)" />
                 )}
               </div>
 
-              <span className="rounded-full bg-white/[0.05] px-3 py-1 text-xs text-gray-400">
+              <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-(--color-muted)">
                 {game.status}
               </span>
             </div>
 
-            <h3 className="font-semibold text-white">{game.title}</h3>
-            <p className="mt-2 text-sm leading-5 text-gray-500">
+            <h3 className="font-semibold text-(--color-text)">
+              {game.title}
+            </h3>
+
+            <p className="mt-2 text-sm leading-5 text-(--color-muted)">
               {game.subtitle}
             </p>
 
-            <button className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-2 text-sm text-gray-300 hover:bg-white/[0.1] hover:text-white">
+            <button className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white/6 px-4 py-2 text-sm text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)">
               <Play className="h-4 w-4" />
               Abrir
             </button>

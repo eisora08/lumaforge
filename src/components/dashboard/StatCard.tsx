@@ -10,17 +10,17 @@ export default function StatCard({
   description,
 }: StatCardProps) {
   return (
-    <div className="bg-[#302b2f] border border-white/10 rounded-2xl p-5 shadow-lg">
-      <p className="text-xs uppercase tracking-wide text-gray-400">
+    <div className="rounded-2xl border border-(--color-border) bg-(--color-surface) p-5 shadow-lg">
+      <p className="text-xs uppercase tracking-wide text-(--color-muted)">
         {label}
       </p>
 
-      <h2 className="text-3xl font-bold text-[#b8d7dc] mt-2">
+      <h2 className="mt-2 text-3xl font-bold text-(--color-accent)">
         {value}
       </h2>
 
       {description && (
-        <p className="text-sm text-gray-400 mt-2">
+        <p className="mt-2 text-sm text-(--color-muted)">
           {description}
         </p>
       )}

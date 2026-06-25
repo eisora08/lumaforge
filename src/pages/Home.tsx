@@ -8,10 +8,10 @@ import SystemHealth from "../components/dashboard/SystemHealth";
 
 export default function Home() {
   return (
-    <div className="p-5 lg:p-7 space-y-6">
+    <div className="space-y-6 p-5 lg:p-7">
       <HeroPanel />
 
-      <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Juegos instalados"
           value={0}
@@ -39,7 +39,7 @@ export default function Home() {
 
       <QuickActions />
 
-      <section className="grid grid-cols-1 2xl:grid-cols-[1.3fr_0.7fr] gap-5">
+      <section className="grid grid-cols-1 gap-5 2xl:grid-cols-[1.3fr_0.7fr]">
         <div className="space-y-5">
           <LibraryPreview />
           <RecentPackages />

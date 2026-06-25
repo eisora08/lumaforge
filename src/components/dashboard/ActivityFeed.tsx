@@ -22,16 +22,19 @@ const activities = [
     title: "Sin instalaciones recientes",
     description: "Los paquetes instalados aparecerán en este historial.",
     icon: Clock,
-    color: "text-gray-400",
+    color: "text-(--color-muted)",
   },
 ];
 
 export default function ActivityFeed() {
   return (
-    <section className="rounded-2xl border border-white/10 bg-[#302b2f] p-5">
+    <section className="rounded-2xl border border-(--color-border) bg-(--color-surface) p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="font-semibold text-white">Actividad reciente</h2>
-        <Info className="h-4 w-4 text-gray-500" />
+        <h2 className="font-semibold text-(--color-text)">
+          Actividad reciente
+        </h2>
+
+        <Info className="h-4 w-4 text-(--color-muted)" />
       </div>
 
       <div className="space-y-4">
@@ -45,10 +48,11 @@ export default function ActivityFeed() {
               </div>
 
               <div>
-                <h3 className="text-sm font-medium text-white">
+                <h3 className="text-sm font-medium text-(--color-text)">
                   {activity.title}
                 </h3>
-                <p className="mt-1 text-xs leading-5 text-gray-500">
+
+                <p className="mt-1 text-xs leading-5 text-(--color-muted)">
                   {activity.description}
                 </p>
               </div>
