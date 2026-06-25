@@ -3,6 +3,7 @@ import {
   Globe,
   FolderCog,
   SlidersHorizontal,
+  RotateCcw,
 } from "lucide-react";
 
 import SettingsSection from "../components/settings/SettingsSection";
@@ -13,6 +14,7 @@ import ToggleOption from "../components/settings/ToggleOption";
 
 import { themes, surfaceModes } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
+import { useSettings } from "../context/SettingsContext";
 
 export default function Settings() {
   const {
@@ -22,18 +24,34 @@ export default function Settings() {
     setSurfaceMode,
   } = useTheme();
 
+  const {
+    settings,
+    updateSetting,
+    resetSettings,
+  } = useSettings();
+
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
-      <header>
-        <h1 className="text-3xl font-bold text-(--color-text)">
-          Configuración
-        </h1>
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-(--color-text)">
+            Configuración
+          </h1>
 
-        <p className="mt-2 text-(--color-muted)">
-          Personaliza LumaForge, rutas, API, apariencia y comportamiento.
-        </p>
+          <p className="mt-2 text-(--color-muted)">
+            Personaliza LumaForge, rutas, API, apariencia y comportamiento.
+          </p>
+        </div>
+
+        <button
+          onClick={resetSettings}
+          className="inline-flex w-fit items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
+        >
+          <RotateCcw className="h-4 w-4" />
+          Restablecer
+        </button>
       </header>
 
       <SettingsSection
@@ -94,12 +112,18 @@ export default function Settings() {
             label="Base URL"
             description="URL principal desde donde se consultarán los paquetes."
             placeholder="https://api.tu-dominio.com"
+            type="url"
+            value={settings.apiBaseUrl}
+            onChange={(value) => updateSetting("apiBaseUrl", value)}
           />
 
           <SettingsInput
             label="API Key"
             description="Opcional. Solo si tu API requiere autenticación."
             placeholder="No configurada"
+            type="password"
+            value={settings.apiKey}
+            onChange={(value) => updateSetting("apiKey", value)}
           />
         </div>
       </SettingsSection>
@@ -118,24 +142,32 @@ export default function Settings() {
             label="Steam Root"
             description="Carpeta raíz donde está steam.exe."
             placeholder="No detectada"
+            value={settings.steamRoot}
+            onChange={(value) => updateSetting("steamRoot", value)}
           />
 
           <SettingsInput
             label="config/lua"
             description="Destino para archivos .lua instalados."
             placeholder="No detectada"
+            value={settings.luaPath}
+            onChange={(value) => updateSetting("luaPath", value)}
           />
 
           <SettingsInput
             label="depotcache"
             description="Destino para archivos .manifest."
             placeholder="No detectado"
+            value={settings.depotcachePath}
+            onChange={(value) => updateSetting("depotcachePath", value)}
           />
 
           <SettingsInput
             label="Carpeta temporal"
             description="Ubicación para descargas y extracción de ZIP."
             placeholder="Usar carpeta temporal del sistema"
+            value={settings.tempFolder}
+            onChange={(value) => updateSetting("tempFolder", value)}
           />
         </div>
       </SettingsSection>
@@ -153,23 +185,29 @@ export default function Settings() {
           <ToggleOption
             label="Crear backups automáticamente"
             description="Antes de sobrescribir archivos existentes."
-            enabled
+            enabled={settings.createBackups}
+            onChange={(enabled) => updateSetting("createBackups", enabled)}
           />
 
           <ToggleOption
             label="Guardar logs detallados"
             description="Registra instalaciones, descargas, errores y rutas."
-            enabled
+            enabled={settings.detailedLogs}
+            onChange={(enabled) => updateSetting("detailedLogs", enabled)}
           />
 
           <ToggleOption
             label="Limpiar temporales al cerrar"
             description="Elimina ZIPs y carpetas extraídas al salir."
+            enabled={settings.cleanTempOnExit}
+            onChange={(enabled) => updateSetting("cleanTempOnExit", enabled)}
           />
 
           <ToggleOption
             label="Modo compacto"
             description="Reduce animaciones y espaciado visual."
+            enabled={settings.compactMode}
+            onChange={(enabled) => updateSetting("compactMode", enabled)}
           />
         </div>
       </SettingsSection>

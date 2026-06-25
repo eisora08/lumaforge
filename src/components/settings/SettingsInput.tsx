@@ -2,7 +2,9 @@ type SettingsInputProps = {
   label: string;
   description?: string;
   placeholder?: string;
-  value?: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: "text" | "password" | "url";
 };
 
 export default function SettingsInput({
@@ -10,6 +12,8 @@ export default function SettingsInput({
   description,
   placeholder,
   value,
+  onChange,
+  type = "text",
 }: SettingsInputProps) {
   return (
     <label className="block">
@@ -26,9 +30,10 @@ export default function SettingsInput({
       </div>
 
       <input
+        type={type}
         value={value}
         placeholder={placeholder}
-        readOnly
+        onChange={(event) => onChange(event.target.value)}
         className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
       />
     </label>

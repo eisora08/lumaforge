@@ -1,13 +1,15 @@
 type ToggleOptionProps = {
   label: string;
   description?: string;
-  enabled?: boolean;
+  enabled: boolean;
+  onChange: (enabled: boolean) => void;
 };
 
 export default function ToggleOption({
   label,
   description,
-  enabled = false,
+  enabled,
+  onChange,
 }: ToggleOptionProps) {
   return (
     <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
@@ -24,6 +26,8 @@ export default function ToggleOption({
       </div>
 
       <button
+        type="button"
+        onClick={() => onChange(!enabled)}
         className={`relative h-7 w-12 rounded-full transition ${
           enabled ? "bg-(--color-accent)" : "bg-white/10"
         }`}
