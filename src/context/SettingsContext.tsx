@@ -6,6 +6,7 @@ import {
 } from "react";
 
 import { AppSettings, AppSettingsKey } from "../types/settings";
+import { defaultProviderSettings } from "../data/providers";
 
 type SettingsContextValue = {
   settings: AppSettings;
@@ -22,6 +23,8 @@ const STORAGE_KEY = "lumaforge-settings";
 export const defaultSettings: AppSettings = {
   apiBaseUrl: "",
   apiKey: "",
+
+  providers: defaultProviderSettings,
 
   steamRoot: "",
   luaPath: "",

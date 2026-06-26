@@ -1,6 +1,13 @@
+import {
+  ApiProviderId,
+  ApiProviderUserSettings,
+} from "./provider";
+
 export type AppSettings = {
   apiBaseUrl: string;
   apiKey: string;
+
+  providers: Record<ApiProviderId, ApiProviderUserSettings>;
 
   steamRoot: string;
   luaPath: string;
