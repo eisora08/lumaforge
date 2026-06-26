@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import type { ElementType } from "react";
+
 import {
   Cloud,
   Database,
@@ -9,40 +10,25 @@ import {
 import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
 
-import { mockPackages } from "../data/mockPackages";
-import { ApiProviderId } from "../types/provider";
+import { useProviderSearch } from "../hooks/useProviderSearch";
 
 export default function Packages() {
-  const [query, setQuery] = useState("");
-  const [selectedProvider, setSelectedProvider] =
-    useState<ApiProviderId | "all">("all");
+  const {
+    query,
+    selectedProvider,
+    results,
+    loading,
+    searchedProviders,
+    setQuery,
+    setSelectedProvider,
+  } = useProviderSearch();
 
-  const filteredPackages = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-
-    return mockPackages.filter((game) => {
-      const matchesQuery =
-        !normalizedQuery ||
-        game.title.toLowerCase().includes(normalizedQuery) ||
-        game.appId.includes(normalizedQuery) ||
-        game.sources.some((source) =>
-          source.providerName.toLowerCase().includes(normalizedQuery)
-        );
-
-      const matchesProvider =
-        selectedProvider === "all" ||
-        game.sources.some((source) => source.providerId === selectedProvider);
-
-      return matchesQuery && matchesProvider;
-    });
-  }, [query, selectedProvider]);
-
-  const totalSources = mockPackages.reduce(
+  const totalSources = results.reduce(
     (count, game) => count + game.sources.length,
     0
   );
 
-  const availableSources = mockPackages.reduce(
+  const availableSources = results.reduce(
     (count, game) =>
       count + game.sources.filter((source) => source.available).length,
     0
@@ -63,16 +49,15 @@ export default function Packages() {
 
           <p className="mt-2 max-w-2xl text-(--color-muted)">
             Busca juegos, revisa fuentes disponibles y prepara descargas desde
-            múltiples providers como HubcapDB, Ryuu, TwentyTwo Cloud, Sushi y
-            APIs personalizadas.
+            múltiples providers configurados.
           </p>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           <MiniStat
             icon={Database}
-            label="Games"
-            value={mockPackages.length}
+            label="Results"
+            value={results.length}
           />
 
           <MiniStat
@@ -96,7 +81,40 @@ export default function Packages() {
         onProviderChange={setSelectedProvider}
       />
 
-      {filteredPackages.length === 0 ? (
+      <section className="lf-surface rounded-2xl border p-4">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
+          <span>Providers consultados:</span>
+
+          {searchedProviders.length === 0 ? (
+            <span className="rounded-full bg-red-500/10 px-3 py-1 text-red-300">
+              Ninguno habilitado
+            </span>
+          ) : (
+            searchedProviders.map((provider) => (
+              <span
+                key={provider}
+                className="rounded-full bg-(--color-accent)/10 px-3 py-1 text-(--color-accent)"
+              >
+                {provider}
+              </span>
+            ))
+          )}
+        </div>
+      </section>
+
+      {loading ? (
+        <section className="lf-surface rounded-2xl border p-10 text-center">
+          <PackageSearch className="mx-auto h-10 w-10 animate-pulse text-(--color-accent)" />
+
+          <h2 className="mt-4 font-semibold text-(--color-text)">
+            Buscando paquetes
+          </h2>
+
+          <p className="mt-2 text-sm text-(--color-muted)">
+            Consultando providers habilitados...
+          </p>
+        </section>
+      ) : results.length === 0 ? (
         <section className="lf-surface rounded-2xl border p-10 text-center">
           <PackageSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
 
@@ -110,7 +128,7 @@ export default function Packages() {
         </section>
       ) : (
         <section className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
-          {filteredPackages.map((game) => (
+          {results.map((game) => (
             <PackageCard key={game.appId} game={game} />
           ))}
         </section>
@@ -120,7 +138,7 @@ export default function Packages() {
 }
 
 type MiniStatProps = {
-  icon: React.ElementType;
+  icon: ElementType;
   label: string;
   value: string | number;
 };

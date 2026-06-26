@@ -30,7 +30,7 @@ export default function PackageCard({ game }: PackageCardProps) {
           </div>
         )}
 
-        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-transparent" />
+        <div className="absolute inset-0 bg-linear-to-t from-black/75 via-black/10 to-transparent" />
 
         <div className="absolute bottom-3 left-3 right-3">
           <h3 className="line-clamp-1 font-semibold text-white">
