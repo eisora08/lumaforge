@@ -6,6 +6,10 @@ import {
   RotateCcw,
 } from "lucide-react";
 
+import ProviderSettingsCard from "../components/settings/ProviderSettingsCard";
+import { defaultApiProviders } from "../data/providers";
+import { ApiProviderUserSettings } from "../types/provider";
+
 import SettingsSection from "../components/settings/SettingsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
@@ -106,32 +110,34 @@ export default function Settings() {
       </SettingsSection>
 
       <SettingsSection
-        title="API"
-        description="Configura la conexión con el catálogo de paquetes."
+        title="Providers / APIs"
+        description="Configura las fuentes que LumaForge usará para buscar y descargar paquetes."
       >
         <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
           <Globe className="h-4 w-4" />
-          Catálogo remoto
+          Multi-provider fallback
         </div>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <SettingsInput
-            label="Base URL"
-            description="URL principal desde donde se consultarán los paquetes."
-            placeholder="https://api.tu-dominio.com"
-            type="url"
-            value={settings.apiBaseUrl}
-            onChange={(value) => updateSetting("apiBaseUrl", value)}
-          />
+          {defaultApiProviders.map((provider) => {
+            const providerSettings = settings.providers[provider.id];
 
-          <SettingsInput
-            label="API Key"
-            description="Opcional. Solo si tu API requiere autenticación."
-            placeholder="No configurada"
-            type="password"
-            value={settings.apiKey}
-            onChange={(value) => updateSetting("apiKey", value)}
-          />
+            function handleProviderChange(nextProviderSettings: ApiProviderUserSettings) {
+              updateSetting("providers", {
+                ...settings.providers,
+                [provider.id]: nextProviderSettings,
+              });
+            }
+
+            return (
+              <ProviderSettingsCard
+                key={provider.id}
+                provider={provider}
+                settings={providerSettings}
+                onChange={handleProviderChange}
+              />
+            );
+          })}
         </div>
       </SettingsSection>
 
