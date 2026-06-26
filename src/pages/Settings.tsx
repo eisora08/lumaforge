@@ -4,18 +4,28 @@ import {
   FolderCog,
   SlidersHorizontal,
   RotateCcw,
+  Crosshair,
 } from "lucide-react";
 
-import ProviderSettingsCard from "../components/settings/ProviderSettingsCard";
-import { defaultApiProviders } from "../data/providers";
-import { ApiProviderUserSettings } from "../types/provider";
+import {
+  showError,
+  showSuccess,
+  showWarning,
+} from "../components/toast/GameToast";
 
+import { detectSteamPaths } from "../services/tauri";
+
+import ProviderSettingsCard from "../components/settings/ProviderSettingsCard";
 import SettingsSection from "../components/settings/SettingsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
 import SettingsImportExport from "../components/settings/SettingsImportExport";
+
+import { defaultApiProviders } from "../data/providers";
+import { ApiProviderUserSettings } from "../types/provider";
+
 import { themes, surfaceModes } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
 import { useSettings } from "../context/SettingsContext";
@@ -36,6 +46,45 @@ export default function Settings() {
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
 
+  async function handleDetectSteamPaths() {
+    try {
+      const paths = await detectSteamPaths();
+
+      if (!paths) {
+        showError("No se encontró una instalación de Steam con steam.exe.", {
+          title: "Steam no detectado",
+        });
+
+        return;
+      }
+
+      updateSetting("steamRoot", paths.steam_root);
+      updateSetting("luaPath", paths.lua_path);
+      updateSetting("depotcachePath", paths.depotcache_path);
+
+      if (!paths.lua_exists) {
+        showWarning(
+          "Steam fue detectado, pero la carpeta config/lua no existe todavía.",
+          {
+            title: "Carpeta Lua no encontrada",
+          }
+        );
+
+        return;
+      }
+
+      showSuccess("Las rutas de Steam fueron detectadas correctamente.", {
+        title: "Steam detectado",
+      });
+    } catch (error) {
+      console.error(error);
+
+      showError("Ocurrió un error detectando las rutas de Steam.", {
+        title: "Error de detección",
+      });
+    }
+  }
+
   return (
     <div className="space-y-6 p-5 lg:p-7">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -50,6 +99,7 @@ export default function Settings() {
         </div>
 
         <button
+          type="button"
           onClick={resetSettings}
           className="inline-flex w-fit items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
         >
@@ -120,9 +170,16 @@ export default function Settings() {
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {defaultApiProviders.map((provider) => {
-            const providerSettings = settings.providers[provider.id];
+            const providerSettings =
+              settings.providers?.[provider.id] ?? {
+                enabled: provider.enabledByDefault,
+                baseUrl: provider.baseUrl,
+                apiKey: "",
+              };
 
-            function handleProviderChange(nextProviderSettings: ApiProviderUserSettings) {
+            function handleProviderChange(
+              nextProviderSettings: ApiProviderUserSettings
+            ) {
               updateSetting("providers", {
                 ...settings.providers,
                 [provider.id]: nextProviderSettings,
@@ -149,6 +206,15 @@ export default function Settings() {
           <FolderCog className="h-4 w-4" />
           Steam y carpetas internas
         </div>
+
+        <button
+          type="button"
+          onClick={handleDetectSteamPaths}
+          className="mb-4 inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
+        >
+          <Crosshair className="h-4 w-4" />
+          Detectar Steam automáticamente
+        </button>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <SettingsInput

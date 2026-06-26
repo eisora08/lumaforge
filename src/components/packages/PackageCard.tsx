@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import {
+  showError,
   showSuccess,
   showWarning,
 } from "../toast/GameToast";
@@ -16,6 +17,9 @@ import { PackageGame, PackageSource } from "../../types/package";
 import PackageSourceBadge from "./PackageSourceBadge";
 import PackageSourceSelector from "./PackageSourceSelector";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
+
+import { useSettings } from "../../context/SettingsContext";
+import { downloadAndInstallPackage } from "../../services/tauri";
 
 type PackageCardProps = {
   game: PackageGame;
@@ -34,40 +38,93 @@ export default function PackageCard({ game }: PackageCardProps) {
 
   const [selectedSourceKey, setSelectedSourceKey] =
     useState(defaultSourceKey);
-
+  const { settings } = useSettings();
   const selectedSource = useMemo(() => {
     return game.sources.find(
       (source) => getSourceKey(source) === selectedSourceKey
     );
   }, [game.sources, selectedSourceKey]);
 
-  const { addJob } = useDownloadQueue();
+  const { addJob, updateJob } = useDownloadQueue();
 
-function handleDownload() {
-  if (!selectedSource || !selectedSource.available) {
-    showWarning("Selecciona una fuente disponible antes de descargar.", {
-      title: "Fuente requerida",
-    });
-    return;
-  }
-
-  const job = addJob({
-    appId: game.appId,
-    gameTitle: game.title,
-    providerId: selectedSource.providerId,
-    providerName: selectedSource.providerName,
-    fileType: selectedSource.fileType,
-    downloadUrl: selectedSource.downloadUrl,
-  });
-
-  showSuccess(
-    `${job.gameTitle} fue agregado a la cola desde ${job.providerName} (.${job.fileType}).`,
-    {
-      title: "Descarga en cola",
+  async function handleDownload() {
+    if (!selectedSource || !selectedSource.available) {
+      showWarning("Selecciona una fuente disponible antes de descargar.", {
+        title: "Fuente requerida",
+      });
+      return;
     }
-  );
-}
 
+    if (!selectedSource.downloadUrl) {
+      showError("Esta fuente no tiene una URL de descarga válida.", {
+        title: "URL inválida",
+      });
+      return;
+    }
+
+    if (!settings.luaPath || !settings.depotcachePath) {
+      showWarning("Configura o detecta las rutas de Steam antes de instalar.", {
+        title: "Rutas requeridas",
+      });
+      return;
+    }
+
+    const job = addJob({
+      appId: game.appId,
+      gameTitle: game.title,
+      providerId: selectedSource.providerId,
+      providerName: selectedSource.providerName,
+      fileType: selectedSource.fileType,
+      downloadUrl: selectedSource.downloadUrl,
+    });
+
+    try {
+      updateJob(job.id, {
+        status: "checking",
+        progress: 5,
+      });
+
+      updateJob(job.id, {
+        status: "downloading",
+        progress: 20,
+      });
+
+      const result = await downloadAndInstallPackage({
+        downloadUrl: selectedSource.downloadUrl,
+        luaTarget: settings.luaPath,
+        depotcacheTarget: settings.depotcachePath,
+        createBackups: settings.createBackups,
+      });
+
+      updateJob(job.id, {
+        status: "done",
+        progress: 100,
+        bytesRead: 0,
+        totalBytes: 0,
+      });
+
+      showSuccess(result.message, {
+        title: "Paquete instalado",
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "No se pudo instalar el paquete.";
+
+      updateJob(job.id, {
+        status: "failed",
+        progress: 0,
+        error: message,
+      });
+
+      showError(message, {
+        title: "Instalación fallida",
+      });
+    }
+  }
 
   return (
     <article className="lf-surface group overflow-hidden rounded-2xl border transition">

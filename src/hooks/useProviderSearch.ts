@@ -36,11 +36,15 @@ export function useProviderSearch() {
 
       const enabledProviderIds = getEnabledProviderIds(settings);
 
-      const response = await searchPackagesByProviders({
-        query,
-        provider: selectedProvider,
-        enabledProviderIds,
-      });
+
+      const response = await searchPackagesByProviders(
+        {
+          query,
+          provider: selectedProvider,
+          enabledProviderIds,
+        },
+        settings
+      );
 
       if (cancelled) {
         return;

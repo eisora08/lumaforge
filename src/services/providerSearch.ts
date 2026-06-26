@@ -24,7 +24,8 @@ export function getEnabledProviderIds(settings: AppSettings): ApiProviderId[] {
 }
 
 export async function searchPackagesByProviders(
-  params: ProviderSearchParams
+  params: ProviderSearchParams,
+  settings: AppSettings
 ): Promise<ProviderSearchResult> {
   const normalizedQuery = params.query.trim().toLowerCase();
 
@@ -37,10 +38,25 @@ export async function searchPackagesByProviders(
   const collectedGames = new Map<string, PackageGame>();
 
   for (const provider of targetProviders) {
+    const userSettings = settings.providers?.[provider.id];
+
+    if (provider.requiresApiKey && !userSettings?.apiKey) {
+      providerReports.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        status: "error",
+        resultCount: 0,
+        message: "API key requerida",
+      });
+
+      continue;
+    }
+
     try {
       const providerResults = await searchMockProvider(
         provider,
-        normalizedQuery
+        normalizedQuery,
+        settings
       );
 
       providerReports.push({
@@ -74,9 +90,7 @@ export async function searchPackagesByProviders(
     params.enabledProviderIds
   );
 
-  const results = Array.from(collectedGames.values()).map((game) =>
-    hydrateDownloadUrls(game)
-  );
+  const results = Array.from(collectedGames.values());
 
   return {
     query: params.query,
@@ -127,10 +141,11 @@ function getDisabledProviderReports(
 
 async function searchMockProvider(
   provider: ApiProviderDefinition,
-  query: string
+  query: string,
+  settings: AppSettings
 ): Promise<PackageGame[]> {
   const results = mockPackages
-    .map((game) => filterGameByProvider(game, provider.id))
+    .map((game) => filterGameByProvider(game, provider.id, settings))
     .filter((game): game is PackageGame => Boolean(game))
     .filter((game) => matchesQuery(game, query));
 
@@ -139,11 +154,18 @@ async function searchMockProvider(
 
 function filterGameByProvider(
   game: PackageGame,
-  providerId: ApiProviderId
+  providerId: ApiProviderId,
+  settings: AppSettings
 ): PackageGame | null {
-  const sources = game.sources.filter(
-    (source) => source.providerId === providerId
-  );
+  const provider = defaultApiProviders.find((item) => item.id === providerId);
+
+  if (!provider) {
+    return null;
+  }
+
+  const sources = game.sources
+    .filter((source) => source.providerId === providerId)
+    .map((source) => hydrateSource(source, game.appId, settings));
 
   if (sources.length === 0) {
     return null;
@@ -152,6 +174,41 @@ function filterGameByProvider(
   return {
     ...game,
     sources,
+  };
+}
+
+function hydrateSource(
+  source: PackageSource,
+  appId: string,
+  settings: AppSettings
+): PackageSource {
+  const provider = defaultApiProviders.find(
+    (item) => item.id === source.providerId
+  );
+
+  if (!provider) {
+    return {
+      ...source,
+      available: false,
+      error: "Provider no encontrado",
+    };
+  }
+
+  const providerSettings = settings.providers?.[provider.id];
+
+  if (provider.requiresApiKey && !providerSettings?.apiKey) {
+    return {
+      ...source,
+      available: false,
+      downloadUrl: undefined,
+      error: "API key requerida",
+    };
+  }
+
+  return {
+    ...source,
+    downloadUrl:
+      source.downloadUrl ?? buildProviderDownloadUrl(source, appId, settings),
   };
 }
 
@@ -203,20 +260,10 @@ function mergeSources(
   return Array.from(sourceMap.values());
 }
 
-function hydrateDownloadUrls(game: PackageGame): PackageGame {
-  return {
-    ...game,
-    sources: game.sources.map((source) => ({
-      ...source,
-      downloadUrl:
-        source.downloadUrl ?? buildProviderDownloadUrl(source, game.appId),
-    })),
-  };
-}
-
 function buildProviderDownloadUrl(
   source: PackageSource,
-  appId: string
+  appId: string,
+  settings: AppSettings
 ): string | undefined {
   const provider = defaultApiProviders.find(
     (item) => item.id === source.providerId
@@ -226,8 +273,11 @@ function buildProviderDownloadUrl(
     return undefined;
   }
 
+  const providerSettings = settings.providers?.[provider.id];
+  const apiKey = providerSettings?.apiKey ?? "";
+
   return provider.urlTemplate
     .replace(/<appid>/g, appId)
-    .replace(/<apikey>/g, "")
-    .replace(/<moapikey>/g, "");
+    .replace(/<apikey>/g, apiKey)
+    .replace(/<moapikey>/g, apiKey);
 }
