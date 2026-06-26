@@ -1,6 +1,12 @@
 import { Download, Upload } from "lucide-react";
 import { useRef } from "react";
 
+import {
+  showError,
+  showSuccess,
+  showWarning,
+} from "../toast/GameToast";
+
 import { useSettings } from "../../context/SettingsContext";
 import { useTheme } from "../../context/ThemeContext";
 import {
@@ -27,6 +33,10 @@ export default function SettingsImportExport() {
     };
 
     downloadJsonFile("lumaforge-settings.json", backup);
+
+    showSuccess("Tu configuración fue exportada como lumaforge-settings.json.", {
+      title: "Configuración exportada",
+    });
   }
 
   async function handleImport(file: File) {
@@ -34,7 +44,10 @@ export default function SettingsImportExport() {
       const backup = await readJsonFile<unknown>(file);
 
       if (!isValidSettingsBackup(backup)) {
-        alert("El archivo no parece ser una configuración válida de LumaForge.");
+        showWarning("El archivo no parece ser una configuración válida de LumaForge.", {
+          title: "Configuración inválida",
+        });
+
         return;
       }
 
@@ -42,10 +55,15 @@ export default function SettingsImportExport() {
       setTheme(backup.theme);
       setSurfaceMode(backup.surfaceMode);
 
-      alert("Configuración importada correctamente.");
+      showSuccess("La configuración fue importada correctamente.", {
+        title: "Configuración restaurada",
+      });
     } catch (error) {
       console.error(error);
-      alert("No se pudo importar la configuración.");
+
+      showError("No se pudo importar la configuración. Verifica que el archivo sea un JSON válido.", {
+        title: "Importación fallida",
+      });
     }
   }
 

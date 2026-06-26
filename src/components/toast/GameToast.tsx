@@ -68,7 +68,7 @@ function GameToast({
 
   return (
     <div
-      className={`pointer-events-auto relative min-w-[340px] max-w-[440px] overflow-hidden rounded-3xl border border-white/15 bg-black/35 px-5 py-4 text-(--color-text) shadow-[0_24px_70px_rgba(0,0,0,0.45)] backdrop-blur-2xl transition-all duration-300 ${
+      className={`pointer-events-auto relative min-w-85 max-w-110 overflow-hidden rounded-3xl border border-white/15 bg-black/35 px-5 py-4 text-(--color-text) shadow-[0_24px_70px_rgba(0,0,0,0.45)] backdrop-blur-2xl transition-all duration-300 ${
         t.visible
           ? "translate-y-0 scale-100 opacity-100"
           : "-translate-y-3 scale-95 opacity-0"
@@ -79,7 +79,7 @@ function GameToast({
       />
 
       <div
-        className={`absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${config.accent}`}
+        className={`absolute inset-x-0 top-0 h-0.75 bg-linear-to-r ${config.accent}`}
       />
 
       <div className="relative z-10 flex items-start gap-4">
@@ -108,9 +108,9 @@ function GameToast({
         </button>
       </div>
 
-      <div className="absolute bottom-0 left-0 h-[3px] w-full bg-white/10">
+      <div className="absolute bottom-0 left-0 h-0.75 w-full bg-white/10">
         <div
-          className={`h-full origin-left bg-gradient-to-r ${config.accent}`}
+          className={`h-full origin-left bg-linear-to-r ${config.accent}`}
           style={{
             animation: `lf-toast-progress ${duration}ms linear forwards`,
           }}
