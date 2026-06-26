@@ -89,12 +89,15 @@ export default function PackageCard({ game }: PackageCardProps) {
         progress: 20,
       });
 
+
       const result = await downloadAndInstallPackage({
         downloadUrl: selectedSource.downloadUrl,
         luaTarget: settings.luaPath,
         depotcacheTarget: settings.depotcachePath,
         createBackups: settings.createBackups,
+        headers: selectedSource.authHeaders,
       });
+
 
       updateJob(job.id, {
         status: "done",

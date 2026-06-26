@@ -13,22 +13,19 @@ export type ProviderCapability =
   | "download-manifest"
   | "metadata";
 
-export type PackageFileType =
-  | "zip"
-  | "lua"
-  | "manifest";
+export type PackageFileType = "zip" | "lua" | "manifest";
 
-export type ProviderAuthType =
-  | "none"
-  | "query"
-  | "header";
+export type ProviderAuthType = "none" | "query" | "header";
 
 export type ApiProviderDefinition = {
   id: ApiProviderId;
   name: string;
   description: string;
   baseUrl: string;
-  urlTemplate: string;
+
+  availabilityUrlTemplate?: string;
+  downloadUrlTemplate: string;
+
   enabledByDefault: boolean;
   requiresApiKey: boolean;
 
@@ -39,6 +36,7 @@ export type ApiProviderDefinition = {
 
   successCode: number;
   unavailableCode: number;
+
   capabilities: ProviderCapability[];
   supportedFileTypes: PackageFileType[];
 };

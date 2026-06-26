@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { SteamPaths } from "../types/steam";
-import { InstallResult } from "../types/install";
+import type { SteamPaths } from "../types/steam";
+import type { InstallResult } from "../types/install";
 import type { ProviderAvailabilityResult } from "../types/providerAvailability";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
@@ -13,24 +13,30 @@ export async function downloadAndInstallPackage(params: {
   luaTarget: string;
   depotcacheTarget: string;
   createBackups: boolean;
+  headers?: Record<string, string>;
 }): Promise<InstallResult> {
   return await invoke<InstallResult>("download_and_install_package", {
     downloadUrl: params.downloadUrl,
     luaTarget: params.luaTarget,
     depotcacheTarget: params.depotcacheTarget,
     createBackups: params.createBackups,
+    headers: params.headers,
   });
 }
-
 
 export async function checkProviderAvailability(params: {
   url: string;
   successCode: number;
   unavailableCode: number;
+  headers?: Record<string, string>;
 }): Promise<ProviderAvailabilityResult> {
-  return await invoke<ProviderAvailabilityResult>("check_provider_availability", {
-    url: params.url,
-    successCode: params.successCode,
-    unavailableCode: params.unavailableCode,
-  });
+  return await invoke<ProviderAvailabilityResult>(
+    "check_provider_availability",
+    {
+      url: params.url,
+      successCode: params.successCode,
+      unavailableCode: params.unavailableCode,
+      headers: params.headers,
+    }
+  );
 }

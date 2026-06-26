@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::models::install_result::InstallResult;
 use crate::utils::{archive_utils, download_utils, install_utils};
 
@@ -7,6 +9,7 @@ pub fn download_and_install_package(
     lua_target: String,
     depotcache_target: String,
     create_backups: bool,
+    headers: Option<HashMap<String, String>>,
 ) -> Result<InstallResult, String> {
     if download_url.trim().is_empty() {
         return Err("La URL de descarga está vacía.".to_string());
@@ -20,7 +23,7 @@ pub fn download_and_install_package(
         return Err("La ruta depotcache está vacía.".to_string());
     }
 
-    let zip_path = download_utils::download_file_to_temp(&download_url)?;
+    let zip_path = download_utils::download_file_to_temp(&download_url, headers)?;
     let extracted_folder = archive_utils::extract_zip(&zip_path)?;
 
     let counts = install_utils::install_extracted_package(

@@ -19,32 +19,7 @@ pub fn check_provider_availability(
         .build()
         .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
 
-    let mut head_request = client.head(&url);
-
-    if let Some(headers) = &headers {
-        for (key, value) in headers {
-            head_request = head_request.header(key, value);
-        }
-    }
-
-    let head_result = head_request.send();
-
-    let response = match head_result {
-        Ok(response) => response,
-        Err(_) => {
-            let mut get_request = client.get(&url).header("Range", "bytes=0-0");
-
-            if let Some(headers) = &headers {
-                for (key, value) in headers {
-                    get_request = get_request.header(key, value);
-                }
-            }
-
-            get_request
-                .send()
-                .map_err(|error| format!("Error consultando provider: {}", error))?
-        }
-    };
+    let response = send_head_or_get(&client, &url, headers.as_ref())?;
 
     let status = response.status();
     let status_code = status.as_u16();
@@ -69,6 +44,7 @@ pub fn check_provider_availability(
         401 => "No autorizado. Verifica API key o permisos.",
         403 => "Acceso bloqueado por el provider.",
         404 => "No disponible en este provider.",
+        405 => "El provider no permite HEAD/GET para esta verificación.",
         429 => "Límite de peticiones alcanzado.",
         500 => "Error interno del provider.",
         502 => "Provider temporalmente caído o Bad Gateway.",
@@ -82,4 +58,47 @@ pub fn check_provider_availability(
         status_code,
         message: format!("{} Status: {}", message, status),
     })
+}
+
+fn send_head_or_get(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+) -> Result<reqwest::blocking::Response, String> {
+    let mut head_request = client.head(url);
+
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            head_request = head_request.header(key.as_str(), value.as_str());
+        }
+    }
+
+    match head_request.send() {
+        Ok(response) => {
+            if response.status().as_u16() == 405 {
+                send_range_get(client, url, headers)
+            } else {
+                Ok(response)
+            }
+        }
+        Err(_) => send_range_get(client, url, headers),
+    }
+}
+
+fn send_range_get(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+) -> Result<reqwest::blocking::Response, String> {
+    let mut get_request = client.get(url).header("Range", "bytes=0-0");
+
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            get_request = get_request.header(key.as_str(), value.as_str());
+        }
+    }
+
+    get_request
+        .send()
+        .map_err(|error| format!("Error consultando provider: {}", error))
 }

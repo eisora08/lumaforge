@@ -1,9 +1,28 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-pub fn download_file_to_temp(download_url: &str) -> Result<PathBuf, String> {
-    let response = reqwest::blocking::get(download_url)
+pub fn download_file_to_temp(
+    download_url: &str,
+    headers: Option<HashMap<String, String>>,
+) -> Result<PathBuf, String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("LumaForge/0.1.0")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
+
+    let mut request = client.get(download_url);
+
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+    }
+
+    let response = request
+        .send()
         .map_err(|error| format!("Error descargando archivo: {}", error))?;
 
     if !response.status().is_success() {
@@ -23,6 +42,7 @@ pub fn download_file_to_temp(download_url: &str) -> Result<PathBuf, String> {
 
         return Err(format!("{} Status: {}", message, status));
     }
+
     let bytes = response
         .bytes()
         .map_err(|error| format!("Error leyendo respuesta: {}", error))?;
@@ -45,7 +65,8 @@ pub fn download_file_to_temp(download_url: &str) -> Result<PathBuf, String> {
 }
 
 fn validate_zip_magic(path: &PathBuf) -> Result<(), String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("Error validando ZIP: {}", error))?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("Error validando ZIP: {}", error))?;
 
     let is_zip = bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04])
         || bytes.starts_with(&[0x50, 0x4B, 0x05, 0x06])

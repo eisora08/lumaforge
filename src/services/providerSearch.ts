@@ -87,16 +87,29 @@ async function searchRealProviderAvailability(
     }
 
     const fileType = provider.supportedFileTypes[0] ?? "zip";
-    const url = buildProviderDownloadUrl(provider, appId, settings, fileType);
+
+    const availabilityUrl = buildProviderAvailabilityUrl(
+      provider,
+      appId,
+      settings
+    );
+
+    const downloadUrl = buildProviderDownloadUrl(
+      provider,
+      appId,
+      settings,
+      fileType
+    );
+
     const authHeaders = buildProviderAuthHeaders(provider, settings);
 
-    if (!url) {
+    if (!availabilityUrl) {
       providerReports.push({
         providerId: provider.id,
         providerName: provider.name,
         status: "error",
         resultCount: 0,
-        message: "URL inválida",
+        message: "URL de verificación inválida",
       });
 
       sources.push({
@@ -104,7 +117,27 @@ async function searchRealProviderAvailability(
         providerName: provider.name,
         fileType,
         available: false,
-        error: "URL inválida",
+        error: "URL de verificación inválida",
+      });
+
+      continue;
+    }
+
+    if (!downloadUrl) {
+      providerReports.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        status: "error",
+        resultCount: 0,
+        message: "URL de descarga inválida",
+      });
+
+      sources.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        fileType,
+        available: false,
+        error: "URL de descarga inválida",
       });
 
       continue;
@@ -112,9 +145,10 @@ async function searchRealProviderAvailability(
 
     try {
       const availability = await checkProviderAvailability({
-        url,
+        url: availabilityUrl,
         successCode: provider.successCode,
         unavailableCode: provider.unavailableCode,
+        headers: authHeaders,
       });
 
       providerReports.push({
@@ -130,7 +164,7 @@ async function searchRealProviderAvailability(
         providerName: provider.name,
         fileType,
         available: availability.available,
-        downloadUrl: availability.available ? url : undefined,
+        downloadUrl: availability.available ? downloadUrl : undefined,
         authHeaders,
         error: availability.available ? undefined : availability.message,
       });
@@ -367,6 +401,36 @@ function mergeSources(
   return Array.from(sourceMap.values());
 }
 
+function buildProviderAvailabilityUrl(
+  provider: ApiProviderDefinition,
+  appId: string,
+  settings: AppSettings
+): string | undefined {
+  const userSettings = settings.providers?.[provider.id];
+  const apiKey = userSettings?.apiKey ?? "";
+
+  const template =
+    provider.availabilityUrlTemplate || provider.downloadUrlTemplate;
+
+  if (!template) {
+    return undefined;
+  }
+
+  let url = template
+    .replace(/<appid>/g, appId)
+    .replace(/<apikey>/g, apiKey)
+    .replace(/<moapikey>/g, apiKey);
+
+  if (provider.authType === "query" && provider.authQueryParam && apiKey) {
+    const separator = url.includes("?") ? "&" : "?";
+    url = `${url}${separator}${provider.authQueryParam}=${encodeURIComponent(
+      apiKey
+    )}`;
+  }
+
+  return url;
+}
+
 function buildProviderDownloadUrl(
   provider: ApiProviderDefinition,
   appId: string,
@@ -391,7 +455,7 @@ function buildProviderDownloadUrl(
     return `${normalizedBase}/api/download/${appId}?file_type=${fileType}`;
   }
 
-  let url = provider.urlTemplate
+  let url = provider.downloadUrlTemplate
     .replace(/<appid>/g, appId)
     .replace(/<apikey>/g, apiKey)
     .replace(/<moapikey>/g, apiKey);
@@ -415,6 +479,12 @@ function buildProviderAuthHeaders(
 
   if (!apiKey || provider.authType !== "header" || !provider.authHeaderName) {
     return undefined;
+  }
+
+  if (provider.id === "hubcapdb") {
+    return {
+      [provider.authHeaderName]: `Bearer ${apiKey}`,
+    };
   }
 
   return {

@@ -9,20 +9,24 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     id: "hubcapdb",
     name: "HubcapDB",
     description:
-      "Proveedor basado en Hubcap/Morrenus para manifests y paquetes ZIP.",
+      "Proveedor basado en HubcapDB para manifests, Lua files y generación de paquetes.",
     baseUrl: "https://hubcapmanifest.com",
-    urlTemplate:
-      "https://hubcapmanifest.com/api/v1/manifest/<appid>?api_key=<apikey>",
+
+    availabilityUrlTemplate:
+      "https://hubcapmanifest.com/api/v1/status/<appid>",
+
+    downloadUrlTemplate:
+      "https://hubcapmanifest.com/api/v1/manifest/<appid>",
+
     enabledByDefault: true,
-
-    apiKeyPlaceholder: "<apikey>",
-
-    authType: "query",
-    authQueryParam: "api_key",
     requiresApiKey: true,
+
+    authType: "header",
+    authHeaderName: "Authorization",
 
     successCode: 200,
     unavailableCode: 404,
+
     capabilities: [
       "search",
       "availability-check",
@@ -30,6 +34,7 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
       "download-manifest",
       "metadata",
     ],
+
     supportedFileTypes: ["zip", "manifest"],
   },
   {
@@ -37,13 +42,22 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     name: "Ryuu",
     description: "Proveedor alternativo para paquetes LUA, manifests y ZIP.",
     baseUrl: "https://generator.ryuu.lol",
-    urlTemplate: "https://generator.ryuu.lol/api/download/<appid>",
+
+    availabilityUrlTemplate:
+      "https://generator.ryuu.lol/api/download/<appid>",
+
+    downloadUrlTemplate:
+      "https://generator.ryuu.lol/api/download/<appid>",
+
     enabledByDefault: true,
     requiresApiKey: true,
+
     authType: "header",
     authHeaderName: "X-Auth-Key",
+
     successCode: 200,
     unavailableCode: 404,
+
     capabilities: [
       "availability-check",
       "download-zip",
@@ -51,59 +65,75 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
       "download-manifest",
       "metadata",
     ],
+
     supportedFileTypes: ["zip", "lua", "manifest"],
   },
   {
     id: "twentytwo-cloud",
     name: "TwentyTwo Cloud",
-    description:
-      "Proveedor alternativo compatible con descargas por AppID.",
+    description: "Proveedor alternativo compatible con descargas por AppID.",
     baseUrl: "https://api.twentytwocloud.com",
-    urlTemplate: "https://api.twentytwocloud.com/download?appid=<appid>",
+
+    availabilityUrlTemplate:
+      "https://api.twentytwocloud.com/download?appid=<appid>",
+
+    downloadUrlTemplate:
+      "https://api.twentytwocloud.com/download?appid=<appid>",
+
     enabledByDefault: true,
     requiresApiKey: false,
+
     authType: "none",
+
     successCode: 200,
     unavailableCode: 404,
-    capabilities: [
-      "availability-check",
-      "download-zip",
-      "metadata",
-    ],
+
+    capabilities: ["availability-check", "download-zip", "metadata"],
+
     supportedFileTypes: ["zip"],
   },
   {
     id: "sushi",
     name: "Sushi",
-    description:
-      "Repositorio estático basado en archivos ZIP por AppID.",
+    description: "Repositorio estático basado en archivos ZIP por AppID.",
     baseUrl:
       "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt",
-    urlTemplate:
+
+    availabilityUrlTemplate:
       "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip",
+
+    downloadUrlTemplate:
+      "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip",
+
     enabledByDefault: true,
     requiresApiKey: false,
+
     authType: "none",
+
     successCode: 200,
     unavailableCode: 404,
-    capabilities: [
-      "availability-check",
-      "download-zip",
-    ],
+
+    capabilities: ["availability-check", "download-zip"],
+
     supportedFileTypes: ["zip"],
   },
   {
     id: "custom",
     name: "Custom API",
-    description:
-      "Proveedor personalizado configurado por el usuario.",
+    description: "Proveedor personalizado configurado por el usuario.",
     baseUrl: "",
-    urlTemplate: "",
+
+    availabilityUrlTemplate: "",
+    downloadUrlTemplate: "",
+
     enabledByDefault: false,
     requiresApiKey: false,
+
     authType: "none",
+
     successCode: 200,
     unavailableCode: 404,
+
     capabilities: [
       "search",
       "availability-check",
@@ -112,6 +142,7 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
       "download-manifest",
       "metadata",
     ],
+
     supportedFileTypes: ["zip", "lua", "manifest"],
   },
 ];
