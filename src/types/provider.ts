@@ -18,6 +18,11 @@ export type PackageFileType =
   | "lua"
   | "manifest";
 
+export type ProviderAuthType =
+  | "none"
+  | "query"
+  | "header";
+
 export type ApiProviderDefinition = {
   id: ApiProviderId;
   name: string;
@@ -26,7 +31,12 @@ export type ApiProviderDefinition = {
   urlTemplate: string;
   enabledByDefault: boolean;
   requiresApiKey: boolean;
+
+  authType: ProviderAuthType;
+  authHeaderName?: string;
+  authQueryParam?: string;
   apiKeyPlaceholder?: string;
+
   successCode: number;
   unavailableCode: number;
   capabilities: ProviderCapability[];

@@ -14,8 +14,13 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     urlTemplate:
       "https://hubcapmanifest.com/api/v1/manifest/<appid>?api_key=<apikey>",
     enabledByDefault: true,
-    requiresApiKey: true,
+
     apiKeyPlaceholder: "<apikey>",
+
+    authType: "query",
+    authQueryParam: "api_key",
+    requiresApiKey: true,
+
     successCode: 200,
     unavailableCode: 404,
     capabilities: [
@@ -30,22 +35,23 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
   {
     id: "ryuu",
     name: "Ryuu",
-    description:
-      "Proveedor alternativo para paquetes LUA/ZIP usando AppID.",
+    description: "Proveedor alternativo para paquetes LUA, manifests y ZIP.",
     baseUrl: "https://generator.ryuu.lol",
-    urlTemplate: "https://generator.ryuu.lol/<appid>",
+    urlTemplate: "https://generator.ryuu.lol/api/download/<appid>",
     enabledByDefault: true,
-    requiresApiKey: false,
+    requiresApiKey: true,
+    authType: "header",
+    authHeaderName: "X-Auth-Key",
     successCode: 200,
     unavailableCode: 404,
     capabilities: [
-      "search",
       "availability-check",
       "download-zip",
       "download-lua",
+      "download-manifest",
       "metadata",
     ],
-    supportedFileTypes: ["zip", "lua"],
+    supportedFileTypes: ["zip", "lua", "manifest"],
   },
   {
     id: "twentytwo-cloud",
@@ -56,6 +62,7 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     urlTemplate: "https://api.twentytwocloud.com/download?appid=<appid>",
     enabledByDefault: true,
     requiresApiKey: false,
+    authType: "none",
     successCode: 200,
     unavailableCode: 404,
     capabilities: [
@@ -76,6 +83,7 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
       "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip",
     enabledByDefault: true,
     requiresApiKey: false,
+    authType: "none",
     successCode: 200,
     unavailableCode: 404,
     capabilities: [
@@ -93,6 +101,7 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     urlTemplate: "",
     enabledByDefault: false,
     requiresApiKey: false,
+    authType: "none",
     successCode: 200,
     unavailableCode: 404,
     capabilities: [

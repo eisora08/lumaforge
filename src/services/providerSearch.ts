@@ -1,5 +1,7 @@
 import { mockPackages } from "../data/mockPackages";
 import { defaultApiProviders } from "../data/providers";
+import { checkProviderAvailability } from "./tauri";
+
 import { AppSettings } from "../types/settings";
 import { ApiProviderDefinition, ApiProviderId } from "../types/provider";
 import {
@@ -28,12 +30,168 @@ export async function searchPackagesByProviders(
   settings: AppSettings
 ): Promise<ProviderSearchResult> {
   const normalizedQuery = params.query.trim().toLowerCase();
+  const appIdQuery = getAppIdFromQuery(normalizedQuery);
 
   const targetProviders = getTargetProviders(
     params.provider,
     params.enabledProviderIds
   );
 
+  if (appIdQuery) {
+    return await searchRealProviderAvailability(
+      appIdQuery,
+      params,
+      settings,
+      targetProviders
+    );
+  }
+
+  return searchMockCatalog(
+    normalizedQuery,
+    params,
+    settings,
+    targetProviders
+  );
+}
+
+async function searchRealProviderAvailability(
+  appId: string,
+  params: ProviderSearchParams,
+  settings: AppSettings,
+  targetProviders: ApiProviderDefinition[]
+): Promise<ProviderSearchResult> {
+  const providerReports: ProviderSearchProviderReport[] = [];
+  const sources: PackageSource[] = [];
+
+  for (const provider of targetProviders) {
+    const userSettings = settings.providers?.[provider.id];
+
+    if (provider.requiresApiKey && !userSettings?.apiKey) {
+      providerReports.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        status: "error",
+        resultCount: 0,
+        message: "API key requerida",
+      });
+
+      sources.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        fileType: provider.supportedFileTypes[0] ?? "zip",
+        available: false,
+        error: "API key requerida",
+      });
+
+      continue;
+    }
+
+    const fileType = provider.supportedFileTypes[0] ?? "zip";
+    const url = buildProviderDownloadUrl(provider, appId, settings, fileType);
+    const authHeaders = buildProviderAuthHeaders(provider, settings);
+
+    if (!url) {
+      providerReports.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        status: "error",
+        resultCount: 0,
+        message: "URL inválida",
+      });
+
+      sources.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        fileType,
+        available: false,
+        error: "URL inválida",
+      });
+
+      continue;
+    }
+
+    try {
+      const availability = await checkProviderAvailability({
+        url,
+        successCode: provider.successCode,
+        unavailableCode: provider.unavailableCode,
+      });
+
+      providerReports.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        status: availability.available ? "found" : "not-found",
+        resultCount: availability.available ? 1 : 0,
+        message: availability.message,
+      });
+
+      sources.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        fileType,
+        available: availability.available,
+        downloadUrl: availability.available ? url : undefined,
+        authHeaders,
+        error: availability.available ? undefined : availability.message,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Error consultando provider";
+
+      providerReports.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        status: "error",
+        resultCount: 0,
+        message,
+      });
+
+      sources.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        fileType,
+        available: false,
+        error: message,
+      });
+    }
+  }
+
+  const disabledReports = getDisabledProviderReports(
+    params.provider,
+    params.enabledProviderIds
+  );
+
+  const results: PackageGame[] = [
+    {
+      appId,
+      title: getKnownGameTitle(appId) ?? `Steam App ${appId}`,
+      developer: "Steam",
+      imageUrl: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`,
+      platforms: ["Windows"],
+      sources,
+    },
+  ];
+
+  return {
+    query: params.query,
+    provider: params.provider,
+    searchedProviders: targetProviders.map((provider) => provider.id),
+    providerReports: [...providerReports, ...disabledReports],
+    results,
+    totalResults: results.length,
+  };
+}
+
+function searchMockCatalog(
+  query: string,
+  params: ProviderSearchParams,
+  settings: AppSettings,
+  targetProviders: ApiProviderDefinition[]
+): ProviderSearchResult {
   const providerReports: ProviderSearchProviderReport[] = [];
   const collectedGames = new Map<string, PackageGame>();
 
@@ -52,37 +210,23 @@ export async function searchPackagesByProviders(
       continue;
     }
 
-    try {
-      const providerResults = await searchMockProvider(
-        provider,
-        normalizedQuery,
-        settings
-      );
+    const providerResults = mockPackages
+      .map((game) => filterGameByProvider(game, provider.id, settings))
+      .filter((game): game is PackageGame => Boolean(game))
+      .filter((game) => matchesQuery(game, query));
 
-      providerReports.push({
-        providerId: provider.id,
-        providerName: provider.name,
-        status: providerResults.length > 0 ? "found" : "not-found",
-        resultCount: providerResults.length,
-        message:
-          providerResults.length > 0
-            ? "Resultados encontrados"
-            : "No disponible en este provider",
-      });
+    providerReports.push({
+      providerId: provider.id,
+      providerName: provider.name,
+      status: providerResults.length > 0 ? "found" : "not-found",
+      resultCount: providerResults.length,
+      message:
+        providerResults.length > 0
+          ? "Resultados encontrados"
+          : "No disponible en este provider",
+    });
 
-      mergeProviderResults(collectedGames, providerResults);
-    } catch (error) {
-      providerReports.push({
-        providerId: provider.id,
-        providerName: provider.name,
-        status: "error",
-        resultCount: 0,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Error desconocido consultando provider",
-      });
-    }
+    mergeProviderResults(collectedGames, providerResults);
   }
 
   const disabledReports = getDisabledProviderReports(
@@ -139,19 +283,6 @@ function getDisabledProviderReports(
     }));
 }
 
-async function searchMockProvider(
-  provider: ApiProviderDefinition,
-  query: string,
-  settings: AppSettings
-): Promise<PackageGame[]> {
-  const results = mockPackages
-    .map((game) => filterGameByProvider(game, provider.id, settings))
-    .filter((game): game is PackageGame => Boolean(game))
-    .filter((game) => matchesQuery(game, query));
-
-  return results;
-}
-
 function filterGameByProvider(
   game: PackageGame,
   providerId: ApiProviderId,
@@ -165,7 +296,18 @@ function filterGameByProvider(
 
   const sources = game.sources
     .filter((source) => source.providerId === providerId)
-    .map((source) => hydrateSource(source, game.appId, settings));
+    .map((source) => ({
+      ...source,
+      downloadUrl:
+        source.downloadUrl ??
+        buildProviderDownloadUrl(
+          provider,
+          game.appId,
+          settings,
+          source.fileType
+        ),
+      authHeaders: buildProviderAuthHeaders(provider, settings),
+    }));
 
   if (sources.length === 0) {
     return null;
@@ -174,41 +316,6 @@ function filterGameByProvider(
   return {
     ...game,
     sources,
-  };
-}
-
-function hydrateSource(
-  source: PackageSource,
-  appId: string,
-  settings: AppSettings
-): PackageSource {
-  const provider = defaultApiProviders.find(
-    (item) => item.id === source.providerId
-  );
-
-  if (!provider) {
-    return {
-      ...source,
-      available: false,
-      error: "Provider no encontrado",
-    };
-  }
-
-  const providerSettings = settings.providers?.[provider.id];
-
-  if (provider.requiresApiKey && !providerSettings?.apiKey) {
-    return {
-      ...source,
-      available: false,
-      downloadUrl: undefined,
-      error: "API key requerida",
-    };
-  }
-
-  return {
-    ...source,
-    downloadUrl:
-      source.downloadUrl ?? buildProviderDownloadUrl(source, appId, settings),
   };
 }
 
@@ -261,23 +368,68 @@ function mergeSources(
 }
 
 function buildProviderDownloadUrl(
-  source: PackageSource,
+  provider: ApiProviderDefinition,
   appId: string,
-  settings: AppSettings
+  settings: AppSettings,
+  fileType: PackageSource["fileType"] = "zip"
 ): string | undefined {
-  const provider = defaultApiProviders.find(
-    (item) => item.id === source.providerId
-  );
+  const userSettings = settings.providers?.[provider.id];
+  const apiKey = userSettings?.apiKey ?? "";
+  const baseUrl = userSettings?.baseUrl || provider.baseUrl;
 
-  if (!provider) {
+  if (!baseUrl) {
     return undefined;
   }
 
-  const providerSettings = settings.providers?.[provider.id];
-  const apiKey = providerSettings?.apiKey ?? "";
+  if (provider.id === "ryuu") {
+    const normalizedBase = baseUrl.replace(/\/$/, "");
 
-  return provider.urlTemplate
+    if (fileType === "zip") {
+      return `${normalizedBase}/api/download/${appId}`;
+    }
+
+    return `${normalizedBase}/api/download/${appId}?file_type=${fileType}`;
+  }
+
+  let url = provider.urlTemplate
     .replace(/<appid>/g, appId)
     .replace(/<apikey>/g, apiKey)
     .replace(/<moapikey>/g, apiKey);
+
+  if (provider.authType === "query" && provider.authQueryParam && apiKey) {
+    const separator = url.includes("?") ? "&" : "?";
+    url = `${url}${separator}${provider.authQueryParam}=${encodeURIComponent(
+      apiKey
+    )}`;
+  }
+
+  return url;
+}
+
+function buildProviderAuthHeaders(
+  provider: ApiProviderDefinition,
+  settings: AppSettings
+): Record<string, string> | undefined {
+  const userSettings = settings.providers?.[provider.id];
+  const apiKey = userSettings?.apiKey ?? "";
+
+  if (!apiKey || provider.authType !== "header" || !provider.authHeaderName) {
+    return undefined;
+  }
+
+  return {
+    [provider.authHeaderName]: apiKey,
+  };
+}
+
+function getAppIdFromQuery(query: string): string | null {
+  if (/^\d{2,10}$/.test(query)) {
+    return query;
+  }
+
+  return null;
+}
+
+function getKnownGameTitle(appId: string): string | undefined {
+  return mockPackages.find((game) => game.appId === appId)?.title;
 }

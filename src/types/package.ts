@@ -6,6 +6,7 @@ export type PackageSource = {
   fileType: PackageFileType;
   available: boolean;
   downloadUrl?: string;
+  authHeaders?: Record<string, string>;
   lastUpdated?: string;
   error?: string;
 };
