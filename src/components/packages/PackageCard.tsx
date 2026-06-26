@@ -7,9 +7,15 @@ import {
   SearchCheck,
 } from "lucide-react";
 
+import {
+  showSuccess,
+  showWarning,
+} from "../toast/GameToast";
+
 import { PackageGame, PackageSource } from "../../types/package";
 import PackageSourceBadge from "./PackageSourceBadge";
 import PackageSourceSelector from "./PackageSourceSelector";
+import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 
 type PackageCardProps = {
   game: PackageGame;
@@ -35,16 +41,33 @@ export default function PackageCard({ game }: PackageCardProps) {
     );
   }, [game.sources, selectedSourceKey]);
 
-  function handleDownload() {
-    if (!selectedSource || !selectedSource.available) {
-      alert("Selecciona una fuente disponible.");
-      return;
-    }
+  const { addJob } = useDownloadQueue();
 
-    alert(
-      `Luego conectamos descarga desde ${selectedSource.providerName} (.${selectedSource.fileType})`
-    );
+function handleDownload() {
+  if (!selectedSource || !selectedSource.available) {
+    showWarning("Selecciona una fuente disponible antes de descargar.", {
+      title: "Fuente requerida",
+    });
+    return;
   }
+
+  const job = addJob({
+    appId: game.appId,
+    gameTitle: game.title,
+    providerId: selectedSource.providerId,
+    providerName: selectedSource.providerName,
+    fileType: selectedSource.fileType,
+    downloadUrl: selectedSource.downloadUrl,
+  });
+
+  showSuccess(
+    `${job.gameTitle} fue agregado a la cola desde ${job.providerName} (.${job.fileType}).`,
+    {
+      title: "Descarga en cola",
+    }
+  );
+}
+
 
   return (
     <article className="lf-surface group overflow-hidden rounded-2xl border transition">

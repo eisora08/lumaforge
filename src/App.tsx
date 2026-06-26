@@ -12,7 +12,7 @@ import Activity from "./pages/Activity";
 import Verification from "./pages/Verification";
 import Tools from "./pages/Tools";
 import Settings from "./pages/Settings";
-
+import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 
 function App() {
@@ -45,11 +45,17 @@ function App() {
     }
   }
 
+
   return (
-    <AppLayout activePage={activePage} onNavigate={setActivePage}>
-      {renderPage()}
-    </AppLayout>
+    <>
+      <AppLayout activePage={activePage} onNavigate={setActivePage}>
+        {renderPage()}
+      </AppLayout>
+
+      <GameToastViewport />
+    </>
   );
+
 }
 
 export default App;

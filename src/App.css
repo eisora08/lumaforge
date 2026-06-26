@@ -193,3 +193,15 @@ body {
 .lf-surface-hover:hover {
   background: var(--surface-active-hover);
 }
+
+
+
+@keyframes lf-toast-progress {
+  from {
+    transform: scaleX(1);
+  }
+
+  to {
+    transform: scaleX(0);
+  }
+}

@@ -6,12 +6,15 @@ import "./App.css";
 
 import { ThemeProvider } from "./context/ThemeContext";
 import { SettingsProvider } from "./context/SettingsContext";
+import { DownloadQueueProvider } from "./context/DownloadQueueContext";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeProvider>
       <SettingsProvider>
-        <App />
+        <DownloadQueueProvider>
+          <App />
+        </DownloadQueueProvider>
       </SettingsProvider>
     </ThemeProvider>
   </React.StrictMode>
