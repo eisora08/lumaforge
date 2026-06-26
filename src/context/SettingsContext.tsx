@@ -13,12 +13,13 @@ type SettingsContextValue = {
     key: K,
     value: AppSettings[K]
   ) => void;
+  replaceSettings: (settings: AppSettings) => void;
   resetSettings: () => void;
 };
 
 const STORAGE_KEY = "lumaforge-settings";
 
-const defaultSettings: AppSettings = {
+export const defaultSettings: AppSettings = {
   apiBaseUrl: "",
   apiKey: "",
 
@@ -52,16 +53,16 @@ function loadSettings(): AppSettings {
   }
 }
 
+function persistSettings(settings: AppSettings) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+}
+
 export function SettingsProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
-
-  function persistSettings(nextSettings: AppSettings) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSettings));
-  }
 
   function updateSetting<K extends AppSettingsKey>(
     key: K,
@@ -79,15 +80,26 @@ export function SettingsProvider({
     });
   }
 
+  function replaceSettings(nextSettings: AppSettings) {
+    const mergedSettings = {
+      ...defaultSettings,
+      ...nextSettings,
+    };
+
+    setSettings(mergedSettings);
+    persistSettings(mergedSettings);
+  }
+
   function resetSettings() {
     setSettings(defaultSettings);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultSettings));
+    persistSettings(defaultSettings);
   }
 
   const value = useMemo(
     () => ({
       settings,
       updateSetting,
+      replaceSettings,
       resetSettings,
     }),
     [settings]

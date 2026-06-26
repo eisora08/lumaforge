@@ -11,7 +11,7 @@ import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
-
+import SettingsImportExport from "../components/settings/SettingsImportExport";
 import { themes, surfaceModes } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
 import { useSettings } from "../context/SettingsContext";
@@ -96,6 +96,13 @@ export default function Settings() {
             ))}
           </div>
         </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Importar / Exportar"
+        description="Guarda o restaura tu configuración local de LumaForge."
+      >
+        <SettingsImportExport />
       </SettingsSection>
 
       <SettingsSection
