@@ -3,7 +3,10 @@ import { useEffect, useState } from "react";
 import { useSettings } from "../context/SettingsContext";
 import { ApiProviderId } from "../types/provider";
 import { PackageGame } from "../types/package";
-import { ProviderFilter } from "../types/providerSearch";
+import {
+  ProviderFilter,
+  ProviderSearchProviderReport,
+} from "../types/providerSearch";
 import {
   getEnabledProviderIds,
   searchPackagesByProviders,
@@ -21,6 +24,9 @@ export function useProviderSearch() {
   const [searchedProviders, setSearchedProviders] = useState<ApiProviderId[]>(
     []
   );
+  const [providerReports, setProviderReports] = useState<
+    ProviderSearchProviderReport[]
+  >([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +48,7 @@ export function useProviderSearch() {
 
       setResults(response.results);
       setSearchedProviders(response.searchedProviders);
+      setProviderReports(response.providerReports);
       setLoading(false);
     }
 
@@ -58,6 +65,7 @@ export function useProviderSearch() {
     results,
     loading,
     searchedProviders,
+    providerReports,
     setQuery,
     setSelectedProvider,
   };

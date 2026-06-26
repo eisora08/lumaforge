@@ -9,6 +9,7 @@ import {
 
 import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
+import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 
 import { useProviderSearch } from "../hooks/useProviderSearch";
 
@@ -18,7 +19,7 @@ export default function Packages() {
     selectedProvider,
     results,
     loading,
-    searchedProviders,
+    providerReports,
     setQuery,
     setSelectedProvider,
   } = useProviderSearch();
@@ -40,7 +41,7 @@ export default function Packages() {
         <div>
           <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
             <PackageSearch className="h-3.5 w-3.5" />
-            Multi-provider catalog
+            Multi-provider fallback
           </div>
 
           <h1 className="text-3xl font-bold text-(--color-text)">
@@ -48,8 +49,8 @@ export default function Packages() {
           </h1>
 
           <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Busca juegos, revisa fuentes disponibles y prepara descargas desde
-            múltiples providers configurados.
+            Busca juegos, revisa fuentes disponibles y elige desde qué provider
+            descargar cuando existan varias opciones.
           </p>
         </div>
 
@@ -81,26 +82,7 @@ export default function Packages() {
         onProviderChange={setSelectedProvider}
       />
 
-      <section className="lf-surface rounded-2xl border p-4">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
-          <span>Providers consultados:</span>
-
-          {searchedProviders.length === 0 ? (
-            <span className="rounded-full bg-red-500/10 px-3 py-1 text-red-300">
-              Ninguno habilitado
-            </span>
-          ) : (
-            searchedProviders.map((provider) => (
-              <span
-                key={provider}
-                className="rounded-full bg-(--color-accent)/10 px-3 py-1 text-(--color-accent)"
-              >
-                {provider}
-              </span>
-            ))
-          )}
-        </div>
-      </section>
+      <ProviderSearchReport reports={providerReports} />
 
       {loading ? (
         <section className="lf-surface rounded-2xl border p-10 text-center">
