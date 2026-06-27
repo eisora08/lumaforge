@@ -11,6 +11,9 @@ import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 
+import StoreHero from "../components/store/StoreHero";
+import StoreSection from "../components/store/StoreSection";
+import { PackageGame } from "../types/package";
 import { useEffect, useMemo, useState } from "react";
 import { useSettings } from "../context/SettingsContext";
 import { scanInstalledLuaScripts } from "../services/tauri";
@@ -74,10 +77,34 @@ export default function Store() {
 
 
 
+  const normalizedQuery = query.trim();
+  const isSearching = normalizedQuery.length > 0;
+  const featuredGames = results.slice(0, 3);
   const installedCount = results.filter((game) =>
     installedStatusByAppId.has(game.appId)
   ).length;
 
+const installedGames = results.filter((game) =>
+  installedStatusByAppId.has(game.appId)
+);
+
+  const recentlySupportedGames = results
+    .filter((game) => game.sources.some((source) => source.available))
+    .slice(0, 8);
+
+  const popularPlaceholderGames = results.slice(3, 11);
+
+
+  function renderStoreCard(game: PackageGame) {
+    return (
+      <PackageCard
+        key={game.appId}
+        game={game}
+        installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
+        onInstallComplete={refreshInstalledScripts}
+      />
+    );
+  }
   useEffect(() => {
     refreshInstalledScripts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -166,20 +193,74 @@ export default function Store() {
           </p>
         </section>
       ) : (
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
-          {results.map((game) => (
+        <div className="space-y-8">
+          <StoreHero
+            totalResults={results.length}
+            availableSources={availableSources}
+            installedCount={installedCount}
+          />
 
-            <PackageCard
-              key={game.appId}
-              game={game}
-              installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
-              recheckingSources={loading && query.trim() === game.appId}
-              onInstallComplete={refreshInstalledScripts}
-            />
+          {isSearching ? (
+            <StoreSection
+              title="Search Results"
+              description={`Resultados para "${normalizedQuery}"`}
+            >
+              {results.length === 0 ? (
+                <EmptyStoreState />
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {results.map(renderStoreCard)}
+                </div>
+              )}
+            </StoreSection>
+          ) : (
+            <>
+              {featuredGames.length > 0 && (
+                <StoreSection
+                  title="Featured Supported Games"
+                  description="Juegos destacados con metadata y fuentes preparadas para LumaForge."
+                >
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                    {featuredGames.map(renderStoreCard)}
+                  </div>
+                </StoreSection>
+              )}
 
+              {installedGames.length > 0 && (
+                <StoreSection
+                  title="Installed & Supported"
+                  description="Juegos que ya tienen Lua instalado o detectado en tu biblioteca."
+                >
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {installedGames.map(renderStoreCard)}
+                  </div>
+                </StoreSection>
+              )}
 
-          ))}
-        </section>
+              {recentlySupportedGames.length > 0 && (
+                <StoreSection
+                  title="Recently Supported"
+                  description="Juegos con fuentes disponibles en providers configurados."
+                >
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {recentlySupportedGames.map(renderStoreCard)}
+                  </div>
+                </StoreSection>
+              )}
+
+              {popularPlaceholderGames.length > 0 && (
+                <StoreSection
+                  title="Popular Picks"
+                  description="Selección inicial basada en resultados disponibles. Luego esto se conectará a Steam trending."
+                >
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {popularPlaceholderGames.map(renderStoreCard)}
+                  </div>
+                </StoreSection>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -206,6 +287,20 @@ function MiniStat({ icon: Icon, label, value }: MiniStatProps) {
 
       <p className="mt-1 text-lg font-semibold text-(--color-text)">
         {value}
+      </p>
+    </div>
+  );
+}
+
+function EmptyStoreState() {
+  return (
+    <div className="lf-surface rounded-2xl border p-10 text-center">
+      <h2 className="font-semibold text-(--color-text)">
+        No se encontraron juegos
+      </h2>
+
+      <p className="mt-2 text-sm text-(--color-muted)">
+        Intenta buscar por AppID, nombre del juego o cambia los providers activos.
       </p>
     </div>
   );
