@@ -10,18 +10,29 @@ import type { StoreSearchDropdownItem } from "../components/packages/PackagesToo
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreHero from "../components/store/StoreHero";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
+import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
 
 import { useSettings } from "../context/SettingsContext";
 import { useProviderSearch } from "../hooks/useProviderSearch";
+import { useDownloadQueue } from "../hooks/useDownloadQueue";
 
-import { scanInstalledLuaScripts } from "../services/tauri";
+import {
+  downloadAndInstallPackage,
+  scanInstalledLuaScripts,
+} from "../services/tauri";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
 import { searchSteamStore } from "../services/steamStoreSearchResolver";
 import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
 
-import type { PackageGame } from "../types/package";
+import {
+  showError,
+  showSuccess,
+  showWarning,
+} from "../components/toast/GameToast";
+
+import type { PackageGame, PackageSource } from "../types/package";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SteamAppMetadata } from "../types/gameMetadata";
@@ -69,6 +80,19 @@ function mapSteamSearchItemToPackageGame(
   };
 }
 
+function mapSteamDropdownItemToPackageGame(
+  item: StoreSearchDropdownItem
+): PackageGame {
+  return {
+    appId: item.appId,
+    title: item.title,
+    developer: undefined,
+    imageUrl: item.imageUrl,
+    platforms: [],
+    sources: [],
+  };
+}
+
 function mapSteamCategoryToStoreSection(
   category: SteamFeaturedCategory
 ): StoreSectionModel {
@@ -80,24 +104,8 @@ function mapSteamCategoryToStoreSection(
   };
 }
 
-function getDropdownProviderLabel(game?: PackageGame) {
-  if (!game) {
-    return undefined;
-  }
-
-  const availableSources = game.sources.filter((source) => source.available);
-
-  if (availableSources.length === 0) {
-    return "No source";
-  }
-
-  return `${availableSources.length} source${availableSources.length === 1 ? "" : "s"
-    }`;
-}
-
 export default function Store() {
   const {
-    query: providerQuery,
     selectedProvider,
     results,
     loading,
@@ -107,6 +115,7 @@ export default function Store() {
   } = useProviderSearch();
 
   const { settings } = useSettings();
+  const { addJob, updateJob } = useDownloadQueue();
 
   const [storeSearchQuery, setStoreSearchQuery] = useState("");
   const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
@@ -138,6 +147,8 @@ export default function Store() {
   >({});
 
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const [selectedDetailGame, setSelectedDetailGame] =
+    useState<PackageGame | null>(null);
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -226,19 +237,21 @@ export default function Store() {
           return;
         }
 
-        const dropdownItems = searchItems.map<StoreSearchDropdownItem>((item) => {
-          const appId = String(item.app_id);
+        const dropdownItems = searchItems.map<StoreSearchDropdownItem>(
+          (item) => {
+            const appId = String(item.app_id);
 
-          return {
-            appId,
-            title: item.name,
-            subtitle: `AppID ${appId}`,
-            imageUrl: item.image_url || undefined,
-            priceLabel: item.price_label || undefined,
-            discountLabel: item.discount_label || undefined,
-            installed: installedStatusByAppId.has(appId),
-          };
-        });
+            return {
+              appId,
+              title: item.name,
+              subtitle: `AppID ${appId}`,
+              imageUrl: item.image_url || undefined,
+              priceLabel: item.price_label || undefined,
+              discountLabel: item.discount_label || undefined,
+              installed: installedStatusByAppId.has(appId),
+            };
+          }
+        );
 
         setSteamSearchItems(dropdownItems);
       } catch (error) {
@@ -377,6 +390,10 @@ export default function Store() {
     ? allStoreSections.find((section) => section.id === activeSectionId)
     : undefined;
 
+  const selectedDetailGameWithOverlay = selectedDetailGame
+    ? providerOverlayByAppId[selectedDetailGame.appId] ?? selectedDetailGame
+    : null;
+
   const visibleAppIds = useMemo(() => {
     const appIds = new Set<number>();
 
@@ -406,8 +423,16 @@ export default function Store() {
       }
     });
 
+    if (selectedDetailGame) {
+      const appId = Number(selectedDetailGame.appId);
+
+      if (Number.isFinite(appId)) {
+        appIds.add(appId);
+      }
+    }
+
     return Array.from(appIds);
-  }, [results, steamStoreSections, steamSearchItems]);
+  }, [results, steamStoreSections, steamSearchItems, selectedDetailGame]);
 
   useEffect(() => {
     if (visibleAppIds.length === 0) {
@@ -491,19 +516,130 @@ export default function Store() {
     setSubmittedSearchQuery(query);
     setQuery(query);
     setActiveSectionId(null);
+    setSelectedDetailGame(null);
+  }
+
+  async function openDetailsForGame(game: PackageGame) {
+    setSelectedDetailGame(game);
+    setActiveSectionId(null);
+
+    try {
+      const overlays = await resolveProviderOverlaysForStoreGames(
+        [game],
+        settings
+      );
+
+      const overlayGame = overlays[game.appId];
+
+      if (overlayGame) {
+        setProviderOverlayByAppId((current) => ({
+          ...current,
+          [game.appId]: overlayGame,
+        }));
+      }
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   function handleSelectSearchItem(item: StoreSearchDropdownItem) {
+    const game = mapSteamDropdownItemToPackageGame(item);
+
     setStoreSearchQuery(item.title);
-    setSubmittedSearchQuery(item.title);
-    setQuery(item.appId);
+    setSubmittedSearchQuery("");
+    setQuery("");
     setActiveSectionId(null);
     setSteamSearchItems([]);
+
+    openDetailsForGame(game);
   }
 
   function handleProviderChange(value: typeof selectedProvider) {
     setSelectedProvider(value);
     setActiveSectionId(null);
+  }
+
+  async function handleDownloadSource(source: PackageSource) {
+    const game = selectedDetailGameWithOverlay;
+
+    if (!game) {
+      return;
+    }
+
+    if (!source.available) {
+      showWarning("Selecciona una fuente disponible antes de descargar.", {
+        title: "Fuente requerida",
+      });
+
+      return;
+    }
+
+    if (!source.downloadUrl) {
+      showError("Esta fuente no tiene una URL de descarga válida.", {
+        title: "URL inválida",
+      });
+
+      return;
+    }
+
+    if (!settings.luaPath || !settings.depotcachePath) {
+      showWarning("Configura o detecta las rutas de Steam antes de instalar.", {
+        title: "Rutas requeridas",
+      });
+
+      return;
+    }
+
+    const job = addJob({
+      appId: game.appId,
+      gameTitle: game.title,
+      providerId: source.providerId,
+      providerName: source.providerName,
+      fileType: source.fileType,
+      downloadUrl: source.downloadUrl,
+    });
+
+    try {
+      const result = await downloadAndInstallPackage({
+        jobId: job.id,
+        downloadUrl: source.downloadUrl,
+        luaTarget: settings.luaPath,
+        depotcacheTarget: settings.depotcachePath,
+        createBackups: settings.createBackups,
+        headers: source.authHeaders,
+        tempFolder: settings.tempFolder,
+      });
+
+      updateJob(job.id, {
+        status: "done",
+        progress: 100,
+        bytesRead: result.bytes_read,
+        totalBytes: result.total_bytes,
+      });
+
+      showSuccess(result.message, {
+        title: "Paquete instalado",
+      });
+
+      refreshInstalledScripts();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "No se pudo instalar el paquete.";
+
+      updateJob(job.id, {
+        status: "failed",
+        progress: 0,
+        error: message,
+      });
+
+      showError(message, {
+        title: "Instalación fallida",
+      });
+    }
   }
 
   function renderStoreCard(game: PackageGame) {
@@ -518,6 +654,28 @@ export default function Store() {
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
         onInstallComplete={refreshInstalledScripts}
       />
+    );
+  }
+
+  if (selectedDetailGameWithOverlay) {
+    return (
+      <div className="p-5 lg:p-7">
+        <StoreGameDetailsPage
+          game={selectedDetailGameWithOverlay}
+          metadata={
+            storeMetadataByAppId[Number(selectedDetailGameWithOverlay.appId)]
+          }
+          reviewSummary={
+            reviewSummaryByAppId[Number(selectedDetailGameWithOverlay.appId)]
+          }
+          installStatus={
+            installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
+            "not-installed"
+          }
+          onBack={() => setSelectedDetailGame(null)}
+          onDownloadSource={handleDownloadSource}
+        />
+      </div>
     );
   }
 
