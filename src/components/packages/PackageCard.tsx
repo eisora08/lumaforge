@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ElementType } from "react";
+import type { ElementType, MouseEvent } from "react";
 
 import {
   CheckCircle2,
@@ -23,6 +23,7 @@ import {
 import type { PackageGame, PackageSource } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
+import type { SteamReviewSummary } from "../../types/gameReview";
 
 import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
@@ -40,8 +41,6 @@ import {
 } from "../toast/GameToast";
 
 import PackageDetailsModal from "./PackageDetailsModal";
-import type { SteamReviewSummary } from "../../types/gameReview";
-
 
 type PackageCardProps = {
   game: PackageGame;
@@ -52,7 +51,6 @@ type PackageCardProps = {
   onInstallComplete?: () => void;
   onRecheckSources?: (appId: string) => void;
 };
-
 
 function getSourceKey(source: PackageSource) {
   return `${source.providerId}-${source.fileType}`;
@@ -199,7 +197,6 @@ function getReviewScoreLabel(summary?: SteamReviewSummary) {
   return summary.review_score_desc || "N/A";
 }
 
-
 export default function PackageCard({
   game,
   storeMetadata,
@@ -209,7 +206,6 @@ export default function PackageCard({
   onInstallComplete,
   onRecheckSources,
 }: PackageCardProps) {
-
   const { settings } = useSettings();
   const { addJob, updateJob } = useDownloadQueue();
 
@@ -258,11 +254,18 @@ export default function PackageCard({
   const displayDeveloper = getStoreDeveloper(game, storeMetadata);
   const displayImageUrl = getBestStoreImage(game, storeMetadata);
   const displayPlatforms = getStorePlatforms(game, storeMetadata);
+
   const dlcLabel = getDlcLabel(storeMetadata);
   const languagesLabel = getLanguagesLabel(storeMetadata);
   const reviewScoreLabel = getReviewScoreLabel(reviewSummary);
 
-  async function handleOpenSteamPage() {
+  function stopCardClick(event: MouseEvent) {
+    event.stopPropagation();
+  }
+
+  async function handleOpenSteamPage(event?: MouseEvent) {
+    event?.stopPropagation();
+
     try {
       await openExternalUrl(getSteamStoreUrl(Number(game.appId)));
     } catch (error) {
@@ -274,7 +277,9 @@ export default function PackageCard({
     }
   }
 
-  async function handleOpenSteamDb() {
+  async function handleOpenSteamDb(event?: MouseEvent) {
+    event?.stopPropagation();
+
     try {
       await openExternalUrl(getSteamDbUrl(Number(game.appId)));
     } catch (error) {
@@ -286,7 +291,9 @@ export default function PackageCard({
     }
   }
 
-  async function handleDownload() {
+  async function handleDownload(event?: MouseEvent) {
+    event?.stopPropagation();
+
     if (!selectedSource || !selectedSource.available) {
       showWarning("Selecciona una fuente disponible antes de descargar.", {
         title: "Fuente requerida",
@@ -365,93 +372,108 @@ export default function PackageCard({
 
   return (
     <>
-      <article className="group lf-surface overflow-hidden rounded-2xl border transition hover:border-(--color-accent)/35">
-        <div className="relative h-36 overflow-hidden bg-white/5">
-          {displayImageUrl && !imageFailed ? (
-            <img
-              src={displayImageUrl}
-              alt={displayTitle}
-              className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-              loading="lazy"
-              onError={() => setImageFailed(true)}
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-white/5">
-              <Gamepad2 className="h-9 w-9 text-(--color-muted)" />
-            </div>
-          )}
+      <article
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetailsOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            setDetailsOpen(true);
+          }
+        }}
+        className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
+      >
+        {displayImageUrl && !imageFailed ? (
+          <img
+            src={displayImageUrl}
+            alt={displayTitle}
+            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+            loading="lazy"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-white/5">
+            <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+          </div>
+        )}
 
-          <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/35 to-transparent" />
+        <div className="absolute inset-0 bg-linear-to-t from-black/85 via-black/20 to-transparent" />
 
-          {installBadge &&
-            (() => {
-              const InstallIcon = installBadge.icon;
+        <div className="absolute left-3 right-3 top-3 z-10 flex items-start justify-between gap-2">
+          <div className="flex flex-wrap gap-1.5">
+            {installBadge &&
+              (() => {
+                const InstallIcon = installBadge.icon;
 
-              return (
-                <div
-                  className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium ${installBadge.className}`}
-                >
-                  <InstallIcon className="h-3.5 w-3.5" />
-                  {installBadge.label}
-                </div>
-              );
-            })()}
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium backdrop-blur-md ${installBadge.className}`}
+                  >
+                    <InstallIcon className="h-3 w-3" />
+                    {installBadge.label}
+                  </span>
+                );
+              })()}
 
-          <div className="absolute bottom-3 left-3 right-3">
-            <h3 className="line-clamp-1 font-bold text-white">
+            {selectedSource?.available && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-medium text-emerald-300 backdrop-blur-md">
+                <CheckCircle2 className="h-3 w-3" />
+                Lua Ready
+              </span>
+            )}
+          </div>
+
+          <span className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[11px] text-white/70 backdrop-blur-md">
+            {availableSources.length} source
+            {availableSources.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        <div className="absolute bottom-0 left-0 right-0 z-10 p-4">
+          <h3 className="line-clamp-1 text-lg font-black text-white drop-shadow">
+            {displayTitle}
+          </h3>
+
+          <p className="mt-1 line-clamp-1 text-xs text-white/70">
+            App ID: {game.appId} · {displayDeveloper}
+          </p>
+        </div>
+
+        <div className="absolute inset-0 z-20 flex flex-col justify-end bg-black/82 p-4 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
+          <div className="mb-3">
+            <h3 className="line-clamp-1 text-lg font-black text-white">
               {displayTitle}
             </h3>
 
-            <p className="mt-0.5 text-xs text-white/70">
-              App ID: {game.appId}
+            <p className="mt-1 line-clamp-1 text-xs text-white/65">
+              {displayDeveloper}
             </p>
           </div>
-        </div>
 
-        <div className="space-y-4 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="line-clamp-1 text-sm text-(--color-muted)">
-                {displayDeveloper}
-              </p>
-
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {displayPlatforms.map((platform) => (
-                  <span
-                    key={platform}
-                    className="rounded-md border border-(--surface-active-border) bg-white/5 px-2 py-0.5 text-[11px] text-(--color-muted)"
-                  >
-                    {platform}
-                  </span>
-                ))}
-              </div>
+          {displayPlatforms.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {displayPlatforms.slice(0, 4).map((platform) => (
+                <span
+                  key={platform}
+                  className="rounded-md border border-white/10 bg-white/10 px-2 py-0.5 text-[11px] text-white/70"
+                >
+                  {platform}
+                </span>
+              ))}
             </div>
+          )}
 
-            <span className="shrink-0 rounded-full border border-(--surface-active-border) bg-white/5 px-2.5 py-1 text-[11px] text-(--color-muted)">
-              {availableSources.length} source
-              {availableSources.length === 1 ? "" : "s"}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <StoreInfoBlock
-              icon={Puzzle}
-              label="DLC Content"
-              value={dlcLabel}
-            />
-
-
+          <div className="mb-3 grid grid-cols-2 gap-2">
             <StoreInfoBlock
               icon={Star}
-              label="Review Score"
+              label="Review"
               value={reviewScoreLabel}
             />
 
-
             <StoreInfoBlock
-              icon={Clock3}
-              label="Last Checked"
-              value={formatCheckedAt(selectedSource)}
+              icon={Puzzle}
+              label="DLC"
+              value={dlcLabel}
             />
 
             <StoreInfoBlock
@@ -459,21 +481,15 @@ export default function PackageCard({
               label="Languages"
               value={languagesLabel}
             />
+
+            <StoreInfoBlock
+              icon={Clock3}
+              label="Checked"
+              value={formatCheckedAt(selectedSource)}
+            />
           </div>
 
-          <div className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-(--color-muted)">
-                Lua Provider
-              </p>
-
-              {recheckingSources && (
-                <span className="text-[11px] text-(--color-accent)">
-                  Rechecking...
-                </span>
-              )}
-            </div>
-
+          <div className="mb-3 rounded-xl border border-white/10 bg-white/10 p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -481,12 +497,12 @@ export default function PackageCard({
                     className={`h-3.5 w-3.5 ${selectedStatus.className}`}
                   />
 
-                  <span className="truncate text-sm font-semibold text-(--color-text)">
+                  <span className="truncate text-sm font-semibold text-white">
                     {selectedSource?.providerName || "No source"}
                   </span>
 
                   {selectedSource && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-black/20 px-2 py-0.5 text-[11px] text-(--color-muted)">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-black/30 px-2 py-0.5 text-[11px] text-white/65">
                       <SelectedFileIcon className="h-3 w-3" />
                       .{selectedSource.fileType}
                     </span>
@@ -496,24 +512,20 @@ export default function PackageCard({
                 <p className={`mt-1 text-xs ${selectedStatus.className}`}>
                   {selectedStatus.label}
                 </p>
-
-                <p className="mt-1 line-clamp-1 text-[11px] text-(--color-muted)">
-                  {selectedStatus.description}
-                </p>
               </div>
 
-              <div className="relative shrink-0">
+              <div className="relative shrink-0" onClick={stopCardClick}>
                 <button
                   type="button"
                   onClick={() => setSourceMenuOpen((value) => !value)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-black/20 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-white transition hover:bg-white/10"
                 >
                   Source
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
 
                 {sourceMenuOpen && (
-                  <div className="absolute right-0 top-11 z-20 w-72 rounded-2xl border border-(--surface-active-border) bg-black/95 p-2 shadow-2xl backdrop-blur-xl">
+                  <div className="absolute right-0 top-11 z-30 w-72 rounded-2xl border border-white/10 bg-black/95 p-2 shadow-2xl backdrop-blur-xl">
                     <div className="mb-2 px-2 py-1 text-[11px] uppercase tracking-wide text-white/40">
                       Select provider
                     </div>
@@ -534,10 +546,11 @@ export default function PackageCard({
                               setSelectedSourceKey(sourceKey);
                               setSourceMenuOpen(false);
                             }}
-                            className={`w-full rounded-xl px-3 py-2 text-left transition ${isSelected
-                              ? "bg-(--color-accent)/15"
-                              : "hover:bg-white/10"
-                              }`}
+                            className={`w-full rounded-xl px-3 py-2 text-left transition ${
+                              isSelected
+                                ? "bg-(--color-accent)/15"
+                                : "hover:bg-white/10"
+                            }`}
                           >
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
@@ -570,13 +583,22 @@ export default function PackageCard({
                 )}
               </div>
             </div>
+
+            {recheckingSources && (
+              <p className="mt-2 text-[11px] text-(--color-accent)">
+                Rechecking sources...
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-[1fr_1.4fr] gap-2">
             <button
               type="button"
-              onClick={() => setDetailsOpen(true)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+              onClick={(event) => {
+                event.stopPropagation();
+                setDetailsOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs text-white transition hover:bg-white/15"
             >
               <SearchCheck className="h-3.5 w-3.5" />
               Details
@@ -593,11 +615,11 @@ export default function PackageCard({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={handleOpenSteamPage}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs text-white/75 transition hover:bg-white/15 hover:text-white"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Steam
@@ -606,7 +628,7 @@ export default function PackageCard({
             <button
               type="button"
               onClick={handleOpenSteamDb}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs text-white/75 transition hover:bg-white/15 hover:text-white"
             >
               <Server className="h-3.5 w-3.5" />
               SteamDB
@@ -642,13 +664,13 @@ function StoreInfoBlock({
   value,
 }: StoreInfoBlockProps) {
   return (
-    <div className="rounded-xl border border-(--surface-active-border) bg-black/20 p-3">
-      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-(--color-muted)">
+    <div className="rounded-xl border border-white/10 bg-black/25 p-2.5">
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-white/45">
         <Icon className="h-3 w-3 text-(--color-accent)" />
         {label}
       </div>
 
-      <p className="line-clamp-1 text-xs font-semibold text-(--color-text)">
+      <p className="line-clamp-1 text-xs font-semibold text-white">
         {value}
       </p>
     </div>
