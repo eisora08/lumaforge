@@ -20,7 +20,6 @@ import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
 import StoreGameOverviewSection from "./details/StoreGameOverviewSection";
 import StoreGameDlcSection from "./details/StoreGameDlcSection";
 import StoreGameTechnicalSection from "./details/StoreGameTechnicalSection";
-import StoreGameLanguagesPanel from "./details/StoreGameLanguagesPanel";
 import StoreGameSummaryPanel from "./details/StoreGameSummaryPanel";
 import StoreSourceSelectorModal from "./StoreSourceSelectorModal";
 import { InfoBlock } from "./details/StoreGameDetailPrimitives";
@@ -139,7 +138,6 @@ export default function StoreGameDetailsPage({
     game.imageUrl,
   ].filter((img): img is string => !!img);
   const platforms = getPlatforms(game, metadata);
-  const languages = metadata?.languages ?? [];
   const languagesLabel = getLanguagesLabel(metadata);
   const dlcLabel = getDlcLabel(metadata);
   const dlcCount = metadata?.dlc_count ?? 0;
@@ -295,11 +293,7 @@ export default function StoreGameDetailsPage({
         />
       )}
 
-      <StoreGameTechnicalSection />
-
-      {languages.length > 0 && (
-        <StoreGameLanguagesPanel languages={languages} />
-      )}
+      <StoreGameTechnicalSection metadata={metadata} />
 
       <StoreSourceSelectorModal
         open={sourceSelectorOpen}

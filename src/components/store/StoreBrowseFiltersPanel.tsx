@@ -68,19 +68,36 @@ function CheckRow({ checked, onChange, label }: CheckRowProps) {
     <button
       type="button"
       onClick={onChange}
-      className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition hover:bg-white/5"
+      className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-(--color-text) transition hover:bg-white/[0.04]"
     >
       <span
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition ${
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition ${
           checked
             ? "border-(--color-accent) bg-(--color-accent)"
-            : "border-(--surface-active-border) bg-white/5"
+            : "border-(--surface-active-border) bg-white/[0.03]"
         }`}
       >
         {checked && <Check className="h-3 w-3 text-black" />}
       </span>
-      <span className="text-sm text-(--color-text)">{label}</span>
+      {label}
     </button>
+  );
+}
+
+function FilterSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <span className="block px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+        {title}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function FilterDivider() {
+  return (
+    <div className="border-t border-(--surface-active-border)" />
   );
 }
 
@@ -110,16 +127,11 @@ export default function StoreBrowseFiltersPanel({
     filters.keywords.trim().length > 0;
 
   return (
-    <div className="w-full shrink-0 space-y-5 lg:w-64">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-(--color-text)">
-            Filters
-          </h3>
-          <p className="mt-0.5 text-xs text-(--color-muted)">
-            {filteredGames} / {totalGames} games
-          </p>
-        </div>
+    <div className="w-full shrink-0 space-y-0 overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5 lg:w-64">
+      <div className="flex items-center justify-between px-5 pt-5">
+        <h3 className="text-sm font-semibold text-(--color-text)">
+          Filters
+        </h3>
 
         {hasAnyFilter && (
           <button
@@ -133,117 +145,125 @@ export default function StoreBrowseFiltersPanel({
         )}
       </div>
 
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-muted)" />
-        <input
-          type="text"
-          value={filters.keywords}
-          onChange={(e) => update({ keywords: e.target.value })}
-          placeholder="Search within results..."
-          className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 py-2 pl-9 pr-3 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
-        />
-        {filters.keywords && (
+      <div className="px-5 pt-4">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-muted)" />
+          <input
+            type="text"
+            value={filters.keywords}
+            onChange={(e) => update({ keywords: e.target.value })}
+            placeholder="Search within results..."
+            className="w-full rounded-xl border border-(--surface-active-border) bg-black/20 py-2 pl-9 pr-8 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
+          />
+          {filters.keywords && (
+            <button
+              type="button"
+              onClick={() => update({ keywords: "" })}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-(--color-muted) hover:text-(--color-text)"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-4 px-3 py-4">
+        <FilterDivider />
+
+        <FilterSection title="Availability">
+          <CheckRow
+            checked={filters.luaReady}
+            onChange={() => update({ luaReady: !filters.luaReady })}
+            label="Lua Ready"
+          />
+          <CheckRow
+            checked={filters.installed}
+            onChange={() => update({ installed: !filters.installed })}
+            label="Installed"
+          />
+        </FilterSection>
+
+        <FilterDivider />
+
+        <FilterSection title="Source">
+          <CheckRow
+            checked={filters.hasSource}
+            onChange={() => update({ hasSource: !filters.hasSource })}
+            label="Has Source"
+          />
+        </FilterSection>
+
+        <FilterDivider />
+
+        <FilterSection title="Platform">
+          {PLATFORM_OPTIONS.map((platform) => (
+            <CheckRow
+              key={platform}
+              checked={filters.platforms.includes(platform)}
+              onChange={() =>
+                update({
+                  platforms: toggleArrayItem(filters.platforms, platform),
+                })
+              }
+              label={PLATFORM_LABELS[platform] || platform}
+            />
+          ))}
+        </FilterSection>
+
+        <FilterDivider />
+
+        <FilterSection title="Source Type">
+          {SOURCE_TYPE_OPTIONS.map((type) => (
+            <CheckRow
+              key={type}
+              checked={filters.sourceTypes.includes(type)}
+              onChange={() =>
+                update({
+                  sourceTypes: toggleArrayItem(filters.sourceTypes, type),
+                })
+              }
+              label={`.${type}`}
+            />
+          ))}
+        </FilterSection>
+
+        <FilterDivider />
+
+        <div>
           <button
             type="button"
-            onClick={() => update({ keywords: "" })}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-(--color-muted) hover:text-(--color-text)"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-(--color-muted) transition hover:bg-white/[0.04] hover:text-(--color-text)"
           >
-            <X className="h-3.5 w-3.5" />
+            Advanced Providers
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition ${showAdvanced ? "rotate-180" : ""}`}
+            />
           </button>
-        )}
+
+          {showAdvanced && (
+            <div className="mt-0.5 space-y-0.5">
+              {PROVIDER_OPTIONS.map((provider) => (
+                <CheckRow
+                  key={provider.id}
+                  checked={filters.providers.includes(provider.id)}
+                  onChange={() =>
+                    update({
+                      providers: toggleArrayItem(filters.providers, provider.id),
+                    })
+                  }
+                  label={provider.label}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="space-y-1">
-        <h4 className="px-2 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
-          Availability
-        </h4>
-        <CheckRow
-          checked={filters.luaReady}
-          onChange={() => update({ luaReady: !filters.luaReady })}
-          label="Lua Ready"
-        />
-        <CheckRow
-          checked={filters.installed}
-          onChange={() => update({ installed: !filters.installed })}
-          label="Installed"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <h4 className="px-2 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
-          Source
-        </h4>
-        <CheckRow
-          checked={filters.hasSource}
-          onChange={() => update({ hasSource: !filters.hasSource })}
-          label="Has Source"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <h4 className="px-2 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
-          Platform
-        </h4>
-        {PLATFORM_OPTIONS.map((platform) => (
-          <CheckRow
-            key={platform}
-            checked={filters.platforms.includes(platform)}
-            onChange={() =>
-              update({
-                platforms: toggleArrayItem(filters.platforms, platform),
-              })
-            }
-            label={PLATFORM_LABELS[platform] || platform}
-          />
-        ))}
-      </div>
-
-      <div className="space-y-1">
-        <h4 className="px-2 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
-          Source Type
-        </h4>
-        {SOURCE_TYPE_OPTIONS.map((type) => (
-          <CheckRow
-            key={type}
-            checked={filters.sourceTypes.includes(type)}
-            onChange={() =>
-              update({
-                sourceTypes: toggleArrayItem(filters.sourceTypes, type),
-              })
-            }
-            label={`.${type}`}
-          />
-        ))}
-      </div>
-
-      <div className="space-y-1">
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
-        >
-          Providers
-          <ChevronDown
-            className={`h-3.5 w-3.5 transition ${showAdvanced ? "rotate-180" : ""}`}
-          />
-        </button>
-
-        {showAdvanced && (
-          <div className="space-y-0.5">
-            {PROVIDER_OPTIONS.map((provider) => (
-              <CheckRow
-                key={provider.id}
-                checked={filters.providers.includes(provider.id)}
-                onChange={() =>
-                  update({
-                    providers: toggleArrayItem(filters.providers, provider.id),
-                  })
-                }
-                label={provider.label}
-              />
-            ))}
-          </div>
-        )}
+      <div className="border-t border-(--surface-active-border) px-5 py-3">
+        <p className="text-xs text-(--color-muted)">
+          {filteredGames} / {totalGames} games
+        </p>
       </div>
     </div>
   );
