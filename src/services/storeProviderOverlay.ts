@@ -6,9 +6,12 @@ import {
   searchPackagesByProviders,
 } from "./providerSearch";
 
-const CACHE_KEY = "lumaforge-store-provider-overlay-cache";
-const CACHE_TTL_MS = 1000 * 60 * 30;
-const MAX_OVERLAY_CHECKS = 40;
+const CACHE_KEY = "lumaforge-store-provider-overlay-cache-v2";
+const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+
+const MAX_OVERLAY_CHECKS = 24;
+const OVERLAY_CONCURRENCY = 3;
+const OVERLAY_TIMEOUT_MS = 12000;
 
 type OverlayCacheItem = {
   savedAt: number;
@@ -16,6 +19,14 @@ type OverlayCacheItem = {
 };
 
 type OverlayCache = Record<string, OverlayCacheItem>;
+
+function getProviderSignature(enabledProviderIds: string[]) {
+  return enabledProviderIds.slice().sort().join(",");
+}
+
+function getCacheKey(appId: string, enabledProviderIds: string[]) {
+  return `${appId}::${getProviderSignature(enabledProviderIds)}`;
+}
 
 function loadCache(): OverlayCache {
   try {
@@ -43,6 +54,55 @@ function isCacheValid(item?: OverlayCacheItem) {
   return Date.now() - item.savedAt < CACHE_TTL_MS;
 }
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      })
+      .catch((error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
+}
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const output: R[] = [];
+  let index = 0;
+
+  async function runWorker() {
+    while (index < items.length) {
+      const currentIndex = index;
+      index += 1;
+
+      output[currentIndex] = await worker(items[currentIndex]);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => runWorker()
+  );
+
+  await Promise.all(workers);
+
+  return output;
+}
+
 function mergeSteamGameWithProviderGame(
   steamGame: PackageGame,
   providerGame: PackageGame
@@ -63,78 +123,113 @@ function mergeSteamGameWithProviderGame(
   };
 }
 
+function createNoSourceGame(game: PackageGame): PackageGame {
+  return {
+    ...game,
+    sources: [],
+  };
+}
+
 export async function resolveProviderOverlaysForStoreGames(
   games: PackageGame[],
   settings: AppSettings
 ): Promise<Record<string, PackageGame>> {
   const enabledProviderIds = getEnabledProviderIds(settings);
-  const cache = loadCache();
   const output: Record<string, PackageGame> = {};
+
+  if (enabledProviderIds.length === 0 || games.length === 0) {
+    return output;
+  }
+
+  const cache = loadCache();
 
   const uniqueGames = Array.from(
     new Map(games.map((game) => [game.appId, game])).values()
   );
 
-  const gamesToCheck = uniqueGames
+  const candidates = uniqueGames
     .filter((game) => game.sources.length === 0)
     .slice(0, MAX_OVERLAY_CHECKS);
 
-  for (const game of gamesToCheck) {
-    const cached = cache[game.appId];
+  const gamesToCheck: PackageGame[] = [];
+
+  for (const game of candidates) {
+    const cacheKey = getCacheKey(game.appId, enabledProviderIds);
+    const cached = cache[cacheKey];
 
     if (isCacheValid(cached)) {
       output[game.appId] = cached.game;
       continue;
     }
 
-    try {
-      const response = await searchPackagesByProviders(
-        {
-          query: game.appId,
-          provider: "all",
-          enabledProviderIds,
-        },
-        settings
-      );
-
-      const providerGame = response.results.find(
-        (item) => item.appId === game.appId
-      );
-
-      if (!providerGame) {
-        const noSourceGame: PackageGame = {
-          ...game,
-          sources: [],
-        };
-
-        cache[game.appId] = {
-          savedAt: Date.now(),
-          game: noSourceGame,
-        };
-
-        output[game.appId] = noSourceGame;
-        continue;
-      }
-
-      const mergedGame = mergeSteamGameWithProviderGame(game, providerGame);
-
-      cache[game.appId] = {
-        savedAt: Date.now(),
-        game: mergedGame,
-      };
-
-      output[game.appId] = mergedGame;
-    } catch (error) {
-      console.error(error);
-
-      const failedGame: PackageGame = {
-        ...game,
-        sources: [],
-      };
-
-      output[game.appId] = failedGame;
-    }
+    gamesToCheck.push(game);
   }
+
+  if (gamesToCheck.length === 0) {
+    return output;
+  }
+
+  const resolvedGames = await runWithConcurrency(
+    gamesToCheck,
+    OVERLAY_CONCURRENCY,
+    async (game) => {
+      try {
+        const response = await withTimeout(
+          searchPackagesByProviders(
+            {
+              query: game.appId,
+              provider: "all",
+              enabledProviderIds,
+            },
+            settings
+          ),
+          OVERLAY_TIMEOUT_MS,
+          `Timeout revisando providers para AppID ${game.appId}.`
+        );
+
+        const providerGame = response.results.find(
+          (item) => item.appId === game.appId
+        );
+
+        if (!providerGame) {
+          const noSourceGame = createNoSourceGame(game);
+
+          return {
+            appId: game.appId,
+            game: noSourceGame,
+            cacheable: true,
+          };
+        }
+
+        return {
+          appId: game.appId,
+          game: mergeSteamGameWithProviderGame(game, providerGame),
+          cacheable: true,
+        };
+      } catch (error) {
+        console.error(error);
+
+        return {
+          appId: game.appId,
+          game: createNoSourceGame(game),
+          cacheable: false,
+        };
+      }
+    }
+  );
+
+  resolvedGames.forEach((resolved) => {
+    output[resolved.appId] = resolved.game;
+
+    if (resolved.cacheable) {
+      const cacheKey = getCacheKey(resolved.appId, enabledProviderIds);
+
+      cache[cacheKey] = {
+        savedAt: Date.now(),
+        game: resolved.game,
+      };
+    }
+  });
 
   saveCache(cache);
 
