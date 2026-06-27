@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import type { ElementType } from "react";
 
 import {
@@ -10,17 +11,25 @@ import {
 import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
-
 import StoreHero from "../components/store/StoreHero";
 import StoreSection from "../components/store/StoreSection";
-import { PackageGame } from "../types/package";
-import { useEffect, useMemo, useState } from "react";
-import { useSettings } from "../context/SettingsContext";
-import { scanInstalledLuaScripts } from "../services/tauri";
-import { InstalledLuaScript } from "../types/installedLua";
 
-import { PackageInstallStatus } from "../types/packageInstall";
+import { useSettings } from "../context/SettingsContext";
 import { useProviderSearch } from "../hooks/useProviderSearch";
+
+import { scanInstalledLuaScripts } from "../services/tauri";
+import { resolveGameMetadata } from "../services/gameMetadataResolver";
+
+import type { PackageGame } from "../types/package";
+import type { InstalledLuaScript } from "../types/installedLua";
+import type { PackageInstallStatus } from "../types/packageInstall";
+import type { SteamAppMetadata } from "../types/gameMetadata";
+
+type MiniStatProps = {
+  icon: ElementType;
+  label: string;
+  value: string | number;
+};
 
 export default function Store() {
   const {
@@ -33,19 +42,15 @@ export default function Store() {
     setSelectedProvider,
   } = useProviderSearch();
 
-
   const { settings } = useSettings();
-  const [installedScripts, setInstalledScripts] = useState<InstalledLuaScript[]>([]);
-  const totalSources = results.reduce(
-    (count, game) => count + game.sources.length,
-    0
-  );
 
-  const availableSources = results.reduce(
-    (count, game) =>
-      count + game.sources.filter((source) => source.available).length,
-    0
-  );
+  const [installedScripts, setInstalledScripts] = useState<
+    InstalledLuaScript[]
+  >([]);
+
+  const [storeMetadataByAppId, setStoreMetadataByAppId] = useState<
+    Record<number, SteamAppMetadata>
+  >({});
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -62,6 +67,46 @@ export default function Store() {
     }
   }
 
+  useEffect(() => {
+    refreshInstalledScripts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.luaPath]);
+
+  useEffect(() => {
+    if (results.length === 0) {
+      setStoreMetadataByAppId({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadStoreMetadata() {
+      try {
+        const appIds = results
+          .map((game) => Number(game.appId))
+          .filter((appId) => Number.isFinite(appId));
+
+        const metadata = await resolveGameMetadata(appIds);
+
+        if (!cancelled) {
+          setStoreMetadataByAppId(metadata);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setStoreMetadataByAppId({});
+        }
+      }
+    }
+
+    loadStoreMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [results]);
+
   const installedStatusByAppId = useMemo(() => {
     const map = new Map<string, PackageInstallStatus>();
 
@@ -75,18 +120,29 @@ export default function Store() {
     return map;
   }, [installedScripts]);
 
+  const totalSources = results.reduce(
+    (count, game) => count + game.sources.length,
+    0
+  );
 
+  const availableSources = results.reduce(
+    (count, game) =>
+      count + game.sources.filter((source) => source.available).length,
+    0
+  );
 
-  const normalizedQuery = query.trim();
-  const isSearching = normalizedQuery.length > 0;
-  const featuredGames = results.slice(0, 3);
   const installedCount = results.filter((game) =>
     installedStatusByAppId.has(game.appId)
   ).length;
 
-const installedGames = results.filter((game) =>
-  installedStatusByAppId.has(game.appId)
-);
+  const normalizedQuery = query.trim();
+  const isSearching = normalizedQuery.length > 0;
+
+  const featuredGames = results.slice(0, 3);
+
+  const installedGames = results.filter((game) =>
+    installedStatusByAppId.has(game.appId)
+  );
 
   const recentlySupportedGames = results
     .filter((game) => game.sources.some((source) => source.available))
@@ -94,22 +150,17 @@ const installedGames = results.filter((game) =>
 
   const popularPlaceholderGames = results.slice(3, 11);
 
-
   function renderStoreCard(game: PackageGame) {
     return (
       <PackageCard
         key={game.appId}
         game={game}
+        storeMetadata={storeMetadataByAppId[Number(game.appId)]}
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
         onInstallComplete={refreshInstalledScripts}
       />
     );
   }
-  useEffect(() => {
-    refreshInstalledScripts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.luaPath]);
-
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
@@ -120,18 +171,17 @@ const installedGames = results.filter((game) =>
             Multi-provider fallback
           </div>
 
-
           <h1 className="text-3xl font-bold text-(--color-text)">
             Store
           </h1>
 
           <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Busca juegos, revisa fuentes disponibles y descarga Lua/manifests con providers compatibles.
+            Busca juegos, revisa fuentes disponibles y descarga Lua/manifests
+            con providers compatibles.
           </p>
-
         </div>
 
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <MiniStat
             icon={Database}
             label="Results"
@@ -155,7 +205,6 @@ const installedGames = results.filter((game) =>
             label="Installed"
             value={installedCount}
           />
-
         </div>
       </header>
 
@@ -185,7 +234,7 @@ const installedGames = results.filter((game) =>
           <PackageSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
 
           <h2 className="mt-4 font-semibold text-(--color-text)">
-            No se encontraron paquetes
+            No se encontraron juegos
           </h2>
 
           <p className="mt-2 text-sm text-(--color-muted)">
@@ -205,13 +254,9 @@ const installedGames = results.filter((game) =>
               title="Search Results"
               description={`Resultados para "${normalizedQuery}"`}
             >
-              {results.length === 0 ? (
-                <EmptyStoreState />
-              ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                  {results.map(renderStoreCard)}
-                </div>
-              )}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {results.map(renderStoreCard)}
+              </div>
             </StoreSection>
           ) : (
             <>
@@ -266,14 +311,6 @@ const installedGames = results.filter((game) =>
   );
 }
 
-type MiniStatProps = {
-  icon: ElementType;
-  label: string;
-  value: string | number;
-};
-
-
-
 function MiniStat({ icon: Icon, label, value }: MiniStatProps) {
   return (
     <div className="lf-surface rounded-2xl border px-4 py-3">
@@ -287,20 +324,6 @@ function MiniStat({ icon: Icon, label, value }: MiniStatProps) {
 
       <p className="mt-1 text-lg font-semibold text-(--color-text)">
         {value}
-      </p>
-    </div>
-  );
-}
-
-function EmptyStoreState() {
-  return (
-    <div className="lf-surface rounded-2xl border p-10 text-center">
-      <h2 className="font-semibold text-(--color-text)">
-        No se encontraron juegos
-      </h2>
-
-      <p className="mt-2 text-sm text-(--color-muted)">
-        Intenta buscar por AppID, nombre del juego o cambia los providers activos.
       </p>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ElementType } from "react";
 
 import {
   CheckCircle2,
@@ -19,8 +20,9 @@ import {
   Star,
 } from "lucide-react";
 
-import { PackageGame, PackageSource } from "../../types/package";
-import { PackageInstallStatus } from "../../types/packageInstall";
+import type { PackageGame, PackageSource } from "../../types/package";
+import type { PackageInstallStatus } from "../../types/packageInstall";
+import type { SteamAppMetadata } from "../../types/gameMetadata";
 
 import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
@@ -41,6 +43,7 @@ import PackageDetailsModal from "./PackageDetailsModal";
 
 type PackageCardProps = {
   game: PackageGame;
+  storeMetadata?: SteamAppMetadata;
   installStatus?: PackageInstallStatus;
   recheckingSources?: boolean;
   onInstallComplete?: () => void;
@@ -83,7 +86,6 @@ function getFriendlySourceStatus(source?: PackageSource) {
       label: "No source",
       description: "No hay una fuente seleccionada.",
       className: "text-zinc-300",
-      dotClassName: "bg-zinc-400",
       icon: CircleX,
     };
   }
@@ -93,7 +95,6 @@ function getFriendlySourceStatus(source?: PackageSource) {
       label: "Ready",
       description: "Lista para descargar.",
       className: "text-emerald-300",
-      dotClassName: "bg-emerald-400",
       icon: CheckCircle2,
     };
   }
@@ -103,7 +104,6 @@ function getFriendlySourceStatus(source?: PackageSource) {
       label: "Needs setup",
       description: "Configura la API key en Settings.",
       className: "text-yellow-300",
-      dotClassName: "bg-yellow-400",
       icon: Server,
     };
   }
@@ -112,7 +112,6 @@ function getFriendlySourceStatus(source?: PackageSource) {
     label: "Unavailable",
     description: "Esta fuente no está disponible ahora.",
     className: "text-red-300",
-    dotClassName: "bg-red-400",
     icon: CircleX,
   };
 }
@@ -131,20 +130,57 @@ function formatCheckedAt(source?: PackageSource) {
   }
 }
 
-function getDlcLabel(game: PackageGame) {
-  const hasDlcSource = game.sources.some((source) =>
-    source.providerName.toLowerCase().includes("dlc")
+function getBestStoreImage(game: PackageGame, metadata?: SteamAppMetadata) {
+  return (
+    metadata?.header_image ||
+    metadata?.capsule_image ||
+    metadata?.capsule_image_v5 ||
+    game.imageUrl
   );
-
-  if (hasDlcSource) {
-    return "DLC Available";
-  }
-
-  return "Base Game Only";
 }
 
-function getLanguagesLabel() {
-  return "Metadata pending";
+function getStoreTitle(game: PackageGame, metadata?: SteamAppMetadata) {
+  return metadata?.name || game.title;
+}
+
+function getStoreDeveloper(game: PackageGame, metadata?: SteamAppMetadata) {
+  return metadata?.developer || game.developer || "Developer unknown";
+}
+
+function getStorePlatforms(game: PackageGame, metadata?: SteamAppMetadata) {
+  if (metadata?.platforms?.length) {
+    return metadata.platforms;
+  }
+
+  return game.platforms;
+}
+
+function getDlcLabel(metadata?: SteamAppMetadata) {
+  const dlcCount = metadata?.dlc_count ?? 0;
+
+  if (dlcCount <= 0) {
+    return "Base Game Only";
+  }
+
+  if (dlcCount === 1) {
+    return "1 DLC Available";
+  }
+
+  return `${dlcCount} DLCs Available`;
+}
+
+function getLanguagesLabel(metadata?: SteamAppMetadata) {
+  const languages = metadata?.languages ?? [];
+
+  if (languages.length === 0) {
+    return "Unknown";
+  }
+
+  if (languages.length <= 3) {
+    return languages.join(", ");
+  }
+
+  return `${languages.slice(0, 3).join(", ")} +${languages.length - 3} more`;
 }
 
 function getReviewScoreLabel() {
@@ -153,6 +189,7 @@ function getReviewScoreLabel() {
 
 export default function PackageCard({
   game,
+  storeMetadata,
   installStatus = "not-installed",
   recheckingSources = false,
   onInstallComplete,
@@ -163,6 +200,7 @@ export default function PackageCard({
 
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
 
   const availableSources = game.sources.filter((source) => source.available);
 
@@ -200,6 +238,13 @@ export default function PackageCard({
 
   const SelectedFileIcon = selectedFileIcon;
   const installBadge = getInstallBadge(installStatus);
+
+  const displayTitle = getStoreTitle(game, storeMetadata);
+  const displayDeveloper = getStoreDeveloper(game, storeMetadata);
+  const displayImageUrl = getBestStoreImage(game, storeMetadata);
+  const displayPlatforms = getStorePlatforms(game, storeMetadata);
+  const dlcLabel = getDlcLabel(storeMetadata);
+  const languagesLabel = getLanguagesLabel(storeMetadata);
 
   async function handleOpenSteamPage() {
     try {
@@ -252,7 +297,7 @@ export default function PackageCard({
 
     const job = addJob({
       appId: game.appId,
-      gameTitle: game.title,
+      gameTitle: displayTitle,
       providerId: selectedSource.providerId,
       providerName: selectedSource.providerName,
       fileType: selectedSource.fileType,
@@ -306,12 +351,13 @@ export default function PackageCard({
     <>
       <article className="group lf-surface overflow-hidden rounded-2xl border transition hover:border-(--color-accent)/35">
         <div className="relative h-36 overflow-hidden bg-white/5">
-          {game.imageUrl ? (
+          {displayImageUrl && !imageFailed ? (
             <img
-              src={game.imageUrl}
-              alt={game.title}
+              src={displayImageUrl}
+              alt={displayTitle}
               className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
               loading="lazy"
+              onError={() => setImageFailed(true)}
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -321,22 +367,23 @@ export default function PackageCard({
 
           <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/35 to-transparent" />
 
-          {installBadge && (() => {
-            const InstallIcon = installBadge.icon;
+          {installBadge &&
+            (() => {
+              const InstallIcon = installBadge.icon;
 
-            return (
-              <div
-                className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium ${installBadge.className}`}
-              >
-                <InstallIcon className="h-3.5 w-3.5" />
-                {installBadge.label}
-              </div>
-            );
-          })()}
+              return (
+                <div
+                  className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium ${installBadge.className}`}
+                >
+                  <InstallIcon className="h-3.5 w-3.5" />
+                  {installBadge.label}
+                </div>
+              );
+            })()}
 
           <div className="absolute bottom-3 left-3 right-3">
             <h3 className="line-clamp-1 font-bold text-white">
-              {game.title}
+              {displayTitle}
             </h3>
 
             <p className="mt-0.5 text-xs text-white/70">
@@ -349,11 +396,11 @@ export default function PackageCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="line-clamp-1 text-sm text-(--color-muted)">
-                {game.developer || "Developer unknown"}
+                {displayDeveloper}
               </p>
 
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {game.platforms.map((platform) => (
+                {displayPlatforms.map((platform) => (
                   <span
                     key={platform}
                     className="rounded-md border border-(--surface-active-border) bg-white/5 px-2 py-0.5 text-[11px] text-(--color-muted)"
@@ -374,7 +421,7 @@ export default function PackageCard({
             <StoreInfoBlock
               icon={Puzzle}
               label="DLC Content"
-              value={getDlcLabel(game)}
+              value={dlcLabel}
             />
 
             <StoreInfoBlock
@@ -392,7 +439,7 @@ export default function PackageCard({
             <StoreInfoBlock
               icon={Languages}
               label="Languages"
-              value={getLanguagesLabel()}
+              value={languagesLabel}
             />
           </div>
 
@@ -567,7 +614,7 @@ export default function PackageCard({
 }
 
 type StoreInfoBlockProps = {
-  icon: React.ElementType;
+  icon: ElementType;
   label: string;
   value: string;
 };
