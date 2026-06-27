@@ -242,8 +242,6 @@ export default function StoreGameDetailsPage({
 
         <div className="grid grid-cols-1 gap-6 p-5 lg:grid-cols-[1fr_360px] lg:p-6">
           <section className="space-y-5">
-            <StoreGameOverviewSection title={title} metadata={metadata} />
-
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <InfoBlock
                 icon={Star}
@@ -266,6 +264,8 @@ export default function StoreGameDetailsPage({
                 description="Supported languages from Steam metadata."
               />
             </div>
+
+            <StoreGameOverviewSection title={title} metadata={metadata} />
           </section>
 
           <aside className="space-y-4">
@@ -288,17 +288,17 @@ export default function StoreGameDetailsPage({
 
       <StoreGameDlcSection dlcCount={dlcCount} dlcMetadata={dlcMetadata} />
 
-      <StoreGameTechnicalSection />
-
-      {languages.length > 0 && (
-        <StoreGameLanguagesPanel languages={languages} />
-      )}
-
       {moreLikeThisGames.length > 0 && (
         <StoreMoreLikeThisSection
           games={moreLikeThisGames}
           onOpenGame={onOpenGame}
         />
+      )}
+
+      <StoreGameTechnicalSection />
+
+      {languages.length > 0 && (
+        <StoreGameLanguagesPanel languages={languages} />
       )}
 
       <StoreSourceSelectorModal

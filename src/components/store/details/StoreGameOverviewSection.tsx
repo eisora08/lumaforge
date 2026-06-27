@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Calendar, Gamepad2, Tag } from "lucide-react";
 
 import type { SteamAppMetadata } from "../../../types/gameMetadata";
 
@@ -61,7 +60,9 @@ export default function StoreGameOverviewSection({
     ? longText!.slice(0, MAX_LONG_PREVIEW)
     : longText;
 
-  const hasContent = !!primaryText || genres.length > 0 || categories.length > 0 || publishers.length > 0 || releaseDate;
+  const hasIntro = !!primaryText;
+  const hasMeta = genres.length > 0 || categories.length > 0 || publishers.length > 0 || releaseDate;
+  const hasContent = hasIntro || hasMeta;
 
   if (!hasContent) {
     return (
@@ -88,8 +89,61 @@ export default function StoreGameOverviewSection({
         </p>
       )}
 
-      {longText && (
+      {hasMeta && (
         <div className="mt-5">
+          {(publishers.length > 0 || releaseDate) && (
+            <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-(--color-muted)">
+              {publishers.length > 0 && (
+                <span>{publishers.join(", ")}</span>
+              )}
+              {releaseDate && (
+                <span>{releaseDate}</span>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {genres.length > 0 && (
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+                  Genres
+                </span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {genres.map((genre) => (
+                    <span
+                      key={genre}
+                      className="rounded-full border border-(--surface-active-border) bg-white/5 px-3 py-1 text-xs text-(--color-text)/70"
+                    >
+                      {genre}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {categories.length > 0 && (
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+                  Features
+                </span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {categories.slice(0, 6).map((cat) => (
+                    <span
+                      key={cat}
+                      className="rounded-full border border-(--surface-active-border) bg-white/[0.03] px-3 py-1 text-xs text-(--color-muted)"
+                    >
+                      {cat}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {longText && (
+        <div className="mt-6">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
             About This Game
           </h3>
@@ -113,49 +167,6 @@ export default function StoreGameOverviewSection({
               {showFullDescription ? "Show less" : "Show more"}
             </button>
           )}
-        </div>
-      )}
-
-      <div className="mt-5 flex flex-wrap items-center gap-4 text-sm text-(--color-muted)">
-        {publishers.length > 0 && (
-          <span className="inline-flex items-center gap-1.5">
-            <Tag className="h-3.5 w-3.5" />
-            {publishers.join(", ")}
-          </span>
-        )}
-
-        {releaseDate && (
-          <span className="inline-flex items-center gap-1.5">
-            <Calendar className="h-3.5 w-3.5" />
-            {releaseDate}
-          </span>
-        )}
-      </div>
-
-      {genres.length > 0 && (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
-          {genres.map((genre) => (
-            <span
-              key={genre}
-              className="rounded-full border border-(--surface-active-border) bg-white/5 px-3 py-1 text-xs text-(--color-text)/70"
-            >
-              {genre}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {categories.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {categories.slice(0, 6).map((cat) => (
-            <span
-              key={cat}
-              className="rounded-md border border-(--surface-active-border) bg-white/[0.03] px-2.5 py-1 text-xs text-(--color-muted)"
-            >
-              {cat}
-            </span>
-          ))}
         </div>
       )}
     </div>
