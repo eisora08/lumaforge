@@ -16,25 +16,50 @@ import { useProviderSearch } from "../hooks/useProviderSearch";
 import { scanInstalledLuaScripts } from "../services/tauri";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
+import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
 
 import type { PackageGame } from "../types/package";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
-
-type StoreSectionId =
-  | "featured"
-  | "installed-supported"
-  | "recently-supported"
-  | "popular";
+import type {
+  SteamFeaturedCategory,
+  SteamFeaturedItem,
+} from "../types/steamFeatured";
 
 type StoreSectionModel = {
-  id: StoreSectionId;
+  id: string;
   title: string;
   description: string;
   games: PackageGame[];
 };
+
+function mapSteamFeaturedItemToPackageGame(item: SteamFeaturedItem): PackageGame {
+  return {
+    appId: String(item.app_id),
+    title: item.name,
+    developer: undefined,
+    imageUrl:
+      item.large_capsule_image ||
+      item.header_image ||
+      item.small_capsule_image ||
+      undefined,
+    platforms: item.platforms,
+    sources: [],
+  };
+}
+
+function mapSteamCategoryToStoreSection(
+  category: SteamFeaturedCategory
+): StoreSectionModel {
+  return {
+    id: `steam-${category.id}`,
+    title: category.name,
+    description: "Selección destacada desde Steam Store.",
+    games: category.items.map(mapSteamFeaturedItemToPackageGame),
+  };
+}
 
 export default function Store() {
   const {
@@ -61,8 +86,11 @@ export default function Store() {
     Record<number, SteamReviewSummary>
   >({});
 
-  const [activeSectionId, setActiveSectionId] =
-    useState<StoreSectionId | null>(null);
+  const [steamFeaturedCategories, setSteamFeaturedCategories] = useState<
+    SteamFeaturedCategory[]
+  >([]);
+
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -85,74 +113,37 @@ export default function Store() {
   }, [settings.luaPath]);
 
   useEffect(() => {
-    if (results.length === 0) {
-      setStoreMetadataByAppId({});
-      return;
-    }
-
     let cancelled = false;
 
-    async function loadStoreMetadata() {
+    async function loadSteamFeaturedCategories() {
       try {
-        const appIds = results
-          .map((game) => Number(game.appId))
-          .filter((appId) => Number.isFinite(appId));
-
-        const metadata = await resolveGameMetadata(appIds);
+        const categories = await resolveFeaturedStoreCategories();
 
         if (!cancelled) {
-          setStoreMetadataByAppId(metadata);
+          setSteamFeaturedCategories(categories);
         }
       } catch (error) {
         console.error(error);
 
         if (!cancelled) {
-          setStoreMetadataByAppId({});
+          setSteamFeaturedCategories([]);
         }
       }
     }
 
-    loadStoreMetadata();
+    loadSteamFeaturedCategories();
 
     return () => {
       cancelled = true;
     };
-  }, [results]);
+  }, []);
 
-  useEffect(() => {
-    if (results.length === 0) {
-      setReviewSummaryByAppId({});
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadReviewSummaries() {
-      try {
-        const appIds = results
-          .map((game) => Number(game.appId))
-          .filter((appId) => Number.isFinite(appId));
-
-        const summaries = await resolveGameReviewSummaries(appIds);
-
-        if (!cancelled) {
-          setReviewSummaryByAppId(summaries);
-        }
-      } catch (error) {
-        console.error(error);
-
-        if (!cancelled) {
-          setReviewSummaryByAppId({});
-        }
-      }
-    }
-
-    loadReviewSummaries();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [results]);
+  const steamStoreSections = useMemo(() => {
+    return steamFeaturedCategories
+      .map(mapSteamCategoryToStoreSection)
+      .filter((section) => section.games.length > 0)
+      .slice(0, 6);
+  }, [steamFeaturedCategories]);
 
   const installedStatusByAppId = useMemo(() => {
     const map = new Map<string, PackageInstallStatus>();
@@ -167,11 +158,6 @@ export default function Store() {
     return map;
   }, [installedScripts]);
 
-  const totalSources = results.reduce(
-    (count, game) => count + game.sources.length,
-    0
-  );
-
   const availableSources = results.reduce(
     (count, game) =>
       count + game.sources.filter((source) => source.available).length,
@@ -185,7 +171,7 @@ export default function Store() {
   const normalizedQuery = query.trim();
   const isSearching = normalizedQuery.length > 0;
 
-  const storeSections = useMemo(() => {
+  const lumaForgeSections = useMemo(() => {
     const usedAppIds = new Set<string>();
 
     function takeUnique(games: PackageGame[], limit?: number) {
@@ -219,45 +205,136 @@ export default function Store() {
       )
     );
 
-    const popularGames = takeUnique(results);
-
     const sections: StoreSectionModel[] = [
       {
-        id: "featured",
-        title: "Featured Supported Games",
+        id: "lumaforge-featured",
+        title: "Lua Ready Games",
         description:
-          "Juegos destacados con metadata y fuentes preparadas para LumaForge.",
+          "Juegos encontrados en tus providers compatibles con LumaForge.",
         games: featuredGames,
       },
       {
-        id: "installed-supported",
+        id: "lumaforge-installed-supported",
         title: "Installed & Supported",
         description:
           "Juegos que ya tienen Lua instalado o detectado en tu biblioteca.",
         games: installedGames,
       },
       {
-        id: "recently-supported",
+        id: "lumaforge-recently-supported",
         title: "Recently Supported",
         description:
           "Juegos con fuentes disponibles en providers configurados.",
         games: recentlySupportedGames,
-      },
-      {
-        id: "popular",
-        title: "Popular Picks",
-        description:
-          "Selección inicial basada en resultados disponibles. Luego esto se conectará a Steam trending.",
-        games: popularGames,
       },
     ];
 
     return sections.filter((section) => section.games.length > 0);
   }, [results, installedStatusByAppId]);
 
+  const allStoreSections = useMemo(() => {
+    return [...steamStoreSections, ...lumaForgeSections];
+  }, [steamStoreSections, lumaForgeSections]);
+
   const activeSection = activeSectionId
-    ? storeSections.find((section) => section.id === activeSectionId)
+    ? allStoreSections.find((section) => section.id === activeSectionId)
     : undefined;
+
+  const visibleAppIds = useMemo(() => {
+    const appIds = new Set<number>();
+
+    results.forEach((game) => {
+      const appId = Number(game.appId);
+
+      if (Number.isFinite(appId)) {
+        appIds.add(appId);
+      }
+    });
+
+    steamStoreSections.forEach((section) => {
+      section.games.forEach((game) => {
+        const appId = Number(game.appId);
+
+        if (Number.isFinite(appId)) {
+          appIds.add(appId);
+        }
+      });
+    });
+
+    return Array.from(appIds);
+  }, [results, steamStoreSections]);
+
+  useEffect(() => {
+    if (visibleAppIds.length === 0) {
+      setStoreMetadataByAppId({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadStoreMetadata() {
+      try {
+        const metadata = await resolveGameMetadata(visibleAppIds);
+
+        if (!cancelled) {
+          setStoreMetadataByAppId(metadata);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setStoreMetadataByAppId({});
+        }
+      }
+    }
+
+    loadStoreMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleAppIds]);
+
+  useEffect(() => {
+    if (visibleAppIds.length === 0) {
+      setReviewSummaryByAppId({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadReviewSummaries() {
+      try {
+        const summaries = await resolveGameReviewSummaries(visibleAppIds);
+
+        if (!cancelled) {
+          setReviewSummaryByAppId(summaries);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setReviewSummaryByAppId({});
+        }
+      }
+    }
+
+    loadReviewSummaries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleAppIds]);
+
+  function handleQueryChange(value: string) {
+    setQuery(value);
+    setActiveSectionId(null);
+  }
+
+  function handleProviderChange(value: typeof selectedProvider) {
+    setSelectedProvider(value);
+    setActiveSectionId(null);
+  }
 
   function renderStoreCard(game: PackageGame) {
     return (
@@ -274,7 +351,7 @@ export default function Store() {
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
-      <header className="flex flex-col gap-3">
+      <header className="space-y-4">
         <div className="inline-flex w-fit items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
           <PackageSearch className="h-3.5 w-3.5" />
           LumaForge Store
@@ -286,8 +363,8 @@ export default function Store() {
           </h1>
 
           <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Busca juegos, revisa fuentes disponibles y descarga Lua/manifests
-            con providers compatibles.
+            Explora juegos de Steam, descubre secciones destacadas y descarga
+            Lua/manifests cuando haya providers compatibles.
           </p>
         </div>
       </header>
@@ -295,50 +372,24 @@ export default function Store() {
       <PackagesToolbar
         query={query}
         selectedProvider={selectedProvider}
-        onQueryChange={(value) => {
-          setQuery(value);
-          setActiveSectionId(null);
-        }}
-        onProviderChange={(value) => {
-          setSelectedProvider(value);
-          setActiveSectionId(null);
-        }}
+        onQueryChange={handleQueryChange}
+        onProviderChange={handleProviderChange}
       />
 
-      <details className="lf-surface rounded-2xl border p-4">
-        <summary className="cursor-pointer text-sm font-medium text-(--color-text)">
-          Provider Health
-        </summary>
+      {providerReports.length > 0 && (
+        <details className="lf-surface rounded-2xl border p-4">
+          <summary className="cursor-pointer text-sm font-medium text-(--color-text)">
+            Provider Health
+          </summary>
 
-        <div className="mt-4">
-          <ProviderSearchReport reports={providerReports} />
-        </div>
-      </details>
+          <div className="mt-4">
+            <ProviderSearchReport reports={providerReports} />
+          </div>
+        </details>
+      )}
 
       {loading ? (
-        <section className="lf-surface rounded-2xl border p-10 text-center">
-          <PackageSearch className="mx-auto h-10 w-10 animate-pulse text-(--color-accent)" />
-
-          <h2 className="mt-4 font-semibold text-(--color-text)">
-            Buscando juegos
-          </h2>
-
-          <p className="mt-2 text-sm text-(--color-muted)">
-            Consultando providers habilitados...
-          </p>
-        </section>
-      ) : results.length === 0 ? (
-        <section className="lf-surface rounded-2xl border p-10 text-center">
-          <PackageSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
-
-          <h2 className="mt-4 font-semibold text-(--color-text)">
-            No se encontraron juegos
-          </h2>
-
-          <p className="mt-2 text-sm text-(--color-muted)">
-            Prueba con otro AppID, nombre o provider.
-          </p>
-        </section>
+        <StoreLoadingState />
       ) : activeSection ? (
         <section className="space-y-5">
           <button
@@ -364,46 +415,78 @@ export default function Store() {
             {activeSection.games.map(renderStoreCard)}
           </div>
         </section>
+      ) : isSearching ? (
+        results.length === 0 ? (
+          <StoreEmptyState />
+        ) : (
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-xl font-bold text-(--color-text)">
+                Search Results
+              </h2>
+
+              <p className="mt-1 text-sm text-(--color-muted)">
+                Resultados para "{normalizedQuery}"
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {results.map(renderStoreCard)}
+            </div>
+          </section>
+        )
       ) : (
         <div className="space-y-8">
           <StoreHero
-            totalResults={results.length}
+            totalResults={visibleAppIds.length}
             availableSources={availableSources}
             installedCount={installedCount}
           />
 
-          {isSearching ? (
-            <section className="space-y-4">
-              <div>
-                <h2 className="text-xl font-bold text-(--color-text)">
-                  Search Results
-                </h2>
-
-                <p className="mt-1 text-sm text-(--color-muted)">
-                  Resultados para "{normalizedQuery}"
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {results.map(renderStoreCard)}
-              </div>
-            </section>
-          ) : (
-            <>
-              {storeSections.map((section) => (
-                <StoreHorizontalSection
-                  key={section.id}
-                  title={section.title}
-                  description={section.description}
-                  onViewAll={() => setActiveSectionId(section.id)}
-                >
-                  {section.games.map(renderStoreCard)}
-                </StoreHorizontalSection>
-              ))}
-            </>
-          )}
+          {allStoreSections.map((section) => (
+            <StoreHorizontalSection
+              key={section.id}
+              title={section.title}
+              description={section.description}
+              onViewAll={() => setActiveSectionId(section.id)}
+            >
+              {section.games.map(renderStoreCard)}
+            </StoreHorizontalSection>
+          ))}
         </div>
       )}
     </div>
+  );
+}
+
+function StoreLoadingState() {
+  return (
+    <section className="lf-surface rounded-2xl border p-10 text-center">
+      <PackageSearch className="mx-auto h-10 w-10 animate-pulse text-(--color-accent)" />
+
+      <h2 className="mt-4 font-semibold text-(--color-text)">
+        Buscando juegos
+      </h2>
+
+      <p className="mt-2 text-sm text-(--color-muted)">
+        Consultando providers habilitados...
+      </p>
+    </section>
+  );
+}
+
+function StoreEmptyState() {
+  return (
+    <section className="lf-surface rounded-2xl border p-10 text-center">
+      <PackageSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
+
+      <h2 className="mt-4 font-semibold text-(--color-text)">
+        No se encontraron juegos
+      </h2>
+
+      <p className="mt-2 text-sm text-(--color-muted)">
+        Prueba con otro AppID, nombre o provider.
+      </p>
+    </section>
   );
 }

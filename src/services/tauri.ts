@@ -8,6 +8,7 @@ import type { LuaActionResult } from "../types/luaAction";
 import type { GameNameResult } from "../types/gameName";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
+import type { SteamFeaturedCategory } from "../types/steamFeatured";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -109,4 +110,17 @@ export async function resolveSteamReviewSummaries(
   return await invoke<SteamReviewSummary[]>("resolve_steam_review_summaries", {
     appIds,
   });
+}
+
+export async function resolveSteamFeaturedCategories(params?: {
+  countryCode?: string;
+  language?: string;
+}): Promise<SteamFeaturedCategory[]> {
+  return await invoke<SteamFeaturedCategory[]>(
+    "resolve_steam_featured_categories",
+    {
+      countryCode: params?.countryCode,
+      language: params?.language,
+    }
+  );
 }

@@ -8,3 +8,4 @@ pub mod lua_action_result;
 pub mod game_name;
 pub mod steam_app_metadata;
 pub mod steam_review_summary;
+pub mod steam_featured;

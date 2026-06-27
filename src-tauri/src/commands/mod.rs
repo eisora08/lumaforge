@@ -6,3 +6,4 @@ pub mod lua;
 pub mod game;
 pub mod metadata;
 pub mod reviews;
+pub mod store;
