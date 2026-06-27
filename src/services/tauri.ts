@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SteamPaths } from "../types/steam";
 import type { InstallResult } from "../types/install";
 import type { ProviderAvailabilityResult } from "../types/providerAvailability";
+import type { InstalledLuaScript } from "../types/installedLua";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -43,4 +44,13 @@ export async function checkProviderAvailability(params: {
       headers: params.headers,
     }
   );
+}
+
+
+export async function scanInstalledLuaScripts(
+  luaPath: string
+): Promise<InstalledLuaScript[]> {
+  return await invoke<InstalledLuaScript[]>("scan_installed_lua_scripts", {
+    luaPath,
+  });
 }

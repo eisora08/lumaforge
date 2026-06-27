@@ -9,7 +9,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::steam::detect_steam_paths,
             commands::installer::download_and_install_package,
-            commands::provider::check_provider_availability
+            commands::provider::check_provider_availability,
+            commands::lua::scan_installed_lua_scripts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
