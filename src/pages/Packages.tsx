@@ -11,6 +11,12 @@ import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 
+import { useEffect, useMemo, useState } from "react";
+import { useSettings } from "../context/SettingsContext";
+import { scanInstalledLuaScripts } from "../services/tauri";
+import { InstalledLuaScript } from "../types/installedLua";
+
+import { PackageInstallStatus } from "../types/packageInstall";
 import { useProviderSearch } from "../hooks/useProviderSearch";
 
 export default function Packages() {
@@ -24,6 +30,9 @@ export default function Packages() {
     setSelectedProvider,
   } = useProviderSearch();
 
+
+  const { settings } = useSettings();
+  const [installedScripts, setInstalledScripts] = useState<InstalledLuaScript[]>([]);
   const totalSources = results.reduce(
     (count, game) => count + game.sources.length,
     0
@@ -34,6 +43,46 @@ export default function Packages() {
       count + game.sources.filter((source) => source.available).length,
     0
   );
+
+  async function refreshInstalledScripts() {
+    if (!settings.luaPath) {
+      setInstalledScripts([]);
+      return;
+    }
+
+    try {
+      const scripts = await scanInstalledLuaScripts(settings.luaPath);
+      setInstalledScripts(scripts);
+    } catch (error) {
+      console.error(error);
+      setInstalledScripts([]);
+    }
+  }
+
+  const installedStatusByAppId = useMemo(() => {
+    const map = new Map<string, PackageInstallStatus>();
+
+    installedScripts.forEach((script) => {
+      map.set(
+        String(script.app_id),
+        script.is_disabled ? "disabled" : "active"
+      );
+    });
+
+    return map;
+  }, [installedScripts]);
+
+
+
+  const installedCount = results.filter((game) =>
+    installedStatusByAppId.has(game.appId)
+  ).length;
+
+  useEffect(() => {
+    refreshInstalledScripts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.luaPath]);
+
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
@@ -72,6 +121,13 @@ export default function Packages() {
             label="Available"
             value={availableSources}
           />
+
+          <MiniStat
+            icon={PackageSearch}
+            label="Installed"
+            value={installedCount}
+          />
+
         </div>
       </header>
 
@@ -111,7 +167,15 @@ export default function Packages() {
       ) : (
         <section className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
           {results.map((game) => (
-            <PackageCard key={game.appId} game={game} />
+
+            <PackageCard
+              key={game.appId}
+              game={game}
+              installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
+              onInstallComplete={refreshInstalledScripts}
+            />
+
+
           ))}
         </section>
       )}
@@ -124,6 +188,8 @@ type MiniStatProps = {
   label: string;
   value: string | number;
 };
+
+
 
 function MiniStat({ icon: Icon, label, value }: MiniStatProps) {
   return (

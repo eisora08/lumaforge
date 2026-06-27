@@ -5,6 +5,8 @@ import {
   ExternalLink,
   Gamepad2,
   SearchCheck,
+  CheckCircle2,
+  PauseCircle
 } from "lucide-react";
 
 import {
@@ -20,16 +22,19 @@ import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 
 import { useSettings } from "../../context/SettingsContext";
 import { downloadAndInstallPackage } from "../../services/tauri";
+import { PackageInstallStatus } from "../../types/packageInstall";
 
 type PackageCardProps = {
   game: PackageGame;
+  installStatus?: PackageInstallStatus;
+  onInstallComplete?: () => void;
 };
 
 function getSourceKey(source: PackageSource) {
   return `${source.providerId}-${source.fileType}`;
 }
 
-export default function PackageCard({ game }: PackageCardProps) {
+export default function PackageCard({ game, installStatus = "not-installed", onInstallComplete, }: PackageCardProps) {
   const availableSources = game.sources.filter((source) => source.available);
 
   const defaultSourceKey = availableSources[0]
@@ -110,6 +115,7 @@ export default function PackageCard({ game }: PackageCardProps) {
       showSuccess(result.message, {
         title: "Paquete instalado",
       });
+      onInstallComplete?.();
     } catch (error) {
       const message =
         error instanceof Error
@@ -129,7 +135,24 @@ export default function PackageCard({ game }: PackageCardProps) {
       });
     }
   }
+  const installBadge = getInstallBadge(installStatus);
+  function getInstallBadge(status: PackageInstallStatus) {
+    if (status === "active") {
+      return {
+        label: "Installed",
+        icon: CheckCircle2,
+        className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+      };
+    }
 
+    if (status === "disabled") {
+      return {
+        label: "Disabled",
+        icon: PauseCircle,
+        className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300",
+      };
+    }
+  }
   return (
     <article className="lf-surface group overflow-hidden rounded-2xl border transition">
       <div className="relative h-36 overflow-hidden bg-white/5">
@@ -144,7 +167,18 @@ export default function PackageCard({ game }: PackageCardProps) {
             <Gamepad2 className="h-8 w-8 text-(--color-muted)" />
           </div>
         )}
+        {installBadge && (() => {
+          const InstallIcon = installBadge.icon;
 
+          return (
+            <div
+              className={`absolute right-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium ${installBadge.className}`}
+            >
+              <InstallIcon className="h-3.5 w-3.5" />
+              {installBadge.label}
+            </div>
+          );
+        })()}
         <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent" />
 
         <div className="absolute bottom-3 left-3 right-3">
