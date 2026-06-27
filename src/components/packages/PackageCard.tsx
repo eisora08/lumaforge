@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
-  CircleX,
   Download,
   ExternalLink,
   FileArchive,
@@ -278,7 +277,7 @@ export default function PackageCard({
             </div>
           )}
 
-          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
+          <div className="absolute inset-0 bg-linear-to-t from-black/85 via-black/30 to-transparent" />
 
           {installBadge && (() => {
             const InstallIcon = installBadge.icon;

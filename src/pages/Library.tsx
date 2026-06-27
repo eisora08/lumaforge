@@ -20,7 +20,7 @@ import {
   setLuaScriptEnabled,
 } from "../services/tauri";
 import { InstalledLuaScript } from "../types/installedLua";
-import { resolveGameNames } from "../services/gameNameResolver";
+// import { resolveGameNames } from "../services/gameNameResolver";
 import { openExternalUrl } from "../services/externalLinks";
 import {
   getSteamDbUrl,
@@ -32,34 +32,55 @@ import {
   showWarning,
 } from "../components/toast/GameToast";
 
+import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import type { SteamAppMetadata } from "../types/gameMetadata";
+
 type LibraryFilter = "all" | "active" | "disabled";
 type LibrarySort = "appid" | "name" | "modified" | "size";
 
-function formatBytes(bytes: number) {
-  if (!bytes) return "0 B";
-
-  const units = ["B", "KB", "MB", "GB"];
-  let size = bytes;
-  let unitIndex = 0;
-
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
-}
 
 function formatDate(seconds: number) {
   if (!seconds) return "No disponible";
-  return new Date(seconds * 1000).toLocaleString();
+  return new Date(seconds * 1000).toLocaleDateString();
+}
+
+function getFallbackHeaderImageUrl(appId: number) {
+  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+}
+
+function getBestCoverUrl(
+  appId: number,
+  metadata?: SteamAppMetadata
+): string {
+  return (
+    metadata?.header_image ||
+    metadata?.capsule_image ||
+    metadata?.capsule_image_v5 ||
+    getFallbackHeaderImageUrl(appId)
+  );
+}
+
+function getUpdateLabel(script: InstalledLuaScript) {
+  if (script.is_disabled) {
+    return {
+      label: "Deshabilitado",
+      className: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
+    };
+  }
+
+  return {
+    label: "No verificado",
+    className: "border-sky-500/20 bg-sky-500/10 text-sky-300",
+  };
 }
 
 export default function Library() {
   const { settings } = useSettings();
 
   const [scripts, setScripts] = useState<InstalledLuaScript[]>([]);
-  const [gameNames, setGameNames] = useState<Record<number, string>>({});
+  const [gameMetadata, setGameMetadata] = useState<
+    Record<number, SteamAppMetadata>
+  >({});
   const [loading, setLoading] = useState(false);
 
   const [query, setQuery] = useState("");
@@ -81,11 +102,11 @@ export default function Library() {
       const results = await scanInstalledLuaScripts(settings.luaPath);
       setScripts(results);
 
-      const names = await resolveGameNames(
+      const metadata = await resolveGameMetadata(
         results.map((script) => script.app_id)
       );
 
-      setGameNames(names);
+      setGameMetadata(metadata);
 
       showSuccess(`Se detectaron ${results.length} script(s) Lua.`, {
         title: "Biblioteca actualizada",
@@ -211,12 +232,14 @@ export default function Library() {
     const normalizedQuery = query.trim().toLowerCase();
 
     const filtered = scripts.filter((script) => {
-      const gameName = gameNames[script.app_id] || "";
+      const metadata = gameMetadata[script.app_id];
+      const gameTitle = metadata?.name || "";
+
       const matchesQuery =
         !normalizedQuery ||
         script.app_id.toString().includes(normalizedQuery) ||
         script.file_name.toLowerCase().includes(normalizedQuery) ||
-        gameName.toLowerCase().includes(normalizedQuery);
+        gameTitle.toLowerCase().includes(normalizedQuery);
 
       const matchesFilter =
         filter === "all" ||
@@ -228,9 +251,12 @@ export default function Library() {
 
     return [...filtered].sort((a, b) => {
       if (sortBy === "name") {
-        const aName = gameNames[a.app_id] || `Steam App ${a.app_id}`;
-        const bName = gameNames[b.app_id] || `Steam App ${b.app_id}`;
-        return aName.localeCompare(bName);
+        const aTitle =
+          gameMetadata[a.app_id]?.name || `Steam App ${a.app_id}`;
+        const bTitle =
+          gameMetadata[b.app_id]?.name || `Steam App ${b.app_id}`;
+
+        return aTitle.localeCompare(bTitle);
       }
 
       if (sortBy === "modified") {
@@ -243,7 +269,7 @@ export default function Library() {
 
       return a.app_id - b.app_id;
     });
-  }, [scripts, query, filter, sortBy, gameNames]);
+  }, [scripts, query, filter, sortBy, gameMetadata]);
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
@@ -251,7 +277,7 @@ export default function Library() {
         <div>
           <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
             <FolderSearch className="h-3.5 w-3.5" />
-            Installed Lua Scanner
+            Installed Lua Catalog
           </div>
 
           <h1 className="text-3xl font-bold text-(--color-text)">
@@ -259,7 +285,7 @@ export default function Library() {
           </h1>
 
           <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Busca, filtra y administra los scripts Lua instalados en Steam.
+            Explora tus scripts Lua instalados como un catálogo de juegos.
           </p>
         </div>
 
@@ -274,7 +300,7 @@ export default function Library() {
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <h2 className="font-semibold text-(--color-text)">
-              Ruta escaneada
+              Biblioteca Lua
             </h2>
 
             <p className="mt-1 break-all text-sm text-(--color-muted)">
@@ -288,7 +314,9 @@ export default function Library() {
             disabled={loading}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCcw
+              className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+            />
             {loading ? "Escaneando..." : "Escanear ahora"}
           </button>
         </div>
@@ -312,7 +340,9 @@ export default function Library() {
 
             <select
               value={filter}
-              onChange={(event) => setFilter(event.target.value as LibraryFilter)}
+              onChange={(event) =>
+                setFilter(event.target.value as LibraryFilter)
+              }
               className="w-full bg-transparent text-sm text-(--color-text) outline-none"
             >
               <option className="bg-black text-white" value="all">
@@ -332,7 +362,9 @@ export default function Library() {
 
             <select
               value={sortBy}
-              onChange={(event) => setSortBy(event.target.value as LibrarySort)}
+              onChange={(event) =>
+                setSortBy(event.target.value as LibrarySort)
+              }
               className="w-full bg-transparent text-sm text-(--color-text) outline-none"
             >
               <option className="bg-black text-white" value="appid">
@@ -365,12 +397,12 @@ export default function Library() {
           </p>
         </section>
       ) : (
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filteredScripts.map((script) => (
-            <InstalledLuaCard
+            <InstalledLuaCatalogCard
               key={script.path}
               script={script}
-              gameName={gameNames[script.app_id]}
+              metadata={gameMetadata[script.app_id]}
               onToggle={handleToggleScript}
               onDelete={handleDeleteScript}
               onOpenSteamStore={handleOpenSteamStore}
@@ -383,122 +415,187 @@ export default function Library() {
   );
 }
 
-type InstalledLuaCardProps = {
+type InstalledLuaCatalogCardProps = {
   script: InstalledLuaScript;
-  gameName?: string;
+  metadata?: SteamAppMetadata;
   onToggle: (script: InstalledLuaScript) => void;
   onDelete: (script: InstalledLuaScript) => void;
   onOpenSteamStore: (script: InstalledLuaScript) => void;
   onOpenSteamDb: (script: InstalledLuaScript) => void;
 };
 
-function InstalledLuaCard({
+function InstalledLuaCatalogCard({
   script,
-  gameName,
+  metadata,
   onToggle,
   onDelete,
   onOpenSteamStore,
   onOpenSteamDb,
-}: InstalledLuaCardProps) {
+}: InstalledLuaCatalogCardProps) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  const title = metadata?.name || `Steam App ${script.app_id}`;
+  const developer = metadata?.developer;
+  const updateLabel = getUpdateLabel(script);
+  const coverUrl = getBestCoverUrl(script.app_id, metadata);
+
   return (
-    <article className="lf-surface rounded-2xl border p-5">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/5">
-            <FileCode2 className="h-5 w-5 text-(--color-accent)" />
-          </div>
+    <article className="group lf-surface overflow-hidden rounded-2xl border transition hover:border-(--color-accent)/30">
+      <div className="relative h-32 overflow-hidden bg-white/5">
+        {!imageFailed ? (
+          <img
+            src={coverUrl}
+            alt={title}
+            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+            loading="lazy"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          <LibraryCoverFallback appId={script.app_id} title={title} />
+        )}
 
-          <div className="min-w-0">
-            <h3 className="truncate font-semibold text-(--color-text)">
-              {gameName || `Steam App ${script.app_id}`}
-            </h3>
+        <div className="absolute inset-0 bg-linear-to-t from-black/85 via-black/25 to-transparent" />
 
-            <p className="mt-0.5 truncate text-xs text-(--color-muted)">
-              AppID {script.app_id} · {script.file_name}
-            </p>
-          </div>
+        <div className="absolute right-3 top-3">
+          {script.is_disabled ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zinc-500/20 bg-zinc-500/10 px-2.5 py-1 text-[11px] text-zinc-300">
+              <ShieldOff className="h-3 w-3" />
+              Disabled
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">
+              <ShieldCheck className="h-3 w-3" />
+              Active
+            </span>
+          )}
         </div>
 
-        {script.is_disabled ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-zinc-500/20 bg-zinc-500/10 px-2.5 py-1 text-[11px] text-zinc-300">
-            <ShieldOff className="h-3 w-3" />
-            Disabled
+        <div className="absolute bottom-3 left-3 right-3">
+          <h3 className="line-clamp-1 font-semibold text-white">
+            {title}
+          </h3>
+
+          <p className="mt-0.5 text-xs text-white/70">
+            AppID {script.app_id}
+          </p>
+
+          {developer && (
+            <p className="mt-0.5 line-clamp-1 text-xs text-white/55">
+              {developer}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-3 p-4">
+        {metadata?.platforms?.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {metadata.platforms.map((platform) => (
+              <span
+                key={platform}
+                className="rounded-full border border-(--surface-active-border) bg-white/5 px-2 py-0.5 text-[11px] text-(--color-muted)"
+              >
+                {platform}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-xs text-(--color-muted)">
+              {script.file_name}
+            </p>
+
+            <p className="mt-1 text-[11px] text-(--color-muted)">
+              Modificado: {formatDate(script.modified_at)}
+            </p>
+          </div>
+
+          <span
+            className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] ${updateLabel.className}`}
+          >
+            {updateLabel.label}
           </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">
-            <ShieldCheck className="h-3 w-3" />
-            Active
-          </span>
-        )}
-      </div>
+        </div>
 
-      <div className="space-y-3 text-xs text-(--color-muted)">
-        <InfoBox label="Tamaño" value={formatBytes(script.file_size)} />
-        <InfoBox label="Modificado" value={formatDate(script.modified_at)} />
-        <InfoBox label="Ruta" value={script.path} breakAll />
-      </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenSteamStore(script)}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Steam
+          </button>
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => onOpenSteamStore(script)}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Steam
-        </button>
+          <button
+            type="button"
+            onClick={() => onOpenSteamDb(script)}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+          >
+            <Database className="h-3.5 w-3.5" />
+            SteamDB
+          </button>
+        </div>
 
-        <button
-          type="button"
-          onClick={() => onOpenSteamDb(script)}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-        >
-          <Database className="h-3.5 w-3.5" />
-          SteamDB
-        </button>
-      </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onToggle(script)}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+          >
+            <Power className="h-3.5 w-3.5" />
+            {script.is_disabled ? "Activar" : "Deshabilitar"}
+          </button>
 
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => onToggle(script)}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-        >
-          <Power className="h-3.5 w-3.5" />
-          {script.is_disabled ? "Activar" : "Deshabilitar"}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onDelete(script)}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/20"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Eliminar
-        </button>
+          <button
+            type="button"
+            onClick={() => onDelete(script)}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/20"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Eliminar
+          </button>
+        </div>
       </div>
     </article>
   );
 }
 
-type InfoBoxProps = {
-  label: string;
-  value: string;
-  breakAll?: boolean;
+type LibraryCoverFallbackProps = {
+  appId: number;
+  title: string;
 };
 
-function InfoBox({ label, value, breakAll }: InfoBoxProps) {
-  return (
-    <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-      <p>{label}</p>
+function LibraryCoverFallback({
+  appId,
+  title,
+}: LibraryCoverFallbackProps) {
+  const initials = title
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join("");
 
-      <p
-        className={`mt-1 font-medium text-(--color-text) ${
-          breakAll ? "break-all" : ""
-        }`}
-      >
-        {value}
-      </p>
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-white/5">
+      <div className="text-center">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
+          {initials ? (
+            <span className="text-sm font-bold text-white/80">
+              {initials}
+            </span>
+          ) : (
+            <FileCode2 className="h-6 w-6 text-white/40" />
+          )}
+        </div>
+
+        <p className="mt-2 text-[11px] text-white/45">
+          AppID {appId}
+        </p>
+      </div>
     </div>
   );
 }
@@ -521,3 +618,4 @@ function MiniStat({ label, value }: MiniStatProps) {
     </div>
   );
 }
+

@@ -6,6 +6,7 @@ import type { ProviderAvailabilityResult } from "../types/providerAvailability";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { LuaActionResult } from "../types/luaAction";
 import type { GameNameResult } from "../types/gameName";
+import type { SteamAppMetadata } from "../types/gameMetadata";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -85,6 +86,16 @@ export async function resolveSteamAppNames(
   appIds: number[]
 ): Promise<GameNameResult[]> {
   return await invoke<GameNameResult[]>("resolve_steam_app_names", {
+    appIds,
+  });
+}
+
+
+
+export async function resolveSteamAppMetadata(
+  appIds: number[]
+): Promise<SteamAppMetadata[]> {
+  return await invoke<SteamAppMetadata[]>("resolve_steam_app_metadata", {
     appIds,
   });
 }
