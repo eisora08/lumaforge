@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   CheckCircle2,
@@ -18,7 +18,7 @@ import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 import { downloadAndInstallPackage } from "../../services/tauri";
 import { openExternalUrl } from "../../services/externalLinks";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
-import { getBestAvailableSource, getSourceKey } from "../../utils/sourceHelpers";
+import { getBestAvailableSource } from "../../utils/sourceHelpers";
 
 import {
   showError,
@@ -26,7 +26,6 @@ import {
   showWarning,
 } from "../toast/GameToast";
 
-import PackageDetailsModal from "./PackageDetailsModal";
 import StoreSourceSelectorModal from "../store/StoreSourceSelectorModal";
 
 type PackageCardProps = {
@@ -34,14 +33,13 @@ type PackageCardProps = {
   storeMetadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
   installStatus?: PackageInstallStatus;
-  recheckingSources?: boolean;
   onInstallComplete?: () => void;
-  onRecheckSources?: (appId: string) => void;
   variant?: "landscape" | "poster";
   onOpenGame?: (game: PackageGame) => void;
   onOpenSteam?: (appId: string) => void;
   onDownload?: (game: PackageGame) => void;
   onOpenDetails?: (game: PackageGame) => void;
+  onOpenSourceSelector?: (game: PackageGame) => void;
   onDownloadSource?: (game: PackageGame, source: PackageSource) => void;
 };
 
@@ -95,52 +93,23 @@ export default function PackageCard({
   game,
   storeMetadata,
   installStatus = "not-installed",
-  recheckingSources = false,
   onInstallComplete,
-  onRecheckSources,
   variant = "landscape",
   onOpenGame,
   onOpenSteam,
   onDownload,
   onOpenDetails,
+  onOpenSourceSelector,
   onDownloadSource,
 }: PackageCardProps) {
   const { settings } = useSettings();
   const { addJob, updateJob } = useDownloadQueue();
 
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
 
   const availableSources = game.sources.filter((source) => source.available);
-
-  const defaultSourceKey = availableSources[0]
-    ? getSourceKey(availableSources[0])
-    : game.sources[0]
-      ? getSourceKey(game.sources[0])
-      : "";
-
-  const [selectedSourceKey, setSelectedSourceKey] =
-    useState(defaultSourceKey);
-
-  useEffect(() => {
-    const currentExists = game.sources.some(
-      (source) => getSourceKey(source) === selectedSourceKey
-    );
-
-    if (!currentExists) {
-      setSelectedSourceKey(defaultSourceKey);
-    }
-  }, [defaultSourceKey, game.sources, selectedSourceKey]);
-
-  const selectedSource = useMemo(() => {
-    return game.sources.find(
-      (source) => getSourceKey(source) === selectedSourceKey
-    );
-  }, [game.sources, selectedSourceKey]);
-
   const bestSource = useMemo(() => getBestAvailableSource(game), [game]);
-
   const installBadge = getInstallBadge(installStatus);
 
   const displayTitle = getStoreTitle(game, storeMetadata);
@@ -158,8 +127,6 @@ export default function PackageCard({
       onOpenDetails(game);
     } else if (onOpenGame) {
       onOpenGame(game);
-    } else {
-      setDetailsOpen(true);
     }
   }
 
@@ -172,6 +139,16 @@ export default function PackageCard({
     }
 
     openExternalUrl(getSteamStoreUrl(Number(game.appId)));
+  }
+
+  function handleSourceButton(event?: React.MouseEvent) {
+    event?.stopPropagation();
+
+    if (onOpenSourceSelector) {
+      onOpenSourceSelector(game);
+    } else {
+      setSourceSelectorOpen(true);
+    }
   }
 
   function handleDownloadAction(event?: React.MouseEvent) {
@@ -294,10 +271,7 @@ export default function PackageCard({
 
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setSourceSelectorOpen(true);
-        }}
+        onClick={handleSourceButton}
         className="w-32 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/15 hover:text-white"
       >
         Source
@@ -401,7 +375,6 @@ export default function PackageCard({
           game={game}
           selectedSource={bestSource}
           onClose={() => setSourceSelectorOpen(false)}
-          onSelectSource={setSelectedSourceKey}
           onDownloadSource={handleSourceDownload}
           onOpenDetails={onOpenDetails || onOpenGame}
         />
@@ -483,28 +456,11 @@ export default function PackageCard({
         </div>
       </article>
 
-      <PackageDetailsModal
-        game={game}
-        installStatus={installStatus}
-        selectedSource={selectedSource}
-        open={detailsOpen}
-        rechecking={recheckingSources}
-        onClose={() => setDetailsOpen(false)}
-        onSelectSource={setSelectedSourceKey}
-        onDownload={() => {
-          if (selectedSource) {
-            internalDownload(selectedSource);
-          }
-        }}
-        onRecheckSources={(appId) => onRecheckSources?.(appId)}
-      />
-
       <StoreSourceSelectorModal
         open={sourceSelectorOpen}
         game={game}
         selectedSource={bestSource}
         onClose={() => setSourceSelectorOpen(false)}
-        onSelectSource={setSelectedSourceKey}
         onDownloadSource={handleSourceDownload}
         onOpenDetails={onOpenDetails || onOpenGame}
       />

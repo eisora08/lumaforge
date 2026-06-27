@@ -13,6 +13,7 @@ import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
+import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
 import StoreBrowseFiltersPanel, {
   DEFAULT_BROWSE_FILTERS,
 } from "../components/store/StoreBrowseFiltersPanel";
@@ -167,6 +168,9 @@ export default function Store() {
   const [activeStoreTab, setActiveStoreTab] = useState<StoreTab>("discover");
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [selectedDetailGame, setSelectedDetailGame] =
+    useState<PackageGame | null>(null);
+
+  const [sourceSelectorGame, setSourceSelectorGame] =
     useState<PackageGame | null>(null);
 
   const [browseFilters, setBrowseFilters] = useState<BrowseFilters>(
@@ -743,6 +747,10 @@ export default function Store() {
     openExternalUrl(getSteamStoreUrl(Number(appId)));
   }
 
+  function openSourceSelectorForGame(game: PackageGame) {
+    setSourceSelectorGame(game);
+  }
+
   async function openDetailsForGame(game: PackageGame) {
     setSelectedDetailGame(game);
     setActiveSectionId(null);
@@ -877,6 +885,13 @@ export default function Store() {
     await downloadFromSource(game, source);
   }
 
+  async function handleDownloadSourceForGame(
+    game: PackageGame,
+    source: PackageSource
+  ) {
+    await downloadFromSource(game, source);
+  }
+
   async function handlePosterDownload(game: PackageGame) {
     const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
     const source = getBestAvailableSource(gameWithOverlay);
@@ -903,6 +918,9 @@ export default function Store() {
         reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
         onInstallComplete={refreshInstalledScripts}
+        onOpenDetails={openDetailsForGame}
+        onOpenSourceSelector={openSourceSelectorForGame}
+        onDownload={handlePosterDownload}
       />
     );
   }
@@ -918,8 +936,10 @@ export default function Store() {
         storeMetadata={storeMetadataByAppId[Number(game.appId)]}
         reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
+        onOpenDetails={openDetailsForGame}
         onOpenGame={openDetailsForGame}
         onOpenSteam={openSteamPage}
+        onOpenSourceSelector={openSourceSelectorForGame}
         onDownload={handlePosterDownload}
       />
     );
@@ -1252,6 +1272,25 @@ export default function Store() {
           )}
         </div>
       )}
+
+      <StoreSourceSelectorModal
+        open={sourceSelectorGame !== null}
+        game={sourceSelectorGame ? (providerOverlayByAppId[sourceSelectorGame.appId] ?? sourceSelectorGame) : null}
+        onClose={() => setSourceSelectorGame(null)}
+        onDownloadSource={(source) => {
+          const game = sourceSelectorGame;
+          if (game) {
+            handleDownloadSourceForGame(
+              providerOverlayByAppId[game.appId] ?? game,
+              source
+            );
+          }
+        }}
+        onOpenDetails={(game) => {
+          setSourceSelectorGame(null);
+          openDetailsForGame(game);
+        }}
+      />
     </div>
   );
 }

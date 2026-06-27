@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ArrowLeft, Languages, Puzzle, Star } from "lucide-react";
 
 import type { PackageGame, PackageSource } from "../../types/package";
@@ -10,15 +11,16 @@ import {
   getSteamDbUrl,
   getSteamStoreUrl,
 } from "../../utils/steamLinks";
+import { getBestAvailableSource } from "../../utils/sourceHelpers";
 
 import { showError } from "../toast/GameToast";
 
 import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
-import StoreGameProviderPanel from "./details/StoreGameProviderPanel";
 import StoreGameContentSection from "./details/StoreGameContentSection";
 import StoreGameTechnicalSection from "./details/StoreGameTechnicalSection";
 import StoreGameLanguagesPanel from "./details/StoreGameLanguagesPanel";
 import StoreGameSummaryPanel from "./details/StoreGameSummaryPanel";
+import StoreSourceSelectorModal from "./StoreSourceSelectorModal";
 import { InfoBlock } from "./details/StoreGameDetailPrimitives";
 
 import StoreMoreLikeThisSection from "./StoreMoreLikeThisSection";
@@ -118,6 +120,8 @@ export default function StoreGameDetailsPage({
   onDownloadSource,
   onOpenGame,
 }: StoreGameDetailsPageProps) {
+  const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
+
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
@@ -136,6 +140,7 @@ export default function StoreGameDetailsPage({
   const reviewSubLabel = getReviewSubLabel(reviewSummary);
 
   const availableSources = game.sources.filter((source) => source.available);
+  const bestSource = getBestAvailableSource(game);
 
   async function handleOpenSteam() {
     try {
@@ -159,6 +164,16 @@ export default function StoreGameDetailsPage({
         title: "Error abriendo enlace",
       });
     }
+  }
+
+  function handleDownload() {
+    if (bestSource) {
+      onDownloadSource?.(bestSource);
+    }
+  }
+
+  function handleDownloadFromSource(source: PackageSource) {
+    onDownloadSource?.(source);
   }
 
   return (
@@ -208,11 +223,6 @@ export default function StoreGameDetailsPage({
                 description="Supported languages from Steam metadata."
               />
             </div>
-
-            <StoreGameProviderPanel
-              sources={game.sources}
-              onDownloadSource={onDownloadSource}
-            />
           </section>
 
           <aside className="space-y-4">
@@ -220,8 +230,11 @@ export default function StoreGameDetailsPage({
               game={game}
               installStatus={installStatus}
               developer={developer}
+              platforms={platforms}
               availableSources={availableSources.length}
               totalSources={game.sources.length}
+              onDownload={handleDownload}
+              onChangeSource={() => setSourceSelectorOpen(true)}
               onOpenSteam={handleOpenSteam}
               onOpenSteamDb={handleOpenSteamDb}
             />
@@ -243,6 +256,15 @@ export default function StoreGameDetailsPage({
           onOpenGame={onOpenGame}
         />
       )}
+
+      <StoreSourceSelectorModal
+        open={sourceSelectorOpen}
+        game={game}
+        selectedSource={bestSource}
+        onClose={() => setSourceSelectorOpen(false)}
+        onDownloadSource={handleDownloadFromSource}
+        onOpenDetails={onOpenGame}
+      />
     </div>
   );
 }
