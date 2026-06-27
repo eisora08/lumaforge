@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
+  Gamepad2,
   PackageSearch,
 } from "lucide-react";
 
@@ -8,7 +9,7 @@ import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
 import type { StoreSearchDropdownItem } from "../components/packages/PackagesToolbar";
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
-import StoreHero from "../components/store/StoreHero";
+import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
 import type { StoreMoreLikeThisGame } from "../components/store/StoreMoreLikeThisSection";
@@ -21,6 +22,8 @@ import {
   downloadAndInstallPackage,
   scanInstalledLuaScripts,
 } from "../services/tauri";
+import { openExternalUrl } from "../services/externalLinks";
+import { getSteamStoreUrl } from "../utils/steamLinks";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
@@ -42,6 +45,15 @@ import type {
   SteamFeaturedCategory,
   SteamFeaturedItem,
 } from "../types/steamFeatured";
+
+type StoreTab = "discover" | "browse" | "lua-ready" | "news";
+
+const STORE_TABS: { id: StoreTab; label: string }[] = [
+  { id: "discover", label: "Discover" },
+  { id: "browse", label: "Browse" },
+  { id: "lua-ready", label: "Lua Ready" },
+  { id: "news", label: "News" },
+];
 
 type StoreSectionModel = {
   id: string;
@@ -91,6 +103,15 @@ function mapSteamCategoryToStoreSection(
   };
 }
 
+function dedupeGames(games: PackageGame[]): PackageGame[] {
+  const seen = new Set<string>();
+  return games.filter((game) => {
+    if (seen.has(game.appId)) return false;
+    seen.add(game.appId);
+    return true;
+  });
+}
+
 export default function Store() {
   const {
     selectedProvider,
@@ -133,6 +154,7 @@ export default function Store() {
     Record<string, PackageGame>
   >({});
 
+  const [activeStoreTab, setActiveStoreTab] = useState<StoreTab>("discover");
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [selectedDetailGame, setSelectedDetailGame] =
     useState<PackageGame | null>(null);
@@ -296,16 +318,6 @@ export default function Store() {
     };
   }, [steamStoreSections, settings]);
 
-  const availableSources = results.reduce(
-    (count, game) =>
-      count + game.sources.filter((source) => source.available).length,
-    0
-  );
-
-  const installedCount = results.filter((game) =>
-    installedStatusByAppId.has(game.appId)
-  ).length;
-
   const isSearchResultsView = submittedSearchQuery.trim().length > 0;
 
   const lumaForgeSections = useMemo(() => {
@@ -372,6 +384,74 @@ export default function Store() {
   const allStoreSections = useMemo(() => {
     return [...steamStoreSections, ...lumaForgeSections];
   }, [steamStoreSections, lumaForgeSections]);
+
+  const browseGames = useMemo(() => {
+    const allGames: PackageGame[] = [];
+
+    steamStoreSections.forEach((section) => {
+      section.games.forEach((game) => {
+        allGames.push(providerOverlayByAppId[game.appId] ?? game);
+      });
+    });
+
+    lumaForgeSections.forEach((section) => {
+      section.games.forEach((game) => {
+        allGames.push(providerOverlayByAppId[game.appId] ?? game);
+      });
+    });
+
+    results.forEach((game) => {
+      allGames.push(providerOverlayByAppId[game.appId] ?? game);
+    });
+
+    return dedupeGames(allGames);
+  }, [steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
+
+  const luaReadyGames = useMemo(() => {
+    const seen = new Set<string>();
+    const games: PackageGame[] = [];
+
+    const addIfReady = (game: PackageGame) => {
+      if (seen.has(game.appId)) return;
+      const overlayed = providerOverlayByAppId[game.appId] ?? game;
+      if (overlayed.sources.some((s) => s.available)) {
+        seen.add(game.appId);
+        games.push(overlayed);
+      }
+    };
+
+    results.forEach(addIfReady);
+
+    steamStoreSections.forEach((section) => {
+      section.games.forEach(addIfReady);
+    });
+
+    return games;
+  }, [results, steamStoreSections, providerOverlayByAppId]);
+
+  const featuredGames = useMemo(() => {
+    const seen = new Set<string>();
+    const games: PackageGame[] = [];
+
+    function tryAdd(game: PackageGame) {
+      if (seen.has(game.appId)) return;
+      const overlayed = providerOverlayByAppId[game.appId] ?? game;
+      seen.add(game.appId);
+      games.push(overlayed);
+    }
+
+    steamStoreSections.forEach((section) => {
+      section.games.forEach(tryAdd);
+    });
+
+    lumaForgeSections.forEach((section) => {
+      section.games.forEach(tryAdd);
+    });
+
+    results.forEach(tryAdd);
+
+    return games.slice(0, 8);
+  }, [steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
 
   const activeSection = activeSectionId
     ? allStoreSections.find((section) => section.id === activeSectionId)
@@ -546,6 +626,10 @@ export default function Store() {
     setSelectedDetailGame(null);
   }
 
+  function openSteamPage(appId: string) {
+    openExternalUrl(getSteamStoreUrl(Number(appId)));
+  }
+
   async function openDetailsForGame(game: PackageGame) {
     setSelectedDetailGame(game);
     setActiveSectionId(null);
@@ -579,6 +663,11 @@ export default function Store() {
     setSteamSearchItems([]);
 
     openDetailsForGame(game);
+  }
+
+  function handleStoreTabChange(tab: StoreTab) {
+    setActiveStoreTab(tab);
+    setActiveSectionId(null);
   }
 
   function handleProviderChange(value: typeof selectedProvider) {
@@ -728,6 +817,26 @@ export default function Store() {
         </div>
       </header>
 
+      <div className="flex gap-1 border-b border-(--surface-active-border)">
+        {STORE_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => handleStoreTabChange(tab.id)}
+            className={`relative px-4 py-3 text-sm font-medium transition ${
+              activeStoreTab === tab.id
+                ? "text-(--color-accent)"
+                : "text-(--color-muted) hover:text-(--color-text)"
+            }`}
+          >
+            {tab.label}
+            {activeStoreTab === tab.id && (
+              <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
+            )}
+          </button>
+        ))}
+      </div>
+
       <PackagesToolbar
         query={storeSearchQuery}
         selectedProvider={selectedProvider}
@@ -739,18 +848,6 @@ export default function Store() {
         onViewAllSearchResults={submitSteamSearch}
         onSelectSearchItem={handleSelectSearchItem}
       />
-
-      {providerReports.length > 0 && (
-        <details className="lf-surface rounded-2xl border p-4">
-          <summary className="cursor-pointer text-sm font-medium text-(--color-text)">
-            Provider Health
-          </summary>
-
-          <div className="mt-4">
-            <ProviderSearchReport reports={providerReports} />
-          </div>
-        </details>
-      )}
 
       {loading ? (
         <StoreLoadingState />
@@ -799,12 +896,93 @@ export default function Store() {
             </div>
           </section>
         )
+      ) : activeStoreTab === "browse" ? (
+        <section className="space-y-5">
+          <div>
+            <h2 className="text-2xl font-bold text-(--color-text)">
+              Browse Games
+            </h2>
+
+            <p className="mt-1 text-sm text-(--color-muted)">
+              Explora todos los juegos disponibles desde Steam y providers
+              compatibles.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {browseGames.map(renderStoreCard)}
+          </div>
+        </section>
+      ) : activeStoreTab === "lua-ready" ? (
+        luaReadyGames.length === 0 ? (
+          <StoreLuaReadyEmptyState />
+        ) : (
+          <section className="space-y-5">
+            <div>
+              <h2 className="text-2xl font-bold text-(--color-text)">
+                Lua Ready
+              </h2>
+
+              <p className="mt-1 text-sm text-(--color-muted)">
+                Juegos con fuentes de descarga disponibles en tus providers.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {luaReadyGames.map(renderStoreCard)}
+            </div>
+          </section>
+        )
+      ) : activeStoreTab === "news" ? (
+        <section className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-bold text-(--color-text)">
+              News
+            </h2>
+
+            <p className="mt-1 text-sm text-(--color-muted)">
+              Updates, provider changes and game news will appear here.
+            </p>
+          </div>
+
+          <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-5">
+            <h3 className="text-lg font-bold text-(--color-text)">
+              Coming Soon
+            </h3>
+
+            <p className="mt-2 text-sm text-(--color-muted)">
+              News feed and game updates are coming in a future update.
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-5">
+            <h3 className="text-lg font-bold text-(--color-text)">
+              Today
+            </h3>
+
+            <p className="mt-2 text-sm text-(--color-muted)">
+              No news today.
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-5">
+            <h3 className="text-lg font-bold text-(--color-text)">
+              Earlier
+            </h3>
+
+            <p className="mt-2 text-sm text-(--color-muted)">
+              No earlier news.
+            </p>
+          </section>
+        </section>
       ) : (
         <div className="space-y-8">
-          <StoreHero
-            totalResults={visibleAppIds.length}
-            availableSources={availableSources}
-            installedCount={installedCount}
+          <StoreDiscoverHeroCarousel
+            games={featuredGames}
+            storeMetadataByAppId={storeMetadataByAppId}
+            installedStatusByAppId={installedStatusByAppId}
+            onOpenGame={openDetailsForGame}
+            onOpenSteam={openSteamPage}
           />
 
           {allStoreSections.map((section) => (
@@ -817,6 +995,18 @@ export default function Store() {
               {section.games.map(renderStoreCard)}
             </StoreHorizontalSection>
           ))}
+
+          {providerReports.length > 0 && (
+            <details className="lf-surface rounded-2xl border p-4">
+              <summary className="cursor-pointer text-sm font-medium text-(--color-muted)">
+                Advanced provider status
+              </summary>
+
+              <div className="mt-4">
+                <ProviderSearchReport reports={providerReports} />
+              </div>
+            </details>
+          )}
         </div>
       )}
     </div>
@@ -850,6 +1040,22 @@ function StoreEmptyState() {
 
       <p className="mt-2 text-sm text-(--color-muted)">
         Prueba con otro AppID, nombre o provider.
+      </p>
+    </section>
+  );
+}
+
+function StoreLuaReadyEmptyState() {
+  return (
+    <section className="lf-surface rounded-2xl border p-10 text-center">
+      <Gamepad2 className="mx-auto h-10 w-10 text-(--color-muted)" />
+
+      <h2 className="mt-4 font-semibold text-(--color-text)">
+        No Lua-ready games found yet
+      </h2>
+
+      <p className="mt-2 text-sm text-(--color-muted)">
+        Try searching for games or configuring a provider in Settings.
       </p>
     </section>
   );
