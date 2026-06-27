@@ -9,6 +9,7 @@ import type { GameNameResult } from "../types/gameName";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
 import type { SteamFeaturedCategory } from "../types/steamFeatured";
+import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -123,4 +124,18 @@ export async function resolveSteamFeaturedCategories(params?: {
       language: params?.language,
     }
   );
+}
+
+export async function resolveSteamStoreSearch(params: {
+  term: string;
+  countryCode?: string;
+  language?: string;
+  limit?: number;
+}): Promise<SteamStoreSearchItem[]> {
+  return await invoke<SteamStoreSearchItem[]>("resolve_steam_store_search", {
+    term: params.term,
+    countryCode: params.countryCode,
+    language: params.language,
+    limit: params.limit,
+  });
 }

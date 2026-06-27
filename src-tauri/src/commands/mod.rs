@@ -7,3 +7,4 @@ pub mod game;
 pub mod metadata;
 pub mod reviews;
 pub mod store;
+pub mod store_search;
