@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ElementType } from "react";
-
 import {
-  Cloud,
-  Database,
-  Download,
+  ArrowLeft,
   PackageSearch,
 } from "lucide-react";
 
@@ -12,27 +8,32 @@ import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreHero from "../components/store/StoreHero";
-import StoreSection from "../components/store/StoreSection";
+import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
 
 import { useSettings } from "../context/SettingsContext";
 import { useProviderSearch } from "../hooks/useProviderSearch";
 
 import { scanInstalledLuaScripts } from "../services/tauri";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 
 import type { PackageGame } from "../types/package";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SteamAppMetadata } from "../types/gameMetadata";
-
-
-import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import type { SteamReviewSummary } from "../types/gameReview";
 
-type MiniStatProps = {
-  icon: ElementType;
-  label: string;
-  value: string | number;
+type StoreSectionId =
+  | "featured"
+  | "installed-supported"
+  | "recently-supported"
+  | "popular";
+
+type StoreSectionModel = {
+  id: StoreSectionId;
+  title: string;
+  description: string;
+  games: PackageGame[];
 };
 
 export default function Store() {
@@ -48,10 +49,6 @@ export default function Store() {
 
   const { settings } = useSettings();
 
-  const [reviewSummaryByAppId, setReviewSummaryByAppId] = useState<
-    Record<number, SteamReviewSummary>
-  >({});
-
   const [installedScripts, setInstalledScripts] = useState<
     InstalledLuaScript[]
   >([]);
@@ -59,6 +56,13 @@ export default function Store() {
   const [storeMetadataByAppId, setStoreMetadataByAppId] = useState<
     Record<number, SteamAppMetadata>
   >({});
+
+  const [reviewSummaryByAppId, setReviewSummaryByAppId] = useState<
+    Record<number, SteamReviewSummary>
+  >({});
+
+  const [activeSectionId, setActiveSectionId] =
+    useState<StoreSectionId | null>(null);
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -181,21 +185,82 @@ export default function Store() {
   const normalizedQuery = query.trim();
   const isSearching = normalizedQuery.length > 0;
 
-  const featuredGames = results.slice(0, 3);
+  const storeSections = useMemo(() => {
+    const usedAppIds = new Set<string>();
 
-  const installedGames = results.filter((game) =>
-    installedStatusByAppId.has(game.appId)
-  );
+    function takeUnique(games: PackageGame[], limit?: number) {
+      const output: PackageGame[] = [];
 
-  const recentlySupportedGames = results
-    .filter((game) => game.sources.some((source) => source.available))
-    .slice(0, 8);
+      for (const game of games) {
+        if (usedAppIds.has(game.appId)) {
+          continue;
+        }
 
-  const popularPlaceholderGames = results.slice(3, 11);
+        output.push(game);
+        usedAppIds.add(game.appId);
+
+        if (limit && output.length >= limit) {
+          break;
+        }
+      }
+
+      return output;
+    }
+
+    const featuredGames = takeUnique(results, 12);
+
+    const installedGames = takeUnique(
+      results.filter((game) => installedStatusByAppId.has(game.appId))
+    );
+
+    const recentlySupportedGames = takeUnique(
+      results.filter((game) =>
+        game.sources.some((source) => source.available)
+      )
+    );
+
+    const popularGames = takeUnique(results);
+
+    const sections: StoreSectionModel[] = [
+      {
+        id: "featured",
+        title: "Featured Supported Games",
+        description:
+          "Juegos destacados con metadata y fuentes preparadas para LumaForge.",
+        games: featuredGames,
+      },
+      {
+        id: "installed-supported",
+        title: "Installed & Supported",
+        description:
+          "Juegos que ya tienen Lua instalado o detectado en tu biblioteca.",
+        games: installedGames,
+      },
+      {
+        id: "recently-supported",
+        title: "Recently Supported",
+        description:
+          "Juegos con fuentes disponibles en providers configurados.",
+        games: recentlySupportedGames,
+      },
+      {
+        id: "popular",
+        title: "Popular Picks",
+        description:
+          "Selección inicial basada en resultados disponibles. Luego esto se conectará a Steam trending.",
+        games: popularGames,
+      },
+    ];
+
+    return sections.filter((section) => section.games.length > 0);
+  }, [results, installedStatusByAppId]);
+
+  const activeSection = activeSectionId
+    ? storeSections.find((section) => section.id === activeSectionId)
+    : undefined;
 
   function renderStoreCard(game: PackageGame) {
     return (
-
       <PackageCard
         key={game.appId}
         game={game}
@@ -204,19 +269,18 @@ export default function Store() {
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
         onInstallComplete={refreshInstalledScripts}
       />
-
     );
   }
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
-      <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
-            <PackageSearch className="h-3.5 w-3.5" />
-            Multi-provider fallback
-          </div>
+      <header className="flex flex-col gap-3">
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
+          <PackageSearch className="h-3.5 w-3.5" />
+          LumaForge Store
+        </div>
 
+        <div>
           <h1 className="text-3xl font-bold text-(--color-text)">
             Store
           </h1>
@@ -226,42 +290,30 @@ export default function Store() {
             con providers compatibles.
           </p>
         </div>
-
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <MiniStat
-            icon={Database}
-            label="Results"
-            value={results.length}
-          />
-
-          <MiniStat
-            icon={Cloud}
-            label="Sources"
-            value={totalSources}
-          />
-
-          <MiniStat
-            icon={Download}
-            label="Available"
-            value={availableSources}
-          />
-
-          <MiniStat
-            icon={PackageSearch}
-            label="Installed"
-            value={installedCount}
-          />
-        </div>
       </header>
 
       <PackagesToolbar
         query={query}
         selectedProvider={selectedProvider}
-        onQueryChange={setQuery}
-        onProviderChange={setSelectedProvider}
+        onQueryChange={(value) => {
+          setQuery(value);
+          setActiveSectionId(null);
+        }}
+        onProviderChange={(value) => {
+          setSelectedProvider(value);
+          setActiveSectionId(null);
+        }}
       />
 
-      <ProviderSearchReport reports={providerReports} />
+      <details className="lf-surface rounded-2xl border p-4">
+        <summary className="cursor-pointer text-sm font-medium text-(--color-text)">
+          Provider Health
+        </summary>
+
+        <div className="mt-4">
+          <ProviderSearchReport reports={providerReports} />
+        </div>
+      </details>
 
       {loading ? (
         <section className="lf-surface rounded-2xl border p-10 text-center">
@@ -287,6 +339,31 @@ export default function Store() {
             Prueba con otro AppID, nombre o provider.
           </p>
         </section>
+      ) : activeSection ? (
+        <section className="space-y-5">
+          <button
+            type="button"
+            onClick={() => setActiveSectionId(null)}
+            className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Volver al Store
+          </button>
+
+          <div>
+            <h2 className="text-2xl font-bold text-(--color-text)">
+              {activeSection.title}
+            </h2>
+
+            <p className="mt-1 text-sm text-(--color-muted)">
+              {activeSection.description}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {activeSection.games.map(renderStoreCard)}
+          </div>
+        </section>
       ) : (
         <div className="space-y-8">
           <StoreHero
@@ -296,81 +373,37 @@ export default function Store() {
           />
 
           {isSearching ? (
-            <StoreSection
-              title="Search Results"
-              description={`Resultados para "${normalizedQuery}"`}
-            >
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-xl font-bold text-(--color-text)">
+                  Search Results
+                </h2>
+
+                <p className="mt-1 text-sm text-(--color-muted)">
+                  Resultados para "{normalizedQuery}"
+                </p>
+              </div>
+
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {results.map(renderStoreCard)}
               </div>
-            </StoreSection>
+            </section>
           ) : (
             <>
-              {featuredGames.length > 0 && (
-                <StoreSection
-                  title="Featured Supported Games"
-                  description="Juegos destacados con metadata y fuentes preparadas para LumaForge."
+              {storeSections.map((section) => (
+                <StoreHorizontalSection
+                  key={section.id}
+                  title={section.title}
+                  description={section.description}
+                  onViewAll={() => setActiveSectionId(section.id)}
                 >
-                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-                    {featuredGames.map(renderStoreCard)}
-                  </div>
-                </StoreSection>
-              )}
-
-              {installedGames.length > 0 && (
-                <StoreSection
-                  title="Installed & Supported"
-                  description="Juegos que ya tienen Lua instalado o detectado en tu biblioteca."
-                >
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                    {installedGames.map(renderStoreCard)}
-                  </div>
-                </StoreSection>
-              )}
-
-              {recentlySupportedGames.length > 0 && (
-                <StoreSection
-                  title="Recently Supported"
-                  description="Juegos con fuentes disponibles en providers configurados."
-                >
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                    {recentlySupportedGames.map(renderStoreCard)}
-                  </div>
-                </StoreSection>
-              )}
-
-              {popularPlaceholderGames.length > 0 && (
-                <StoreSection
-                  title="Popular Picks"
-                  description="Selección inicial basada en resultados disponibles. Luego esto se conectará a Steam trending."
-                >
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                    {popularPlaceholderGames.map(renderStoreCard)}
-                  </div>
-                </StoreSection>
-              )}
+                  {section.games.map(renderStoreCard)}
+                </StoreHorizontalSection>
+              ))}
             </>
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function MiniStat({ icon: Icon, label, value }: MiniStatProps) {
-  return (
-    <div className="lf-surface rounded-2xl border px-4 py-3">
-      <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4 text-(--color-accent)" />
-
-        <span className="text-xs text-(--color-muted)">
-          {label}
-        </span>
-      </div>
-
-      <p className="mt-1 text-lg font-semibold text-(--color-text)">
-        {value}
-      </p>
     </div>
   );
 }
