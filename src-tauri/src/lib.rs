@@ -12,7 +12,8 @@ pub fn run() {
             commands::provider::check_provider_availability,
             commands::lua::scan_installed_lua_scripts,
             commands::lua::set_lua_script_enabled,
-            commands::lua::delete_lua_script
+            commands::lua::delete_lua_script,
+            commands::game::resolve_steam_app_names
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

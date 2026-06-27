@@ -10,6 +10,8 @@ import {
 
 } from "lucide-react";
 
+
+import { resolveGameNames } from "../services/gameNameResolver";
 import {
   deleteLuaScript,
   setLuaScriptEnabled,
@@ -50,6 +52,7 @@ export default function Library() {
 
   const [scripts, setScripts] = useState<InstalledLuaScript[]>([]);
   const [loading, setLoading] = useState(false);
+  const [gameNames, setGameNames] = useState<Record<number, string>>({});
 
   async function handleScan() {
     if (!settings.luaPath) {
@@ -65,6 +68,11 @@ export default function Library() {
 
       const results = await scanInstalledLuaScripts(settings.luaPath);
       setScripts(results);
+      const names = await resolveGameNames(
+        results.map((script) => script.app_id)
+      );
+
+      setGameNames(names);
 
       showSuccess(`Se detectaron ${results.length} script(s) Lua.`, {
         title: "Biblioteca actualizada",
@@ -231,10 +239,11 @@ export default function Library() {
             <InstalledLuaCard
               key={script.path}
               script={script}
+              gameName={gameNames[script.app_id]}
               onToggle={handleToggleScript}
               onDelete={handleDeleteScript}
 
-                />
+            />
           ))}
         </section>
       )}
@@ -245,12 +254,13 @@ export default function Library() {
 
 type InstalledLuaCardProps = {
   script: InstalledLuaScript;
+  gameName?: string;
   onToggle: (script: InstalledLuaScript) => void;
   onDelete: (script: InstalledLuaScript) => void;
 };
 
 
-function InstalledLuaCard({ script, onToggle, onDelete }: InstalledLuaCardProps) {
+function InstalledLuaCard({ script, gameName, onToggle, onDelete }: InstalledLuaCardProps) {
   return (
     <article className="lf-surface rounded-2xl border p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -260,13 +270,15 @@ function InstalledLuaCard({ script, onToggle, onDelete }: InstalledLuaCardProps)
           </div>
 
           <div className="min-w-0">
+
             <h3 className="truncate font-semibold text-(--color-text)">
-              AppID {script.app_id}
+              {gameName || `Steam App ${script.app_id}`}
             </h3>
 
             <p className="mt-0.5 truncate text-xs text-(--color-muted)">
-              {script.file_name}
+              AppID {script.app_id} · {script.file_name}
             </p>
+
           </div>
         </div>
 

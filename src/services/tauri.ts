@@ -5,6 +5,7 @@ import type { InstallResult } from "../types/install";
 import type { ProviderAvailabilityResult } from "../types/providerAvailability";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { LuaActionResult } from "../types/luaAction";
+import type { GameNameResult } from "../types/gameName";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -76,5 +77,14 @@ export async function deleteLuaScript(params: {
   return await invoke<LuaActionResult>("delete_lua_script", {
     luaPath: params.luaPath,
     fileName: params.fileName,
+  });
+}
+
+
+export async function resolveSteamAppNames(
+  appIds: number[]
+): Promise<GameNameResult[]> {
+  return await invoke<GameNameResult[]>("resolve_steam_app_names", {
+    appIds,
   });
 }
