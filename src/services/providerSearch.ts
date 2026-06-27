@@ -75,13 +75,20 @@ async function searchRealProviderAvailability(
         message: "API key requerida",
       });
 
+
       sources.push({
         providerId: provider.id,
         providerName: provider.name,
         fileType: provider.supportedFileTypes[0] ?? "zip",
         available: false,
         error: "API key requerida",
+        providerMessage: "API key requerida",
+        checkedAt: new Date().toISOString(),
+        requiresApiKey: provider.requiresApiKey,
+        authType: provider.authType,
+        hasAuth: false,
       });
+
 
       continue;
     }
@@ -112,13 +119,20 @@ async function searchRealProviderAvailability(
         message: "URL de verificación inválida",
       });
 
+
       sources.push({
         providerId: provider.id,
         providerName: provider.name,
         fileType,
         available: false,
         error: "URL de verificación inválida",
+        providerMessage: "URL de verificación inválida",
+        checkedAt: new Date().toISOString(),
+        requiresApiKey: provider.requiresApiKey,
+        authType: provider.authType,
+        hasAuth: false,
       });
+
 
       continue;
     }
@@ -132,13 +146,20 @@ async function searchRealProviderAvailability(
         message: "URL de descarga inválida",
       });
 
+
       sources.push({
         providerId: provider.id,
         providerName: provider.name,
         fileType,
         available: false,
         error: "URL de descarga inválida",
+        providerMessage: "URL de descarga inválida",
+        checkedAt: new Date().toISOString(),
+        requiresApiKey: provider.requiresApiKey,
+        authType: provider.authType,
+        hasAuth: Boolean(authHeaders),
       });
+
 
       continue;
     }
@@ -167,6 +188,14 @@ async function searchRealProviderAvailability(
         downloadUrl: availability.available ? downloadUrl : undefined,
         authHeaders,
         error: availability.available ? undefined : availability.message,
+
+        statusCode: availability.status_code,
+        providerMessage: availability.message,
+        checkedAt: new Date().toISOString(),
+
+        requiresApiKey: provider.requiresApiKey,
+        authType: provider.authType,
+        hasAuth: Boolean(authHeaders),
       });
     } catch (error) {
       const message =
@@ -190,6 +219,13 @@ async function searchRealProviderAvailability(
         fileType,
         available: false,
         error: message,
+
+        providerMessage: message,
+        checkedAt: new Date().toISOString(),
+
+        requiresApiKey: provider.requiresApiKey,
+        authType: provider.authType,
+        hasAuth: Boolean(authHeaders),
       });
     }
   }
@@ -330,18 +366,31 @@ function filterGameByProvider(
 
   const sources = game.sources
     .filter((source) => source.providerId === providerId)
-    .map((source) => ({
-      ...source,
-      downloadUrl:
-        source.downloadUrl ??
-        buildProviderDownloadUrl(
-          provider,
-          game.appId,
-          settings,
-          source.fileType
-        ),
-      authHeaders: buildProviderAuthHeaders(provider, settings),
-    }));
+    .map((source) => {
+      const authHeaders = buildProviderAuthHeaders(provider, settings);
+
+      return {
+        ...source,
+        downloadUrl:
+          source.downloadUrl ??
+          buildProviderDownloadUrl(
+            provider,
+            game.appId,
+            settings,
+            source.fileType
+          ),
+        authHeaders,
+
+        providerMessage:
+          source.providerMessage ??
+          (source.available ? "Mock disponible" : source.error ?? "No disponible"),
+        checkedAt: source.checkedAt ?? new Date().toISOString(),
+
+        requiresApiKey: provider.requiresApiKey,
+        authType: provider.authType,
+        hasAuth: Boolean(authHeaders),
+      };
+    });
 
   if (sources.length === 0) {
     return null;

@@ -103,7 +103,7 @@ export default function Packages() {
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <MiniStat
             icon={Database}
             label="Results"

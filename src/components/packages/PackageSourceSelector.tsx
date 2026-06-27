@@ -4,6 +4,7 @@ import {
   FileArchive,
   FileCode2,
   FileText,
+  KeyRound,
 } from "lucide-react";
 
 import { PackageSource } from "../../types/package";
@@ -22,6 +23,16 @@ function getFileIcon(fileType: PackageSource["fileType"]) {
   if (fileType === "zip") return FileArchive;
   if (fileType === "lua") return FileCode2;
   return FileText;
+}
+
+function formatCheckedAt(value?: string) {
+  if (!value) return "No verificado";
+
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return "No verificado";
+  }
 }
 
 export default function PackageSourceSelector({
@@ -54,7 +65,7 @@ export default function PackageSourceSelector({
                   : "border-(--surface-active-border) bg-white/5 hover:bg-white/10"
               } disabled:cursor-not-allowed disabled:opacity-50`}
             >
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <StatusIcon
@@ -70,26 +81,47 @@ export default function PackageSourceSelector({
                     </span>
                   </div>
 
-                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-(--color-muted)">
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-(--color-muted)">
                     <FileIcon className="h-3 w-3" />
                     .{source.fileType}
 
-                    {source.lastUpdated && (
-                      <span className="ml-1">• {source.lastUpdated}</span>
+                    {typeof source.statusCode === "number" && (
+                      <span>• HTTP {source.statusCode}</span>
                     )}
+
+                    <span>• {formatCheckedAt(source.checkedAt)}</span>
                   </div>
                 </div>
 
-                {isSelected && (
-                  <span className="rounded-full bg-(--color-accent) px-2 py-0.5 text-[10px] font-medium text-black">
-                    Selected
-                  </span>
-                )}
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  {source.requiresApiKey && (
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
+                        source.hasAuth
+                          ? "bg-emerald-500/10 text-emerald-300"
+                          : "bg-yellow-500/10 text-yellow-300"
+                      }`}
+                    >
+                      <KeyRound className="h-3 w-3" />
+                      {source.hasAuth ? "Auth" : "Key"}
+                    </span>
+                  )}
+
+                  {isSelected && (
+                    <span className="rounded-full bg-(--color-accent) px-2 py-0.5 text-[10px] font-medium text-black">
+                      Selected
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {!source.available && source.error && (
-                <p className="mt-2 text-[11px] text-red-300">
-                  {source.error}
+              {(source.providerMessage || source.error) && (
+                <p
+                  className={`mt-2 text-[11px] ${
+                    source.available ? "text-(--color-muted)" : "text-red-300"
+                  }`}
+                >
+                  {source.providerMessage || source.error}
                 </p>
               )}
             </button>

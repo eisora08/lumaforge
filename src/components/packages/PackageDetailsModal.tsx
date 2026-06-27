@@ -8,7 +8,10 @@ import {
   FileCode2,
   FileText,
   Gamepad2,
+  KeyRound,
   PauseCircle,
+  ShieldCheck,
+  ShieldQuestion,
   X,
 } from "lucide-react";
 
@@ -59,6 +62,43 @@ function getInstallStatusLabel(status: PackageInstallStatus) {
     className: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
     icon: CircleX,
   };
+}
+
+function getFriendlySourceStatus(source: PackageSource) {
+  if (source.available) {
+    return {
+      label: "Disponible",
+      description: "Esta fuente está lista para descargar.",
+      icon: CheckCircle2,
+      className: "text-emerald-300",
+    };
+  }
+
+  if (source.requiresApiKey && !source.hasAuth) {
+    return {
+      label: "Requiere API key",
+      description: "Configura tu API key para usar esta fuente.",
+      icon: KeyRound,
+      className: "text-yellow-300",
+    };
+  }
+
+  return {
+    label: "No disponible",
+    description: "Esta fuente no está disponible ahora mismo.",
+    icon: CircleX,
+    className: "text-red-300",
+  };
+}
+
+function formatCheckedAt(value?: string) {
+  if (!value) return "No revisado";
+
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return "No revisado";
+  }
 }
 
 export default function PackageDetailsModal({
@@ -162,7 +202,11 @@ export default function PackageDetailsModal({
                   Fuentes disponibles
                 </h3>
 
-                <div className="mt-4 space-y-2">
+                <p className="mt-1 text-sm text-(--color-muted)">
+                  Elige desde cuál fuente quieres descargar el paquete.
+                </p>
+
+                <div className="mt-4 space-y-3">
                   {game.sources.map((source) => {
                     const sourceKey = getSourceKey(source);
                     const isSelected =
@@ -170,6 +214,8 @@ export default function PackageDetailsModal({
                       getSourceKey(selectedSource) === sourceKey;
 
                     const FileIcon = getFileIcon(source.fileType);
+                    const status = getFriendlySourceStatus(source);
+                    const StatusIcon = status.icon;
 
                     return (
                       <button
@@ -181,29 +227,39 @@ export default function PackageDetailsModal({
                           isSelected
                             ? "border-(--color-accent) bg-(--color-accent)/10"
                             : "border-(--surface-active-border) bg-white/5 hover:bg-white/10"
-                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                        } disabled:cursor-not-allowed disabled:opacity-60`}
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              {source.available ? (
-                                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                              ) : (
-                                <CircleX className="h-4 w-4 text-red-400" />
-                              )}
+                              <StatusIcon className={`h-4 w-4 ${status.className}`} />
 
-                              <span className="font-medium text-(--color-text)">
+                              <span className="font-semibold text-(--color-text)">
                                 {source.providerName}
                               </span>
                             </div>
 
-                            <div className="mt-1 flex items-center gap-2 text-xs text-(--color-muted)">
-                              <FileIcon className="h-3.5 w-3.5" />
-                              .{source.fileType}
+                            <p className="mt-1 text-sm text-(--color-muted)">
+                              {status.description}
+                            </p>
 
-                              {source.lastUpdated && (
-                                <span>· {source.lastUpdated}</span>
+                            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
+                                <FileIcon className="h-3.5 w-3.5" />
+                                .{source.fileType}
+                              </span>
+
+                              {source.requiresApiKey && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                  {source.hasAuth ? "Cuenta configurada" : "Requiere cuenta"}
+                                </span>
                               )}
+
+                              <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
+                                <ShieldQuestion className="h-3.5 w-3.5" />
+                                Revisado {formatCheckedAt(source.checkedAt)}
+                              </span>
                             </div>
                           </div>
 
@@ -214,17 +270,44 @@ export default function PackageDetailsModal({
                           )}
                         </div>
 
-                        {source.error && (
-                          <p className="mt-3 text-xs text-red-300">
-                            {source.error}
-                          </p>
-                        )}
+                        <details className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                          <summary className="cursor-pointer text-xs font-medium text-(--color-muted) hover:text-(--color-text)">
+                            Detalles técnicos
+                          </summary>
 
-                        {source.downloadUrl && (
-                          <p className="mt-3 break-all text-[11px] text-(--color-muted)">
-                            {source.downloadUrl}
-                          </p>
-                        )}
+                          <div className="mt-3 space-y-2 text-xs text-(--color-muted)">
+                            <TechLine
+                              label="HTTP Status"
+                              value={
+                                typeof source.statusCode === "number"
+                                  ? String(source.statusCode)
+                                  : "N/A"
+                              }
+                            />
+
+                            <TechLine
+                              label="Provider Message"
+                              value={source.providerMessage || source.error || "N/A"}
+                            />
+
+                            <TechLine
+                              label="Auth"
+                              value={
+                                source.requiresApiKey
+                                  ? source.hasAuth
+                                    ? "Configurada"
+                                    : "Requerida"
+                                  : "No requerida"
+                              }
+                            />
+
+                            <TechLine
+                              label="Download URL"
+                              value={source.downloadUrl || "N/A"}
+                              breakAll
+                            />
+                          </div>
+                        </details>
                       </button>
                     );
                   })}
@@ -285,8 +368,12 @@ export default function PackageDetailsModal({
                       value={`.${selectedSource.fileType}`}
                     />
                     <InfoBox
-                      label="Disponible"
-                      value={selectedSource.available ? "Sí" : "No"}
+                      label="Estado"
+                      value={
+                        selectedSource.available
+                          ? "Lista para descargar"
+                          : "No disponible"
+                      }
                     />
                   </div>
                 ) : (
@@ -318,6 +405,30 @@ function InfoBox({ label, value }: InfoBoxProps) {
       <p className="mt-1 break-all text-sm font-medium text-(--color-text)">
         {value}
       </p>
+    </div>
+  );
+}
+
+type TechLineProps = {
+  label: string;
+  value: string;
+  breakAll?: boolean;
+};
+
+function TechLine({ label, value, breakAll }: TechLineProps) {
+  return (
+    <div className="grid grid-cols-[120px_1fr] gap-2">
+      <span className="text-(--color-muted)">
+        {label}
+      </span>
+
+      <span
+        className={`text-(--color-text) ${
+          breakAll ? "break-all" : ""
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }
