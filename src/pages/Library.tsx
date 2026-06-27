@@ -6,11 +6,18 @@ import {
   ShieldCheck,
   ShieldOff,
   Power,
-  Trash2
+  Trash2,
+  ExternalLink,
+  Database,
 
 } from "lucide-react";
 
 
+import { openExternalUrl } from "../services/externalLinks";
+import {
+  getSteamDbUrl,
+  getSteamStoreUrl,
+} from "../utils/steamLinks";
 import { resolveGameNames } from "../services/gameNameResolver";
 import {
   deleteLuaScript,
@@ -160,7 +167,29 @@ export default function Library() {
       });
     }
   }
+  async function handleOpenSteamStore(script: InstalledLuaScript) {
+    try {
+      await openExternalUrl(getSteamStoreUrl(script.app_id));
+    } catch (error) {
+      console.error(error);
 
+      showError("No se pudo abrir la página de Steam.", {
+        title: "Error abriendo enlace",
+      });
+    }
+  }
+
+  async function handleOpenSteamDb(script: InstalledLuaScript) {
+    try {
+      await openExternalUrl(getSteamDbUrl(script.app_id));
+    } catch (error) {
+      console.error(error);
+
+      showError("No se pudo abrir SteamDB.", {
+        title: "Error abriendo enlace",
+      });
+    }
+  }
   useEffect(() => {
     if (settings.luaPath) {
       handleScan();
@@ -242,6 +271,8 @@ export default function Library() {
               gameName={gameNames[script.app_id]}
               onToggle={handleToggleScript}
               onDelete={handleDeleteScript}
+              onOpenSteamStore={handleOpenSteamStore}
+              onOpenSteamDb={handleOpenSteamDb}
 
             />
           ))}
@@ -257,10 +288,13 @@ type InstalledLuaCardProps = {
   gameName?: string;
   onToggle: (script: InstalledLuaScript) => void;
   onDelete: (script: InstalledLuaScript) => void;
+  onOpenSteamStore: (script: InstalledLuaScript) => void;
+  onOpenSteamDb: (script: InstalledLuaScript) => void;
+
 };
 
 
-function InstalledLuaCard({ script, gameName, onToggle, onDelete }: InstalledLuaCardProps) {
+function InstalledLuaCard({ script, gameName, onToggle, onDelete, onOpenSteamDb, onOpenSteamStore }: InstalledLuaCardProps) {
   return (
     <article className="lf-surface rounded-2xl border p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -316,6 +350,25 @@ function InstalledLuaCard({ script, gameName, onToggle, onDelete }: InstalledLua
             {script.path}
           </p>
         </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onOpenSteamStore(script)}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Steam
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onOpenSteamDb(script)}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+        >
+          <Database className="h-3.5 w-3.5" />
+          SteamDB
+        </button>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button
