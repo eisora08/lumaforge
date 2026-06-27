@@ -121,7 +121,12 @@ export default function StoreGameDetailsPage({
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
-  const galleryImages: string[] = [];
+  const galleryImages = [
+    metadata?.header_image,
+    metadata?.capsule_image,
+    metadata?.capsule_image_v5,
+    game.imageUrl,
+  ].filter((img): img is string => !!img);
   const platforms = getPlatforms(game, metadata);
   const languages = metadata?.languages ?? [];
   const languagesLabel = getLanguagesLabel(metadata);

@@ -686,7 +686,7 @@ export default function Store() {
 
   if (selectedDetailGameWithOverlay) {
     return (
-      <div className="p-5 lg:p-7">
+      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
         <StoreGameDetailsPage
           game={selectedDetailGameWithOverlay}
           metadata={
@@ -709,7 +709,7 @@ export default function Store() {
   }
 
   return (
-    <div className="space-y-6 p-5 lg:p-7">
+    <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7">
       <header className="space-y-4">
         <div className="inline-flex w-fit items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
           <PackageSearch className="h-3.5 w-3.5" />
