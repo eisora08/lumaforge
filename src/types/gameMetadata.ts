@@ -11,5 +11,9 @@ export type SteamAppMetadata = {
   languages: string[];
   dlc_count: number;
 
+  short_description?: string | null;
+  detailed_description?: string | null;
+  genres: string[];
+
   resolved: boolean;
 };

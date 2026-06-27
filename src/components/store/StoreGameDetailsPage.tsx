@@ -16,6 +16,7 @@ import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { showError } from "../toast/GameToast";
 
 import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
+import StoreGameOverviewSection from "./details/StoreGameOverviewSection";
 import StoreGameContentSection from "./details/StoreGameContentSection";
 import StoreGameTechnicalSection from "./details/StoreGameTechnicalSection";
 import StoreGameLanguagesPanel from "./details/StoreGameLanguagesPanel";
@@ -32,9 +33,11 @@ type StoreGameDetailsPageProps = {
   reviewSummary?: SteamReviewSummary;
   installStatus?: PackageInstallStatus;
   moreLikeThisGames?: StoreMoreLikeThisGame[];
+  selectedSource?: PackageSource | null;
   onBack: () => void;
   onDownloadSource?: (source: PackageSource) => void;
   onOpenGame?: (game: PackageGame) => void;
+  onSelectSourceKey?: (sourceKey: string) => void;
 };
 
 function getBestImage(game: PackageGame, metadata?: SteamAppMetadata) {
@@ -116,9 +119,11 @@ export default function StoreGameDetailsPage({
   reviewSummary,
   installStatus = "not-installed",
   moreLikeThisGames = [],
+  selectedSource,
   onBack,
   onDownloadSource,
   onOpenGame,
+  onSelectSourceKey,
 }: StoreGameDetailsPageProps) {
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
 
@@ -140,7 +145,7 @@ export default function StoreGameDetailsPage({
   const reviewSubLabel = getReviewSubLabel(reviewSummary);
 
   const availableSources = game.sources.filter((source) => source.available);
-  const bestSource = getBestAvailableSource(game);
+  const bestSource = selectedSource ?? getBestAvailableSource(game);
 
   async function handleOpenSteam() {
     try {
@@ -167,8 +172,9 @@ export default function StoreGameDetailsPage({
   }
 
   function handleDownload() {
-    if (bestSource) {
-      onDownloadSource?.(bestSource);
+    const source = selectedSource?.available ? selectedSource : bestSource;
+    if (source) {
+      onDownloadSource?.(source);
     }
   }
 
@@ -201,6 +207,8 @@ export default function StoreGameDetailsPage({
 
         <div className="grid grid-cols-1 gap-6 p-5 lg:grid-cols-[1fr_360px] lg:p-6">
           <section className="space-y-5">
+            <StoreGameOverviewSection title={title} metadata={metadata} />
+
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <InfoBlock
                 icon={Star}
@@ -233,6 +241,7 @@ export default function StoreGameDetailsPage({
               platforms={platforms}
               availableSources={availableSources.length}
               totalSources={game.sources.length}
+              selectedSource={selectedSource ?? bestSource}
               onDownload={handleDownload}
               onChangeSource={() => setSourceSelectorOpen(true)}
               onOpenSteam={handleOpenSteam}
@@ -260,8 +269,9 @@ export default function StoreGameDetailsPage({
       <StoreSourceSelectorModal
         open={sourceSelectorOpen}
         game={game}
-        selectedSource={bestSource}
+        selectedSource={selectedSource ?? bestSource}
         onClose={() => setSourceSelectorOpen(false)}
+        onSelectSource={onSelectSourceKey}
         onDownloadSource={handleDownloadFromSource}
         onOpenDetails={onOpenGame}
       />

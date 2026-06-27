@@ -69,6 +69,9 @@ function createFallbackMetadata(appId: number): SteamAppMetadata {
     platforms: [],
     languages: [],
     dlc_count: 0,
+    short_description: null,
+    detailed_description: null,
+    genres: [],
     resolved: false,
   };
 }

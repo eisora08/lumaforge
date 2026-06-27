@@ -14,5 +14,9 @@ pub struct SteamAppMetadata {
     pub languages: Vec<String>,
     pub dlc_count: usize,
 
+    pub short_description: Option<String>,
+    pub detailed_description: Option<String>,
+    pub genres: Vec<String>,
+
     pub resolved: bool,
 }

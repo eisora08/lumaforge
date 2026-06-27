@@ -3,13 +3,16 @@ import {
   Database,
   Download,
   ExternalLink,
+  FileArchive,
+  FileCode2,
+  FileText,
   Gamepad2,
   PauseCircle,
 } from "lucide-react";
 
 import { SummaryLine } from "./StoreGameDetailPrimitives";
 
-import type { PackageGame } from "../../../types/package";
+import type { PackageGame, PackageSource } from "../../../types/package";
 import type { PackageInstallStatus } from "../../../types/packageInstall";
 
 type StoreGameSummaryPanelProps = {
@@ -19,6 +22,7 @@ type StoreGameSummaryPanelProps = {
   platforms: string[];
   availableSources: number;
   totalSources: number;
+  selectedSource?: PackageSource | null;
   onDownload?: () => void;
   onChangeSource?: () => void;
   onOpenSteam: () => void;
@@ -45,6 +49,19 @@ function getInstallBadge(status: PackageInstallStatus) {
   return null;
 }
 
+function getFileIcon(fileType: PackageSource["fileType"]) {
+  if (fileType === "zip") return FileArchive;
+  if (fileType === "lua") return FileCode2;
+  return FileText;
+}
+
+function getDownloadLabel(source?: PackageSource | null) {
+  if (!source) return "Download";
+  if (source.fileType === "lua") return "Download Lua";
+  if (source.fileType === "zip") return "Download Package";
+  return "Download";
+}
+
 export default function StoreGameSummaryPanel({
   game,
   installStatus = "not-installed",
@@ -52,6 +69,7 @@ export default function StoreGameSummaryPanel({
   platforms,
   availableSources,
   totalSources,
+  selectedSource,
   onDownload,
   onChangeSource,
   onOpenSteam,
@@ -59,6 +77,7 @@ export default function StoreGameSummaryPanel({
 }: StoreGameSummaryPanelProps) {
   const hasLuaReady = availableSources > 0;
   const installBadge = getInstallBadge(installStatus);
+  const canDownload = !!selectedSource?.available;
 
   return (
     <div className="space-y-4">
@@ -118,15 +137,38 @@ export default function StoreGameSummaryPanel({
       </div>
 
       <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
+        {selectedSource && (
+          <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-(--color-muted)">
+                Selected Source
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-xs text-(--color-text)">
+                {(function () {
+                  const FileIcon = getFileIcon(selectedSource.fileType);
+                  return <FileIcon className="h-3 w-3" />;
+                })()}
+                .{selectedSource.fileType}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-sm text-(--color-text)">
+              <span>{selectedSource.providerName}</span>
+              <span className="text-xs text-emerald-300">
+                Ready
+              </span>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-2">
           <button
             type="button"
-            disabled={!hasLuaReady}
+            disabled={!canDownload}
             onClick={onDownload}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
-            {hasLuaReady ? "Download" : "No Sources Available"}
+            {canDownload ? getDownloadLabel(selectedSource) : "No Sources Available"}
           </button>
 
           <button

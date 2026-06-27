@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   CheckCircle2,
   CircleX,
@@ -68,9 +69,31 @@ export default function StoreSourceSelectorModal({
 }: StoreSourceSelectorModalProps) {
   if (!open || !game) return null;
 
-  const hasSources = game.sources.length > 0;
   const bestSource = getBestAvailableSource(game);
-  const defaultSource = selectedSource || bestSource;
+  const initialKey = selectedSource
+    ? getSourceKey(selectedSource)
+    : bestSource
+      ? getSourceKey(bestSource)
+      : null;
+
+  const [selectedKey, setSelectedKey] = useState<string | null>(initialKey);
+
+  useEffect(() => {
+    setSelectedKey(initialKey);
+  }, [game?.appId, initialKey]);
+
+  const hasSources = game.sources.length > 0;
+
+  const selectedSourceForDownload = selectedKey
+    ? game.sources.find((s) => getSourceKey(s) === selectedKey)
+    : null;
+
+  function getDownloadLabel() {
+    if (!selectedSourceForDownload) return "Download";
+    if (selectedSourceForDownload.fileType === "lua") return "Download Lua";
+    if (selectedSourceForDownload.fileType === "zip") return "Download Package";
+    return "Download";
+  }
 
   return (
     <div
@@ -126,9 +149,7 @@ export default function StoreSourceSelectorModal({
             <div className="space-y-2">
               {game.sources.map((source) => {
                 const sourceKey = getSourceKey(source);
-                const isSelected = defaultSource
-                  ? getSourceKey(defaultSource) === sourceKey
-                  : false;
+                const isSelected = selectedKey === sourceKey;
 
                 const FileIcon = getFileIcon(source.fileType);
                 const status = getSourceStatus(source);
@@ -138,7 +159,10 @@ export default function StoreSourceSelectorModal({
                   <button
                     key={sourceKey}
                     type="button"
-                    onClick={() => onSelectSource?.(sourceKey)}
+                    onClick={() => {
+                      setSelectedKey(sourceKey);
+                      onSelectSource?.(sourceKey);
+                    }}
                     className={`w-full rounded-xl border p-3.5 text-left transition ${
                       isSelected
                         ? "border-(--color-accent) bg-(--color-accent)/10"
@@ -199,16 +223,16 @@ export default function StoreSourceSelectorModal({
 
           <button
             type="button"
-            disabled={!bestSource || !bestSource.available}
+            disabled={!selectedSourceForDownload?.available}
             onClick={() => {
-              if (bestSource) {
-                onDownloadSource?.(bestSource);
+              if (selectedSourceForDownload) {
+                onDownloadSource?.(selectedSourceForDownload);
               }
             }}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2.5 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
-            Download
+            {getDownloadLabel()}
           </button>
 
           <div className="ml-auto flex items-center gap-2">

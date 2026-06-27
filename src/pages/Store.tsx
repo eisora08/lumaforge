@@ -30,7 +30,7 @@ import {
 } from "../services/tauri";
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl } from "../utils/steamLinks";
-import { getBestAvailableSource } from "../utils/sourceHelpers";
+import { getBestAvailableSource, getSourceKey } from "../utils/sourceHelpers";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
@@ -172,6 +172,10 @@ export default function Store() {
 
   const [sourceSelectorGame, setSourceSelectorGame] =
     useState<PackageGame | null>(null);
+
+  const [selectedSourceKeyByAppId, setSelectedSourceKeyByAppId] = useState<
+    Record<string, string>
+  >({});
 
   const [browseFilters, setBrowseFilters] = useState<BrowseFilters>(
     DEFAULT_BROWSE_FILTERS
@@ -747,6 +751,15 @@ export default function Store() {
     openExternalUrl(getSteamStoreUrl(Number(appId)));
   }
 
+  function getSelectedSourceForGame(game: PackageGame): PackageSource | undefined {
+    const key = selectedSourceKeyByAppId[game.appId];
+    if (key) {
+      const match = game.sources.find((s) => getSourceKey(s) === key);
+      if (match) return match;
+    }
+    return getBestAvailableSource(game);
+  }
+
   function openSourceSelectorForGame(game: PackageGame) {
     setSourceSelectorGame(game);
   }
@@ -960,10 +973,17 @@ export default function Store() {
             installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
             "not-installed"
           }
+          selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
           moreLikeThisGames={selectedDetailRelatedGames}
           onBack={() => setSelectedDetailGame(null)}
           onDownloadSource={handleDownloadSource}
           onOpenGame={openDetailsForGame}
+          onSelectSourceKey={(sourceKey) =>
+            setSelectedSourceKeyByAppId((current) => ({
+              ...current,
+              [selectedDetailGameWithOverlay.appId]: sourceKey,
+            }))
+          }
         />
       </div>
     );
@@ -1276,7 +1296,23 @@ export default function Store() {
       <StoreSourceSelectorModal
         open={sourceSelectorGame !== null}
         game={sourceSelectorGame ? (providerOverlayByAppId[sourceSelectorGame.appId] ?? sourceSelectorGame) : null}
+        selectedSource={
+          sourceSelectorGame
+            ? getSelectedSourceForGame(
+                providerOverlayByAppId[sourceSelectorGame.appId] ?? sourceSelectorGame
+              )
+            : undefined
+        }
         onClose={() => setSourceSelectorGame(null)}
+        onSelectSource={(sourceKey) => {
+          const game = sourceSelectorGame;
+          if (game) {
+            setSelectedSourceKeyByAppId((current) => ({
+              ...current,
+              [game.appId]: sourceKey,
+            }));
+          }
+        }}
         onDownloadSource={(source) => {
           const game = sourceSelectorGame;
           if (game) {

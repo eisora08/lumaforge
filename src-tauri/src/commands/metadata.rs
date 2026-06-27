@@ -112,6 +112,18 @@ pub fn resolve_steam_app_metadata(
             .map(|items| items.len())
             .unwrap_or(0);
 
+        let short_description = data
+            .get("short_description")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
+        let detailed_description = data
+            .get("detailed_description")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
+        let genres = parse_genres(data);
+
         output.push(SteamAppMetadata {
             app_id,
             name,
@@ -122,6 +134,9 @@ pub fn resolve_steam_app_metadata(
             platforms,
             languages,
             dlc_count,
+            short_description,
+            detailed_description,
+            genres,
             resolved: true,
         });
     }
@@ -129,6 +144,22 @@ pub fn resolve_steam_app_metadata(
     output.sort_by_key(|item| item.app_id);
 
     Ok(output)
+}
+
+fn parse_genres(data: &serde_json::Value) -> Vec<String> {
+    data.get("genres")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.get("description")
+                        .and_then(|desc| desc.as_str())
+                        .map(|desc| desc.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
@@ -142,6 +173,9 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         platforms: Vec::new(),
         languages: Vec::new(),
         dlc_count: 0,
+        short_description: None,
+        detailed_description: None,
+        genres: Vec::new(),
         resolved: false,
     }
 }
