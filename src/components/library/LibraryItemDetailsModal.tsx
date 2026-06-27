@@ -1,13 +1,10 @@
 import { useState } from "react";
-import type { ElementType } from "react";
 
 import {
   Database,
   ExternalLink,
-  FileCode2,
   Gamepad2,
   Languages,
-  Package,
   Power,
   ShieldCheck,
   ShieldOff,
@@ -72,6 +69,9 @@ function getInitials(title: string) {
     .join("");
 }
 
+import LuaUpdateBadge from "./LuaUpdateBadge";
+import { getLuaUpdateInfo } from "../../utils/luaUpdateStatus";
+
 export default function LibraryItemDetailsModal({
   open,
   script,
@@ -92,9 +92,7 @@ export default function LibraryItemDetailsModal({
   const developer = metadata?.developer || "Developer unknown";
   const coverUrl = getBestCoverUrl(script.app_id, metadata);
   const initials = getInitials(title);
-
-  const statusLabel = script.is_disabled ? "Disabled" : "Active";
-  const updateLabel = script.is_disabled ? "Deshabilitado" : "No verificado";
+  const updateInfo = getLuaUpdateInfo(script);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
@@ -241,7 +239,7 @@ export default function LibraryItemDetailsModal({
                     label="Modificado"
                     value={formatDate(script.modified_at)}
                   />
-                  <InfoBox label="Estado de update" value={updateLabel} />
+                  <InfoBox label="Estado de update" value={updateInfo.label} />
                 </div>
 
                 <div className="mt-3 rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
@@ -307,23 +305,17 @@ export default function LibraryItemDetailsModal({
                 </h3>
 
                 <div className="mt-4 space-y-3">
-                  <SummaryLine
-                    icon={FileCode2}
-                    label="Lua"
-                    value={script.file_name}
-                  />
+                  <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
+                    <p className="mb-2 text-xs text-(--color-muted)">
+                      Update
+                    </p>
 
-                  <SummaryLine
-                    icon={Package}
-                    label="Estado"
-                    value={statusLabel}
-                  />
+                    <LuaUpdateBadge info={updateInfo} />
 
-                  <SummaryLine
-                    icon={Package}
-                    label="Update"
-                    value={updateLabel}
-                  />
+                    <p className="mt-2 text-xs text-(--color-muted)">
+                      {updateInfo.description}
+                    </p>
+                  </div>
                 </div>
               </div>
             </aside>
@@ -353,30 +345,4 @@ function InfoBox({ label, value }: InfoBoxProps) {
   );
 }
 
-type SummaryLineProps = {
-  icon: ElementType;
-  label: string;
-  value: string;
-};
 
-function SummaryLine({
-  icon: Icon,
-  label,
-  value,
-}: SummaryLineProps) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-      <Icon className="h-4 w-4 text-(--color-accent)" />
-
-      <div className="min-w-0">
-        <p className="text-xs text-(--color-muted)">
-          {label}
-        </p>
-
-        <p className="truncate text-sm font-medium text-(--color-text)">
-          {value}
-        </p>
-      </div>
-    </div>
-  );
-}

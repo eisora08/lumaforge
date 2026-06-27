@@ -28,6 +28,9 @@ import {
   showWarning,
 } from "../components/toast/GameToast";
 
+import LuaUpdateBadge from "../components/library/LuaUpdateBadge";
+import { getLuaUpdateInfo } from "../utils/luaUpdateStatus";
+
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
@@ -56,19 +59,7 @@ function getBestCoverUrl(
   );
 }
 
-function getUpdateLabel(script: InstalledLuaScript) {
-  if (script.is_disabled) {
-    return {
-      label: "Deshabilitado",
-      className: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
-    };
-  }
 
-  return {
-    label: "No verificado",
-    className: "border-sky-500/20 bg-sky-500/10 text-sky-300",
-  };
-}
 
 export default function Library() {
   const { settings } = useSettings();
@@ -446,7 +437,7 @@ function InstalledLuaCatalogCard({
 
   const title = metadata?.name || `Steam App ${script.app_id}`;
   const developer = metadata?.developer;
-  const updateLabel = getUpdateLabel(script);
+  const updateInfo = getLuaUpdateInfo(script);
   const coverUrl = getBestCoverUrl(script.app_id, metadata);
 
   return (
@@ -522,11 +513,7 @@ function InstalledLuaCatalogCard({
             </p>
           </div>
 
-          <span
-            className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] ${updateLabel.className}`}
-          >
-            {updateLabel.label}
-          </span>
+          <LuaUpdateBadge info={updateInfo} />
         </div>
 
 
