@@ -96,6 +96,7 @@ export default function PackageCard({ game }: PackageCardProps) {
         depotcacheTarget: settings.depotcachePath,
         createBackups: settings.createBackups,
         headers: selectedSource.authHeaders,
+        tempFolder: settings.tempFolder,
       });
 
 

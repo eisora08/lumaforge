@@ -10,6 +10,7 @@ pub fn download_and_install_package(
     depotcache_target: String,
     create_backups: bool,
     headers: Option<HashMap<String, String>>,
+    temp_folder: Option<String>,
 ) -> Result<InstallResult, String> {
     if download_url.trim().is_empty() {
         return Err("La URL de descarga está vacía.".to_string());
@@ -23,7 +24,9 @@ pub fn download_and_install_package(
         return Err("La ruta depotcache está vacía.".to_string());
     }
 
-    let zip_path = download_utils::download_file_to_temp(&download_url, headers)?;
+    let zip_path =
+        download_utils::download_file_to_temp(&download_url, headers, temp_folder)?;
+
     let extracted_folder = archive_utils::extract_zip(&zip_path)?;
 
     let counts = install_utils::install_extracted_package(

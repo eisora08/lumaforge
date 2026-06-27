@@ -10,10 +10,7 @@ pub fn extract_zip(zip_path: &Path) -> Result<PathBuf, String> {
     let mut archive = ZipArchive::new(file)
         .map_err(|error| format!("Error leyendo ZIP: {}", error))?;
 
-    let extract_dir = zip_path
-        .parent()
-        .ok_or("No se pudo obtener la carpeta temporal")?
-        .join("extracted");
+    let extract_dir = build_extract_dir(zip_path)?;
 
     fs::create_dir_all(&extract_dir)
         .map_err(|error| format!("Error creando carpeta de extracción: {}", error))?;
@@ -48,4 +45,17 @@ pub fn extract_zip(zip_path: &Path) -> Result<PathBuf, String> {
     }
 
     Ok(extract_dir)
+}
+
+fn build_extract_dir(zip_path: &Path) -> Result<PathBuf, String> {
+    let parent = zip_path
+        .parent()
+        .ok_or("No se pudo obtener la carpeta del ZIP")?;
+
+    let file_stem = zip_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("package");
+
+    Ok(parent.join(format!("{}-extracted", file_stem)))
 }

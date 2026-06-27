@@ -14,6 +14,7 @@ export async function downloadAndInstallPackage(params: {
   depotcacheTarget: string;
   createBackups: boolean;
   headers?: Record<string, string>;
+  tempFolder?: string;
 }): Promise<InstallResult> {
   return await invoke<InstallResult>("download_and_install_package", {
     downloadUrl: params.downloadUrl,
@@ -21,6 +22,7 @@ export async function downloadAndInstallPackage(params: {
     depotcacheTarget: params.depotcacheTarget,
     createBackups: params.createBackups,
     headers: params.headers,
+    tempFolder: params.tempFolder,
   });
 }
 
