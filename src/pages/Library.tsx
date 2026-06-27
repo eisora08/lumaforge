@@ -1,37 +1,39 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Database,
+  ExternalLink,
   FileCode2,
+  Filter,
   FolderSearch,
+  Power,
   RefreshCcw,
+  Search,
   ShieldCheck,
   ShieldOff,
-  Power,
   Trash2,
-  ExternalLink,
-  Database,
-
 } from "lucide-react";
 
-
+import { useSettings } from "../context/SettingsContext";
+import {
+  deleteLuaScript,
+  scanInstalledLuaScripts,
+  setLuaScriptEnabled,
+} from "../services/tauri";
+import { InstalledLuaScript } from "../types/installedLua";
+import { resolveGameNames } from "../services/gameNameResolver";
 import { openExternalUrl } from "../services/externalLinks";
 import {
   getSteamDbUrl,
   getSteamStoreUrl,
 } from "../utils/steamLinks";
-import { resolveGameNames } from "../services/gameNameResolver";
-import {
-  deleteLuaScript,
-  setLuaScriptEnabled,
-} from "../services/tauri";
-
-import { useSettings } from "../context/SettingsContext";
-import { scanInstalledLuaScripts } from "../services/tauri";
-import { InstalledLuaScript } from "../types/installedLua";
 import {
   showError,
   showSuccess,
   showWarning,
 } from "../components/toast/GameToast";
+
+type LibraryFilter = "all" | "active" | "disabled";
+type LibrarySort = "appid" | "name" | "modified" | "size";
 
 function formatBytes(bytes: number) {
   if (!bytes) return "0 B";
@@ -50,7 +52,6 @@ function formatBytes(bytes: number) {
 
 function formatDate(seconds: number) {
   if (!seconds) return "No disponible";
-
   return new Date(seconds * 1000).toLocaleString();
 }
 
@@ -58,8 +59,12 @@ export default function Library() {
   const { settings } = useSettings();
 
   const [scripts, setScripts] = useState<InstalledLuaScript[]>([]);
-  const [loading, setLoading] = useState(false);
   const [gameNames, setGameNames] = useState<Record<number, string>>({});
+  const [loading, setLoading] = useState(false);
+
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<LibraryFilter>("all");
+  const [sortBy, setSortBy] = useState<LibrarySort>("appid");
 
   async function handleScan() {
     if (!settings.luaPath) {
@@ -75,6 +80,7 @@ export default function Library() {
 
       const results = await scanInstalledLuaScripts(settings.luaPath);
       setScripts(results);
+
       const names = await resolveGameNames(
         results.map((script) => script.app_id)
       );
@@ -101,7 +107,6 @@ export default function Library() {
       setLoading(false);
     }
   }
-
 
   async function handleToggleScript(script: InstalledLuaScript) {
     try {
@@ -167,6 +172,7 @@ export default function Library() {
       });
     }
   }
+
   async function handleOpenSteamStore(script: InstalledLuaScript) {
     try {
       await openExternalUrl(getSteamStoreUrl(script.app_id));
@@ -190,6 +196,7 @@ export default function Library() {
       });
     }
   }
+
   useEffect(() => {
     if (settings.luaPath) {
       handleScan();
@@ -199,6 +206,44 @@ export default function Library() {
 
   const enabledScripts = scripts.filter((script) => !script.is_disabled);
   const disabledScripts = scripts.filter((script) => script.is_disabled);
+
+  const filteredScripts = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    const filtered = scripts.filter((script) => {
+      const gameName = gameNames[script.app_id] || "";
+      const matchesQuery =
+        !normalizedQuery ||
+        script.app_id.toString().includes(normalizedQuery) ||
+        script.file_name.toLowerCase().includes(normalizedQuery) ||
+        gameName.toLowerCase().includes(normalizedQuery);
+
+      const matchesFilter =
+        filter === "all" ||
+        (filter === "active" && !script.is_disabled) ||
+        (filter === "disabled" && script.is_disabled);
+
+      return matchesQuery && matchesFilter;
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "name") {
+        const aName = gameNames[a.app_id] || `Steam App ${a.app_id}`;
+        const bName = gameNames[b.app_id] || `Steam App ${b.app_id}`;
+        return aName.localeCompare(bName);
+      }
+
+      if (sortBy === "modified") {
+        return b.modified_at - a.modified_at;
+      }
+
+      if (sortBy === "size") {
+        return b.file_size - a.file_size;
+      }
+
+      return a.app_id - b.app_id;
+    });
+  }, [scripts, query, filter, sortBy, gameNames]);
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
@@ -214,8 +259,7 @@ export default function Library() {
           </h1>
 
           <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Escanea los scripts Lua instalados en Steam y revisa qué AppIDs
-            tienen archivos activos o deshabilitados.
+            Busca, filtra y administra los scripts Lua instalados en Steam.
           </p>
         </div>
 
@@ -250,7 +294,65 @@ export default function Library() {
         </div>
       </section>
 
-      {scripts.length === 0 ? (
+      <section className="lf-surface rounded-2xl border p-4">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_190px_190px]">
+          <div className="flex h-11 items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-4">
+            <Search className="h-4 w-4 text-(--color-muted)" />
+
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Buscar por nombre, AppID o archivo..."
+              className="w-full bg-transparent text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)"
+            />
+          </div>
+
+          <div className="flex h-11 items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-4">
+            <Filter className="h-4 w-4 text-(--color-muted)" />
+
+            <select
+              value={filter}
+              onChange={(event) => setFilter(event.target.value as LibraryFilter)}
+              className="w-full bg-transparent text-sm text-(--color-text) outline-none"
+            >
+              <option className="bg-black text-white" value="all">
+                Todos
+              </option>
+              <option className="bg-black text-white" value="active">
+                Activos
+              </option>
+              <option className="bg-black text-white" value="disabled">
+                Deshabilitados
+              </option>
+            </select>
+          </div>
+
+          <div className="flex h-11 items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-4">
+            <RefreshCcw className="h-4 w-4 text-(--color-muted)" />
+
+            <select
+              value={sortBy}
+              onChange={(event) => setSortBy(event.target.value as LibrarySort)}
+              className="w-full bg-transparent text-sm text-(--color-text) outline-none"
+            >
+              <option className="bg-black text-white" value="appid">
+                Ordenar por AppID
+              </option>
+              <option className="bg-black text-white" value="name">
+                Ordenar por nombre
+              </option>
+              <option className="bg-black text-white" value="modified">
+                Más recientes
+              </option>
+              <option className="bg-black text-white" value="size">
+                Mayor tamaño
+              </option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {filteredScripts.length === 0 ? (
         <section className="lf-surface rounded-2xl border p-10 text-center">
           <FileCode2 className="mx-auto h-10 w-10 text-(--color-muted)" />
 
@@ -259,12 +361,12 @@ export default function Library() {
           </h2>
 
           <p className="mt-2 text-sm text-(--color-muted)">
-            Cuando instales paquetes, aparecerán aquí.
+            Cambia la búsqueda, el filtro o instala paquetes desde Paquetes.
           </p>
         </section>
       ) : (
         <section className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
-          {scripts.map((script) => (
+          {filteredScripts.map((script) => (
             <InstalledLuaCard
               key={script.path}
               script={script}
@@ -273,7 +375,6 @@ export default function Library() {
               onDelete={handleDeleteScript}
               onOpenSteamStore={handleOpenSteamStore}
               onOpenSteamDb={handleOpenSteamDb}
-
             />
           ))}
         </section>
@@ -282,7 +383,6 @@ export default function Library() {
   );
 }
 
-
 type InstalledLuaCardProps = {
   script: InstalledLuaScript;
   gameName?: string;
@@ -290,11 +390,16 @@ type InstalledLuaCardProps = {
   onDelete: (script: InstalledLuaScript) => void;
   onOpenSteamStore: (script: InstalledLuaScript) => void;
   onOpenSteamDb: (script: InstalledLuaScript) => void;
-
 };
 
-
-function InstalledLuaCard({ script, gameName, onToggle, onDelete, onOpenSteamDb, onOpenSteamStore }: InstalledLuaCardProps) {
+function InstalledLuaCard({
+  script,
+  gameName,
+  onToggle,
+  onDelete,
+  onOpenSteamStore,
+  onOpenSteamDb,
+}: InstalledLuaCardProps) {
   return (
     <article className="lf-surface rounded-2xl border p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -304,7 +409,6 @@ function InstalledLuaCard({ script, gameName, onToggle, onDelete, onOpenSteamDb,
           </div>
 
           <div className="min-w-0">
-
             <h3 className="truncate font-semibold text-(--color-text)">
               {gameName || `Steam App ${script.app_id}`}
             </h3>
@@ -312,7 +416,6 @@ function InstalledLuaCard({ script, gameName, onToggle, onDelete, onOpenSteamDb,
             <p className="mt-0.5 truncate text-xs text-(--color-muted)">
               AppID {script.app_id} · {script.file_name}
             </p>
-
           </div>
         </div>
 
@@ -330,27 +433,11 @@ function InstalledLuaCard({ script, gameName, onToggle, onDelete, onOpenSteamDb,
       </div>
 
       <div className="space-y-3 text-xs text-(--color-muted)">
-        <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-          <p>Tamaño</p>
-          <p className="mt-1 font-medium text-(--color-text)">
-            {formatBytes(script.file_size)}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-          <p>Modificado</p>
-          <p className="mt-1 font-medium text-(--color-text)">
-            {formatDate(script.modified_at)}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-          <p>Ruta</p>
-          <p className="mt-1 break-all font-medium text-(--color-text)">
-            {script.path}
-          </p>
-        </div>
+        <InfoBox label="Tamaño" value={formatBytes(script.file_size)} />
+        <InfoBox label="Modificado" value={formatDate(script.modified_at)} />
+        <InfoBox label="Ruta" value={script.path} breakAll />
       </div>
+
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button
           type="button"
@@ -370,7 +457,8 @@ function InstalledLuaCard({ script, gameName, onToggle, onDelete, onOpenSteamDb,
           SteamDB
         </button>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-2">
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => onToggle(script)}
@@ -389,8 +477,29 @@ function InstalledLuaCard({ script, gameName, onToggle, onDelete, onOpenSteamDb,
           Eliminar
         </button>
       </div>
-
     </article>
+  );
+}
+
+type InfoBoxProps = {
+  label: string;
+  value: string;
+  breakAll?: boolean;
+};
+
+function InfoBox({ label, value, breakAll }: InfoBoxProps) {
+  return (
+    <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
+      <p>{label}</p>
+
+      <p
+        className={`mt-1 font-medium text-(--color-text) ${
+          breakAll ? "break-all" : ""
+        }`}
+      >
+        {value}
+      </p>
+    </div>
   );
 }
 
