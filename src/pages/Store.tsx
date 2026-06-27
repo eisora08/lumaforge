@@ -612,6 +612,13 @@ export default function Store() {
       if (Number.isFinite(appId)) {
         appIds.add(appId);
       }
+
+      const dlcIds = storeMetadataByAppId[appId]?.dlc_app_ids ?? [];
+      dlcIds.forEach((id) => {
+        if (Number.isFinite(id)) {
+          appIds.add(id);
+        }
+      });
     }
 
     return Array.from(appIds);

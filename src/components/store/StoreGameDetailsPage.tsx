@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Languages, Puzzle, Star } from "lucide-react";
 
 import type { PackageGame, PackageSource } from "../../types/package";
@@ -12,12 +12,13 @@ import {
   getSteamStoreUrl,
 } from "../../utils/steamLinks";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
+import { resolveGameMetadata } from "../../services/gameMetadataResolver";
 
 import { showError } from "../toast/GameToast";
 
 import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
 import StoreGameOverviewSection from "./details/StoreGameOverviewSection";
-import StoreGameContentSection from "./details/StoreGameContentSection";
+import StoreGameDlcSection from "./details/StoreGameDlcSection";
 import StoreGameTechnicalSection from "./details/StoreGameTechnicalSection";
 import StoreGameLanguagesPanel from "./details/StoreGameLanguagesPanel";
 import StoreGameSummaryPanel from "./details/StoreGameSummaryPanel";
@@ -126,6 +127,7 @@ export default function StoreGameDetailsPage({
   onSelectSourceKey,
 }: StoreGameDetailsPageProps) {
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
+  const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
 
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
@@ -141,8 +143,41 @@ export default function StoreGameDetailsPage({
   const languagesLabel = getLanguagesLabel(metadata);
   const dlcLabel = getDlcLabel(metadata);
   const dlcCount = metadata?.dlc_count ?? 0;
+  const dlcAppIds = metadata?.dlc_app_ids ?? [];
   const reviewLabel = getReviewLabel(reviewSummary);
   const reviewSubLabel = getReviewSubLabel(reviewSummary);
+
+  useEffect(() => {
+    if (dlcAppIds.length === 0) {
+      setDlcMetadata([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const resolved = await resolveGameMetadata(dlcAppIds);
+        const items = dlcAppIds
+          .map((id) => resolved[id])
+          .filter((item): item is SteamAppMetadata => !!item);
+
+        if (!cancelled) {
+          setDlcMetadata(items);
+        }
+      } catch {
+        if (!cancelled) {
+          setDlcMetadata([]);
+        }
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dlcAppIds]);
 
   const availableSources = game.sources.filter((source) => source.available);
   const bestSource = selectedSource ?? getBestAvailableSource(game);
@@ -251,7 +286,7 @@ export default function StoreGameDetailsPage({
         </div>
       </section>
 
-      <StoreGameContentSection dlcLabel={dlcLabel} dlcCount={dlcCount} />
+      <StoreGameDlcSection dlcCount={dlcCount} dlcMetadata={dlcMetadata} />
 
       <StoreGameTechnicalSection />
 

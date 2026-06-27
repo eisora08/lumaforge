@@ -1,7 +1,14 @@
 import { resolveSteamAppMetadata } from "./tauri";
 import { SteamAppMetadata } from "../types/gameMetadata";
 
-const CACHE_KEY = "lumaforge-steam-app-metadata-cache";
+const CACHE_KEY = "lumaforge-steam-app-metadata-cache-v3";
+
+const OLD_CACHE_KEYS = [
+  "lumaforge-steam-app-metadata-cache",
+  "lumaforge-steam-app-metadata-cache-v2",
+];
+
+OLD_CACHE_KEYS.forEach((key) => localStorage.removeItem(key));
 
 type MetadataCache = Record<string, SteamAppMetadata>;
 
@@ -71,10 +78,15 @@ function createFallbackMetadata(appId: number): SteamAppMetadata {
     dlc_count: 0,
     short_description: null,
     detailed_description: null,
+    about_the_game: null,
     genres: [],
-    publisher: null,
+    publishers: [],
     release_date: null,
     categories: [],
+    dlc_app_ids: [],
+    pc_requirements: null,
+    mac_requirements: null,
+    linux_requirements: null,
     resolved: false,
   };
 }

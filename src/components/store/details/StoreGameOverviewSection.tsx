@@ -22,7 +22,7 @@ function stripHtml(input: string): string {
 }
 
 const MAX_SHORT_DESCRIPTION_LENGTH = 300;
-const MAX_LONG_PREVIEW = 500;
+const MAX_LONG_PREVIEW = 700;
 
 export default function StoreGameOverviewSection({
   title,
@@ -31,29 +31,37 @@ export default function StoreGameOverviewSection({
   const [showFullDescription, setShowFullDescription] = useState(false);
 
   const shortDescription = metadata?.short_description || null;
+  const rawAboutTheGame = metadata?.about_the_game || null;
   const rawDetailedDescription = metadata?.detailed_description || null;
-  const detailedDescription = rawDetailedDescription
-    ? stripHtml(rawDetailedDescription)
-    : null;
+
+  const aboutTheGame = rawAboutTheGame ? stripHtml(rawAboutTheGame) : null;
+  const detailedDescription = rawDetailedDescription ? stripHtml(rawDetailedDescription) : null;
+
+  const publishers = metadata?.publishers ?? [];
   const genres = metadata?.genres ?? [];
   const categories = metadata?.categories ?? [];
-  const publisher = metadata?.publisher || null;
   const releaseDate = metadata?.release_date || null;
 
-  const primaryText = shortDescription && shortDescription.length <= MAX_SHORT_DESCRIPTION_LENGTH
-    ? shortDescription
-    : (detailedDescription ?? shortDescription ?? "");
+  const primaryText = (() => {
+    if (shortDescription) return shortDescription;
+    if (aboutTheGame) return aboutTheGame.slice(0, MAX_SHORT_DESCRIPTION_LENGTH);
+    if (detailedDescription) return detailedDescription.slice(0, MAX_SHORT_DESCRIPTION_LENGTH);
+    return "";
+  })();
 
-  const longText = detailedDescription && detailedDescription !== primaryText
-    ? detailedDescription
-    : null;
+  const longText = (() => {
+    const source = aboutTheGame ?? detailedDescription;
+    if (!source) return null;
+    if (source === primaryText) return null;
+    return source;
+  })();
 
-  const shouldClamp = longText && longText.length > MAX_LONG_PREVIEW;
+  const shouldClamp = longText !== null && longText.length > MAX_LONG_PREVIEW;
   const displayLongText = shouldClamp && !showFullDescription
-    ? longText.slice(0, MAX_LONG_PREVIEW)
+    ? longText!.slice(0, MAX_LONG_PREVIEW)
     : longText;
 
-  const hasContent = !!primaryText || genres.length > 0 || categories.length > 0 || publisher || releaseDate;
+  const hasContent = !!primaryText || genres.length > 0 || categories.length > 0 || publishers.length > 0 || releaseDate;
 
   if (!hasContent) {
     return (
@@ -109,10 +117,10 @@ export default function StoreGameOverviewSection({
       )}
 
       <div className="mt-5 flex flex-wrap items-center gap-4 text-sm text-(--color-muted)">
-        {publisher && (
+        {publishers.length > 0 && (
           <span className="inline-flex items-center gap-1.5">
             <Tag className="h-3.5 w-3.5" />
-            {publisher}
+            {publishers.join(", ")}
           </span>
         )}
 

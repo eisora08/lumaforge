@@ -106,11 +106,22 @@ pub fn resolve_steam_app_metadata(
         let platforms = parse_platforms(data);
         let languages = parse_languages(data);
 
-        let dlc_count = data
+        let dlc_array = data
             .get("dlc")
-            .and_then(|value| value.as_array())
+            .and_then(|value| value.as_array());
+
+        let dlc_count = dlc_array
             .map(|items| items.len())
             .unwrap_or(0);
+
+        let dlc_app_ids = dlc_array
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_u64().map(|id| id as u32))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let short_description = data
             .get("short_description")
@@ -122,14 +133,23 @@ pub fn resolve_steam_app_metadata(
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
 
-        let genres = parse_genres(data);
-
-        let publisher = data
-            .get("publishers")
-            .and_then(|value| value.as_array())
-            .and_then(|items| items.first())
+        let about_the_game = data
+            .get("about_the_game")
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
+
+        let genres = parse_genres(data);
+
+        let publishers = data
+            .get("publishers")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let release_date = data
             .get("release_date")
@@ -152,6 +172,10 @@ pub fn resolve_steam_app_metadata(
             })
             .unwrap_or_default();
 
+        let pc_requirements = parse_requirements(data, "pc_requirements");
+        let mac_requirements = parse_requirements(data, "mac_requirements");
+        let linux_requirements = parse_requirements(data, "linux_requirements");
+
         output.push(SteamAppMetadata {
             app_id,
             name,
@@ -164,10 +188,15 @@ pub fn resolve_steam_app_metadata(
             dlc_count,
             short_description,
             detailed_description,
+            about_the_game,
             genres,
-            publisher,
+            publishers,
             release_date,
             categories,
+            dlc_app_ids,
+            pc_requirements,
+            mac_requirements,
+            linux_requirements,
             resolved: true,
         });
     }
@@ -193,6 +222,31 @@ fn parse_genres(data: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn parse_requirements(
+    data: &serde_json::Value,
+    key: &str,
+) -> Option<crate::models::steam_app_metadata::SystemRequirements> {
+    let req = data.get(key)?;
+    if !req.is_object() {
+        return None;
+    }
+    let minimum = req
+        .get("minimum")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let recommended = req
+        .get("recommended")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    if minimum.is_none() && recommended.is_none() {
+        return None;
+    }
+    Some(crate::models::steam_app_metadata::SystemRequirements {
+        minimum,
+        recommended,
+    })
+}
+
 fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
     SteamAppMetadata {
         app_id,
@@ -206,10 +260,15 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         dlc_count: 0,
         short_description: None,
         detailed_description: None,
+        about_the_game: None,
         genres: Vec::new(),
-        publisher: None,
+        publishers: Vec::new(),
         release_date: None,
         categories: Vec::new(),
+        dlc_app_ids: Vec::new(),
+        pc_requirements: None,
+        mac_requirements: None,
+        linux_requirements: None,
         resolved: false,
     }
 }

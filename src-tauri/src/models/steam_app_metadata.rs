@@ -16,10 +16,22 @@ pub struct SteamAppMetadata {
 
     pub short_description: Option<String>,
     pub detailed_description: Option<String>,
+    pub about_the_game: Option<String>,
     pub genres: Vec<String>,
-    pub publisher: Option<String>,
+    pub publishers: Vec<String>,
     pub release_date: Option<String>,
     pub categories: Vec<String>,
+    pub dlc_app_ids: Vec<u32>,
+
+    pub pc_requirements: Option<SystemRequirements>,
+    pub mac_requirements: Option<SystemRequirements>,
+    pub linux_requirements: Option<SystemRequirements>,
 
     pub resolved: bool,
+}
+
+#[derive(Serialize)]
+pub struct SystemRequirements {
+    pub minimum: Option<String>,
+    pub recommended: Option<String>,
 }
