@@ -10,7 +10,7 @@ import {
   Gamepad2,
   KeyRound,
   PauseCircle,
-  ShieldCheck,
+  RefreshCcw,
   ShieldQuestion,
   X,
 } from "lucide-react";
@@ -20,15 +20,21 @@ import { PackageInstallStatus } from "../../types/packageInstall";
 import { getSteamDbUrl, getSteamStoreUrl } from "../../utils/steamLinks";
 import { openExternalUrl } from "../../services/externalLinks";
 
+
+
 type PackageDetailsModalProps = {
   game: PackageGame;
   installStatus: PackageInstallStatus;
   selectedSource?: PackageSource;
   open: boolean;
+  rechecking?: boolean;
   onClose: () => void;
   onSelectSource: (sourceKey: string) => void;
   onDownload: () => void;
+  onRecheckSources: (appId: string) => void;
 };
+
+
 
 function getSourceKey(source: PackageSource) {
   return `${source.providerId}-${source.fileType}`;
@@ -106,9 +112,11 @@ export default function PackageDetailsModal({
   installStatus,
   selectedSource,
   open,
+  rechecking = false,
   onClose,
   onSelectSource,
   onDownload,
+  onRecheckSources,
 }: PackageDetailsModalProps) {
   if (!open) {
     return null;
@@ -198,13 +206,27 @@ export default function PackageDetailsModal({
               </div>
 
               <div className="lf-surface rounded-2xl border p-4">
-                <h3 className="font-semibold text-(--color-text)">
-                  Fuentes disponibles
-                </h3>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="font-semibold text-(--color-text)">
+                      Fuentes disponibles
+                    </h3>
 
-                <p className="mt-1 text-sm text-(--color-muted)">
-                  Elige desde cuál fuente quieres descargar el paquete.
-                </p>
+                    <p className="mt-1 text-sm text-(--color-muted)">
+                      Elige desde cuál fuente quieres descargar el paquete.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onRecheckSources(game.appId)}
+                    disabled={rechecking}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCcw className={`h-4 w-4 ${rechecking ? "animate-spin" : ""}`} />
+                    {rechecking ? "Revisando..." : "Revisar fuentes"}
+                  </button>
+                </div>
 
                 <div className="mt-4 space-y-3">
                   {game.sources.map((source) => {
@@ -223,11 +245,10 @@ export default function PackageDetailsModal({
                         type="button"
                         disabled={!source.available}
                         onClick={() => onSelectSource(sourceKey)}
-                        className={`w-full rounded-2xl border p-4 text-left transition ${
-                          isSelected
+                        className={`w-full rounded-2xl border p-4 text-left transition ${isSelected
                             ? "border-(--color-accent) bg-(--color-accent)/10"
                             : "border-(--surface-active-border) bg-white/5 hover:bg-white/10"
-                        } disabled:cursor-not-allowed disabled:opacity-60`}
+                          } disabled:cursor-not-allowed disabled:opacity-60`}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
@@ -423,9 +444,8 @@ function TechLine({ label, value, breakAll }: TechLineProps) {
       </span>
 
       <span
-        className={`text-(--color-text) ${
-          breakAll ? "break-all" : ""
-        }`}
+        className={`text-(--color-text) ${breakAll ? "break-all" : ""
+          }`}
       >
         {value}
       </span>

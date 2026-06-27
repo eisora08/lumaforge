@@ -172,6 +172,7 @@ export default function Packages() {
               key={game.appId}
               game={game}
               installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
+              recheckingSources={loading && query.trim() === game.appId}
               onInstallComplete={refreshInstalledScripts}
             />
 
