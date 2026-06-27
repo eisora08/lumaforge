@@ -19,7 +19,7 @@ import { InstalledLuaScript } from "../types/installedLua";
 import { PackageInstallStatus } from "../types/packageInstall";
 import { useProviderSearch } from "../hooks/useProviderSearch";
 
-export default function Packages() {
+export default function Store() {
   const {
     query,
     selectedProvider,
@@ -93,14 +93,15 @@ export default function Packages() {
             Multi-provider fallback
           </div>
 
+
           <h1 className="text-3xl font-bold text-(--color-text)">
-            Paquetes
+            Store
           </h1>
 
           <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Busca juegos, revisa fuentes disponibles y elige desde qué provider
-            descargar cuando existan varias opciones.
+            Busca juegos, revisa fuentes disponibles y descarga Lua/manifests con providers compatibles.
           </p>
+
         </div>
 
         <div className="grid grid-cols-4 gap-3">
@@ -145,7 +146,7 @@ export default function Packages() {
           <PackageSearch className="mx-auto h-10 w-10 animate-pulse text-(--color-accent)" />
 
           <h2 className="mt-4 font-semibold text-(--color-text)">
-            Buscando paquetes
+            Buscando juegos
           </h2>
 
           <p className="mt-2 text-sm text-(--color-muted)">

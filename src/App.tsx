@@ -4,8 +4,8 @@ import AppLayout from "./components/layout/AppLayout";
 
 import Home from "./pages/Home";
 import Library from "./pages/Library";
+import Store from "./pages/Store";
 import Games from "./pages/Games";
-import Packages from "./pages/Packages";
 import Downloads from "./pages/Downloads";
 import Achievements from "./pages/Achievements";
 import Activity from "./pages/Activity";
@@ -26,8 +26,8 @@ function App() {
         return <Library />;
       case "games":
         return <Games />;
-      case "packages":
-        return <Packages />;
+      case "store":
+        return <Store />;
       case "downloads":
         return <Downloads />;
       case "achievements":

@@ -4,6 +4,7 @@ import {
   Activity,
   Award,
   Boxes,
+  Store,
   Download,
   Gamepad2,
   Home,
@@ -39,7 +40,7 @@ const mainItems: SidebarItem[] = [
   { label: "Inicio", page: "home", icon: Home },
   { label: "Biblioteca", page: "library", icon: Library },
   { label: "Juegos", page: "games", icon: Gamepad2 },
-  { label: "Paquetes", page: "packages", icon: PackageSearch },
+  { label: "Tienda", page: "store", icon: Store },
   { label: "Descargas", page: "downloads", icon: Download },
   { label: "Logros", page: "achievements", icon: Award },
   { label: "Actividad", page: "activity", icon: Activity },
@@ -150,12 +151,12 @@ export default function Sidebar({
           >
             {isCollapsed ? (
               <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10">
-                <Boxes className="h-4 w-4 text-emerald-400" />
+                <Store className="h-4 w-4 text-emerald-400" />
               </div>
             ) : (
               <>
                 <div className="flex items-center gap-2 text-sm font-medium text-(--color-text)">
-                  <Boxes className="h-4 w-4 text-emerald-400" />
+                  <Store className="h-4 w-4 text-emerald-400" />
                   Sistema listo
                 </div>
 

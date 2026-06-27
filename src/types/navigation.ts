@@ -2,7 +2,7 @@ export type AppPage =
   | "home"
   | "library"
   | "games"
-  | "packages"
+  | "store"
   | "downloads"
   | "achievements"
   | "activity"
