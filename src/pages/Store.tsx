@@ -28,6 +28,8 @@ import type {
   SteamFeaturedItem,
 } from "../types/steamFeatured";
 
+import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
+
 type StoreSectionModel = {
   id: string;
   title: string;
@@ -73,6 +75,10 @@ export default function Store() {
   } = useProviderSearch();
 
   const { settings } = useSettings();
+
+  const [providerOverlayByAppId, setProviderOverlayByAppId] = useState<
+    Record<string, PackageGame>
+  >({});
 
   const [installedScripts, setInstalledScripts] = useState<
     InstalledLuaScript[]
@@ -326,6 +332,41 @@ export default function Store() {
     };
   }, [visibleAppIds]);
 
+  useEffect(() => {
+    const steamGames = steamStoreSections.flatMap((section) => section.games);
+
+    if (steamGames.length === 0) {
+      setProviderOverlayByAppId({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadProviderOverlays() {
+      try {
+        const overlays = await resolveProviderOverlaysForStoreGames(
+          steamGames,
+          settings
+        );
+
+        if (!cancelled) {
+          setProviderOverlayByAppId(overlays);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setProviderOverlayByAppId({});
+        }
+      }
+    }
+
+    loadProviderOverlays();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [steamStoreSections, settings]);
   function handleQueryChange(value: string) {
     setQuery(value);
     setActiveSectionId(null);
@@ -336,11 +377,14 @@ export default function Store() {
     setActiveSectionId(null);
   }
 
+
   function renderStoreCard(game: PackageGame) {
+    const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
+
     return (
       <PackageCard
         key={game.appId}
-        game={game}
+        game={gameWithOverlay}
         storeMetadata={storeMetadataByAppId[Number(game.appId)]}
         reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
@@ -348,6 +392,7 @@ export default function Store() {
       />
     );
   }
+
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
