@@ -4,6 +4,7 @@ import type { SteamPaths } from "../types/steam";
 import type { InstallResult } from "../types/install";
 import type { ProviderAvailabilityResult } from "../types/providerAvailability";
 import type { InstalledLuaScript } from "../types/installedLua";
+import type { LuaActionResult } from "../types/luaAction";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -52,5 +53,28 @@ export async function scanInstalledLuaScripts(
 ): Promise<InstalledLuaScript[]> {
   return await invoke<InstalledLuaScript[]>("scan_installed_lua_scripts", {
     luaPath,
+  });
+}
+
+
+export async function setLuaScriptEnabled(params: {
+  luaPath: string;
+  fileName: string;
+  enabled: boolean;
+}): Promise<LuaActionResult> {
+  return await invoke<LuaActionResult>("set_lua_script_enabled", {
+    luaPath: params.luaPath,
+    fileName: params.fileName,
+    enabled: params.enabled,
+  });
+}
+
+export async function deleteLuaScript(params: {
+  luaPath: string;
+  fileName: string;
+}): Promise<LuaActionResult> {
+  return await invoke<LuaActionResult>("delete_lua_script", {
+    luaPath: params.luaPath,
+    fileName: params.fileName,
   });
 }

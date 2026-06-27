@@ -5,7 +5,15 @@ import {
   RefreshCcw,
   ShieldCheck,
   ShieldOff,
+  Power,
+  Trash2
+
 } from "lucide-react";
+
+import {
+  deleteLuaScript,
+  setLuaScriptEnabled,
+} from "../services/tauri";
 
 import { useSettings } from "../context/SettingsContext";
 import { scanInstalledLuaScripts } from "../services/tauri";
@@ -76,6 +84,72 @@ export default function Library() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+
+  async function handleToggleScript(script: InstalledLuaScript) {
+    try {
+      const result = await setLuaScriptEnabled({
+        luaPath: settings.luaPath,
+        fileName: script.file_name,
+        enabled: script.is_disabled,
+      });
+
+      showSuccess(result.message, {
+        title: script.is_disabled ? "Lua activado" : "Lua deshabilitado",
+      });
+
+      await handleScan();
+    } catch (error) {
+      console.error(error);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "No se pudo cambiar el estado del Lua.";
+
+      showError(message, {
+        title: "Acción fallida",
+      });
+    }
+  }
+
+  async function handleDeleteScript(script: InstalledLuaScript) {
+    const accepted = window.confirm(
+      `¿Eliminar definitivamente ${script.file_name}?`
+    );
+
+    if (!accepted) {
+      return;
+    }
+
+    try {
+      const result = await deleteLuaScript({
+        luaPath: settings.luaPath,
+        fileName: script.file_name,
+      });
+
+      showSuccess(result.message, {
+        title: "Lua eliminado",
+      });
+
+      await handleScan();
+    } catch (error) {
+      console.error(error);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "No se pudo eliminar el Lua.";
+
+      showError(message, {
+        title: "Eliminación fallida",
+      });
     }
   }
 
@@ -157,7 +231,10 @@ export default function Library() {
             <InstalledLuaCard
               key={script.path}
               script={script}
-            />
+              onToggle={handleToggleScript}
+              onDelete={handleDeleteScript}
+
+                />
           ))}
         </section>
       )}
@@ -165,11 +242,15 @@ export default function Library() {
   );
 }
 
+
 type InstalledLuaCardProps = {
   script: InstalledLuaScript;
+  onToggle: (script: InstalledLuaScript) => void;
+  onDelete: (script: InstalledLuaScript) => void;
 };
 
-function InstalledLuaCard({ script }: InstalledLuaCardProps) {
+
+function InstalledLuaCard({ script, onToggle, onDelete }: InstalledLuaCardProps) {
   return (
     <article className="lf-surface rounded-2xl border p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -224,6 +305,26 @@ function InstalledLuaCard({ script }: InstalledLuaCardProps) {
           </p>
         </div>
       </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onToggle(script)}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+        >
+          <Power className="h-3.5 w-3.5" />
+          {script.is_disabled ? "Activar" : "Deshabilitar"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onDelete(script)}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/20"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Eliminar
+        </button>
+      </div>
+
     </article>
   );
 }
