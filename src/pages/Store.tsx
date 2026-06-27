@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
-  Filter,
   Gamepad2,
   PackageSearch,
 } from "lucide-react";
@@ -1006,52 +1005,43 @@ export default function Store() {
 
   return (
     <div className="mx-auto w-full max-w-[1440px] space-y-5 p-5 lg:p-7">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-1.5">
-          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
-            <PackageSearch className="h-3.5 w-3.5" />
-            LumaForge Store
+      <div className="sticky top-0 z-30 -mx-5 -mt-5 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-5 py-2.5 backdrop-blur-md lg:-mx-7 lg:-mt-7 lg:px-7">
+        <div className="flex items-center gap-4">
+          <div className="flex gap-1">
+            {STORE_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => handleStoreTabChange(tab.id)}
+                className={`relative px-3 py-1.5 text-sm font-medium transition ${
+                  activeStoreTab === tab.id
+                    ? "text-(--color-accent)"
+                    : "text-(--color-muted) hover:text-(--color-text)"
+                }`}
+              >
+                {tab.label}
+                {activeStoreTab === tab.id && (
+                  <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
+                )}
+              </button>
+            ))}
           </div>
 
-          <h1 className="text-2xl font-bold text-(--color-text)">
-            Store
-          </h1>
+          <div className="ml-auto w-full max-w-[360px]">
+            <PackagesToolbar
+              compact
+              query={storeSearchQuery}
+              selectedProvider={selectedProvider}
+              onQueryChange={handleToolbarQueryChange}
+              onProviderChange={handleProviderChange}
+              searchItems={steamSearchItems}
+              searchLoading={steamSearchLoading}
+              onSubmitSearch={submitSteamSearch}
+              onViewAllSearchResults={submitSteamSearch}
+              onSelectSearchItem={handleSelectSearchItem}
+            />
+          </div>
         </div>
-
-        <div className="w-full lg:w-auto lg:pt-1.5">
-          <PackagesToolbar
-            compact
-            query={storeSearchQuery}
-            selectedProvider={selectedProvider}
-            onQueryChange={handleToolbarQueryChange}
-            onProviderChange={handleProviderChange}
-            searchItems={steamSearchItems}
-            searchLoading={steamSearchLoading}
-            onSubmitSearch={submitSteamSearch}
-            onViewAllSearchResults={submitSteamSearch}
-            onSelectSearchItem={handleSelectSearchItem}
-          />
-        </div>
-      </header>
-
-      <div className="flex gap-1 border-b border-(--surface-active-border)">
-        {STORE_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => handleStoreTabChange(tab.id)}
-            className={`relative px-4 py-3 text-sm font-medium transition ${
-              activeStoreTab === tab.id
-                ? "text-(--color-accent)"
-                : "text-(--color-muted) hover:text-(--color-text)"
-            }`}
-          >
-            {tab.label}
-            {activeStoreTab === tab.id && (
-              <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
-            )}
-          </button>
-        ))}
       </div>
 
       {loading ? (
@@ -1115,52 +1105,6 @@ export default function Store() {
         })()
       ) : activeStoreTab === "browse" ? (
         <section className="space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-bold text-(--color-text)">
-                Browse Games
-              </h2>
-
-              <p className="mt-1 text-sm text-(--color-muted)">
-                Explora todos los juegos disponibles desde Steam y providers
-                compatibles.
-              </p>
-            </div>
-
-            <div className="flex h-10 items-center gap-2.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3.5">
-              <Filter className="h-4 w-4 shrink-0 text-(--color-muted)" />
-
-              <select
-                value={selectedProvider}
-                onChange={(event) =>
-                  handleProviderChange(
-                    event.target.value as typeof selectedProvider
-                  )
-                }
-                className="bg-transparent text-sm text-(--color-text) outline-none"
-              >
-                <option value="all" className="bg-black text-white">
-                  All Providers
-                </option>
-                <option value="hubcapdb" className="bg-black text-white">
-                  HubcapDB
-                </option>
-                <option value="ryuu" className="bg-black text-white">
-                  Ryuu
-                </option>
-                <option value="twentytwo-cloud" className="bg-black text-white">
-                  TwentyTwo Cloud
-                </option>
-                <option value="sushi" className="bg-black text-white">
-                  Sushi
-                </option>
-                <option value="custom" className="bg-black text-white">
-                  Custom API
-                </option>
-              </select>
-            </div>
-          </div>
-
           {steamStoreSections.length > 0 && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
               <button
@@ -1216,15 +1160,6 @@ export default function Store() {
           <StoreLuaReadyEmptyState />
         ) : (
           <section className="space-y-5">
-            <div>
-              <h2 className="text-2xl font-bold text-(--color-text)">
-                Lua Ready
-              </h2>
-
-              <p className="mt-1 text-sm text-(--color-muted)">
-                Juegos con fuentes de descarga disponibles en tus providers.
-              </p>
-            </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {luaReadyGames.map(renderPosterCard)}
@@ -1233,15 +1168,6 @@ export default function Store() {
         )
       ) : activeStoreTab === "news" ? (
         <section className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-bold text-(--color-text)">
-              News
-            </h2>
-
-            <p className="mt-1 text-sm text-(--color-muted)">
-              Updates, provider changes and game news will appear here.
-            </p>
-          </div>
 
           <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-5">
             <h3 className="text-lg font-bold text-(--color-text)">
