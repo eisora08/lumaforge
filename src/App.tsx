@@ -14,7 +14,7 @@ import Tools from "./pages/Tools";
 import Settings from "./pages/Settings";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
-
+import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 function App() {
   const [activePage, setActivePage] = useState<AppPage>("home");
 
@@ -51,7 +51,7 @@ function App() {
       <AppLayout activePage={activePage} onNavigate={setActivePage}>
         {renderPage()}
       </AppLayout>
-
+      <InstallerProgressListener />
       <GameToastViewport />
     </>
   );

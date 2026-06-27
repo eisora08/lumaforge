@@ -9,6 +9,7 @@ export async function detectSteamPaths(): Promise<SteamPaths | null> {
 }
 
 export async function downloadAndInstallPackage(params: {
+  jobId: string;
   downloadUrl: string;
   luaTarget: string;
   depotcacheTarget: string;
@@ -17,6 +18,7 @@ export async function downloadAndInstallPackage(params: {
   tempFolder?: string;
 }): Promise<InstallResult> {
   return await invoke<InstallResult>("download_and_install_package", {
+    jobId: params.jobId,
     downloadUrl: params.downloadUrl,
     luaTarget: params.luaTarget,
     depotcacheTarget: params.depotcacheTarget,

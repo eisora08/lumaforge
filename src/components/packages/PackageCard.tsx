@@ -79,18 +79,19 @@ export default function PackageCard({ game }: PackageCardProps) {
     });
 
     try {
-      updateJob(job.id, {
-        status: "checking",
-        progress: 5,
-      });
+      // updateJob(job.id, {
+      //   status: "checking",
+      //   progress: 5,
+      // });
 
-      updateJob(job.id, {
-        status: "downloading",
-        progress: 20,
-      });
+      // updateJob(job.id, {
+      //   status: "downloading",
+      //   progress: 20,
+      // });
 
 
       const result = await downloadAndInstallPackage({
+        jobId: job.id,
         downloadUrl: selectedSource.downloadUrl,
         luaTarget: settings.luaPath,
         depotcacheTarget: settings.depotcachePath,
@@ -99,12 +100,11 @@ export default function PackageCard({ game }: PackageCardProps) {
         tempFolder: settings.tempFolder,
       });
 
-
       updateJob(job.id, {
         status: "done",
         progress: 100,
-        bytesRead: 0,
-        totalBytes: 0,
+        bytesRead: result.bytes_read,
+        totalBytes: result.total_bytes,
       });
 
       showSuccess(result.message, {

@@ -33,6 +33,16 @@ type DownloadQueueContextValue = {
   clearCompleted: () => void;
 };
 
+const STORAGE_KEY = "lumaforge-download-queue";
+
+const activeStatuses: DownloadStatus[] = [
+  "queued",
+  "checking",
+  "downloading",
+  "extracting",
+  "installing",
+];
+
 const DownloadQueueContext =
   createContext<DownloadQueueContextValue | null>(null);
 
@@ -40,12 +50,54 @@ function createJobId(input: CreateDownloadJobInput) {
   return `${input.appId}-${input.providerId}-${input.fileType}-${Date.now()}`;
 }
 
+function persistJobs(jobs: DownloadJob[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
+}
+
+function loadJobs(): DownloadJob[] {
+  try {
+    const savedJobs = localStorage.getItem(STORAGE_KEY);
+
+    if (!savedJobs) {
+      return [];
+    }
+
+    const parsedJobs = JSON.parse(savedJobs) as DownloadJob[];
+
+    return parsedJobs.map((job) => {
+      if (activeStatuses.includes(job.status)) {
+        return {
+          ...job,
+          status: "failed",
+          error:
+            job.error ||
+            "La app fue recargada mientras esta descarga estaba activa.",
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      return job;
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function DownloadQueueProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [jobs, setJobs] = useState<DownloadJob[]>([]);
+  const [jobs, setJobs] = useState<DownloadJob[]>(() => {
+    const loadedJobs = loadJobs();
+    persistJobs(loadedJobs);
+    return loadedJobs;
+  });
+
+  function commitJobs(nextJobs: DownloadJob[]) {
+    setJobs(nextJobs);
+    persistJobs(nextJobs);
+  }
 
   function addJob(input: CreateDownloadJobInput) {
     const now = new Date().toISOString();
@@ -68,14 +120,15 @@ export function DownloadQueueProvider({
       updatedAt: now,
     };
 
-    setJobs((currentJobs) => [job, ...currentJobs]);
+    const nextJobs = [job, ...jobs];
+    commitJobs(nextJobs);
 
     return job;
   }
 
   function updateJob(jobId: string, update: UpdateDownloadJobInput) {
-    setJobs((currentJobs) =>
-      currentJobs.map((job) =>
+    setJobs((currentJobs) => {
+      const nextJobs = currentJobs.map((job) =>
         job.id === jobId
           ? {
               ...job,
@@ -83,8 +136,12 @@ export function DownloadQueueProvider({
               updatedAt: new Date().toISOString(),
             }
           : job
-      )
-    );
+      );
+
+      persistJobs(nextJobs);
+
+      return nextJobs;
+    });
   }
 
   function cancelJob(jobId: string) {
@@ -95,20 +152,26 @@ export function DownloadQueueProvider({
   }
 
   function removeJob(jobId: string) {
-    setJobs((currentJobs) =>
-      currentJobs.filter((job) => job.id !== jobId)
-    );
+    setJobs((currentJobs) => {
+      const nextJobs = currentJobs.filter((job) => job.id !== jobId);
+      persistJobs(nextJobs);
+      return nextJobs;
+    });
   }
 
   function clearCompleted() {
-    setJobs((currentJobs) =>
-      currentJobs.filter(
+    setJobs((currentJobs) => {
+      const nextJobs = currentJobs.filter(
         (job) =>
           job.status !== "done" &&
           job.status !== "failed" &&
           job.status !== "cancelled"
-      )
-    );
+      );
+
+      persistJobs(nextJobs);
+
+      return nextJobs;
+    });
   }
 
   const value = useMemo(

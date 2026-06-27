@@ -29,3 +29,13 @@ export type DownloadJob = {
 
   error?: string;
 };
+
+
+export type InstallerProgressEvent = {
+  job_id: string;
+  status: DownloadStatus;
+  progress: number;
+  bytes_read: number;
+  total_bytes: number;
+  message: string;
+};
