@@ -127,8 +127,8 @@ export default function StoreBrowseFiltersPanel({
     filters.keywords.trim().length > 0;
 
   return (
-    <div className="w-full shrink-0 space-y-0 overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5 lg:w-64">
-      <div className="flex items-center justify-between px-5 pt-5">
+    <div className="w-full shrink-0 overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5 lg:w-64 lg:sticky lg:top-6 lg:max-h-[calc(100vh-140px)] lg:flex lg:flex-col">
+      <div className="flex shrink-0 items-center justify-between px-5 pt-5">
         <h3 className="text-sm font-semibold text-(--color-text)">
           Filters
         </h3>
@@ -145,7 +145,7 @@ export default function StoreBrowseFiltersPanel({
         )}
       </div>
 
-      <div className="px-5 pt-4">
+      <div className="shrink-0 px-5 pt-4">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-muted)" />
           <input
@@ -167,7 +167,7 @@ export default function StoreBrowseFiltersPanel({
         </div>
       </div>
 
-      <div className="space-y-4 px-3 py-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
         <FilterDivider />
 
         <FilterSection title="Availability">
@@ -260,7 +260,7 @@ export default function StoreBrowseFiltersPanel({
         </div>
       </div>
 
-      <div className="border-t border-(--surface-active-border) px-5 py-3">
+      <div className="shrink-0 border-t border-(--surface-active-border) px-5 py-3">
         <p className="text-xs text-(--color-muted)">
           {filteredGames} / {totalGames} games
         </p>

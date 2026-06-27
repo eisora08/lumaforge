@@ -1192,7 +1192,7 @@ export default function Store() {
             </div>
           )}
 
-          <div className="lg:flex lg:gap-6">
+          <div className="lg:flex lg:gap-6 lg:items-start">
             <StoreBrowseFiltersPanel
               filters={browseFilters}
               onFiltersChange={setBrowseFilters}
