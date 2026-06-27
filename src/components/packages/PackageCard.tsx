@@ -40,15 +40,19 @@ import {
 } from "../toast/GameToast";
 
 import PackageDetailsModal from "./PackageDetailsModal";
+import type { SteamReviewSummary } from "../../types/gameReview";
+
 
 type PackageCardProps = {
   game: PackageGame;
   storeMetadata?: SteamAppMetadata;
+  reviewSummary?: SteamReviewSummary;
   installStatus?: PackageInstallStatus;
   recheckingSources?: boolean;
   onInstallComplete?: () => void;
   onRecheckSources?: (appId: string) => void;
 };
+
 
 function getSourceKey(source: PackageSource) {
   return `${source.providerId}-${source.fileType}`;
@@ -183,18 +187,29 @@ function getLanguagesLabel(metadata?: SteamAppMetadata) {
   return `${languages.slice(0, 3).join(", ")} +${languages.length - 3} more`;
 }
 
-function getReviewScoreLabel() {
-  return "N/A";
+function getReviewScoreLabel(summary?: SteamReviewSummary) {
+  if (!summary || !summary.resolved || summary.total_reviews === 0) {
+    return "No reviews";
+  }
+
+  if (typeof summary.positive_percent === "number") {
+    return `${summary.review_score_desc} · ${summary.positive_percent}%`;
+  }
+
+  return summary.review_score_desc || "N/A";
 }
+
 
 export default function PackageCard({
   game,
   storeMetadata,
+  reviewSummary,
   installStatus = "not-installed",
   recheckingSources = false,
   onInstallComplete,
   onRecheckSources,
 }: PackageCardProps) {
+
   const { settings } = useSettings();
   const { addJob, updateJob } = useDownloadQueue();
 
@@ -245,6 +260,7 @@ export default function PackageCard({
   const displayPlatforms = getStorePlatforms(game, storeMetadata);
   const dlcLabel = getDlcLabel(storeMetadata);
   const languagesLabel = getLanguagesLabel(storeMetadata);
+  const reviewScoreLabel = getReviewScoreLabel(reviewSummary);
 
   async function handleOpenSteamPage() {
     try {
@@ -424,11 +440,13 @@ export default function PackageCard({
               value={dlcLabel}
             />
 
+
             <StoreInfoBlock
               icon={Star}
               label="Review Score"
-              value={getReviewScoreLabel()}
+              value={reviewScoreLabel}
             />
+
 
             <StoreInfoBlock
               icon={Clock3}
@@ -516,11 +534,10 @@ export default function PackageCard({
                               setSelectedSourceKey(sourceKey);
                               setSourceMenuOpen(false);
                             }}
-                            className={`w-full rounded-xl px-3 py-2 text-left transition ${
-                              isSelected
-                                ? "bg-(--color-accent)/15"
-                                : "hover:bg-white/10"
-                            }`}
+                            className={`w-full rounded-xl px-3 py-2 text-left transition ${isSelected
+                              ? "bg-(--color-accent)/15"
+                              : "hover:bg-white/10"
+                              }`}
                           >
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">

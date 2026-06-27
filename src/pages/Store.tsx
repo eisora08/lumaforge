@@ -25,6 +25,10 @@ import type { InstalledLuaScript } from "../types/installedLua";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
+
+import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
+import type { SteamReviewSummary } from "../types/gameReview";
+
 type MiniStatProps = {
   icon: ElementType;
   label: string;
@@ -43,6 +47,10 @@ export default function Store() {
   } = useProviderSearch();
 
   const { settings } = useSettings();
+
+  const [reviewSummaryByAppId, setReviewSummaryByAppId] = useState<
+    Record<number, SteamReviewSummary>
+  >({});
 
   const [installedScripts, setInstalledScripts] = useState<
     InstalledLuaScript[]
@@ -107,6 +115,41 @@ export default function Store() {
     };
   }, [results]);
 
+  useEffect(() => {
+    if (results.length === 0) {
+      setReviewSummaryByAppId({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadReviewSummaries() {
+      try {
+        const appIds = results
+          .map((game) => Number(game.appId))
+          .filter((appId) => Number.isFinite(appId));
+
+        const summaries = await resolveGameReviewSummaries(appIds);
+
+        if (!cancelled) {
+          setReviewSummaryByAppId(summaries);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setReviewSummaryByAppId({});
+        }
+      }
+    }
+
+    loadReviewSummaries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [results]);
+
   const installedStatusByAppId = useMemo(() => {
     const map = new Map<string, PackageInstallStatus>();
 
@@ -152,13 +195,16 @@ export default function Store() {
 
   function renderStoreCard(game: PackageGame) {
     return (
+
       <PackageCard
         key={game.appId}
         game={game}
         storeMetadata={storeMetadataByAppId[Number(game.appId)]}
+        reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
         onInstallComplete={refreshInstalledScripts}
       />
+
     );
   }
 
