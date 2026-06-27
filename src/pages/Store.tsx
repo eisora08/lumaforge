@@ -6,6 +6,7 @@ import {
 
 import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
+import type { StoreSearchDropdownItem } from "../components/packages/PackagesToolbar";
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreHero from "../components/store/StoreHero";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
@@ -17,6 +18,8 @@ import { scanInstalledLuaScripts } from "../services/tauri";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
+import { searchSteamStore } from "../services/steamStoreSearchResolver";
+import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
 
 import type { PackageGame } from "../types/package";
 import type { InstalledLuaScript } from "../types/installedLua";
@@ -27,8 +30,7 @@ import type {
   SteamFeaturedCategory,
   SteamFeaturedItem,
 } from "../types/steamFeatured";
-
-import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
+import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 
 type StoreSectionModel = {
   id: string;
@@ -37,7 +39,9 @@ type StoreSectionModel = {
   games: PackageGame[];
 };
 
-function mapSteamFeaturedItemToPackageGame(item: SteamFeaturedItem): PackageGame {
+function mapSteamFeaturedItemToPackageGame(
+  item: SteamFeaturedItem
+): PackageGame {
   return {
     appId: String(item.app_id),
     title: item.name,
@@ -48,6 +52,19 @@ function mapSteamFeaturedItemToPackageGame(item: SteamFeaturedItem): PackageGame
       item.small_capsule_image ||
       undefined,
     platforms: item.platforms,
+    sources: [],
+  };
+}
+
+function mapSteamSearchItemToPackageGame(
+  item: SteamStoreSearchItem
+): PackageGame {
+  return {
+    appId: String(item.app_id),
+    title: item.name,
+    developer: undefined,
+    imageUrl: item.image_url || undefined,
+    platforms: [],
     sources: [],
   };
 }
@@ -63,9 +80,24 @@ function mapSteamCategoryToStoreSection(
   };
 }
 
+function getDropdownProviderLabel(game?: PackageGame) {
+  if (!game) {
+    return undefined;
+  }
+
+  const availableSources = game.sources.filter((source) => source.available);
+
+  if (availableSources.length === 0) {
+    return "No source";
+  }
+
+  return `${availableSources.length} source${availableSources.length === 1 ? "" : "s"
+    }`;
+}
+
 export default function Store() {
   const {
-    query,
+    query: providerQuery,
     selectedProvider,
     results,
     loading,
@@ -76,9 +108,14 @@ export default function Store() {
 
   const { settings } = useSettings();
 
-  const [providerOverlayByAppId, setProviderOverlayByAppId] = useState<
-    Record<string, PackageGame>
-  >({});
+  const [storeSearchQuery, setStoreSearchQuery] = useState("");
+  const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
+
+  const [steamSearchItems, setSteamSearchItems] = useState<
+    StoreSearchDropdownItem[]
+  >([]);
+
+  const [steamSearchLoading, setSteamSearchLoading] = useState(false);
 
   const [installedScripts, setInstalledScripts] = useState<
     InstalledLuaScript[]
@@ -95,6 +132,10 @@ export default function Store() {
   const [steamFeaturedCategories, setSteamFeaturedCategories] = useState<
     SteamFeaturedCategory[]
   >([]);
+
+  const [providerOverlayByAppId, setProviderOverlayByAppId] = useState<
+    Record<string, PackageGame>
+  >({});
 
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
 
@@ -164,6 +205,97 @@ export default function Store() {
     return map;
   }, [installedScripts]);
 
+  useEffect(() => {
+    const query = storeSearchQuery.trim();
+
+    if (query.length < 2) {
+      setSteamSearchItems([]);
+      setSteamSearchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        setSteamSearchLoading(true);
+
+        const searchItems = await searchSteamStore(query);
+
+        if (cancelled) {
+          return;
+        }
+
+        const dropdownItems = searchItems.map<StoreSearchDropdownItem>((item) => {
+          const appId = String(item.app_id);
+
+          return {
+            appId,
+            title: item.name,
+            subtitle: `AppID ${appId}`,
+            imageUrl: item.image_url || undefined,
+            priceLabel: item.price_label || undefined,
+            discountLabel: item.discount_label || undefined,
+            installed: installedStatusByAppId.has(appId),
+          };
+        });
+
+        setSteamSearchItems(dropdownItems);
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setSteamSearchItems([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSteamSearchLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [storeSearchQuery, installedStatusByAppId]);
+
+  useEffect(() => {
+    const steamGames = steamStoreSections.flatMap((section) => section.games);
+
+    if (steamGames.length === 0) {
+      setProviderOverlayByAppId({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadProviderOverlays() {
+      try {
+        const overlays = await resolveProviderOverlaysForStoreGames(
+          steamGames,
+          settings
+        );
+
+        if (!cancelled) {
+          setProviderOverlayByAppId(overlays);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setProviderOverlayByAppId({});
+        }
+      }
+    }
+
+    loadProviderOverlays();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [steamStoreSections, settings]);
+
   const availableSources = results.reduce(
     (count, game) =>
       count + game.sources.filter((source) => source.available).length,
@@ -174,8 +306,7 @@ export default function Store() {
     installedStatusByAppId.has(game.appId)
   ).length;
 
-  const normalizedQuery = query.trim();
-  const isSearching = normalizedQuery.length > 0;
+  const isSearchResultsView = submittedSearchQuery.trim().length > 0;
 
   const lumaForgeSections = useMemo(() => {
     const usedAppIds = new Set<string>();
@@ -267,8 +398,16 @@ export default function Store() {
       });
     });
 
+    steamSearchItems.forEach((item) => {
+      const appId = Number(item.appId);
+
+      if (Number.isFinite(appId)) {
+        appIds.add(appId);
+      }
+    });
+
     return Array.from(appIds);
-  }, [results, steamStoreSections]);
+  }, [results, steamStoreSections, steamSearchItems]);
 
   useEffect(() => {
     if (visibleAppIds.length === 0) {
@@ -332,51 +471,40 @@ export default function Store() {
     };
   }, [visibleAppIds]);
 
-  useEffect(() => {
-    const steamGames = steamStoreSections.flatMap((section) => section.games);
+  function handleToolbarQueryChange(value: string) {
+    setStoreSearchQuery(value);
+    setActiveSectionId(null);
 
-    if (steamGames.length === 0) {
-      setProviderOverlayByAppId({});
+    if (value.trim().length === 0) {
+      setSubmittedSearchQuery("");
+      setQuery("");
+    }
+  }
+
+  function submitSteamSearch() {
+    const query = storeSearchQuery.trim();
+
+    if (query.length === 0) {
       return;
     }
 
-    let cancelled = false;
-
-    async function loadProviderOverlays() {
-      try {
-        const overlays = await resolveProviderOverlaysForStoreGames(
-          steamGames,
-          settings
-        );
-
-        if (!cancelled) {
-          setProviderOverlayByAppId(overlays);
-        }
-      } catch (error) {
-        console.error(error);
-
-        if (!cancelled) {
-          setProviderOverlayByAppId({});
-        }
-      }
-    }
-
-    loadProviderOverlays();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [steamStoreSections, settings]);
-  function handleQueryChange(value: string) {
-    setQuery(value);
+    setSubmittedSearchQuery(query);
+    setQuery(query);
     setActiveSectionId(null);
+  }
+
+  function handleSelectSearchItem(item: StoreSearchDropdownItem) {
+    setStoreSearchQuery(item.title);
+    setSubmittedSearchQuery(item.title);
+    setQuery(item.appId);
+    setActiveSectionId(null);
+    setSteamSearchItems([]);
   }
 
   function handleProviderChange(value: typeof selectedProvider) {
     setSelectedProvider(value);
     setActiveSectionId(null);
   }
-
 
   function renderStoreCard(game: PackageGame) {
     const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
@@ -392,7 +520,6 @@ export default function Store() {
       />
     );
   }
-
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
@@ -415,10 +542,15 @@ export default function Store() {
       </header>
 
       <PackagesToolbar
-        query={query}
+        query={storeSearchQuery}
         selectedProvider={selectedProvider}
-        onQueryChange={handleQueryChange}
+        onQueryChange={handleToolbarQueryChange}
         onProviderChange={handleProviderChange}
+        searchItems={steamSearchItems}
+        searchLoading={steamSearchLoading}
+        onSubmitSearch={submitSteamSearch}
+        onViewAllSearchResults={submitSteamSearch}
+        onSelectSearchItem={handleSelectSearchItem}
       />
 
       {providerReports.length > 0 && (
@@ -460,7 +592,7 @@ export default function Store() {
             {activeSection.games.map(renderStoreCard)}
           </div>
         </section>
-      ) : isSearching ? (
+      ) : isSearchResultsView ? (
         results.length === 0 ? (
           <StoreEmptyState />
         ) : (
@@ -471,7 +603,7 @@ export default function Store() {
               </h2>
 
               <p className="mt-1 text-sm text-(--color-muted)">
-                Resultados para "{normalizedQuery}"
+                Resultados para "{submittedSearchQuery}"
               </p>
             </div>
 
