@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import {
   CheckCircle2,
   Download,
-  ExternalLink,
   Gamepad2,
   PauseCircle,
 } from "lucide-react";
@@ -16,8 +15,6 @@ import type { SteamReviewSummary } from "../../types/gameReview";
 import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 import { downloadAndInstallPackage } from "../../services/tauri";
-import { openExternalUrl } from "../../services/externalLinks";
-import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 
 import {
@@ -36,7 +33,6 @@ type PackageCardProps = {
   onInstallComplete?: () => void;
   variant?: "landscape" | "poster";
   onOpenGame?: (game: PackageGame) => void;
-  onOpenSteam?: (appId: string) => void;
   onDownload?: (game: PackageGame) => void;
   onOpenDetails?: (game: PackageGame) => void;
   onOpenSourceSelector?: (game: PackageGame) => void;
@@ -96,7 +92,6 @@ export default function PackageCard({
   onInstallComplete,
   variant = "landscape",
   onOpenGame,
-  onOpenSteam,
   onDownload,
   onOpenDetails,
   onOpenSourceSelector,
@@ -128,17 +123,6 @@ export default function PackageCard({
     } else if (onOpenGame) {
       onOpenGame(game);
     }
-  }
-
-  function handleSteamAction(event?: React.MouseEvent) {
-    event?.stopPropagation();
-
-    if (onOpenSteam) {
-      onOpenSteam(game.appId);
-      return;
-    }
-
-    openExternalUrl(getSteamStoreUrl(Number(game.appId)));
   }
 
   function handleSourceButton(event?: React.MouseEvent) {
@@ -273,17 +257,9 @@ export default function PackageCard({
         type="button"
         onClick={handleSourceButton}
         className="w-32 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/15 hover:text-white"
+        disabled={game.sources.length === 0}
       >
         Source
-      </button>
-
-      <button
-        type="button"
-        onClick={handleSteamAction}
-        className="flex w-32 items-center justify-center gap-1 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/15 hover:text-white"
-      >
-        <ExternalLink className="h-3 w-3" />
-        Steam
       </button>
     </div>
   );
@@ -327,12 +303,12 @@ export default function PackageCard({
           }}
           className="group relative cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
         >
-          <div className="relative aspect-[2/3] overflow-hidden">
+          <div className="relative aspect-[4/5] overflow-hidden">
             {displayImageUrl && !imageFailed ? (
               <img
                 src={displayImageUrl}
                 alt={displayTitle}
-                className="h-full w-full object-cover object-center transition duration-500 group-hover:scale-105"
+                className="h-full w-full object-cover object-[center_20%] transition duration-500 group-hover:scale-105"
                 loading="lazy"
                 onError={() => setImageFailed(true)}
               />

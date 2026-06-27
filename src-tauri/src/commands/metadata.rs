@@ -124,6 +124,34 @@ pub fn resolve_steam_app_metadata(
 
         let genres = parse_genres(data);
 
+        let publisher = data
+            .get("publishers")
+            .and_then(|value| value.as_array())
+            .and_then(|items| items.first())
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
+        let release_date = data
+            .get("release_date")
+            .and_then(|value| value.get("date"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
+        let categories = data
+            .get("categories")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        item.get("description")
+                            .and_then(|desc| desc.as_str())
+                            .map(|desc| desc.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         output.push(SteamAppMetadata {
             app_id,
             name,
@@ -137,6 +165,9 @@ pub fn resolve_steam_app_metadata(
             short_description,
             detailed_description,
             genres,
+            publisher,
+            release_date,
+            categories,
             resolved: true,
         });
     }
@@ -176,6 +207,9 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         short_description: None,
         detailed_description: None,
         genres: Vec::new(),
+        publisher: None,
+        release_date: None,
+        categories: Vec::new(),
         resolved: false,
     }
 }

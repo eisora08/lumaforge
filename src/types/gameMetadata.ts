@@ -14,6 +14,9 @@ export type SteamAppMetadata = {
   short_description?: string | null;
   detailed_description?: string | null;
   genres: string[];
+  publisher?: string | null;
+  release_date?: string | null;
+  categories: string[];
 
   resolved: boolean;
 };

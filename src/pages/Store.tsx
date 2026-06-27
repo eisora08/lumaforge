@@ -541,6 +541,15 @@ export default function Store() {
       });
     }
 
+    if (browseFilters.providers.length > 0) {
+      const providerSet = new Set(browseFilters.providers);
+
+      games = games.filter((g) => {
+        const overlayed = providerOverlayByAppId[g.appId] ?? g;
+        return overlayed.sources.some((s) => providerSet.has(s.providerId));
+      });
+    }
+
     return games;
   }, [
     browseGames,
@@ -951,7 +960,6 @@ export default function Store() {
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
         onOpenDetails={openDetailsForGame}
         onOpenGame={openDetailsForGame}
-        onOpenSteam={openSteamPage}
         onOpenSourceSelector={openSourceSelectorForGame}
         onDownload={handlePosterDownload}
       />
@@ -1062,7 +1070,7 @@ export default function Store() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
             {activeSection.games.map(renderPosterCard)}
           </div>
         </section>
@@ -1092,7 +1100,7 @@ export default function Store() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {mergedResults.map(renderPosterCard)}
               </div>
             </section>
@@ -1189,7 +1197,7 @@ export default function Store() {
               {filteredBrowseGames.length === 0 ? (
                 <StoreEmptyState />
               ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                   {filteredBrowseGames.map(renderPosterCard)}
                 </div>
               )}
@@ -1211,7 +1219,7 @@ export default function Store() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {luaReadyGames.map(renderPosterCard)}
             </div>
           </section>
