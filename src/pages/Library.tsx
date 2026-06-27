@@ -1,18 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Database,
-  ExternalLink,
   FileCode2,
   Filter,
   FolderSearch,
-  Power,
   RefreshCcw,
   Search,
   ShieldCheck,
   ShieldOff,
-  Trash2,
 } from "lucide-react";
-
+import LibraryItemDetailsModal from "../components/library/LibraryItemDetailsModal";
 import { useSettings } from "../context/SettingsContext";
 import {
   deleteLuaScript,
@@ -76,6 +72,9 @@ function getUpdateLabel(script: InstalledLuaScript) {
 
 export default function Library() {
   const { settings } = useSettings();
+
+  const [selectedScript, setSelectedScript] =
+    useState<InstalledLuaScript | null>(null);
 
   const [scripts, setScripts] = useState<InstalledLuaScript[]>([]);
   const [gameMetadata, setGameMetadata] = useState<
@@ -176,7 +175,7 @@ export default function Library() {
       showSuccess(result.message, {
         title: "Lua eliminado",
       });
-
+      setSelectedScript(null);
       await handleScan();
     } catch (error) {
       console.error(error);
@@ -399,39 +398,50 @@ export default function Library() {
       ) : (
         <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filteredScripts.map((script) => (
+
             <InstalledLuaCatalogCard
               key={script.path}
               script={script}
               metadata={gameMetadata[script.app_id]}
-              onToggle={handleToggleScript}
-              onDelete={handleDeleteScript}
-              onOpenSteamStore={handleOpenSteamStore}
-              onOpenSteamDb={handleOpenSteamDb}
+              onDetails={setSelectedScript}
             />
+
           ))}
         </section>
       )}
+      <LibraryItemDetailsModal
+        open={Boolean(selectedScript)}
+        script={selectedScript}
+        metadata={
+          selectedScript
+            ? gameMetadata[selectedScript.app_id]
+            : undefined
+        }
+        onClose={() => setSelectedScript(null)}
+        onToggle={handleToggleScript}
+        onDelete={handleDeleteScript}
+        onOpenSteamStore={handleOpenSteamStore}
+        onOpenSteamDb={handleOpenSteamDb}
+      />
     </div>
   );
 }
 
+
 type InstalledLuaCatalogCardProps = {
   script: InstalledLuaScript;
   metadata?: SteamAppMetadata;
-  onToggle: (script: InstalledLuaScript) => void;
-  onDelete: (script: InstalledLuaScript) => void;
-  onOpenSteamStore: (script: InstalledLuaScript) => void;
-  onOpenSteamDb: (script: InstalledLuaScript) => void;
+  onDetails: (script: InstalledLuaScript) => void;
 };
+
+
 
 function InstalledLuaCatalogCard({
   script,
   metadata,
-  onToggle,
-  onDelete,
-  onOpenSteamStore,
-  onOpenSteamDb,
+  onDetails,
 }: InstalledLuaCatalogCardProps) {
+
   const [imageFailed, setImageFailed] = useState(false);
 
   const title = metadata?.name || `Steam App ${script.app_id}`;
@@ -519,45 +529,21 @@ function InstalledLuaCatalogCard({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => onOpenSteamStore(script)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            Steam
-          </button>
 
-          <button
-            type="button"
-            onClick={() => onOpenSteamDb(script)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-          >
-            <Database className="h-3.5 w-3.5" />
-            SteamDB
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => onDetails(script)}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+        >
+          <FileCode2 className="h-3.5 w-3.5" />
+          Details
+        </button>
 
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => onToggle(script)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-          >
-            <Power className="h-3.5 w-3.5" />
-            {script.is_disabled ? "Activar" : "Deshabilitar"}
-          </button>
 
-          <button
-            type="button"
-            onClick={() => onDelete(script)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/20"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Eliminar
-          </button>
-        </div>
+
+
+
+
       </div>
     </article>
   );
