@@ -11,6 +11,7 @@ import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreHero from "../components/store/StoreHero";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
+import type { StoreMoreLikeThisGame } from "../components/store/StoreMoreLikeThisSection";
 
 import { useSettings } from "../context/SettingsContext";
 import { useProviderSearch } from "../hooks/useProviderSearch";
@@ -41,7 +42,6 @@ import type {
   SteamFeaturedCategory,
   SteamFeaturedItem,
 } from "../types/steamFeatured";
-import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 
 type StoreSectionModel = {
   id: string;
@@ -63,19 +63,6 @@ function mapSteamFeaturedItemToPackageGame(
       item.small_capsule_image ||
       undefined,
     platforms: item.platforms,
-    sources: [],
-  };
-}
-
-function mapSteamSearchItemToPackageGame(
-  item: SteamStoreSearchItem
-): PackageGame {
-  return {
-    appId: String(item.app_id),
-    title: item.name,
-    developer: undefined,
-    imageUrl: item.image_url || undefined,
-    platforms: [],
     sources: [],
   };
 }
@@ -496,6 +483,46 @@ export default function Store() {
     };
   }, [visibleAppIds]);
 
+  const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {
+    if (!selectedDetailGameWithOverlay) {
+      return [];
+    }
+
+    const relatedMap = new Map<string, PackageGame>();
+
+    allStoreSections.forEach((section) => {
+      section.games.forEach((game) => {
+        if (game.appId !== selectedDetailGameWithOverlay.appId) {
+          relatedMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
+        }
+      });
+    });
+
+    results.forEach((game) => {
+      if (game.appId !== selectedDetailGameWithOverlay.appId) {
+        relatedMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
+      }
+    });
+
+    return Array.from(relatedMap.values())
+      .slice(0, 16)
+      .map((game) => ({
+        game,
+        metadata: storeMetadataByAppId[Number(game.appId)],
+        reviewSummary: reviewSummaryByAppId[Number(game.appId)],
+        installStatus:
+          installedStatusByAppId.get(game.appId) ?? "not-installed",
+      }));
+  }, [
+    selectedDetailGameWithOverlay,
+    allStoreSections,
+    results,
+    providerOverlayByAppId,
+    storeMetadataByAppId,
+    reviewSummaryByAppId,
+    installedStatusByAppId,
+  ]);
+
   function handleToolbarQueryChange(value: string) {
     setStoreSearchQuery(value);
     setActiveSectionId(null);
@@ -672,8 +699,10 @@ export default function Store() {
             installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
             "not-installed"
           }
+          moreLikeThisGames={selectedDetailRelatedGames}
           onBack={() => setSelectedDetailGame(null)}
           onDownloadSource={handleDownloadSource}
+          onOpenGame={openDetailsForGame}
         />
       </div>
     );

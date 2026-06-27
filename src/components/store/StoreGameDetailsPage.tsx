@@ -23,6 +23,9 @@ import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
 
+
+import type { StoreMoreLikeThisGame } from "./StoreMoreLikeThisSection";
+import StoreMoreLikeThisSection from "./StoreMoreLikeThisSection";
 import { openExternalUrl } from "../../services/externalLinks";
 import {
   getSteamDbUrl,
@@ -31,13 +34,16 @@ import {
 
 import { showError } from "../toast/GameToast";
 
+
 type StoreGameDetailsPageProps = {
   game: PackageGame;
   metadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
   installStatus?: PackageInstallStatus;
+  moreLikeThisGames?: StoreMoreLikeThisGame[];
   onBack: () => void;
   onDownloadSource?: (source: PackageSource) => void;
+  onOpenGame?: (game: PackageGame) => void;
 };
 
 function getBestImage(game: PackageGame, metadata?: SteamAppMetadata) {
@@ -167,14 +173,18 @@ function getGalleryImages(game: PackageGame, metadata?: SteamAppMetadata) {
   return Array.from(new Set(images));
 }
 
+
 export default function StoreGameDetailsPage({
   game,
   metadata,
   reviewSummary,
   installStatus = "not-installed",
+  moreLikeThisGames = [],
   onBack,
   onDownloadSource,
+  onOpenGame,
 }: StoreGameDetailsPageProps) {
+
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
@@ -273,7 +283,14 @@ export default function StoreGameDetailsPage({
             dlcCount={metadata?.dlc_count ?? 0}
           />
 
-          <StoreMoreLikeThisSection />
+
+
+          <StoreMoreLikeThisSection
+            games={moreLikeThisGames}
+            onOpenGame={onOpenGame}
+          />
+
+
 
           <StoreTechnicalSection />
         </div>
@@ -596,28 +613,28 @@ function StoreContentSection({
   );
 }
 
-function StoreMoreLikeThisSection() {
-  return (
-    <section className="rounded-3xl border border-(--surface-active-border) bg-white/5 p-4">
-      <h2 className="text-xl font-bold text-(--color-text)">
-        More Like This
-      </h2>
+// function StoreMoreLikeThisSection() {
+//   return (
+//     <section className="rounded-3xl border border-(--surface-active-border) bg-white/5 p-4">
+//       <h2 className="text-xl font-bold text-(--color-text)">
+//         More Like This
+//       </h2>
 
-      <p className="mt-1 text-sm text-(--color-muted)">
-        Recommendations based on Steam tags, provider availability and local library data will appear here.
-      </p>
+//       <p className="mt-1 text-sm text-(--color-muted)">
+//         Recommendations based on Steam tags, provider availability and local library data will appear here.
+//       </p>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[1, 2, 3, 4].map((item) => (
-          <div
-            key={item}
-            className="aspect-video rounded-2xl border border-(--surface-active-border) bg-black/25"
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
+//       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+//         {[1, 2, 3, 4].map((item) => (
+//           <div
+//             key={item}
+//             className="aspect-video rounded-2xl border border-(--surface-active-border) bg-black/25"
+//           />
+//         ))}
+//       </div>
+//     </section>
+//   );
+// }
 
 function StoreTechnicalSection() {
   return (
