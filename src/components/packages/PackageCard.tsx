@@ -50,6 +50,10 @@ type PackageCardProps = {
   recheckingSources?: boolean;
   onInstallComplete?: () => void;
   onRecheckSources?: (appId: string) => void;
+  variant?: "landscape" | "poster";
+  onOpenGame?: (game: PackageGame) => void;
+  onOpenSteam?: (appId: string) => void;
+  onDownload?: (game: PackageGame) => void;
 };
 
 function getSourceKey(source: PackageSource) {
@@ -141,6 +145,15 @@ function getBestStoreImage(game: PackageGame, metadata?: SteamAppMetadata) {
   );
 }
 
+function getBestPosterImage(game: PackageGame, metadata?: SteamAppMetadata) {
+  return (
+    metadata?.capsule_image_v5 ||
+    metadata?.capsule_image ||
+    metadata?.header_image ||
+    game.imageUrl
+  );
+}
+
 function getStoreTitle(game: PackageGame, metadata?: SteamAppMetadata) {
   return metadata?.name || game.title;
 }
@@ -205,6 +218,10 @@ export default function PackageCard({
   recheckingSources = false,
   onInstallComplete,
   onRecheckSources,
+  variant = "landscape",
+  onOpenGame,
+  onOpenSteam,
+  onDownload,
 }: PackageCardProps) {
   const { settings } = useSettings();
   const { addJob, updateJob } = useDownloadQueue();
@@ -252,12 +269,16 @@ export default function PackageCard({
 
   const displayTitle = getStoreTitle(game, storeMetadata);
   const displayDeveloper = getStoreDeveloper(game, storeMetadata);
-  const displayImageUrl = getBestStoreImage(game, storeMetadata);
+  const displayImageUrl = variant === "poster"
+    ? getBestPosterImage(game, storeMetadata)
+    : getBestStoreImage(game, storeMetadata);
   const displayPlatforms = getStorePlatforms(game, storeMetadata);
 
   const dlcLabel = getDlcLabel(storeMetadata);
   const languagesLabel = getLanguagesLabel(storeMetadata);
   const reviewScoreLabel = getReviewScoreLabel(reviewSummary);
+
+  const hasLuaReady = availableSources.length > 0;
 
   function stopCardClick(event: MouseEvent) {
     event.stopPropagation();
@@ -368,6 +389,120 @@ export default function PackageCard({
         title: "Instalación fallida",
       });
     }
+  }
+
+  if (variant === "poster") {
+    return (
+      <article
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpenGame?.(game)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            onOpenGame?.(game);
+          }
+        }}
+        className="group relative cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
+      >
+        <div className="relative aspect-[2/3] overflow-hidden">
+          {displayImageUrl && !imageFailed ? (
+            <img
+              src={displayImageUrl}
+              alt={displayTitle}
+              className="h-full w-full object-cover object-center transition duration-500 group-hover:scale-105"
+              loading="lazy"
+              onError={() => setImageFailed(true)}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-white/5">
+              <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+            </div>
+          )}
+
+          <div className="absolute left-2 top-2 z-10 flex flex-wrap gap-1.5">
+            {installBadge &&
+              (() => {
+                const Icon = installBadge.icon;
+
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur-md ${installBadge.className}`}
+                  >
+                    <Icon className="h-2.5 w-2.5" />
+                    {installBadge.label}
+                  </span>
+                );
+              })()}
+
+            {hasLuaReady && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur-md">
+                <CheckCircle2 className="h-2.5 w-2.5" />
+                Lua Ready
+              </span>
+            )}
+          </div>
+
+          {game.sources.length > 0 && (
+            <div className="absolute right-2 top-2 z-10">
+              <span className="rounded-full border border-white/10 bg-black/35 px-2 py-0.5 text-[10px] text-white/70 backdrop-blur-md">
+                {availableSources.length}/{game.sources.length}
+              </span>
+            </div>
+          )}
+
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/75 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenGame?.(game);
+              }}
+              className="w-32 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/15"
+            >
+              Details
+            </button>
+
+            {hasLuaReady && onDownload && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDownload(game);
+                }}
+                className="flex w-32 items-center justify-center gap-1 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90"
+              >
+                <Download className="h-3 w-3" />
+                Download
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSteam?.(game.appId);
+              }}
+              className="flex w-32 items-center justify-center gap-1 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/15 hover:text-white"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Steam
+            </button>
+          </div>
+        </div>
+
+        <div className="p-2.5">
+          <h3 className="line-clamp-2 text-sm font-semibold text-(--color-text)">
+            {displayTitle}
+          </h3>
+
+          {displayDeveloper && (
+            <p className="mt-0.5 line-clamp-1 text-[11px] text-(--color-muted)">
+              {displayDeveloper}
+            </p>
+          )}
+        </div>
+      </article>
+    );
   }
 
   return (

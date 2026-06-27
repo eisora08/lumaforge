@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
+  Filter,
   Gamepad2,
   PackageSearch,
 } from "lucide-react";
@@ -12,6 +13,10 @@ import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
+import StoreBrowseFiltersPanel, {
+  DEFAULT_BROWSE_FILTERS,
+} from "../components/store/StoreBrowseFiltersPanel";
+import type { BrowseFilters } from "../components/store/StoreBrowseFiltersPanel";
 import type { StoreMoreLikeThisGame } from "../components/store/StoreMoreLikeThisSection";
 
 import { useSettings } from "../context/SettingsContext";
@@ -158,6 +163,13 @@ export default function Store() {
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [selectedDetailGame, setSelectedDetailGame] =
     useState<PackageGame | null>(null);
+
+  const [browseFilters, setBrowseFilters] = useState<BrowseFilters>(
+    DEFAULT_BROWSE_FILTERS
+  );
+  const [activeGenreSectionId, setActiveGenreSectionId] = useState<
+    string | null
+  >(null);
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -453,6 +465,80 @@ export default function Store() {
     return games.slice(0, 8);
   }, [steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
 
+  const filteredBrowseGames = useMemo(() => {
+    let games = browseGames;
+
+    if (activeGenreSectionId) {
+      const section = steamStoreSections.find(
+        (s) => s.id === activeGenreSectionId
+      );
+
+      if (section) {
+        const genreIds = new Set(section.games.map((g) => g.appId));
+        games = games.filter((g) => genreIds.has(g.appId));
+      }
+    }
+
+    const kw = browseFilters.keywords.toLowerCase().trim();
+
+    if (kw) {
+      games = games.filter(
+        (g) =>
+          g.title.toLowerCase().includes(kw) ||
+          g.appId.toLowerCase().includes(kw) ||
+          (g.developer && g.developer.toLowerCase().includes(kw))
+      );
+    }
+
+    if (browseFilters.installed) {
+      games = games.filter((g) => installedStatusByAppId.has(g.appId));
+    }
+
+    if (browseFilters.luaReady) {
+      games = games.filter((g) => {
+        const overlayed = providerOverlayByAppId[g.appId] ?? g;
+        return overlayed.sources.some((s) => s.available);
+      });
+    }
+
+    if (browseFilters.hasSource) {
+      games = games.filter((g) => {
+        const overlayed = providerOverlayByAppId[g.appId] ?? g;
+        return overlayed.sources.length > 0;
+      });
+    }
+
+    if (browseFilters.platforms.length > 0) {
+      const platformSet = new Set(browseFilters.platforms);
+
+      games = games.filter((g) => {
+        const metadata = storeMetadataByAppId[Number(g.appId)];
+        const platforms =
+          metadata?.platforms?.length ? metadata.platforms : g.platforms;
+        return platforms.some((p) => platformSet.has(p));
+      });
+    }
+
+    if (browseFilters.sourceTypes.length > 0) {
+      const typeSet = new Set(browseFilters.sourceTypes);
+
+      games = games.filter((g) => {
+        const overlayed = providerOverlayByAppId[g.appId] ?? g;
+        return overlayed.sources.some((s) => typeSet.has(s.fileType));
+      });
+    }
+
+    return games;
+  }, [
+    browseGames,
+    browseFilters,
+    activeGenreSectionId,
+    steamStoreSections,
+    providerOverlayByAppId,
+    installedStatusByAppId,
+    storeMetadataByAppId,
+  ]);
+
   const activeSection = activeSectionId
     ? allStoreSections.find((section) => section.id === activeSectionId)
     : undefined;
@@ -668,6 +754,7 @@ export default function Store() {
   function handleStoreTabChange(tab: StoreTab) {
     setActiveStoreTab(tab);
     setActiveSectionId(null);
+    setActiveGenreSectionId(null);
   }
 
   function handleProviderChange(value: typeof selectedProvider) {
@@ -675,13 +762,7 @@ export default function Store() {
     setActiveSectionId(null);
   }
 
-  async function handleDownloadSource(source: PackageSource) {
-    const game = selectedDetailGameWithOverlay;
-
-    if (!game) {
-      return;
-    }
-
+  async function downloadFromSource(game: PackageGame, source: PackageSource) {
     if (!source.available) {
       showWarning("Selecciona una fuente disponible antes de descargar.", {
         title: "Fuente requerida",
@@ -758,6 +839,31 @@ export default function Store() {
     }
   }
 
+  async function handleDownloadSource(source: PackageSource) {
+    const game = selectedDetailGameWithOverlay;
+
+    if (!game) {
+      return;
+    }
+
+    await downloadFromSource(game, source);
+  }
+
+  async function handlePosterDownload(game: PackageGame) {
+    const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
+    const source = gameWithOverlay.sources.find((s) => s.available);
+
+    if (!source) {
+      showWarning("No hay fuentes disponibles para este juego.", {
+        title: "Sin fuentes",
+      });
+
+      return;
+    }
+
+    await downloadFromSource(gameWithOverlay, source);
+  }
+
   function renderStoreCard(game: PackageGame) {
     const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
 
@@ -769,6 +875,24 @@ export default function Store() {
         reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
         installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
         onInstallComplete={refreshInstalledScripts}
+      />
+    );
+  }
+
+  function renderPosterCard(game: PackageGame) {
+    const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
+
+    return (
+      <PackageCard
+        key={game.appId}
+        variant="poster"
+        game={gameWithOverlay}
+        storeMetadata={storeMetadataByAppId[Number(game.appId)]}
+        reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
+        installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
+        onOpenGame={openDetailsForGame}
+        onOpenSteam={openSteamPage}
+        onDownload={handlePosterDownload}
       />
     );
   }
@@ -798,22 +922,32 @@ export default function Store() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7">
-      <header className="space-y-4">
-        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
-          <PackageSearch className="h-3.5 w-3.5" />
-          LumaForge Store
-        </div>
+    <div className="mx-auto w-full max-w-[1440px] space-y-5 p-5 lg:p-7">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-1.5">
+          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
+            <PackageSearch className="h-3.5 w-3.5" />
+            LumaForge Store
+          </div>
 
-        <div>
-          <h1 className="text-3xl font-bold text-(--color-text)">
+          <h1 className="text-2xl font-bold text-(--color-text)">
             Store
           </h1>
+        </div>
 
-          <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Explora juegos de Steam, descubre secciones destacadas y descarga
-            Lua/manifests cuando haya providers compatibles.
-          </p>
+        <div className="w-full lg:w-auto lg:pt-1.5">
+          <PackagesToolbar
+            compact
+            query={storeSearchQuery}
+            selectedProvider={selectedProvider}
+            onQueryChange={handleToolbarQueryChange}
+            onProviderChange={handleProviderChange}
+            searchItems={steamSearchItems}
+            searchLoading={steamSearchLoading}
+            onSubmitSearch={submitSteamSearch}
+            onViewAllSearchResults={submitSteamSearch}
+            onSelectSearchItem={handleSelectSearchItem}
+          />
         </div>
       </header>
 
@@ -836,18 +970,6 @@ export default function Store() {
           </button>
         ))}
       </div>
-
-      <PackagesToolbar
-        query={storeSearchQuery}
-        selectedProvider={selectedProvider}
-        onQueryChange={handleToolbarQueryChange}
-        onProviderChange={handleProviderChange}
-        searchItems={steamSearchItems}
-        searchLoading={steamSearchLoading}
-        onSubmitSearch={submitSteamSearch}
-        onViewAllSearchResults={submitSteamSearch}
-        onSelectSearchItem={handleSelectSearchItem}
-      />
 
       {loading ? (
         <StoreLoadingState />
@@ -872,8 +994,8 @@ export default function Store() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {activeSection.games.map(renderStoreCard)}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+            {activeSection.games.map(renderPosterCard)}
           </div>
         </section>
       ) : isSearchResultsView ? (
@@ -891,26 +1013,107 @@ export default function Store() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {results.map(renderStoreCard)}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              {results.map(renderPosterCard)}
             </div>
           </section>
         )
       ) : activeStoreTab === "browse" ? (
         <section className="space-y-5">
-          <div>
-            <h2 className="text-2xl font-bold text-(--color-text)">
-              Browse Games
-            </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-2xl font-bold text-(--color-text)">
+                Browse Games
+              </h2>
 
-            <p className="mt-1 text-sm text-(--color-muted)">
-              Explora todos los juegos disponibles desde Steam y providers
-              compatibles.
-            </p>
+              <p className="mt-1 text-sm text-(--color-muted)">
+                Explora todos los juegos disponibles desde Steam y providers
+                compatibles.
+              </p>
+            </div>
+
+            <div className="flex h-10 items-center gap-2.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3.5">
+              <Filter className="h-4 w-4 shrink-0 text-(--color-muted)" />
+
+              <select
+                value={selectedProvider}
+                onChange={(event) =>
+                  handleProviderChange(
+                    event.target.value as typeof selectedProvider
+                  )
+                }
+                className="bg-transparent text-sm text-(--color-text) outline-none"
+              >
+                <option value="all" className="bg-black text-white">
+                  All Providers
+                </option>
+                <option value="hubcapdb" className="bg-black text-white">
+                  HubcapDB
+                </option>
+                <option value="ryuu" className="bg-black text-white">
+                  Ryuu
+                </option>
+                <option value="twentytwo-cloud" className="bg-black text-white">
+                  TwentyTwo Cloud
+                </option>
+                <option value="sushi" className="bg-black text-white">
+                  Sushi
+                </option>
+                <option value="custom" className="bg-black text-white">
+                  Custom API
+                </option>
+              </select>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {browseGames.map(renderStoreCard)}
+          {steamStoreSections.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+              <button
+                type="button"
+                onClick={() => setActiveGenreSectionId(null)}
+                className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  activeGenreSectionId === null
+                    ? "bg-(--color-accent) text-black"
+                    : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                }`}
+              >
+                All
+              </button>
+
+              {steamStoreSections.map((section) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => setActiveGenreSectionId(section.id)}
+                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    activeGenreSectionId === section.id
+                      ? "bg-(--color-accent) text-black"
+                      : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                  }`}
+                >
+                  {section.title}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="lg:flex lg:gap-6">
+            <StoreBrowseFiltersPanel
+              filters={browseFilters}
+              onFiltersChange={setBrowseFilters}
+              totalGames={browseGames.length}
+              filteredGames={filteredBrowseGames.length}
+            />
+
+            <div className="min-w-0 flex-1">
+              {filteredBrowseGames.length === 0 ? (
+                <StoreEmptyState />
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                  {filteredBrowseGames.map(renderPosterCard)}
+                </div>
+              )}
+            </div>
           </div>
         </section>
       ) : activeStoreTab === "lua-ready" ? (
@@ -928,8 +1131,8 @@ export default function Store() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {luaReadyGames.map(renderStoreCard)}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              {luaReadyGames.map(renderPosterCard)}
             </div>
           </section>
         )
