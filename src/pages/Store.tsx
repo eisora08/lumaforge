@@ -11,6 +11,8 @@ import type { StoreSearchDropdownItem } from "../components/packages/PackagesToo
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
+import StoreNewsFeed from "../components/store/StoreNewsFeed";
+import type { StoreNewsItem } from "../components/store/StoreNewsFeed";
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
 import StoreBrowseFiltersPanel, {
@@ -476,6 +478,61 @@ export default function Store() {
 
     return games.slice(0, 8);
   }, [steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
+
+  const newsItems = useMemo<StoreNewsItem[]>(() => {
+    const items: StoreNewsItem[] = [];
+    const usedAppIds = new Set<string>();
+
+    const tryAdd = (game: PackageGame, category: StoreNewsItem["category"], group: StoreNewsItem["group"], title: string, description: string) => {
+      if (usedAppIds.has(game.appId)) return;
+      usedAppIds.add(game.appId);
+      const overlayed = providerOverlayByAppId[game.appId] ?? game;
+      items.push({
+        id: `${category}-${game.appId}-${items.length}`,
+        title,
+        description,
+        imageUrl: overlayed.imageUrl || storeMetadataByAppId[Number(game.appId)]?.capsule_image_v5 || storeMetadataByAppId[Number(game.appId)]?.header_image || undefined,
+        appId: game.appId,
+        category,
+        group,
+        game: overlayed,
+      });
+    };
+
+    const topGames = browseGames.slice(0, 12);
+    for (const game of topGames) {
+      const meta = storeMetadataByAppId[Number(game.appId)];
+      const hasSources = game.sources.some((s) => s.available);
+      const isInstalled = installedStatusByAppId.has(game.appId);
+
+      if (hasSources) {
+        tryAdd(game, "Lua Ready", "Today", `${game.title} is Lua Ready`, `${game.title} has compatible download sources available in LumaForge.`);
+      }
+
+      if (isInstalled) {
+        tryAdd(game, "Installed", "Today", `${game.title} is installed and ready`, `${game.title} is installed in your library and ready to use.`);
+      }
+
+      if (meta && meta.dlc_count > 0) {
+        const dlcLabel = meta.dlc_count === 1 ? "1 DLC" : `${meta.dlc_count} DLCs`;
+        tryAdd(game, "DLC", "This Week", `${game.title} has ${dlcLabel} available`, `Additional content detected from Steam metadata for ${game.title}.`);
+      }
+    }
+
+    for (const section of steamStoreSections.slice(0, 3)) {
+      for (const game of section.games.slice(0, 2)) {
+        if (usedAppIds.has(game.appId)) continue;
+        tryAdd(game, "Featured", "This Week", `${game.title} is featured in Store`, `${game.title} is featured in the "${section.title}" collection on the Store.`);
+      }
+    }
+
+    const extraGames = results.filter((g) => !usedAppIds.has(g.appId)).slice(0, 4);
+    for (const game of extraGames) {
+      tryAdd(game, "Store", "Earlier", `${game.title} found in provider search`, `${game.title} was found in search results from your configured providers.`);
+    }
+
+    return items;
+  }, [browseGames, steamStoreSections, results, providerOverlayByAppId, storeMetadataByAppId, installedStatusByAppId]);
 
   const filteredBrowseGames = useMemo(() => {
     let games = browseGames;
@@ -1167,38 +1224,10 @@ export default function Store() {
           </section>
         )
       ) : activeStoreTab === "news" ? (
-        <section className="space-y-6">
-
-          <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-5">
-            <h3 className="text-lg font-bold text-(--color-text)">
-              Coming Soon
-            </h3>
-
-            <p className="mt-2 text-sm text-(--color-muted)">
-              News feed and game updates are coming in a future update.
-            </p>
-          </section>
-
-          <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-5">
-            <h3 className="text-lg font-bold text-(--color-text)">
-              Today
-            </h3>
-
-            <p className="mt-2 text-sm text-(--color-muted)">
-              No news today.
-            </p>
-          </section>
-
-          <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-5">
-            <h3 className="text-lg font-bold text-(--color-text)">
-              Earlier
-            </h3>
-
-            <p className="mt-2 text-sm text-(--color-muted)">
-              No earlier news.
-            </p>
-          </section>
-        </section>
+        <StoreNewsFeed
+          items={newsItems}
+          onOpenGame={openDetailsForGame}
+        />
       ) : (
         <div className="space-y-8">
           <StoreDiscoverHeroCarousel
