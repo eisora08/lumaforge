@@ -29,6 +29,7 @@ import {
 } from "../services/tauri";
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl } from "../utils/steamLinks";
+import { getBestAvailableSource } from "../utils/sourceHelpers";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
@@ -138,6 +139,10 @@ export default function Store() {
   >([]);
 
   const [steamSearchLoading, setSteamSearchLoading] = useState(false);
+
+  const [steamSubmittedSearchGames, setSteamSubmittedSearchGames] = useState<
+    PackageGame[]
+  >([]);
 
   const [installedScripts, setInstalledScripts] = useState<
     InstalledLuaScript[]
@@ -576,6 +581,14 @@ export default function Store() {
       }
     });
 
+    steamSubmittedSearchGames.forEach((game) => {
+      const appId = Number(game.appId);
+
+      if (Number.isFinite(appId)) {
+        appIds.add(appId);
+      }
+    });
+
     if (selectedDetailGame) {
       const appId = Number(selectedDetailGame.appId);
 
@@ -585,7 +598,7 @@ export default function Store() {
     }
 
     return Array.from(appIds);
-  }, [results, steamStoreSections, steamSearchItems, selectedDetailGame]);
+  }, [results, steamStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame]);
 
   useEffect(() => {
     if (visibleAppIds.length === 0) {
@@ -696,6 +709,7 @@ export default function Store() {
     if (value.trim().length === 0) {
       setSubmittedSearchQuery("");
       setQuery("");
+      setSteamSubmittedSearchGames([]);
     }
   }
 
@@ -706,10 +720,23 @@ export default function Store() {
       return;
     }
 
+    const games = steamSearchItems.map(mapSteamDropdownItemToPackageGame);
+    setSteamSubmittedSearchGames(games);
     setSubmittedSearchQuery(query);
     setQuery(query);
     setActiveSectionId(null);
     setSelectedDetailGame(null);
+
+    if (games.length > 0) {
+      resolveProviderOverlaysForStoreGames(games, settings).then(
+        (overlays) => {
+          setProviderOverlayByAppId((current) => ({
+            ...current,
+            ...overlays,
+          }));
+        }
+      ).catch(console.error);
+    }
   }
 
   function openSteamPage(appId: string) {
@@ -747,6 +774,7 @@ export default function Store() {
     setQuery("");
     setActiveSectionId(null);
     setSteamSearchItems([]);
+    setSteamSubmittedSearchGames([]);
 
     openDetailsForGame(game);
   }
@@ -851,7 +879,7 @@ export default function Store() {
 
   async function handlePosterDownload(game: PackageGame) {
     const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
-    const source = gameWithOverlay.sources.find((s) => s.available);
+    const source = getBestAvailableSource(gameWithOverlay);
 
     if (!source) {
       showWarning("No hay fuentes disponibles para este juego.", {
@@ -999,25 +1027,37 @@ export default function Store() {
           </div>
         </section>
       ) : isSearchResultsView ? (
-        results.length === 0 ? (
-          <StoreEmptyState />
-        ) : (
-          <section className="space-y-4">
-            <div>
-              <h2 className="text-xl font-bold text-(--color-text)">
-                Search Results
-              </h2>
+        (() => {
+          const steamGames = steamSubmittedSearchGames.map(
+            (g) => providerOverlayByAppId[g.appId] ?? g
+          );
 
-              <p className="mt-1 text-sm text-(--color-muted)">
-                Resultados para "{submittedSearchQuery}"
-              </p>
-            </div>
+          const mergedResults = dedupeGames([
+            ...steamGames,
+            ...results,
+          ]);
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-              {results.map(renderPosterCard)}
-            </div>
-          </section>
-        )
+          return mergedResults.length === 0 ? (
+            <StoreEmptyState />
+          ) : (
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-xl font-bold text-(--color-text)">
+                  Search Results for "{submittedSearchQuery}"
+                </h2>
+
+                <p className="mt-1 text-sm text-(--color-muted)">
+                  {mergedResults.length} game
+                  {mergedResults.length === 1 ? "" : "s"} found
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                {mergedResults.map(renderPosterCard)}
+              </div>
+            </section>
+          );
+        })()
       ) : activeStoreTab === "browse" ? (
         <section className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
