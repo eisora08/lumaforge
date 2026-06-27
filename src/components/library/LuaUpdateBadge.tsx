@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   CheckCircle2,
+  CircleX,
   PauseCircle,
   RefreshCcw,
 } from "lucide-react";
@@ -20,7 +21,11 @@ export default function LuaUpdateBadge({ info }: LuaUpdateBadgeProps) {
       title={info.description}
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${config.className}`}
     >
-      <Icon className="h-3 w-3" />
+      <Icon
+        className={`h-3 w-3 ${
+          info.status === "checking" ? "animate-spin" : ""
+        }`}
+      />
       {info.label}
     </span>
   );
@@ -38,6 +43,20 @@ function getBadgeConfig(status: LuaUpdateInfo["status"]) {
     return {
       icon: RefreshCcw,
       className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300",
+    };
+  }
+
+  if (status === "provider-unavailable") {
+    return {
+      icon: CircleX,
+      className: "border-red-500/20 bg-red-500/10 text-red-300",
+    };
+  }
+
+  if (status === "checking") {
+    return {
+      icon: RefreshCcw,
+      className: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
     };
   }
 

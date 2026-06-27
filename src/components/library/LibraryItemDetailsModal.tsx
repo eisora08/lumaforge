@@ -15,17 +15,21 @@ import {
 import type { InstalledLuaScript } from "../../types/installedLua";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 
+import LuaUpdateBadge from "./LuaUpdateBadge";
+import type { LuaUpdateInfo } from "../../types/luaUpdate";
+import { getLuaUpdateInfo } from "../../utils/luaUpdateStatus";
+
 type LibraryItemDetailsModalProps = {
   open: boolean;
   script: InstalledLuaScript | null;
   metadata?: SteamAppMetadata;
+  updateInfo?: LuaUpdateInfo;
   onClose: () => void;
   onToggle: (script: InstalledLuaScript) => void;
   onDelete: (script: InstalledLuaScript) => void;
   onOpenSteamStore: (script: InstalledLuaScript) => void;
   onOpenSteamDb: (script: InstalledLuaScript) => void;
 };
-
 function formatBytes(bytes: number) {
   if (!bytes) return "0 B";
 
@@ -69,8 +73,6 @@ function getInitials(title: string) {
     .join("");
 }
 
-import LuaUpdateBadge from "./LuaUpdateBadge";
-import { getLuaUpdateInfo } from "../../utils/luaUpdateStatus";
 
 export default function LibraryItemDetailsModal({
   open,

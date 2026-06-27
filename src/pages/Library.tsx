@@ -8,38 +8,40 @@ import {
   ShieldCheck,
   ShieldOff,
 } from "lucide-react";
+
 import LibraryItemDetailsModal from "../components/library/LibraryItemDetailsModal";
+import LuaUpdateBadge from "../components/library/LuaUpdateBadge";
+
 import { useSettings } from "../context/SettingsContext";
 import {
   deleteLuaScript,
   scanInstalledLuaScripts,
   setLuaScriptEnabled,
 } from "../services/tauri";
-import { InstalledLuaScript } from "../types/installedLua";
-// import { resolveGameNames } from "../services/gameNameResolver";
 import { openExternalUrl } from "../services/externalLinks";
-import {
-  getSteamDbUrl,
-  getSteamStoreUrl,
-} from "../utils/steamLinks";
+import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import { checkInstalledLuaUpdates } from "../services/installedLuaUpdateChecker";
+
+import type { InstalledLuaScript } from "../types/installedLua";
+import type { SteamAppMetadata } from "../types/gameMetadata";
+import type { LuaProviderUpdateCheck } from "../types/luaUpdateCheck";
+import type { LuaUpdateInfo } from "../types/luaUpdate";
+
+import { getSteamDbUrl, getSteamStoreUrl } from "../utils/steamLinks";
+import { getLuaUpdateInfo } from "../utils/luaUpdateStatus";
+
 import {
   showError,
   showSuccess,
   showWarning,
 } from "../components/toast/GameToast";
 
-import LuaUpdateBadge from "../components/library/LuaUpdateBadge";
-import { getLuaUpdateInfo } from "../utils/luaUpdateStatus";
-
-import { resolveGameMetadata } from "../services/gameMetadataResolver";
-import type { SteamAppMetadata } from "../types/gameMetadata";
-
 type LibraryFilter = "all" | "active" | "disabled";
 type LibrarySort = "appid" | "name" | "modified" | "size";
 
-
 function formatDate(seconds: number) {
   if (!seconds) return "No disponible";
+
   return new Date(seconds * 1000).toLocaleDateString();
 }
 
@@ -47,10 +49,7 @@ function getFallbackHeaderImageUrl(appId: number) {
   return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
 }
 
-function getBestCoverUrl(
-  appId: number,
-  metadata?: SteamAppMetadata
-): string {
+function getBestCoverUrl(appId: number, metadata?: SteamAppMetadata): string {
   return (
     metadata?.header_image ||
     metadata?.capsule_image ||
@@ -58,8 +57,6 @@ function getBestCoverUrl(
     getFallbackHeaderImageUrl(appId)
   );
 }
-
-
 
 export default function Library() {
   const { settings } = useSettings();
@@ -71,11 +68,17 @@ export default function Library() {
   const [gameMetadata, setGameMetadata] = useState<
     Record<number, SteamAppMetadata>
   >({});
+
   const [loading, setLoading] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
 
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sortBy, setSortBy] = useState<LibrarySort>("appid");
+
+  const [updateChecks, setUpdateChecks] = useState<
+    Record<number, LuaProviderUpdateCheck>
+  >({});
 
   async function handleScan() {
     if (!settings.luaPath) {
@@ -116,6 +119,46 @@ export default function Library() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleCheckUpdates() {
+    if (!settings.luaPath) {
+      showWarning(
+        "Configura o detecta la ruta config/lua antes de revisar updates.",
+        {
+          title: "Ruta requerida",
+        }
+      );
+
+      return;
+    }
+
+    if (scripts.length === 0) {
+      showWarning("No hay scripts Lua instalados para revisar.", {
+        title: "Biblioteca vacía",
+      });
+
+      return;
+    }
+
+    try {
+      setCheckingUpdates(true);
+
+      const checks = await checkInstalledLuaUpdates(scripts, settings);
+      setUpdateChecks(checks);
+
+      showSuccess("La revisión de updates terminó correctamente.", {
+        title: "Updates revisados",
+      });
+    } catch (error) {
+      console.error(error);
+
+      showError("No se pudieron revisar los updates.", {
+        title: "Revisión fallida",
+      });
+    } finally {
+      setCheckingUpdates(false);
     }
   }
 
@@ -166,6 +209,7 @@ export default function Library() {
       showSuccess(result.message, {
         title: "Lua eliminado",
       });
+
       setSelectedScript(null);
       await handleScan();
     } catch (error) {
@@ -208,10 +252,23 @@ export default function Library() {
     }
   }
 
+  function getUpdateInfo(script: InstalledLuaScript): LuaUpdateInfo {
+    const check = updateChecks[script.app_id];
+
+    return getLuaUpdateInfo(script, {
+      checking: checkingUpdates,
+      providerAvailable: check?.providerAvailable,
+      providerName: check?.providerName,
+      providerLastUpdatedAt: check?.providerLastUpdatedAt,
+      lastCheckedAt: check?.lastCheckedAt,
+    });
+  }
+
   useEffect(() => {
     if (settings.luaPath) {
       handleScan();
     }
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.luaPath]);
 
@@ -298,17 +355,33 @@ export default function Library() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={handleScan}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <RefreshCcw
-              className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
-            />
-            {loading ? "Escaneando..." : "Escanear ahora"}
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={handleCheckUpdates}
+              disabled={checkingUpdates || scripts.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCcw
+                className={`h-4 w-4 ${
+                  checkingUpdates ? "animate-spin" : ""
+                }`}
+              />
+              {checkingUpdates ? "Revisando updates..." : "Revisar updates"}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleScan}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCcw
+                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+              />
+              {loading ? "Escaneando..." : "Escanear ahora"}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -389,17 +462,17 @@ export default function Library() {
       ) : (
         <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filteredScripts.map((script) => (
-
             <InstalledLuaCatalogCard
               key={script.path}
               script={script}
               metadata={gameMetadata[script.app_id]}
+              updateInfo={getUpdateInfo(script)}
               onDetails={setSelectedScript}
             />
-
           ))}
         </section>
       )}
+
       <LibraryItemDetailsModal
         open={Boolean(selectedScript)}
         script={selectedScript}
@@ -408,6 +481,7 @@ export default function Library() {
             ? gameMetadata[selectedScript.app_id]
             : undefined
         }
+        updateInfo={selectedScript ? getUpdateInfo(selectedScript) : undefined}
         onClose={() => setSelectedScript(null)}
         onToggle={handleToggleScript}
         onDelete={handleDeleteScript}
@@ -418,26 +492,23 @@ export default function Library() {
   );
 }
 
-
 type InstalledLuaCatalogCardProps = {
   script: InstalledLuaScript;
   metadata?: SteamAppMetadata;
+  updateInfo: LuaUpdateInfo;
   onDetails: (script: InstalledLuaScript) => void;
 };
-
-
 
 function InstalledLuaCatalogCard({
   script,
   metadata,
+  updateInfo,
   onDetails,
 }: InstalledLuaCatalogCardProps) {
-
   const [imageFailed, setImageFailed] = useState(false);
 
   const title = metadata?.name || `Steam App ${script.app_id}`;
   const developer = metadata?.developer;
-  const updateInfo = getLuaUpdateInfo(script);
   const coverUrl = getBestCoverUrl(script.app_id, metadata);
 
   return (
@@ -516,7 +587,6 @@ function InstalledLuaCatalogCard({
           <LuaUpdateBadge info={updateInfo} />
         </div>
 
-
         <button
           type="button"
           onClick={() => onDetails(script)}
@@ -525,12 +595,6 @@ function InstalledLuaCatalogCard({
           <FileCode2 className="h-3.5 w-3.5" />
           Details
         </button>
-
-
-
-
-
-
       </div>
     </article>
   );
@@ -591,4 +655,3 @@ function MiniStat({ label, value }: MiniStatProps) {
     </div>
   );
 }
-
