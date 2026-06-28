@@ -1,5 +1,6 @@
 
 pub mod steam;
+pub mod steam_news;
 pub mod installer;
 pub mod provider;
 pub mod lua;

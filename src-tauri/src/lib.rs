@@ -8,6 +8,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::steam::detect_steam_paths,
+            commands::steam_news::fetch_steam_news,
             commands::installer::download_and_install_package,
             commands::provider::check_provider_availability,
             commands::lua::scan_installed_lua_scripts,

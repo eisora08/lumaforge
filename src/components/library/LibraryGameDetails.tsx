@@ -490,6 +490,55 @@ export default function LibraryGameDetails({
                 </p>
               )}
 
+              {/* Genres & Features metadata block */}
+              {(genres.length > 0 || categories.length > 0) && (
+                <section>
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                    {/* Genres column */}
+                    {genres.length > 0 && (
+                      <div>
+                        <h3 className="mb-2.5 text-[11px] font-bold uppercase tracking-widest text-(--color-muted)">
+                          Genres
+                        </h3>
+                        <div className="flex flex-wrap gap-1.5">
+                          {genres.map((genre) => (
+                            <span
+                              key={genre}
+                              className="rounded-full border border-(--surface-active-border) bg-white/5 px-3 py-1 text-[10px] text-(--color-text)/70"
+                            >
+                              {genre}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Features column */}
+                    {categories.length > 0 && (
+                      <div>
+                        <h3 className="mb-2.5 text-[11px] font-bold uppercase tracking-widest text-(--color-muted)">
+                          Features
+                        </h3>
+                        <div className="flex flex-wrap gap-1.5">
+                          {categories.map((cat) => (
+                            <span
+                              key={cat}
+                              className="rounded-full border border-(--color-accent)/20 bg-(--color-accent)/5 px-3 py-1 text-[10px] text-(--color-accent)/80"
+                            >
+                              {cat}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {/* Divider below metadata */}
+                  {(genres.length > 0 || categories.length > 0) && (
+                    <div className="mt-6 border-t border-(--surface-active-border)" />
+                  )}
+                </section>
+              )}
+
               {/* About This Game (only if longer than short intro) */}
               {longDescText && !descriptionsMatch && (
                 <section>
@@ -518,34 +567,6 @@ export default function LibraryGameDetails({
                 <p className="text-sm text-(--color-muted)">
                   Game description is not available yet.
                 </p>
-              )}
-
-              {/* Genres & Categories */}
-              {(genres.length > 0 || categories.length > 0) && (
-                <section>
-                  <h2 className="mb-3 text-base font-bold text-(--color-text)">
-                    <Star className="mr-2 inline h-4 w-4 text-(--color-accent)" />
-                    Features
-                  </h2>
-                  <div className="flex flex-wrap gap-1.5">
-                    {genres.map((genre) => (
-                      <span
-                        key={genre}
-                        className="rounded-full border border-(--surface-active-border) bg-white/5 px-3 py-1 text-[10px] text-(--color-text)/70"
-                      >
-                        {genre}
-                      </span>
-                    ))}
-                    {categories.map((cat) => (
-                      <span
-                        key={cat}
-                        className="rounded-full border border-(--color-accent)/20 bg-(--color-accent)/5 px-3 py-1 text-[10px] text-(--color-accent)/80"
-                      >
-                        {cat}
-                      </span>
-                    ))}
-                  </div>
-                </section>
               )}
 
               {/* Updates — Steam news only */}
@@ -588,6 +609,9 @@ export default function LibraryGameDetails({
                     <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
                     <p className="mt-2 text-sm text-(--color-muted)">
                       {newsError}
+                    </p>
+                    <p className="mt-1 text-xs text-(--color-muted)/50">
+                      Steam news may be unavailable or blocked. Try again later.
                     </p>
                     <button
                       type="button"

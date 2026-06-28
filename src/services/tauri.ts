@@ -208,6 +208,32 @@ export async function installSteamApp(appId: number): Promise<void> {
   return await invoke("install_steam_app", { appId });
 }
 
+export type RawSteamNewsItem = {
+  gid: string;
+  title: string;
+  url: string;
+  is_external_url: boolean;
+  author: string;
+  contents: string;
+  feedlabel: string;
+  date: number;
+  feedname: string;
+  feed_type: number;
+  appid: number;
+};
+
+export async function fetchSteamNews(
+  appId: number,
+  count?: number,
+  maxlength?: number
+): Promise<RawSteamNewsItem[]> {
+  return await invoke<RawSteamNewsItem[]>("fetch_steam_news", {
+    appId,
+    count: count ?? null,
+    maxlength: maxlength ?? null,
+  });
+}
+
 export async function resolveSteamGridDbArtwork(
   appIds: number[],
   apiKey: string
