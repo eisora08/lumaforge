@@ -20,6 +20,7 @@ export type AppSettings = {
   compactMode: boolean;
 
   steamGridDbApiKey: string;
+  steamGridDbArtworkEnabled: boolean;
 
   libraryCardArtworkMode: "landscape" | "poster";
 

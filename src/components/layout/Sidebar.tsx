@@ -5,7 +5,6 @@ import {
   Store,
   Download,
   Library,
-  Gamepad2,
   Home,
   Menu,
   RotateCcw,

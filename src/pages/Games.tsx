@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FolderSearch,
   Gamepad2,
@@ -15,6 +15,9 @@ import { launchSteamApp, installSteamApp, deleteLuaScript } from "../services/ta
 
 import type { LibraryGame } from "../types/libraryGame";
 
+import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
+import type { SgdbArtworkData } from "../services/storeArtworkResolver";
+
 import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
@@ -23,6 +26,8 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
 
   const [filter, setFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
+  const [artworkByAppId, setArtworkByAppId] = useState<Record<string, SgdbArtworkData>>({});
+  const artworkRequest = useRef(0);
 
   async function handleDeleteScript(game: LibraryGame) {
     const script = game.luaScripts[0];
@@ -52,6 +57,32 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
       return true;
     });
   }, [games, filter]);
+
+  // Resolve SGDB artwork for visible games (poster mode only)
+  useEffect(() => {
+    console.debug("[SGDB] enabled", settings.steamGridDbArtworkEnabled);
+    console.debug("[SGDB] apiKey configured", Boolean(settings.steamGridDbApiKey));
+    if (!settings.steamGridDbArtworkEnabled) return;
+    if ((settings.libraryCardArtworkMode ?? "landscape") !== "poster") return;
+    if (!settings.steamGridDbApiKey) return;
+
+    const visibleAppIds = filteredGames
+      .map((g) => Number(g.appId))
+      .filter((id): id is number => !isNaN(id) && id > 0);
+
+    if (visibleAppIds.length === 0) return;
+
+    const requestId = Date.now();
+    artworkRequest.current = requestId;
+
+    console.debug("[Games] Resolving SGDB artwork for", visibleAppIds.length, "games");
+    resolveArtworkForAppIds(visibleAppIds, settings.steamGridDbApiKey)
+      .then((result) => {
+        if (artworkRequest.current !== requestId) return;
+        setArtworkByAppId((prev) => ({ ...prev, ...result }));
+      })
+      .catch(() => {});
+  }, [filteredGames, settings.libraryCardArtworkMode, settings.steamGridDbApiKey]);
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
@@ -156,11 +187,16 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                 <p className="mt-1.5 text-sm text-(--color-muted)">Try adjusting your filter or scan for games.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              <div className={
+                (settings.libraryCardArtworkMode ?? "landscape") === "poster"
+                  ? "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
+                  : "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+              }>
                 {filteredGames.map((game) => (
                   <GameLauncherTile
                     key={game.id}
                     game={game}
+                    artwork={game.appId ? artworkByAppId[game.appId] : undefined}
                     onSelect={(g) => { setSelectedGame(g); onNavigate?.("library-game-detail"); }}
                     onPlay={handlePlay}
                     onInstall={handleInstall}

@@ -9,25 +9,33 @@ import {
   X,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
+import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
+  artwork?: SgdbArtworkData | null;
   onSelect: (game: LibraryGame) => void;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
   onDeleteScript?: (game: LibraryGame) => void;
 };
 
-function getCardImage(game: LibraryGame, mode: "landscape" | "poster"): string | undefined {
+function getCardImage(
+  game: LibraryGame,
+  mode: "landscape" | "poster",
+  artwork?: SgdbArtworkData | null
+): string | undefined {
   const meta = game.metadata;
   if (mode === "poster") {
     return (
-      game.imageUrl ||
-      meta?.capsule_image_v5 ||
+      artwork?.sgdbGridUrl ||
+      artwork?.sgdbGridThumbUrl ||
       meta?.capsule_image ||
+      meta?.capsule_image_v5 ||
       meta?.header_image ||
+      game.imageUrl ||
       undefined
     );
   }
@@ -45,6 +53,7 @@ function getCardImage(game: LibraryGame, mode: "landscape" | "poster"): string |
 
 export default function GameLauncherTile({
   game,
+  artwork,
   onSelect,
   onPlay,
   onInstall,
@@ -56,9 +65,11 @@ export default function GameLauncherTile({
   const [favorite, setFavorite] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
+
   const displayImage = useMemo(
-    () => getCardImage(game, settings.libraryCardArtworkMode),
-    [game, settings.libraryCardArtworkMode]
+    () => getCardImage(game, artworkMode, artwork),
+    [game, artworkMode, artwork]
   );
 
   const action = getLauncherGamePrimaryAction(game);
@@ -111,7 +122,9 @@ export default function GameLauncherTile({
             handleCardClick();
           }
         }}
-        className="relative aspect-video cursor-pointer overflow-hidden rounded-t-2xl bg-white/5"
+        className={`relative cursor-pointer overflow-hidden rounded-t-2xl bg-white/5 ${
+          artworkMode === "poster" ? "aspect-[3/4]" : "aspect-video"
+        }`}
       >
         {displayImage && !imageFailed ? (
           <img

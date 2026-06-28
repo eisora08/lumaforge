@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -28,6 +28,8 @@ import {
 } from "../services/tauri";
 import { checkInstalledLuaUpdates } from "../services/installedLuaUpdateChecker";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
+import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { InstalledLuaScript } from "../types/installedLua";
@@ -59,6 +61,8 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
+  const [artworkByAppId, setArtworkByAppId] = useState<Record<string, SgdbArtworkData>>({});
+  const artworkRequest = useRef(0);
 
   // On mount: scan Lua scripts from config/lua
   useEffect(() => {
@@ -189,6 +193,32 @@ export default function LibraryPage({ onNavigate }: Props) {
     const start = (currentPage - 1) * pageSize;
     return filteredGames.slice(start, start + pageSize);
   }, [filteredGames, currentPage, pageSize]);
+
+  // Resolve SGDB artwork for visible games (poster mode only)
+  useEffect(() => {
+    console.debug("[SGDB] enabled", settings.steamGridDbArtworkEnabled);
+    console.debug("[SGDB] apiKey configured", Boolean(settings.steamGridDbApiKey));
+    if (!settings.steamGridDbArtworkEnabled) return;
+    if ((settings.libraryCardArtworkMode ?? "landscape") !== "poster") return;
+    if (!settings.steamGridDbApiKey) return;
+
+    const visibleAppIds = paginatedGames
+      .map((g) => Number(g.appId))
+      .filter((id): id is number => !isNaN(id) && id > 0);
+
+    if (visibleAppIds.length === 0) return;
+
+    const requestId = Date.now();
+    artworkRequest.current = requestId;
+
+    console.debug("[Library] Resolving SGDB artwork for", visibleAppIds.length, "games");
+    resolveArtworkForAppIds(visibleAppIds, settings.steamGridDbApiKey)
+      .then((result) => {
+        if (artworkRequest.current !== requestId) return;
+        setArtworkByAppId((prev) => ({ ...prev, ...result }));
+      })
+      .catch(() => {});
+  }, [paginatedGames, settings.libraryCardArtworkMode, settings.steamGridDbApiKey]);
 
   // Actions
   async function handlePlay(game: LibraryGame) {
@@ -424,11 +454,16 @@ export default function LibraryPage({ onNavigate }: Props) {
                   </div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    <div className={
+                      (settings.libraryCardArtworkMode ?? "landscape") === "poster"
+                        ? "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
+                        : "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+                    }>
                       {paginatedGames.map((game) => (
                         <GameLauncherTile
                           key={game.id}
                           game={game}
+                          artwork={game.appId ? artworkByAppId[game.appId] : undefined}
                           onSelect={(g) => handleOpenGame(g)}
                           onPlay={handlePlay}
                           onInstall={handleInstall}

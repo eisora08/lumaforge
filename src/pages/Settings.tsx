@@ -345,6 +345,19 @@ export default function Settings() {
                 SteamGridDB Artwork
               </div>
 
+              <ToggleOption
+                label="Enable SteamGridDB Artwork"
+                description="Use SteamGridDB to fetch poster, hero and logo artwork for Biblioteca and Juegos. Requires an API key."
+                enabled={settings.steamGridDbArtworkEnabled}
+                onChange={(enabled) => updateSetting("steamGridDbArtworkEnabled", enabled)}
+              />
+
+              {settings.steamGridDbArtworkEnabled && !settings.steamGridDbApiKey && (
+                <p className="text-xs text-amber-400">
+                  Add a SteamGridDB API key to fetch artwork.
+                </p>
+              )}
+
               <label className="block">
                 <div className="mb-2">
                   <p className="text-sm font-medium text-(--color-text)">

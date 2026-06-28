@@ -86,7 +86,7 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
   useEffect(() => {
     if (!resolvedGame || !resolvedGame.appId) return;
     const appIdNum = Number(resolvedGame.appId);
-    if (!appIdNum || !settings.steamGridDbApiKey) return;
+    if (!appIdNum || !settings.steamGridDbArtworkEnabled || !settings.steamGridDbApiKey) return;
 
     const requestId = Date.now();
     artworkRequest.current = requestId;
@@ -96,17 +96,22 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
         if (artworkRequest.current !== requestId) return;
         const entry = result[String(appIdNum)];
         if (entry) {
+          console.debug("[SGDB] selected cover", appIdNum);
           setArtwork(entry);
         }
       })
       .catch(() => {
         // silent — artwork is optional
       });
-  }, [resolvedGame, settings.steamGridDbApiKey]);
+  }, [resolvedGame, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
 
   const handleRefreshArtwork = useCallback(async () => {
     if (!selectedGame?.appId) {
       showWarning("No App ID available for this game.", { title: "Artwork" });
+      return;
+    }
+    if (!settings.steamGridDbArtworkEnabled) {
+      showWarning("Enable SteamGridDB Artwork in Settings.", { title: "Artwork" });
       return;
     }
     if (!settings.steamGridDbApiKey) {
@@ -118,6 +123,7 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
     const { clearArtworkCache } = await import("../services/storeArtworkResolver");
     clearArtworkCache();
 
+    console.debug("[SGDB] refresh artwork for", appIdNum);
     const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
     const entry = result[String(appIdNum)];
     if (entry) {
@@ -126,7 +132,7 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
     } else {
       showWarning("No artwork found for this game.", { title: "Artwork" });
     }
-  }, [selectedGame, settings.steamGridDbApiKey]);
+  }, [selectedGame, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {

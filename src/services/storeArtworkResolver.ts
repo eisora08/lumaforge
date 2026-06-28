@@ -1,10 +1,15 @@
 import { resolveSteamGridDbArtwork } from "./tauri";
 import type { SteamGridDbArtwork } from "../types/steamGridDb";
 
-const CACHE_KEY = "lumaforge-store-sgdb-cache-v3";
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CACHE_KEY = "lumaforge-sgdb-artwork-v1";
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILURE_TTL_MS = 60 * 60 * 1000;
-const BATCH_SIZE = 5;
+const BATCH_SIZE = 6;
+const BATCH_DELAY_MS = 300;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 type CacheEntry = {
   artwork: SteamGridDbArtwork;
@@ -66,6 +71,7 @@ export async function resolveArtworkForAppIds(
           if (entry.artwork.gridThumbUrl) result[key].sgdbGridThumbUrl = entry.artwork.gridThumbUrl;
           if (entry.artwork.heroUrl) result[key].sgdbHeroUrl = entry.artwork.heroUrl;
           if (entry.artwork.logoUrl) result[key].sgdbLogoUrl = entry.artwork.logoUrl;
+          console.debug("[SGDB] cache hit", appId);
         }
         continue;
       }
@@ -75,9 +81,13 @@ export async function resolveArtworkForAppIds(
 
   if (missing.length === 0) return result;
 
+  console.debug("[SGDB] cache miss for", missing.length, "games");
+
   for (let i = 0; i < missing.length; i += BATCH_SIZE) {
     const batch = missing.slice(i, i + BATCH_SIZE);
+    console.debug("[SGDB] fetch batch size", batch.length);
     try {
+      await delay(BATCH_DELAY_MS);
       const batchResult = await resolveSteamGridDbArtwork(batch, sgdbApiKey);
       for (const a of batchResult) {
         const key = String(a.appId);
@@ -104,6 +114,7 @@ export async function resolveArtworkForAppIds(
   }
 
   setCache(cache);
+  console.debug("[SGDB] resolved", Object.keys(result).length, "games");
   return result;
 }
 
