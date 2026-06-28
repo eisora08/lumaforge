@@ -13,6 +13,7 @@ import {
   FolderSearch,
   Gamepad2,
   Cog,
+  Trophy,
 } from "lucide-react";
 
 import {
@@ -30,6 +31,7 @@ import SurfaceModeOption from "../components/settings/SurfaceModeOption";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
 import SettingsImportExport from "../components/settings/SettingsImportExport";
+import SteamAccountDetector from "../components/settings/SteamAccountDetector";
 import PageContainer from "../components/layout/PageContainer";
 
 import { defaultApiProviders } from "../data/providers";
@@ -65,6 +67,7 @@ export default function Settings() {
 
   const [activeTab, setActiveTab] = useState<SettingsTab>("paths");
   const [showSgdbKey, setShowSgdbKey] = useState(false);
+  const [showSteamApiKey, setShowSteamApiKey] = useState(false);
   const [newScanFolder, setNewScanFolder] = useState("");
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
@@ -418,6 +421,116 @@ export default function Settings() {
                   >
                     Poster
                   </button>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Trophy className="h-4 w-4" />
+                  Steam Achievements
+                </div>
+
+                <ToggleOption
+                  label="Enable Steam Achievements Tracking"
+                  description="Use Steam Web API to load achievement progress, badges and rarity for Steam games. Requires Steam Web API Key and SteamID64."
+                  enabled={settings.steamAchievementsEnabled}
+                  onChange={(enabled) => updateSetting("steamAchievementsEnabled", enabled)}
+                />
+
+                {settings.steamAchievementsEnabled && (!settings.steamWebApiKey || !settings.steamId64) && (
+                  <p className="text-xs text-amber-400">
+                    Fill in Steam Web API Key and SteamID64 below to enable achievement tracking.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Steam Web API Key
+                    </p>
+                    <p className="mt-1 text-xs text-(--color-muted)">
+                      Required for Steam Achievement tracking. Used to fetch your achievement progress, badges and rarity.
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showSteamApiKey ? "text" : "password"}
+                      value={settings.steamWebApiKey}
+                      onChange={(e) => updateSetting("steamWebApiKey", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your Steam Web API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSteamApiKey(!showSteamApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showSteamApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      SteamID64
+                    </p>
+                    <p className="mt-1 text-xs text-(--color-muted)">
+                      Required with Steam Web API Key for per-user achievement progress.
+                    </p>
+                  </div>
+                  <input
+                    type="text"
+                    value={settings.steamId64}
+                    onChange={(e) => updateSetting("steamId64", e.target.value)}
+                    className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                    placeholder="Enter your SteamID64 (e.g. 76561197960265728)"
+                  />
+                </label>
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      SteamID32 / Account ID (optional)
+                    </p>
+                    <p className="mt-1 text-xs text-(--color-muted)">
+                      Optional. Used for local Steam userdata paths and future integrations.
+                    </p>
+                  </div>
+                  <input
+                    type="text"
+                    value={settings.steamAccountId}
+                    onChange={(e) => updateSetting("steamAccountId", e.target.value)}
+                    className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                    placeholder="Enter your SteamID32 (e.g. 12345678)"
+                  />
+                </label>
+
+                <SteamAccountDetector
+                  steamRoot={settings.steamRoot}
+                  currentSteamId64={settings.steamId64}
+                  onSelect={(steamId64) => updateSetting("steamId64", steamId64)}
+                />
+
+                <div className="mt-4">
+                  <label className="block">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-(--color-text)">
+                        Achievements App Schema Folder (optional)
+                      </p>
+                      <p className="mt-1 text-xs text-(--color-muted)">
+                        Optional. Path to a folder containing <code>achievements.json</code> and <code>achievementpercentages.json</code> from the Steam Achievement Schema app. Used as a fallback when no other achievement data is available.
+                      </p>
+                    </div>
+                    <input
+                      type="text"
+                      value={settings.achievementSchemaPath}
+                      onChange={(e) => updateSetting("achievementSchemaPath", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="C:\\path\\to\\achievements-schema"
+                    />
+                  </label>
                 </div>
               </div>
             </div>

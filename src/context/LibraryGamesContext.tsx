@@ -5,6 +5,12 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
 import { loadCachedGames, isCacheExpired } from "../services/gameDetectionCache";
 import { loadMetadataCache } from "../services/gameMetadataResolver";
+import {
+  loadSteamStats,
+  mergeSteamStatsIntoGames,
+  mergeLocalStatsIntoGames,
+  setAchievementsSupportedFlag,
+} from "../services/gameStatsService";
 import { useSettings } from "./SettingsContext";
 
 const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
@@ -90,7 +96,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [selectedId, setSelectedIdState] = useState<string | null>(loadStoredSelectedId);
   const [selectedGame, setSelectedGameState] = useState<LibraryGame | null>(null);
   const initDone = useRef(false);
-  const restoredSelected = useRef(false);
 
   function setSelectedId(id: string | null) {
     setSelectedIdState(id);
@@ -103,30 +108,52 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     storeSelectedId(game?.id ?? null);
   }
 
-  // Restore selected game after games load
+  // Keep selectedGame in sync with the latest games array (stats enrichment, refresh)
   useEffect(() => {
-    if (restoredSelected.current || games.length === 0 || !selectedId) return;
+    if (games.length === 0 || !selectedId) return;
     const match = games.find((g) => g.id === selectedId);
     if (match) {
-      setSelectedGameState(match);
+      if (selectedGame !== match) {
+        setSelectedGameState(match);
+      }
     } else {
       setSelectedIdState(null);
       storeSelectedId(null);
     }
-    restoredSelected.current = true;
-  }, [games, selectedId]);
+  }, [games, selectedId, selectedGame]);
+
+  async function enrichWithStats(games: LibraryGame[]): Promise<LibraryGame[]> {
+    try {
+      const appIds = games
+        .map((g) => Number(g.appId))
+        .filter((id): id is number => Number.isFinite(id));
+      const steamStats = await loadSteamStats(
+        settings.steamRoot || undefined,
+        appIds.length > 0 ? appIds : undefined,
+      );
+      mergeSteamStatsIntoGames(games, steamStats);
+    } catch {
+      // stats are non-critical
+    }
+    mergeLocalStatsIntoGames(games);
+    setAchievementsSupportedFlag(games);
+    return games;
+  }
 
   async function load(settings: AppSettings) {
     const cached = loadCachedGames();
     if (cached) {
-      setGames(cached.games.map(mapCachedToLibraryGame));
+      let loaded = cached.games.map(mapCachedToLibraryGame);
+      loaded = await enrichWithStats(loaded);
+      setGames(loaded);
       setWarnings(cached.warnings || []);
       setInitialLoading(false);
       if (isCacheExpired(cached)) {
         setLoading(true);
         try {
           const result = await resolveLibraryGames(settings);
-          setGames(result.games);
+          const enriched = await enrichWithStats(result.games);
+          setGames(enriched);
           setWarnings(result.warnings);
         } catch (error) {
           console.error("[LibraryGamesContext] scan error:", error);
@@ -138,7 +165,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       setLoading(true);
       try {
         const result = await resolveLibraryGames(settings);
-        setGames(result.games);
+        const enriched = await enrichWithStats(result.games);
+        setGames(enriched);
         setWarnings(result.warnings);
       } catch (error) {
         console.error("[LibraryGamesContext] scan error:", error);
@@ -160,7 +188,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     setLoading(true);
     try {
       const result = await resolveLibraryGames(settings);
-      setGames(result.games);
+      const enriched = await enrichWithStats(result.games);
+      setGames(enriched);
       setWarnings(result.warnings);
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);

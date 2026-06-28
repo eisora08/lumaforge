@@ -1,6 +1,6 @@
 import type { LauncherGame } from "../types/launcherGame";
 
-const CACHE_KEY = "lumaforge-detected-games-cache-v1";
+const CACHE_KEY = "lumaforge-detected-games-cache-v2";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 type DetectedGamesCache = {

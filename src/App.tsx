@@ -86,7 +86,7 @@ function App() {
       case "game-details":
         return <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
       case "library-game-detail":
-        return <LibraryGameDetailPage onBack={() => handleNavigate("library")} />;
+        return <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
       default:
         return <Home />;
     }

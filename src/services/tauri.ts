@@ -12,9 +12,11 @@ import type { SteamFeaturedCategory } from "../types/steamFeatured";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 import type { SteamGridDbArtwork } from "../types/steamGridDb";
 import type { SteamInstalledGame } from "../types/steamInstalled";
+import type { SteamUserGameStats } from "../types/steamUserStats";
 import type { LocalDiscoveredGame } from "../types/localGame";
 import type { LocalExecutableGame } from "../types/localExecutableGame";
 import type { SyncIndex, SyncIndexItem, SyncCheckResult } from "../types/syncIndex";
+import type { SteamLoginUser } from "../types/steamLoginUser";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -168,6 +170,10 @@ export async function markSyncIndexItem(item: SyncIndexItem): Promise<void> {
   return await invoke<void>("mark_sync_index_item", { item });
 }
 
+export async function scanSteamLoginUsers(steamRoot: string): Promise<SteamLoginUser[]> {
+  return await invoke<SteamLoginUser[]>("scan_steam_login_users", { steamRoot });
+}
+
 export async function scanSteamInstalledGames(params?: {
   steamPath?: string;
   luaPath?: string;
@@ -179,6 +185,16 @@ export async function scanSteamInstalledGames(params?: {
     luaPath: params?.luaPath ?? null,
     depotcachePath: params?.depotcachePath ?? null,
     gameScanFolders: params?.gameScanFolders ?? null,
+  });
+}
+
+export async function scanSteamUserGameStats(params?: {
+  steamPath?: string;
+  appIds?: number[];
+}): Promise<SteamUserGameStats[]> {
+  return await invoke<SteamUserGameStats[]>("scan_steam_user_game_stats", {
+    steamPath: params?.steamPath ?? null,
+    appIds: params?.appIds ?? null,
   });
 }
 
@@ -232,6 +248,130 @@ export async function fetchSteamNews(
     count: count ?? null,
     maxlength: maxlength ?? null,
   });
+}
+
+export async function fetchSteamPlayerAchievements(params: {
+  appId: number;
+  steamId: string;
+  apiKey: string;
+  language?: string;
+}): Promise<unknown> {
+  return await invoke("fetch_steam_player_achievements", {
+    appId: params.appId,
+    steamId: params.steamId,
+    apiKey: params.apiKey,
+    language: params.language ?? null,
+  });
+}
+
+export async function fetchSteamGlobalAchievementPercentages(
+  appId: number
+): Promise<unknown> {
+  return await invoke("fetch_steam_global_achievement_percentages", {
+    appId,
+  });
+}
+
+export async function fetchSteamAchievementSchema(params: {
+  appId: number;
+  apiKey: string;
+  language?: string;
+}): Promise<unknown> {
+  return await invoke("fetch_steam_achievement_schema", {
+    appId: params.appId,
+    apiKey: params.apiKey,
+    language: params.language ?? null,
+  });
+}
+
+export type SteamAppcacheAchievement = {
+  api_name: string;
+  unlocked: boolean;
+  unlock_time?: number;
+};
+
+export type SteamAppcacheSchemaEntry = {
+  api_name: string;
+  display_name?: string;
+  description?: string;
+  icon?: string;
+  icon_gray?: string;
+  hidden?: boolean;
+};
+
+export type SteamAppcacheScanResult = {
+  stats_file_found: boolean;
+  schema_file_found: boolean;
+  stats_file_size?: number;
+  schema_file_size?: number;
+  stats_file_modified?: number;
+  schema_file_modified?: number;
+  parsed_achievements: SteamAppcacheAchievement[];
+  parsed_schema: SteamAppcacheSchemaEntry[];
+  progress_available: boolean;
+  error_reason?: string;
+};
+
+export async function scanSteamAppcacheAchievements(params: {
+  steamPath?: string;
+  steamAccountId?: string;
+  appId: number;
+}): Promise<SteamAppcacheScanResult> {
+  return await invoke<SteamAppcacheScanResult>("scan_steam_appcache_achievements", {
+    steamPath: params.steamPath ?? null,
+    steamAccountId: params.steamAccountId ?? null,
+    appId: params.appId,
+  });
+}
+
+export type AppAchievementCacheEntry = {
+  id: string;
+  api_name: string;
+  name: string;
+  description?: string;
+  icon_url?: string;
+  icon_gray_url?: string;
+  unlocked: boolean;
+  unlock_time?: number;
+  rarity_percent?: number;
+};
+
+export type AppAchievementPercentagesEntry = {
+  name: string;
+  percent: number;
+};
+
+export type AppAchievementSummaryData = {
+  app_id: string;
+  total: number;
+  unlocked: number;
+  percent: number;
+  progress_available: boolean;
+  source: string;
+  updated_at: number;
+};
+
+export type AppAchievementCache = {
+  achievements: AppAchievementCacheEntry[];
+  achievement_percentages: AppAchievementPercentagesEntry[];
+  summary: AppAchievementSummaryData;
+};
+
+export async function readAchievementCache(appId: number): Promise<AppAchievementCache | null> {
+  return await invoke<AppAchievementCache | null>("read_achievement_cache", { appId });
+}
+
+export async function writeAchievementCache(appId: number, data: AppAchievementCache): Promise<void> {
+  return await invoke<void>("write_achievement_cache", { appId, data });
+}
+
+export type AchievementsAppSchemaResult = {
+  achievements: AppAchievementCacheEntry[];
+  achievement_percentages: AppAchievementPercentagesEntry[];
+};
+
+export async function readAchievementsAppSchemaFolder(path: string, appId: number): Promise<AchievementsAppSchemaResult> {
+  return await invoke<AchievementsAppSchemaResult>("read_achievements_app_schema_folder", { path, appId });
 }
 
 export async function resolveSteamGridDbArtwork(

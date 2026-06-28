@@ -22,6 +22,12 @@ export type AppSettings = {
   steamGridDbApiKey: string;
   steamGridDbArtworkEnabled: boolean;
 
+  steamWebApiKey: string;
+  steamId64: string;
+  steamAccountId: string;
+  steamAchievementsEnabled: boolean;
+  achievementSchemaPath: string;
+
   libraryCardArtworkMode: "landscape" | "poster";
 
   gameScanFolders: string[];

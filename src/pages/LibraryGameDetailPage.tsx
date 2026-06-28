@@ -13,6 +13,7 @@ import { useSettings } from "../context/SettingsContext";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
+import type { AppPage } from "../types/navigation";
 
 import {
   showError,
@@ -21,9 +22,10 @@ import {
 
 type Props = {
   onBack?: () => void;
+  onNavigate?: (page: AppPage) => void;
 };
 
-export default function LibraryGameDetailPage({ onBack }: Props) {
+export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const { selectedGame, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [metadataLoading, setMetadataLoading] = useState(false);
@@ -200,6 +202,7 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
       onOpenSteamDb={handleOpenSteamDb}
       onBack={handleBack}
       onRefreshArtwork={handleRefreshArtwork}
+      onNavigate={onNavigate}
     />
   );
 }

@@ -1,6 +1,7 @@
 
 pub mod steam;
 pub mod steam_news;
+pub mod steam_user_stats;
 pub mod installer;
 pub mod provider;
 pub mod lua;
@@ -11,4 +12,5 @@ pub mod store;
 pub mod store_search;
 pub mod steam_grid_db;
 pub mod artwork_cache;
+pub mod steam_achievements;
 pub mod sync;

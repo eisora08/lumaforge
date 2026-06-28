@@ -14,6 +14,7 @@ import {
   Gamepad2,
   HardDrive,
   LifeBuoy,
+  Lock,
   MessageCircle,
   MoreHorizontal,
   Play,
@@ -21,6 +22,7 @@ import {
   RefreshCw,
   Star,
   Trophy,
+  Unlock,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
@@ -40,6 +42,11 @@ import { useGameActivity } from "../../context/GameActivityContext";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
+import type { GameAchievementsSummary } from "../../types/gameAchievements";
+import { resolveSteamAchievements } from "../../services/steamAchievementsResolver";
+import { useSettings } from "../../context/SettingsContext";
+import AchievementsModal from "./AchievementsModal";
+import type { AppPage } from "../../types/navigation";
 
 type LibraryGameDetailsProps = {
   game: LibraryGame;
@@ -55,6 +62,7 @@ type LibraryGameDetailsProps = {
   onOpenSourceSelector?: (game: LibraryGame) => void;
   onBack: () => void;
   onRefreshArtwork?: () => void;
+  onNavigate?: (page: AppPage) => void;
 };
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null): string | undefined {
@@ -82,6 +90,25 @@ function formatBytes(bytes?: number): string {
     unitIndex += 1;
   }
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatPlaytime(minutes: number): string {
+  if (minutes <= 0) return "Not tracked";
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (m === 0) return `${h}h`;
+  if (h >= 10) return `${h}.${Math.round(m / 6)}h`;
+  return `${h}h ${m}m`;
+}
+
+function formatCloudStatus(status: string): string {
+  switch (status) {
+    case "synchronized": return "Up to date";
+    case "pending": return "Pending";
+    case "conflict": return "Conflict";
+    default: return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+  }
 }
 
 function stripHtml(html?: string | null): string {
@@ -120,11 +147,17 @@ export default function LibraryGameDetails({
   onOpenSteamDb,
   onBack,
   onRefreshArtwork,
+  onNavigate,
 }: LibraryGameDetailsProps) {
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [favorite, setFavorite] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+
+  const { settings } = useSettings();
+  const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(null);
+  const [achievementsLoading, setAchievementsLoading] = useState(false);
+  const [showAchievementsModal, setShowAchievementsModal] = useState(false);
 
   const imageUrl = getHeroImageUrl(game, artwork);
   const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
@@ -158,22 +191,37 @@ export default function LibraryGameDetails({
   const appIdNum = game.appId ? Number(game.appId) : null;
   const appIdStr = game.appId;
   const { activities, addActivity } = useGameActivity();
-  const { stats: playStats, recordLaunch: recordGameLaunch } = useGamePlayStats(game.id);
+  const { recordLaunch: recordGameLaunch } = useGamePlayStats(game.id);
 
-  const cloudStatus = categories.includes("Steam Cloud") ? "Supported" : "Not tracked";
-  const achievementsStatus = categories.includes("Steam Achievements") ? "Supported" : "Unavailable";
+  const cloudStatus = game.steamCloudStatus
+    ? formatCloudStatus(game.steamCloudStatus)
+    : categories.includes("Steam Cloud")
+      ? "Supported"
+      : "Not tracked";
 
-  const lastPlayed = playStats?.lastPlayedAt
-    ? formatTimestamp(playStats.lastPlayedAt)
+  const lastPlayedSource = game.localLastPlayedAt || game.steamLastPlayedAt || 0;
+  const lastPlayed = lastPlayedSource > 0
+    ? formatTimestamp(lastPlayedSource)
     : "Never";
 
-  const playTimeDisplay = playStats && playStats.playtimeMinutes > 0
-    ? (() => {
-        const h = Math.floor(playStats.playtimeMinutes / 60);
-        const m = playStats.playtimeMinutes % 60;
-        return h > 0 ? `${h}h ${m}m` : `${m}m`;
-      })()
+  const playTimeValue = game.steamPlaytimeMinutes ?? game.localPlaytimeMinutes ?? 0;
+  const playTimeDisplay = playTimeValue > 0
+    ? formatPlaytime(playTimeValue)
     : "Not tracked";
+
+  const achievementsStatus = achievementsSummary?.source === "disabled"
+    ? (game.achievementsSupported ? "Supported" : "Unavailable")
+    : achievementsSummary?.source === "setup-required"
+      ? "Setup required"
+      : achievementsSummary?.errorReason === "missing-appid"
+        ? "Unavailable"
+        : achievementsSummary?.progressAvailable
+          ? `${achievementsSummary.unlocked} / ${achievementsSummary.total}`
+          : achievementsSummary && achievementsSummary.achievements.length > 0
+            ? "Progress unavailable"
+            : game.achievementsSupported
+              ? "Supported"
+              : "Unavailable";
   const [steamNews, setSteamNews] = useState<SteamNewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState<string | null>(null);
@@ -289,6 +337,32 @@ export default function LibraryGameDetails({
     fetchSteamNews();
   }, [fetchSteamNews]);
 
+  // Load achievements
+  useEffect(() => {
+    if (!appIdStr) return;
+    let cancelled = false;
+    setAchievementsLoading(true);
+    resolveSteamAchievements({
+      appId: appIdStr,
+      steamWebApiKey: settings.steamWebApiKey || undefined,
+      steamId64: settings.steamId64 || undefined,
+      accountId: settings.steamAccountId || undefined,
+      steamPath: settings.steamRoot || undefined,
+      steamAchievementsEnabled: settings.steamAchievementsEnabled,
+      achievementSchemaPath: settings.achievementSchemaPath || undefined,
+    })
+      .then((summary) => {
+        if (!cancelled) {
+          setAchievementsSummary(summary);
+          setAchievementsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAchievementsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAchievementsEnabled]);
+
   useEffect(() => {
     if (!showActions) return;
     function handleClick(e: MouseEvent) {
@@ -333,10 +407,10 @@ export default function LibraryGameDetails({
               </div>
             </div>
           </div>
-        </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -798,6 +872,186 @@ export default function LibraryGameDetails({
                 </div>
               </div>
 
+              {/* Achievements */}
+              <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
+                <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
+                  <Trophy className="mr-1.5 inline h-3.5 w-3.5" />
+                  Achievements
+                </h3>
+
+                {achievementsLoading ? (
+                  <div className="mt-3 space-y-2">
+                    <div className="h-3 w-3/4 animate-pulse rounded bg-white/5" />
+                    <div className="h-2 w-full animate-pulse rounded bg-white/5" />
+                    <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
+                    <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
+                    <div className="h-10 w-full animate-pulse rounded-lg bg-white/5" />
+                  </div>
+                ) : achievementsSummary && achievementsSummary.source === "disabled" ? (
+                  <div className="mt-3">
+                    <p className="text-xs text-(--color-muted)">
+                      Steam Achievements Tracking is disabled.
+                    </p>
+                    <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
+                      onClick={() => onNavigate?.("settings")}
+                    >
+                      Enable in Settings
+                    </p>
+                  </div>
+                ) : achievementsSummary && achievementsSummary.errorReason === "missing-appid" ? (
+                  <div className="mt-3">
+                    <p className="text-xs text-(--color-muted)">
+                      Achievements are unavailable because this game has no Steam AppID.
+                    </p>
+                  </div>
+                ) : achievementsSummary && achievementsSummary.source === "setup-required" ? (
+                  <div className="mt-3">
+                    <p className="text-xs text-(--color-muted)">
+                      Configure Steam Web API in Settings to load achievement progress.
+                    </p>
+                    <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
+                      onClick={() => onNavigate?.("settings")}
+                    >
+                      Open Settings
+                    </p>
+                  </div>
+                ) : achievementsSummary && achievementsSummary.progressAvailable && achievementsSummary.total > 0 ? (
+                  <div className="mt-3 space-y-3">
+                    {/* Progress bar */}
+                    <div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-(--color-text) font-medium">
+                          {achievementsSummary.unlocked} / {achievementsSummary.total}
+                        </span>
+                        <span className="text-(--color-muted)">
+                          {achievementsSummary.percent}%
+                        </span>
+                      </div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-(--color-accent) transition-all duration-500"
+                          style={{ width: `${achievementsSummary.percent}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 text-[10px] text-(--color-muted)/60">
+                        {achievementsSummary.percent}% complete
+                      </p>
+                    </div>
+                    {/* Recent achievements (top 5) */}
+                    <div className="space-y-1">
+                      {achievementsSummary.achievements.slice(0, 5).map((ach) => (
+                        <div
+                          key={ach.id}
+                          className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
+                        >
+                          <div className="h-7 w-7 shrink-0 overflow-hidden rounded-md bg-white/5">
+                            {ach.unlocked && ach.iconUrl ? (
+                              <img
+                                src={ach.iconUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                            ) : ach.iconGrayUrl ? (
+                              <img
+                                src={ach.iconGrayUrl}
+                                alt=""
+                                className="h-full w-full object-cover opacity-50"
+                                loading="lazy"
+                              />
+                              ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                {ach.unlocked
+                                  ? <Unlock className="h-4 w-4 text-emerald-400" />
+                                  : <Lock className="h-4 w-4 text-(--color-muted)" />}
+                              </div>
+                            )}
+                          </div>
+                          <span className="min-w-0 flex-1 truncate text-xs text-(--color-text)">
+                            {ach.name}
+                          </span>
+                          <span className={`shrink-0 text-[9px] font-medium ${
+                            ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
+                          }`}>
+                            {ach.unlocked ? "Unlocked" : "Locked"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAchievementsModal(true)}
+                      className="w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      View all achievements ({achievementsSummary.total})
+                    </button>
+                  </div>
+                ) : achievementsSummary && !achievementsSummary.progressAvailable && achievementsSummary.achievements.length > 0 ? (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-xs text-(--color-muted)">
+                      Achievement list available. Progress unavailable.
+                    </p>
+                    {achievementsSummary.errorReason === "api-403-fallback" && (
+                      <p className="text-[10px] text-(--color-muted)/60">
+                        Steam Web API could not load your progress. LumaForge will try local Steam cache.
+                      </p>
+                    )}
+                    <div className="space-y-1">
+                      {achievementsSummary.achievements.slice(0, 5).map((ach) => (
+                        <div
+                          key={ach.id}
+                          className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
+                        >
+                          <div className="h-7 w-7 shrink-0 overflow-hidden rounded-md bg-white/5">
+                            {ach.iconGrayUrl ? (
+                              <img
+                                src={ach.iconGrayUrl}
+                                alt=""
+                                className="h-full w-full object-cover opacity-50"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                <Lock className="h-4 w-4 text-(--color-muted)" />
+                              </div>
+                            )}
+                          </div>
+                          <span className="min-w-0 flex-1 truncate text-xs text-(--color-text)">
+                            {ach.name}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {achievementsSummary.achievements.length > 5 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAchievementsModal(true)}
+                        className="w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                      >
+                        View all achievements
+                      </button>
+                    )}
+                  </div>
+                ) : achievementsSummary && achievementsSummary.source === "unavailable" && game.achievementsSupported ? (
+                  <div className="mt-3">
+                    <p className="text-xs text-(--color-muted)">
+                      Achievement tracking requires Steam Web API setup.
+                    </p>
+                    <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
+                      onClick={() => onNavigate?.("settings")}
+                    >
+                      Configure in Settings
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <p className="text-xs text-(--color-muted)">
+                      Achievements are not available for this game.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Release Date */}
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
@@ -857,9 +1111,37 @@ export default function LibraryGameDetails({
                 </div>
               )}
             </aside>
+            </div>
           </div>
-        </div>
       </div>
+
+      {/* Achievements modal */}
+      {showAchievementsModal && achievementsSummary && achievementsSummary.achievements.length > 0 && (
+        <AchievementsModal
+          summary={achievementsSummary}
+          appIdStr={appIdStr}
+          onClose={() => setShowAchievementsModal(false)}
+          onRefresh={() => {
+            setAchievementsLoading(true);
+            resolveSteamAchievements({
+              appId: appIdStr!,
+              steamWebApiKey: settings.steamWebApiKey || undefined,
+              steamId64: settings.steamId64 || undefined,
+              accountId: settings.steamAccountId || undefined,
+              steamPath: settings.steamRoot || undefined,
+              forceRefresh: true,
+              steamAchievementsEnabled: settings.steamAchievementsEnabled,
+              achievementSchemaPath: settings.achievementSchemaPath || undefined,
+            })
+              .then((s) => {
+                setAchievementsSummary(s);
+                setAchievementsLoading(false);
+              })
+              .catch(() => setAchievementsLoading(false));
+          }}
+          refreshing={achievementsLoading}
+        />
+      )}
     </div>
   );
 }

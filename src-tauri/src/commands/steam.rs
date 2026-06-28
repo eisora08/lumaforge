@@ -445,6 +445,107 @@ fn parse_appmanifest(
 }
 
 #[tauri::command]
+pub fn scan_steam_login_users(steam_root: String) -> Result<Vec<crate::models::steam_login_user::SteamLoginUser>, String> {
+    use crate::models::steam_login_user::SteamLoginUser;
+
+    let loginusers_path = std::path::Path::new(&steam_root).join("config").join("loginusers.vdf");
+    if !loginusers_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(&loginusers_path)
+        .map_err(|e| format!("Failed to read loginusers.vdf: {}", e))?;
+
+    let mut users = Vec::new();
+    let mut current_id: Option<String> = None;
+    let mut current_account_name: Option<String> = None;
+    let mut current_persona_name: Option<String> = None;
+    let mut current_remember_password = false;
+    let mut current_timestamp: u64 = 0;
+    let mut in_user = false;
+    let mut brace_depth = 0u32;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "{" {
+            brace_depth += 1;
+            if brace_depth == 2 && current_id.is_some() {
+                in_user = true;
+            }
+            continue;
+        }
+        if trimmed == "}" {
+            if in_user && brace_depth == 2 {
+                if let (Some(id), Some(account)) = (current_id.take(), current_account_name.take()) {
+                    users.push(SteamLoginUser {
+                        steam_id: id,
+                        account_name: account,
+                        persona_name: current_persona_name.take().unwrap_or_default(),
+                        remember_password: current_remember_password,
+                        timestamp: current_timestamp,
+                    });
+                }
+                current_persona_name = None;
+                current_remember_password = false;
+                current_timestamp = 0;
+                in_user = false;
+            }
+            if brace_depth > 0 {
+                brace_depth -= 1;
+            }
+            continue;
+        }
+
+        // Parse key-value pairs
+        let parts: Vec<&str> = trimmed.split('"').collect();
+        if parts.len() < 5 {
+            // Could be a steam_id key at depth 1
+            if brace_depth == 1 && trimmed.starts_with('"') {
+                if let Some(id_val) = parts.get(1) {
+                    let val = id_val.trim();
+                    if !val.is_empty() && val.chars().all(|c| c.is_ascii_digit()) {
+                        current_id = Some(val.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+
+        let key = parts[1].trim();
+        let value = parts[3].trim();
+
+        if in_user {
+            match key {
+                "AccountName" => current_account_name = Some(value.to_string()),
+                "PersonaName" => current_persona_name = Some(value.to_string()),
+                "RememberPassword" => current_remember_password = value == "1",
+                "Timestamp" => current_timestamp = value.parse::<u64>().unwrap_or(0),
+                _ => {}
+            }
+        }
+    }
+
+    // Flush any remaining
+    if in_user {
+        if let (Some(id), Some(account)) = (current_id.take(), current_account_name.take()) {
+            users.push(SteamLoginUser {
+                steam_id: id,
+                account_name: account,
+                persona_name: current_persona_name.take().unwrap_or_default(),
+                remember_password: current_remember_password,
+                timestamp: current_timestamp,
+            });
+        }
+    }
+
+    users.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    Ok(users)
+}
+
+#[tauri::command]
 pub fn launch_steam_app(app_id: u32) -> Result<(), String> {
     let url = format!("steam://run/{}", app_id);
     open::that_detached(&url).map_err(|e| format!("Could not launch Steam game: {}", e))
