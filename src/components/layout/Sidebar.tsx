@@ -1,23 +1,21 @@
 import type { ElementType } from "react";
 
 import {
-  Activity,
   Award,
   Store,
   Download,
   Gamepad2,
   Home,
-  Library,
   Menu,
   RotateCcw,
   Settings,
-  ShieldCheck,
   Wrench,
   X,
   Flame,
 } from "lucide-react";
 
 import { AppPage } from "../../types/navigation";
+import SidebarLibraryList from "./SidebarLibraryList";
 
 type SidebarProps = {
   isOpen: boolean;
@@ -36,16 +34,13 @@ type SidebarItem = {
 
 const mainItems: SidebarItem[] = [
   { label: "Inicio", page: "home", icon: Home },
-  { label: "Biblioteca", page: "library", icon: Library },
-  { label: "Juegos", page: "games", icon: Gamepad2 },
+  { label: "Biblioteca", page: "library", icon: Gamepad2 },
   { label: "Tienda", page: "store", icon: Store },
   { label: "Descargas", page: "downloads", icon: Download },
   { label: "Logros", page: "achievements", icon: Award },
-  { label: "Actividad", page: "activity", icon: Activity },
 ];
 
 const toolItems: SidebarItem[] = [
-  { label: "Verificación", page: "verification", icon: ShieldCheck },
   { label: "Herramientas", page: "tools", icon: Wrench },
   { label: "Configuración", page: "settings", icon: Settings },
 ];
@@ -60,6 +55,11 @@ export default function Sidebar({
 }: SidebarProps) {
   function handleNavigate(page: AppPage) {
     onNavigate(page);
+    onClose();
+  }
+
+  function handleOpenGame() {
+    onNavigate("library-game-detail");
     onClose();
   }
 
@@ -129,6 +129,10 @@ export default function Sidebar({
             isCollapsed={isCollapsed}
             onNavigate={handleNavigate}
           />
+
+          <div className="my-4 h-px bg-(--shell-border)" />
+
+          {!isCollapsed && <SidebarLibraryList onOpenGame={handleOpenGame} />}
 
           <button
             className={`mt-3 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-(--color-muted) hover:bg-white/6 hover:text-(--color-text) ${

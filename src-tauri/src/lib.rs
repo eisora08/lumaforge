@@ -25,6 +25,8 @@ pub fn run() {
             commands::sync::check_package_update,
             commands::sync::mark_sync_index_item,
             commands::steam::scan_steam_installed_games,
+            commands::steam::launch_steam_app,
+            commands::steam::install_steam_app,
             commands::game::scan_local_games,
             commands::game::scan_local_game_folders,
         ])

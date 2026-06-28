@@ -71,6 +71,43 @@ fn normalize_steam_library_path(input: &Path) -> Option<SteamLibraryPath> {
     None
 }
 
+/// Check common drive-root locations for Steam library folders — no deep scanning.
+fn collect_safe_fallback_steam_paths() -> Vec<PathBuf> {
+    let mut results = Vec::new();
+
+    let patterns = &[
+        "SteamLibrary",
+        "Games/SteamLibrary",
+        "Steam",
+        "Program Files (x86)/Steam",
+        "Program Files/Steam",
+    ];
+
+    for ch in 'C' as u8..='Z' as u8 {
+        let drive = format!("{}:\\", ch as char);
+        let drive_path = Path::new(&drive);
+        if !drive_path.exists() || !drive_path.is_dir() {
+            continue;
+        }
+
+        for pattern in patterns {
+            let candidate = drive_path.join(pattern.replace("/", "\\"));
+            let steamapps = candidate.join("steamapps");
+            if steamapps.is_dir() {
+                if let Ok(canon) = candidate.canonicalize() {
+                    if !results.contains(&canon) {
+                        results.push(canon);
+                    }
+                } else if !results.contains(&candidate) {
+                    results.push(candidate);
+                }
+            }
+        }
+    }
+
+    results
+}
+
 fn is_valid_steamapps_path(path: &Path) -> bool {
     if !path.is_dir() {
         return false;
@@ -134,6 +171,20 @@ pub fn scan_steam_installed_games(
             debug_log(format_args!("candidate from auto-detect: {}", p.display()));
             candidates.push(p);
         }
+    }
+
+    // Add safe fallback paths from common drive-root locations
+    let safe_fallback = collect_safe_fallback_steam_paths();
+    for fp in &safe_fallback {
+        let fp_lower = fp.to_string_lossy().to_lowercase();
+        let already = candidates.iter().any(|c| c.to_string_lossy().to_lowercase() == fp_lower);
+        if !already {
+            debug_log(format_args!("candidate from safe fallback: {}", fp.display()));
+            candidates.push(fp.clone());
+        }
+    }
+    if safe_fallback.len() > 0 {
+        debug_log(format_args!("safe fallback paths found: {}", safe_fallback.len()));
     }
 
     debug_log(format_args!("total candidates: {}", candidates.len()));
@@ -391,4 +442,16 @@ fn parse_appmanifest(
         last_updated,
         is_installed,
     })
+}
+
+#[tauri::command]
+pub fn launch_steam_app(app_id: u32) -> Result<(), String> {
+    let url = format!("steam://run/{}", app_id);
+    open::that_detached(&url).map_err(|e| format!("Could not launch Steam game: {}", e))
+}
+
+#[tauri::command]
+pub fn install_steam_app(app_id: u32) -> Result<(), String> {
+    let url = format!("steam://install/{}", app_id);
+    open::that_detached(&url).map_err(|e| format!("Could not open Steam install page: {}", e))
 }

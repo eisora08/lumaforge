@@ -2,6 +2,7 @@ import { useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import { SearchProvider } from "../../context/SearchContext";
+import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
 import { AppPage } from "../../types/navigation";
 
 type AppLayoutProps = {
@@ -22,30 +23,32 @@ export default function AppLayout({
     <div className="relative h-screen overflow-hidden bg-(--color-bg) text-(--color-text)">
       <div className="lf-backdrop" />
 
-      <div className="relative z-10 flex h-screen w-full">
-        <Sidebar
-          isOpen={isSidebarOpen}
-          isCollapsed={isSidebarCollapsed}
-          activePage={activePage}
-          onClose={() => setIsSidebarOpen(false)}
-          onToggleCollapse={() => setIsSidebarCollapsed((value) => !value)}
-          onNavigate={onNavigate}
-        />
+      <LibraryGamesProvider>
+        <div className="relative z-10 flex h-screen w-full">
+          <Sidebar
+            isOpen={isSidebarOpen}
+            isCollapsed={isSidebarCollapsed}
+            activePage={activePage}
+            onClose={() => setIsSidebarOpen(false)}
+            onToggleCollapse={() => setIsSidebarCollapsed((value) => !value)}
+            onNavigate={onNavigate}
+          />
 
-        <div className="flex min-w-0 flex-1 flex-col lf-page">
-          <SearchProvider>
-            <TopBar
-              onOpenSidebar={() => setIsSidebarOpen(true)}
-              activePage={activePage}
-              onNavigate={onNavigate}
-            />
+          <div className="flex min-w-0 flex-1 flex-col lf-page">
+            <SearchProvider>
+              <TopBar
+                onOpenSidebar={() => setIsSidebarOpen(true)}
+                activePage={activePage}
+                onNavigate={onNavigate}
+              />
 
-            <main className="min-h-0 flex-1 overflow-y-auto">
-              {children}
-            </main>
-          </SearchProvider>
+              <main className="min-h-0 flex-1 overflow-y-auto">
+                {children}
+              </main>
+            </SearchProvider>
+          </div>
         </div>
-      </div>
+      </LibraryGamesProvider>
     </div>
   );
 }

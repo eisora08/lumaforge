@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Download, ExternalLink, Gamepad2, Play } from "lucide-react";
-import type { LauncherGame } from "../../types/launcherGame";
+import type { LibraryGame } from "../../types/libraryGame";
 
 type GameLauncherTileProps = {
-  game: LauncherGame;
-  onSelect: (game: LauncherGame) => void;
-  onPlay: (game: LauncherGame) => void;
-  onInstall: (game: LauncherGame) => void;
+  game: LibraryGame;
+  onSelect: (game: LibraryGame) => void;
+  onPlay: (game: LibraryGame) => void;
+  onInstall: (game: LibraryGame) => void;
 };
 
 export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: GameLauncherTileProps) {
@@ -45,26 +45,11 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
         <h3 className="line-clamp-1 text-sm font-bold text-white drop-shadow">
           {game.title}
         </h3>
-
-        <div className="mt-1 flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/15 px-2 py-0.5 text-[10px] font-medium text-(--color-accent)">
-            {game.source === "steam" ? "Steam" : "Local"}
-          </span>
-          {game.isInstalled ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-              Installed
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-full border border-zinc-500/20 bg-zinc-500/15 px-2 py-0.5 text-[10px] font-medium text-zinc-300">
-              Not Installed
-            </span>
-          )}
-        </div>
       </div>
 
       {isHovered && (
         <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 bg-black/50 backdrop-blur-[2px]">
-          {game.isPlayable && (
+          {game.isPlayable ? (
             <button
               type="button"
               onClick={(e) => handleAction(e, () => onPlay(game))}
@@ -73,8 +58,7 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
               <Play className="h-3.5 w-3.5" />
               Play
             </button>
-          )}
-          {!game.isInstalled && game.source === "steam" && (
+          ) : game.isInstallable ? (
             <button
               type="button"
               onClick={(e) => handleAction(e, () => onInstall(game))}
@@ -83,7 +67,7 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
               <Download className="h-3.5 w-3.5" />
               Install
             </button>
-          )}
+          ) : null}
           <button
             type="button"
             onClick={(e) => handleAction(e, () => onSelect(game))}

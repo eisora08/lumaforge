@@ -14,12 +14,21 @@ import Verification from "./pages/Verification";
 import Tools from "./pages/Tools";
 import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
+import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
 import { GameDetailsProvider } from "./context/GameDetailsContext";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 function App() {
   const [activePage, setActivePage] = useState<AppPage>("home");
+  const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
+
+  function handleNavigate(page: AppPage) {
+    if (page === "game-details") {
+      setGameDetailsPrevPage(activePage);
+    }
+    setActivePage(page);
+  }
 
   function renderPage() {
     switch (activePage) {
@@ -32,7 +41,7 @@ function App() {
       case "store":
         return <Store />;
       case "global-search":
-        return <GlobalSearchResults onBack={() => setActivePage("home")} onNavigate={(page) => setActivePage(page as AppPage)} />;
+        return <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
       case "downloads":
         return <Downloads />;
       case "achievements":
@@ -46,7 +55,9 @@ function App() {
       case "settings":
         return <Settings />;
       case "game-details":
-        return <GameDetailsPage onBack={() => setActivePage("store")} />;
+        return <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
+      case "library-game-detail":
+        return <LibraryGameDetailPage onBack={() => handleNavigate("library")} />;
       default:
         return <Home />;
     }
@@ -56,7 +67,7 @@ function App() {
   return (
     <>
       <GameDetailsProvider>
-        <AppLayout activePage={activePage} onNavigate={setActivePage}>
+        <AppLayout activePage={activePage} onNavigate={handleNavigate}>
           {renderPage()}
         </AppLayout>
       </GameDetailsProvider>
