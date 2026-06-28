@@ -127,7 +127,7 @@ export default function StoreBrowseFiltersPanel({
     filters.keywords.trim().length > 0;
 
   return (
-    <div className="w-full shrink-0 overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5 lg:w-64 lg:sticky lg:top-6 lg:max-h-[calc(100vh-140px)] lg:flex lg:flex-col">
+    <div className="w-full shrink-0 overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5 lg:w-64 lg:sticky lg:top-[48px] lg:max-h-[calc(100vh-80px)] lg:flex lg:flex-col">
       <div className="flex shrink-0 items-center justify-between px-5 pt-5">
         <h3 className="text-sm font-semibold text-(--color-text)">
           Filters

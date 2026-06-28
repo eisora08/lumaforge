@@ -3,7 +3,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  ExternalLink,
+  Download,
   Gamepad2,
 } from "lucide-react";
 
@@ -16,7 +16,8 @@ type StoreDiscoverHeroCarouselProps = {
   storeMetadataByAppId: Record<number, SteamAppMetadata>;
   installedStatusByAppId: Map<string, PackageInstallStatus>;
   onOpenGame: (game: PackageGame) => void;
-  onOpenSteam: (appId: string) => void;
+  onDownload?: (game: PackageGame) => void;
+  onOpenSourceSelector?: (game: PackageGame) => void;
 };
 
 const AUTO_ADVANCE_MS = 7000;
@@ -41,7 +42,8 @@ export default function StoreDiscoverHeroCarousel({
   storeMetadataByAppId,
   installedStatusByAppId,
   onOpenGame,
-  onOpenSteam,
+  onDownload,
+  onOpenSourceSelector,
 }: StoreDiscoverHeroCarouselProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -89,14 +91,24 @@ export default function StoreDiscoverHeroCarousel({
       <section
         onMouseEnter={() => setIsPaused(true)}
         onMouseLeave={() => setIsPaused(false)}
-        className="relative overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5"
+        className="group relative overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5"
       >
-        <div className="relative aspect-[21/9] overflow-hidden bg-white/5">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onOpenGame(current)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              onOpenGame(current);
+            }
+          }}
+          className="relative aspect-[21/9] overflow-hidden bg-white/5"
+        >
           {currentImage ? (
             <img
               src={currentImage}
               alt={current.title}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.02]"
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center">
@@ -104,19 +116,13 @@ export default function StoreDiscoverHeroCarousel({
             </div>
           )}
 
-          <div className="absolute inset-0 bg-linear-to-r from-black/80 via-black/45 to-transparent" />
-          <div className="absolute inset-0 bg-linear-to-t from-black/70 via-transparent to-transparent" />
+          <div className="absolute inset-0 bg-linear-to-r from-black/75 via-black/35 to-transparent" />
+          <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent" />
 
           <div className="absolute bottom-0 left-0 right-0 p-6 lg:p-8">
             <h2 className="max-w-xl text-2xl font-black text-white lg:text-3xl">
               {current.title}
             </h2>
-
-            {current.developer && (
-              <p className="mt-1.5 text-sm text-white/70">
-                {current.developer}
-              </p>
-            )}
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {currentInstallStatus === "active" && (
@@ -133,23 +139,44 @@ export default function StoreDiscoverHeroCarousel({
               )}
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100 md:absolute md:bottom-0 md:left-0 md:right-0 md:p-6 md:lg:p-8">
               <button
                 type="button"
-                onClick={() => onOpenGame(current)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenGame(current);
+                }}
                 className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:opacity-90"
               >
                 Details
               </button>
 
-              <button
-                type="button"
-                onClick={() => onOpenSteam(current.appId)}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/15"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Steam
-              </button>
+              {hasAvailableSource && onDownload && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDownload(current);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/15"
+                >
+                  <Download className="h-4 w-4" />
+                  Download
+                </button>
+              )}
+
+              {current.sources.length > 0 && onOpenSourceSelector && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenSourceSelector(current);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/15 hover:text-white"
+                >
+                  Source
+                </button>
+              )}
             </div>
           </div>
 
@@ -157,7 +184,10 @@ export default function StoreDiscoverHeroCarousel({
             <>
               <button
                 type="button"
-                onClick={handlePrev}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePrev();
+                }}
                 className="absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
               >
                 <ChevronLeft className="h-5 w-5" />
@@ -165,7 +195,10 @@ export default function StoreDiscoverHeroCarousel({
 
               <button
                 type="button"
-                onClick={handleNext}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleNext();
+                }}
                 className="absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
               >
                 <ChevronRight className="h-5 w-5" />
@@ -179,7 +212,10 @@ export default function StoreDiscoverHeroCarousel({
                 <button
                   key={idx}
                   type="button"
-                  onClick={() => setActiveIndex(idx)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveIndex(idx);
+                  }}
                   className={`h-2 rounded-full transition-all ${
                     idx === safeIndex
                       ? "w-6 bg-(--color-accent)"

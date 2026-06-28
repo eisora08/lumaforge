@@ -301,9 +301,9 @@ export default function PackageCard({
               handleOpenDetails();
             }
           }}
-          className="group relative cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
+          className="group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
         >
-          <div className="relative aspect-[4/5] overflow-hidden">
+          <div className="relative aspect-[4/5] w-full shrink-0 overflow-hidden">
             {displayImageUrl && !imageFailed ? (
               <img
                 src={displayImageUrl}
@@ -333,8 +333,8 @@ export default function PackageCard({
             </div>
           </div>
 
-          <div className="p-2.5">
-            <h3 className="line-clamp-2 text-sm font-semibold text-(--color-text)">
+          <div className="flex min-h-[60px] flex-col justify-center p-2.5">
+            <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-(--color-text)">
               {displayTitle}
             </h3>
 

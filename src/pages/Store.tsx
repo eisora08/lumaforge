@@ -29,8 +29,7 @@ import {
   downloadAndInstallPackage,
   scanInstalledLuaScripts,
 } from "../services/tauri";
-import { openExternalUrl } from "../services/externalLinks";
-import { getSteamStoreUrl } from "../utils/steamLinks";
+
 import { getBestAvailableSource, getSourceKey } from "../utils/sourceHelpers";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
@@ -819,10 +818,6 @@ export default function Store() {
     }
   }
 
-  function openSteamPage(appId: string) {
-    openExternalUrl(getSteamStoreUrl(Number(appId)));
-  }
-
   function getSelectedSourceForGame(game: PackageGame): PackageSource | undefined {
     const key = selectedSourceKeyByAppId[game.appId];
     if (key) {
@@ -1061,8 +1056,8 @@ export default function Store() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-5 p-5 lg:p-7">
-      <div className="sticky top-0 z-30 -mx-5 -mt-5 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-5 py-2.5 backdrop-blur-md lg:-mx-7 lg:-mt-7 lg:px-7">
+    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-5 pb-5 lg:px-7 lg:pb-7">
+      <div className="sticky top-0 z-30 -mx-5 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-5 py-2.5 backdrop-blur-md lg:-mx-7 lg:px-7">
         <div className="flex items-center gap-4">
           <div className="flex gap-1">
             {STORE_TABS.map((tab) => (
@@ -1235,7 +1230,8 @@ export default function Store() {
             storeMetadataByAppId={storeMetadataByAppId}
             installedStatusByAppId={installedStatusByAppId}
             onOpenGame={openDetailsForGame}
-            onOpenSteam={openSteamPage}
+            onDownload={handlePosterDownload}
+            onOpenSourceSelector={openSourceSelectorForGame}
           />
 
           {allStoreSections.map((section) => (
