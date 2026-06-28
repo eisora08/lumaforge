@@ -41,6 +41,19 @@ export function recordLaunch(gameId: string): void {
   saveAll(all);
 }
 
+export function recordSessionEnd(gameId: string, durationMs: number): void {
+  if (durationMs < 30000) return; // Only track sessions longer than 30s
+  const all = loadAll();
+  const prev = all[gameId];
+  const additionalMinutes = Math.round(durationMs / 60000);
+  all[gameId] = {
+    lastPlayedAt: Date.now(),
+    launchCount: prev?.launchCount ?? 0,
+    playtimeMinutes: (prev?.playtimeMinutes ?? 0) + additionalMinutes,
+  };
+  saveAll(all);
+}
+
 export function useGamePlayStats(gameId: string) {
   const [stats, setStats] = useState<GamePlayStats | null>(() =>
     getGameStats(gameId)
@@ -51,5 +64,17 @@ export function useGamePlayStats(gameId: string) {
     setStats(getGameStats(gameId));
   }, [gameId]);
 
-  return { stats, recordLaunch: doRecordLaunch };
+  const doRecordSessionEnd = useCallback(
+    (durationMs: number) => {
+      recordSessionEnd(gameId, durationMs);
+      setStats(getGameStats(gameId));
+    },
+    [gameId]
+  );
+
+  return {
+    stats,
+    recordLaunch: doRecordLaunch,
+    recordSessionEnd: doRecordSessionEnd,
+  };
 }

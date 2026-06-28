@@ -406,6 +406,13 @@ export type SpawnResult = {
   launched: boolean;
 };
 
+export type ProcessInfo = {
+  pid: number;
+  parent_pid?: number;
+  name: string;
+  exe?: string;
+};
+
 export async function launchExecutable(path: string): Promise<SpawnResult> {
   return await invoke<SpawnResult>("launch_executable", { path });
 }
@@ -414,6 +421,14 @@ export async function terminateProcess(pid: number): Promise<void> {
   return await invoke<void>("terminate_process", { pid });
 }
 
+export async function terminateProcessTree(pid: number): Promise<void> {
+  return await invoke<void>("terminate_process_tree", { pid });
+}
+
 export async function isProcessRunning(pid: number): Promise<boolean> {
   return await invoke<boolean>("is_process_running", { pid });
+}
+
+export async function listProcesses(): Promise<ProcessInfo[]> {
+  return await invoke<ProcessInfo[]>("list_processes");
 }

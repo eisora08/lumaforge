@@ -29,4 +29,5 @@ walkdir = "2"
 sha2 = "0.10"
 open = "5"
 base64 = "0.22"
+sysinfo = "0.29"
 

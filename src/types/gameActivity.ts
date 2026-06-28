@@ -11,7 +11,8 @@ export type GameActivityKind =
   | "metadata-refreshed"
   | "artwork-refreshed"
   | "dlc-detected"
-  | "local-file-change";
+  | "local-file-change"
+  | "game-closed";
 
 export type GameActivityItem = {
   id: string;

@@ -1,22 +1,31 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { isProcessRunning, terminateProcess } from "../services/tauri";
+import { isProcessRunning, terminateProcess, terminateProcessTree } from "../services/tauri";
+import { findGameProcess } from "../utils/gameProcessDetection";
+import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 
 export type GameSessionState = "idle" | "launching" | "running" | "stopping" | "error";
 
 export type ActiveGameState = Exclude<GameSessionState, "idle" | "error">;
+
+export type TrackingConfidence = "high" | "medium" | "low" | "none";
+
+export type GameSessionSource = "steam" | "epic" | "local" | "unknown";
 
 export type RunningGameSession = {
   gameKey: string;
   gameId?: string;
   appId?: string;
   title?: string;
-  source: "steam" | "local";
+  source: GameSessionSource;
   state: ActiveGameState;
   pid?: number;
+  processName?: string;
   executablePath?: string;
+  installDir?: string;
   launchedAt: number;
   updatedAt: number;
   softSession?: boolean;
+  trackingConfidence?: TrackingConfidence;
   errorMessage?: string;
 };
 
@@ -36,10 +45,18 @@ type GameSessionContextValue = {
   getSession: (gameKey: string) => RunningGameSession | undefined;
   getState: (gameKey: string) => GameSessionState;
   startLaunching: (session: Omit<RunningGameSession, "state" | "launchedAt" | "updatedAt">) => void;
-  markRunning: (gameKey: string, update: { pid?: number; softSession?: boolean }) => void;
+  markRunning: (gameKey: string, update: {
+    pid?: number;
+    softSession?: boolean;
+    trackingConfidence?: TrackingConfidence;
+    processName?: string;
+  }) => void;
   markStopping: (gameKey: string) => void;
   clearSession: (gameKey: string) => void;
+  updateSessionPid: (gameKey: string, pid: number, confidence: TrackingConfidence, processName?: string) => void;
   stopSession: (gameKey: string) => Promise<{ terminated: boolean }>;
+  findGameProcessForSession: (gameKey: string) => Promise<ProcessCandidate | null>;
+  recordPlaytime: (gameKey: string) => { durationMs: number } | null;
 };
 
 const STORAGE_KEY = "lumaforge-running-games-v1";
@@ -102,7 +119,16 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         if (s.pid != null) {
           // Will be confirmed by PID polling; keep for now
           cleaned[key] = s;
-        } else if (s.source === "steam") {
+        } else if (s.softSession) {
+          const age = Date.now() - s.updatedAt;
+          if (age < STEAM_SOFT_TTL_MS) {
+            console.debug("[GameSession] hydrate: soft session kept", { gameKey: key, age });
+            cleaned[key] = s;
+          } else {
+            console.debug("[GameSession] hydrate: soft session expired", { gameKey: key, age });
+            changed = true;
+          }
+        } else if (s.source === "steam" || s.source === "epic") {
           const age = Date.now() - s.updatedAt;
           if (age < STEAM_SOFT_TTL_MS) {
             console.debug("[GameSession] hydrate: soft session kept", { gameKey: key, age });
@@ -112,11 +138,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             changed = true;
           }
         } else {
-          // Local without PID – keep with soft flag
           cleaned[key] = { ...s, softSession: true };
         }
       } else if (s.state === "stopping" || s.state === "error") {
-        // Don't restore intermediate states
         changed = true;
       }
     }
@@ -156,7 +180,6 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         setSessions(next);
         persistSessions(next);
       } else if (Object.keys(next).length > 0) {
-        // Still persist to keep updatedAt fresh
         persistSessions(next);
       }
     }, POLL_INTERVAL_MS);
@@ -185,7 +208,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
   const startLaunching = useCallback(
     (input: Omit<RunningGameSession, "state" | "launchedAt" | "updatedAt">) => {
-      console.debug("[GameSession] startLaunching", { gameKey: input.gameKey, source: input.source });
+      console.debug("[GameSession] launch start", { gameKey: input.gameKey, source: input.source });
       const now = Date.now();
       setSessions((prev) => ({
         ...prev,
@@ -201,7 +224,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
   );
 
   const markRunning = useCallback(
-    (gameKey: string, update: { pid?: number; softSession?: boolean }) => {
+    (gameKey: string, update: {
+      pid?: number;
+      softSession?: boolean;
+      trackingConfidence?: TrackingConfidence;
+      processName?: string;
+    }) => {
       console.debug("[GameSession] markRunning", { gameKey, ...update });
       setSessions((prev) => {
         const existing = prev[gameKey];
@@ -213,6 +241,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             state: "running",
             pid: update.pid ?? existing.pid,
             softSession: update.softSession ?? existing.softSession,
+            trackingConfidence: update.trackingConfidence ?? existing.trackingConfidence,
+            processName: update.processName ?? existing.processName,
             updatedAt: Date.now(),
           },
         };
@@ -242,12 +272,34 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
+  const updateSessionPid = useCallback(
+    (gameKey: string, pid: number, confidence: TrackingConfidence, processName?: string) => {
+      console.debug("[GameSession] updateSessionPid", { gameKey, pid, confidence });
+      setSessions((prev) => {
+        const existing = prev[gameKey];
+        if (!existing) return prev;
+        return {
+          ...prev,
+          [gameKey]: {
+            ...existing,
+            pid,
+            trackingConfidence: confidence,
+            processName: processName ?? existing.processName,
+            softSession: false,
+            updatedAt: Date.now(),
+          },
+        };
+      });
+    },
+    []
+  );
+
   const stopSession = useCallback(
     async (gameKey: string): Promise<{ terminated: boolean }> => {
       const session = sessionsRef.current[gameKey];
       if (!session) return { terminated: false };
 
-      console.debug("[GameSession] stopSession", { gameKey, pid: session.pid });
+      console.debug("[GameSession] stopSession", { gameKey, pid: session.pid, confidence: session.trackingConfidence });
 
       // Set stopping state
       setSessions((prev) => {
@@ -258,10 +310,29 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         };
       });
 
-      if (session.pid != null) {
+      let terminated = false;
+
+      if (session.pid != null && session.trackingConfidence && session.trackingConfidence !== "none" && session.trackingConfidence !== "low") {
+        try {
+          await terminateProcessTree(session.pid);
+          console.debug("[GameSession] process tree terminated", { gameKey, pid: session.pid });
+          terminated = true;
+        } catch (err) {
+          console.warn("[GameSession] terminate tree failed, trying single kill", { gameKey, pid: session.pid, err });
+          // Fall back to single process kill
+          try {
+            await terminateProcess(session.pid);
+            terminated = true;
+          } catch (err2) {
+            console.warn("[GameSession] terminate failed too", { gameKey, pid: session.pid, err: err2 });
+          }
+        }
+      } else if (session.pid != null) {
+        // Low confidence or no confidence — still try, but don't use tree kill
         try {
           await terminateProcess(session.pid);
-          console.debug("[GameSession] process terminated", { gameKey, pid: session.pid });
+          console.debug("[GameSession] process terminated (single)", { gameKey, pid: session.pid });
+          terminated = true;
         } catch (err) {
           console.warn("[GameSession] terminate failed", { gameKey, pid: session.pid, err });
         }
@@ -274,7 +345,44 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         return next;
       });
 
-      return { terminated: !!session.pid };
+      return { terminated };
+    },
+    []
+  );
+
+  const findGameProcessForSession = useCallback(
+    async (gameKey: string): Promise<ProcessCandidate | null> => {
+      const session = sessionsRef.current[gameKey];
+      if (!session) return null;
+
+      const input: FindProcessInput = {
+        executablePath: session.executablePath,
+        installDir: session.installDir,
+        processName: session.processName,
+        title: session.title,
+        appId: session.appId,
+      };
+
+      console.debug("[GameSession] findGameProcess", { gameKey, input });
+      const candidate = await findGameProcess(input, []);
+
+      if (candidate && (candidate.confidence === "high" || candidate.confidence === "medium")) {
+        updateSessionPid(gameKey, candidate.pid, candidate.confidence, candidate.name);
+      }
+
+      return candidate;
+    },
+    [updateSessionPid]
+  );
+
+  const recordPlaytime = useCallback(
+    (gameKey: string): { durationMs: number } | null => {
+      const session = sessionsRef.current[gameKey];
+      if (!session || !session.launchedAt) return null;
+
+      const now = Date.now();
+      const durationMs = now - session.launchedAt;
+      return { durationMs };
     },
     []
   );
@@ -288,9 +396,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       markRunning,
       markStopping,
       clearSession,
+      updateSessionPid,
       stopSession,
+      findGameProcessForSession,
+      recordPlaytime,
     }),
-    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, stopSession]
+    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime]
   );
 
   return (

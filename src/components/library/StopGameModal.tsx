@@ -1,31 +1,38 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Square, AlertTriangle } from "lucide-react";
+import { Square, AlertTriangle, Loader2, Search } from "lucide-react";
 
 type Props = {
   open: boolean;
   gameTitle: string;
   canTerminate: boolean;
-  isSteamSoftSession: boolean;
+  isSoftSession: boolean;
+  trackingConfidence?: string;
   onClose: () => void;
   onConfirmStop: () => void;
   onMarkStopped?: () => void;
+  onFindProcess?: () => Promise<void>;
 };
 
 export default function StopGameModal({
   open,
   gameTitle,
   canTerminate,
-  isSteamSoftSession,
+  isSoftSession,
+  trackingConfidence,
   onClose,
   onConfirmStop,
   onMarkStopped,
+  onFindProcess,
 }: Props) {
   const backdropRef = useRef<HTMLDivElement>(null);
+  const [findingProcess, setFindingProcess] = useState(false);
+
+  console.debug("[StopModal] render", { open, gameTitle });
 
   useEffect(() => {
-    console.debug("[StopModal] render", { open, gameTitle, canTerminate, isSteamSoftSession });
-  }, [open, gameTitle, canTerminate, isSteamSoftSession]);
+    console.debug("[StopModal] props changed", { open, gameTitle, canTerminate, isSoftSession, trackingConfidence });
+  }, [open, gameTitle, canTerminate, isSoftSession, trackingConfidence]);
 
   useEffect(() => {
     if (!open) return;
@@ -40,7 +47,21 @@ export default function StopGameModal({
     if (e.target === backdropRef.current) onClose();
   }
 
+  async function handleFindProcess() {
+    if (!onFindProcess) return;
+    setFindingProcess(true);
+    try {
+      await onFindProcess();
+    } finally {
+      setFindingProcess(false);
+    }
+  }
+
   if (!open) return null;
+
+  const showTerminate = canTerminate && trackingConfidence && trackingConfidence !== "none" && trackingConfidence !== "low";
+  const showMarkStopped = isSoftSession || !canTerminate;
+  const showFindProcess = isSoftSession && !canTerminate && onFindProcess && !showTerminate;
 
   return createPortal(
     <div
@@ -63,25 +84,46 @@ export default function StopGameModal({
           Unsaved progress may be lost.
         </p>
 
-        {isSteamSoftSession && !canTerminate && (
+        {!showTerminate && (
           <p className="mt-2 text-xs leading-relaxed text-amber-400/80">
-            LumaForge cannot safely close this Steam game yet because no process ID is being tracked.
+            LumaForge is tracking this game as running, but no safe process ID is available.
+            {showFindProcess && " Try \"Find Running Process\" to locate the game process."}
           </p>
         )}
 
-        <div className="mt-6 flex items-center justify-end gap-3">
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              console.debug("[StopModal] cancel clicked");
+              onClose();
+            }}
             className="cursor-pointer rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/30"
           >
             Cancel
           </button>
-          {canTerminate && (
+
+          {showFindProcess && (
+            <button
+              type="button"
+              onClick={handleFindProcess}
+              disabled={findingProcess}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/30 disabled:opacity-50"
+            >
+              {findingProcess ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Search className="h-4 w-4" />
+              )}
+              Find Running Process
+            </button>
+          )}
+
+          {showTerminate && (
             <button
               type="button"
               onClick={() => {
-                console.debug("[StopModal] confirm", { gameTitle });
+                console.debug("[StopModal] stop game clicked", { gameTitle, confidence: trackingConfidence });
                 onConfirmStop();
               }}
               className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-500/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-red-500/50"
@@ -90,11 +132,12 @@ export default function StopGameModal({
               Stop Game
             </button>
           )}
-          {isSteamSoftSession && !canTerminate && onMarkStopped && (
+
+          {showMarkStopped && onMarkStopped && !showTerminate && (
             <button
               type="button"
               onClick={() => {
-                console.debug("[StopModal] markStopped", { gameTitle });
+                console.debug("[StopModal] mark stopped clicked", { gameTitle });
                 onMarkStopped();
               }}
               className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/30"

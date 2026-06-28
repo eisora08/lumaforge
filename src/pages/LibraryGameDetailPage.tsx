@@ -12,6 +12,8 @@ import StopGameModal from "../components/library/StopGameModal";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession, computeGameKey } from "../context/GameSessionContext";
 import { useGameLaunchState } from "../hooks/useGameLaunchState";
+import { useGameActivity } from "../context/GameActivityContext";
+import { useGamePlayStats } from "../services/gamePlayStats";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
@@ -35,11 +37,37 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [artwork, setArtwork] = useState<SgdbArtworkData | null>(null);
   const currentRequest = useRef<number | null>(null);
   const artworkRequest = useRef<number | null>(null);
+  const prevRunningRef = useRef(false);
 
   const gameKey = selectedGame ? computeGameKey(selectedGame) : "";
   const { launchInfo, launchGame, cancelLaunch } = useGameLaunchState(gameKey);
   const session = useGameSession();
+  const { addActivity } = useGameActivity();
+  const { recordSessionEnd } = useGamePlayStats(selectedGame?.id || "");
   const [showStopModal, setShowStopModal] = useState(false);
+
+  // Playtime tracking: when session transitions from running to idle/cleared
+  useEffect(() => {
+    const wasRunning = prevRunningRef.current;
+    const isRunning = launchInfo.state === "running";
+    prevRunningRef.current = isRunning;
+
+    if (wasRunning && !isRunning && launchInfo.launchedAt) {
+      const durationMs = Date.now() - launchInfo.launchedAt;
+      if (durationMs > 30000) {
+        recordSessionEnd(durationMs);
+        addActivity({
+          gameId: selectedGame?.id || "",
+          appId: selectedGame?.appId,
+          kind: "game-closed",
+          title: "Game session ended",
+          description: `Played for ${Math.round(durationMs / 60000)}m`,
+          source: "local",
+          severity: "info",
+        });
+      }
+    }
+  }, [launchInfo.state, launchInfo.launchedAt, selectedGame, recordSessionEnd, addActivity]);
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
@@ -65,7 +93,18 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
   function handleOpenStopModal() {
     console.debug("[LaunchButton] opening stop modal", { gameKey });
+    console.debug("[StopModal] set open true", { gameKey });
     setShowStopModal(true);
+  }
+
+  async function handleFindProcess() {
+    console.debug("[StopModal] find process", { gameKey });
+    const candidate = await session.findGameProcessForSession(gameKey);
+    if (candidate) {
+      showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, { title: "Process found" });
+    } else {
+      showWarning("Could not find the game process automatically.", { title: "No process found" });
+    }
   }
 
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
@@ -210,6 +249,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   const displayGame = resolvedGame || selectedGame;
+  const currentSession = session.getSession(gameKey);
 
   return (
     <>
@@ -232,10 +272,12 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         open={showStopModal}
         gameTitle={displayGame.title}
         canTerminate={!!launchInfo.pid}
-        isSteamSoftSession={session.getSession(gameKey)?.softSession ?? false}
+        isSoftSession={currentSession?.softSession ?? true}
+        trackingConfidence={currentSession?.trackingConfidence}
         onClose={() => setShowStopModal(false)}
         onConfirmStop={handleConfirmStop}
         onMarkStopped={handleMarkAsStopped}
+        onFindProcess={handleFindProcess}
       />
     </>
   );
