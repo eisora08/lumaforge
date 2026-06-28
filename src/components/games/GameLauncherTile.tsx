@@ -113,7 +113,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div className="group flex flex-col rounded-2xl border border-(--surface-active-border) bg-white/[0.03] transition hover:border-(--color-accent)/30 hover:bg-white/[0.06]">
+    <div className="group flex flex-col rounded-2xl border border-(--surface-active-border) bg-white/[0.03] lf-card-hover hover:border-(--color-accent)/30 hover:bg-white/[0.06]">
       {/* Image */}
       <div
         role="button"

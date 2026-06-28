@@ -4,6 +4,7 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import type { LibraryGame } from "../../types/libraryGame";
 import AsyncImage from "../common/AsyncImage";
+import { SkeletonBox } from "../common/Skeleton";
 
 type Props = {
   onOpenGame?: () => void;
@@ -30,7 +31,7 @@ function getSidebarImage(game: LibraryGame, mode: "landscape" | "poster"): strin
 }
 
 export default function SidebarLibraryList({ onOpenGame }: Props) {
-  const { games, selectedGame, setSelectedGame } = useLibraryGames();
+  const { games, selectedGame, setSelectedGame, loading, initialLoading } = useLibraryGames();
   const { settings } = useSettings();
   const [query, setQuery] = useState("");
 
@@ -64,8 +65,20 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
         />
       </div>
 
-      <div className="max-h-[40vh] space-y-0.5 overflow-y-auto">
-        {filtered.length === 0 ? (
+      <div className="max-h-[40vh] space-y-0.5 overflow-y-auto lf-scroll-area">
+        {(initialLoading || (loading && games.length === 0)) ? (
+          <div className="space-y-1 py-1">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5">
+                <SkeletonBox className="h-6 w-10 shrink-0 rounded" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <SkeletonBox className="h-3 w-3/4" />
+                  <SkeletonBox className="h-2 w-1/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
           <p className="py-2 text-center text-[10px] text-(--color-muted)">No games match.</p>
         ) : (
           filtered.map((game) => {

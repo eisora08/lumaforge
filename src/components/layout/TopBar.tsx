@@ -12,6 +12,7 @@ import { useSearch } from "../../context/SearchContext";
 import { useGameDetails } from "../../context/GameDetailsContext";
 import { searchSteamStore } from "../../services/steamStoreSearchResolver";
 import type { SteamStoreSearchItem } from "../../types/steamStoreSearch";
+import { SkeletonBox } from "../common/Skeleton";
 
 type TopBarProps = {
   onOpenSidebar: () => void;
@@ -154,11 +155,18 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate }: TopBar
             </div>
 
             {shouldShowDropdown && (
-              <div className="absolute left-0 top-10 z-50 w-[400px] overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/95 shadow-2xl backdrop-blur-xl">
+              <div className="lf-popover-enter absolute left-0 top-10 z-50 w-[400px] overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/95 shadow-2xl backdrop-blur-xl">
                 {searchLoading ? (
-                  <div className="p-5 text-center text-sm text-(--color-muted)">
-                    <div className="mx-auto mb-2 h-5 w-5 animate-pulse rounded-full bg-(--color-accent)/40" />
-                    Searching Steam Store...
+                  <div className="p-2">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-xl p-2.5">
+                        <SkeletonBox className="h-12 w-20 shrink-0 rounded-lg" />
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <SkeletonBox className="h-3 w-3/4" />
+                          <SkeletonBox className="h-3 w-1/3" />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <>

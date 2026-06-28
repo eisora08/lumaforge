@@ -205,3 +205,145 @@ body {
     transform: scaleX(0);
   }
 }
+
+/* =========================
+   PREMIUM SCROLLBARS
+========================= */
+
+/* WebKit (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
+
+/* Utility: thin premium scrollbar area */
+.lf-scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
+
+.lf-scroll-area::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.lf-scroll-area::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+}
+
+.lf-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Hide scrollbar utility (keep functionality) */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* =========================
+   LIGHTWEIGHT TRANSITIONS
+========================= */
+
+.lf-fade-in {
+  animation: lfFadeIn 200ms ease-out both;
+}
+
+@keyframes lfFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.lf-transition {
+  transition: background-color 200ms ease, border-color 200ms ease, opacity 200ms ease, transform 150ms ease;
+}
+
+.lf-card-hover {
+  transition: background-color 200ms ease, border-color 200ms ease, transform 150ms ease, box-shadow 200ms ease;
+}
+
+.lf-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.lf-hover-surface {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+.lf-popover-enter {
+  animation: lfPopoverEnter 180ms ease-out both;
+}
+
+@keyframes lfPopoverEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.lf-scale-in {
+  animation: lfScaleIn 150ms ease-out both;
+}
+
+@keyframes lfScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lf-fade-in,
+  .lf-popover-enter,
+  .lf-scale-in,
+  .lf-transition,
+  .lf-card-hover {
+    animation: none;
+    transition: none;
+  }
+}

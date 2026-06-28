@@ -9,6 +9,7 @@ import {
 
 import type { ApiProviderId } from "../../types/provider";
 import type { ProviderFilter } from "../../types/providerSearch";
+import { SkeletonBox } from "../common/Skeleton";
 
 export type StoreSearchDropdownItem = {
   appId: string;
@@ -155,11 +156,18 @@ export default function PackagesToolbar({
       </div>
 
       {shouldShowDropdown && (
-        <div className="absolute left-1/2 top-12 z-50 w-[480px] -translate-x-1/2 overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/95 shadow-2xl backdrop-blur-xl">
+        <div className="lf-popover-enter absolute left-1/2 top-12 z-50 w-[480px] -translate-x-1/2 overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/95 shadow-2xl backdrop-blur-xl">
           {searchLoading ? (
-            <div className="p-5 text-center text-sm text-(--color-muted)">
-              <div className="mx-auto mb-2 h-5 w-5 animate-pulse rounded-full bg-(--color-accent)/40" />
-              Searching Steam Store...
+            <div className="p-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3 rounded-xl p-2.5">
+                  <SkeletonBox className="h-16 w-28 shrink-0 rounded-lg" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <SkeletonBox className="h-3 w-3/4" />
+                    <SkeletonBox className="h-3 w-1/3" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <>

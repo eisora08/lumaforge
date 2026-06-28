@@ -7,6 +7,26 @@ import { loadCachedGames, isCacheExpired } from "../services/gameDetectionCache"
 import { loadMetadataCache } from "../services/gameMetadataResolver";
 import { useSettings } from "./SettingsContext";
 
+const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
+
+function loadStoredSelectedId(): string | null {
+  try {
+    return localStorage.getItem(SELECTED_GAME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeSelectedId(id: string | null) {
+  try {
+    if (id) {
+      localStorage.setItem(SELECTED_GAME_KEY, id);
+    } else {
+      localStorage.removeItem(SELECTED_GAME_KEY);
+    }
+  } catch { /* ignore */ }
+}
+
 type LibraryGamesState = {
   games: LibraryGame[];
   warnings: string[];
@@ -67,9 +87,34 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedGame, setSelectedGame] = useState<LibraryGame | null>(null);
+  const [selectedId, setSelectedIdState] = useState<string | null>(loadStoredSelectedId);
+  const [selectedGame, setSelectedGameState] = useState<LibraryGame | null>(null);
   const initDone = useRef(false);
+  const restoredSelected = useRef(false);
+
+  function setSelectedId(id: string | null) {
+    setSelectedIdState(id);
+    storeSelectedId(id);
+  }
+
+  function setSelectedGame(game: LibraryGame | null) {
+    setSelectedGameState(game);
+    setSelectedIdState(game?.id ?? null);
+    storeSelectedId(game?.id ?? null);
+  }
+
+  // Restore selected game after games load
+  useEffect(() => {
+    if (restoredSelected.current || games.length === 0 || !selectedId) return;
+    const match = games.find((g) => g.id === selectedId);
+    if (match) {
+      setSelectedGameState(match);
+    } else {
+      setSelectedIdState(null);
+      storeSelectedId(null);
+    }
+    restoredSelected.current = true;
+  }, [games, selectedId]);
 
   async function load(settings: AppSettings) {
     const cached = loadCachedGames();
