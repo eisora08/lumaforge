@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronRight, Gamepad2 } from "lucide-react";
+import AsyncImage from "../common/AsyncImage";
 
 import type { PackageGame } from "../../types/package";
 
@@ -147,11 +148,10 @@ function NewsCard({ item, onOpenGame }: NewsCardProps) {
       <div className={`flex flex-col sm:flex-row ${!item.imageUrl ? "sm:items-center" : ""}`}>
         {item.imageUrl && (
           <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-white/[0.04] sm:h-[160px] sm:w-56 sm:aspect-auto">
-            <img
+            <AsyncImage
               src={item.imageUrl}
               alt={item.title}
-              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
-              loading="lazy"
+              className="h-full w-full transition duration-300 group-hover:scale-[1.03]"
             />
           </div>
         )}

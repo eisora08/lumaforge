@@ -1,5 +1,6 @@
 import { CheckCircle2, Gamepad2, Play, Server } from "lucide-react";
 import { useState, useMemo } from "react";
+import AsyncImage from "../../common/AsyncImage";
 
 type StoreGameMediaGalleryProps = {
   title: string;
@@ -70,10 +71,10 @@ export default function StoreGameMediaGallery({
         <div className="relative aspect-video">
           {currentImage ? (
             <>
-              <img
+              <AsyncImage
                 src={currentImage}
                 alt={title}
-                className="h-full w-full object-cover"
+                className="h-full w-full"
                 onError={() => {
                   handleImageError(currentImage);
                 }}
@@ -157,10 +158,10 @@ export default function StoreGameMediaGallery({
                   : "border-transparent opacity-70 hover:opacity-100"
               }`}
             >
-              <img
+              <AsyncImage
                 src={img}
                 alt=""
-                className="h-16 w-28 object-cover"
+                className="h-16 w-28"
                 onError={() => {
                   handleImageError(img);
                 }}

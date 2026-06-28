@@ -14,6 +14,7 @@ import GameLauncherTile from "../components/games/GameLauncherTile";
 import LibraryFilterPanel from "../components/library/LibraryFilterPanel";
 import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFilterPanel";
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
+import { GridSkeleton, LibrarySectionSkeleton } from "../components/common/Skeleton";
 
 import { useSettings } from "../context/SettingsContext";
 import { useLibraryGames } from "../context/LibraryGamesContext";
@@ -50,7 +51,7 @@ type Props = {
 
 export default function LibraryPage({ onNavigate }: Props) {
   const { settings } = useSettings();
-  const { games, warnings, loading, setSelectedGame, refresh } = useLibraryGames();
+  const { games, warnings, loading, initialLoading, setSelectedGame, refresh } = useLibraryGames();
   const hasLuaPath = Boolean(settings.luaPath);
 
   const [luaScripts, setLuaScripts] = useState<InstalledLuaScript[]>([]);
@@ -374,6 +375,14 @@ export default function LibraryPage({ onNavigate }: Props) {
               <p className="mt-4 text-xs text-(--color-muted)">Go to Settings → Steam Paths</p>
             </div>
           </div>
+        ) : initialLoading ? (
+          <PageContainer className="py-5 lg:py-7">
+            <LibrarySectionSkeleton />
+            <GridSkeleton
+              poster={(settings.libraryCardArtworkMode ?? "landscape") === "poster"}
+              count={8}
+            />
+          </PageContainer>
         ) : showEmptyLua ? (
           <div className="flex flex-1 items-center justify-center p-5 lg:p-7">
             <div className="max-w-md text-center">
@@ -399,7 +408,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                     <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Biblioteca</h1>
                     <p className="mt-1 text-sm text-(--color-muted)">
                       {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
-                      {loading && " (scanning...)"}
+                      {loading && !initialLoading && " · scanning..."}
+                      {scanningLua && " · scanning Lua..."}
                     </p>
                   </div>
 

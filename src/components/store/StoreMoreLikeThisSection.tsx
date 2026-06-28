@@ -2,6 +2,7 @@ import {
   Gamepad2,
   Star,
 } from "lucide-react";
+import AsyncImage from "../common/AsyncImage";
 
 import type { PackageGame } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
@@ -87,18 +88,16 @@ export default function StoreMoreLikeThisSection({
                 onClick={() => onOpenGame?.(game)}
                 className="group relative h-36 w-64 shrink-0 cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/25 text-left transition hover:border-(--color-accent)/40"
               >
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt={title}
-                    loading="lazy"
-                    className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-white/5">
-                    <Gamepad2 className="h-8 w-8 text-(--color-muted)" />
-                  </div>
-                )}
+                <AsyncImage
+                  src={imageUrl}
+                  alt={title}
+                  className="h-full w-full transition duration-300 group-hover:scale-105"
+                  fallback={
+                    <div className="flex h-full w-full items-center justify-center bg-white/5">
+                      <Gamepad2 className="h-8 w-8 text-(--color-muted)" />
+                    </div>
+                  }
+                />
 
                 <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/35 to-transparent" />
 

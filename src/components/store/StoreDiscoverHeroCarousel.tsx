@@ -5,6 +5,7 @@ import {
   Download,
   Gamepad2,
 } from "lucide-react";
+import AsyncImage from "../common/AsyncImage";
 
 import type { PackageGame } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
@@ -98,17 +99,17 @@ export default function StoreDiscoverHeroCarousel({
           }}
           className="relative aspect-[21/9] cursor-pointer overflow-hidden bg-white/5"
         >
-          {currentImage ? (
-            <img
-              src={currentImage}
-              alt={current.title}
-              className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.02]"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
-            </div>
-          )}
+          <AsyncImage
+            src={currentImage}
+            alt={current.title}
+            className="h-full w-full transition duration-500 group-hover:scale-[1.02]"
+            loading="eager"
+            fallback={
+              <div className="flex h-full w-full items-center justify-center">
+                <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
+              </div>
+            }
+          />
 
           <div className="absolute inset-0 bg-linear-to-r from-black/75 via-black/35 to-transparent" />
           <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent" />
@@ -230,17 +231,16 @@ export default function StoreDiscoverHeroCarousel({
                   }`}
                 >
                   <div className="h-14 w-24 shrink-0 overflow-hidden rounded-lg bg-white/5">
-                    {railImage ? (
-                      <img
-                        src={railImage}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center">
-                        <Gamepad2 className="h-5 w-5 text-(--color-muted)" />
-                      </div>
-                    )}
+                    <AsyncImage
+                      src={railImage}
+                      alt=""
+                      className="h-full w-full"
+                      fallback={
+                        <div className="flex h-full w-full items-center justify-center">
+                          <Gamepad2 className="h-5 w-5 text-(--color-muted)" />
+                        </div>
+                      }
+                    />
                   </div>
 
                   <div className="min-w-0">

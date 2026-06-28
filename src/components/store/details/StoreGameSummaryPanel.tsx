@@ -1,3 +1,4 @@
+import AsyncImage from "../../common/AsyncImage";
 import {
   CheckCircle2,
   Database,
@@ -83,17 +84,16 @@ export default function StoreGameSummaryPanel({
     <div className="space-y-4">
       <div className="overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/20">
         <div className="aspect-[16/9] overflow-hidden bg-white/5">
-          {game.imageUrl ? (
-            <img
-              src={game.imageUrl}
-              alt={game.title}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
-            </div>
-          )}
+          <AsyncImage
+            src={game.imageUrl}
+            alt={game.title}
+            className="h-full w-full"
+            fallback={
+              <div className="flex h-full w-full items-center justify-center">
+                <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+              </div>
+            }
+          />
         </div>
 
         <div className="p-4">

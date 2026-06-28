@@ -12,6 +12,8 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
+import AsyncImage from "../common/AsyncImage";
+import { SkeletonBox } from "../common/Skeleton";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -60,12 +62,13 @@ export default function GameLauncherTile({
   onDeleteScript,
 }: GameLauncherTileProps) {
   const { settings } = useSettings();
-  const [imageFailed, setImageFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [favorite, setFavorite] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
+  const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
+  const expectingSgdbArt = artworkMode === "poster" && sgdbEnabled;
 
   const displayImage = useMemo(
     () => getCardImage(game, artworkMode, artwork),
@@ -122,18 +125,21 @@ export default function GameLauncherTile({
             handleCardClick();
           }
         }}
-        className={`relative cursor-pointer overflow-hidden rounded-t-2xl bg-white/5 ${
+        className={`relative cursor-pointer overflow-hidden rounded-t-2xl ${
           artworkMode === "poster" ? "aspect-[3/4]" : "aspect-video"
         }`}
       >
-        {displayImage && !imageFailed ? (
-          <img
+        {displayImage ? (
+          <AsyncImage
             src={displayImage}
             alt={game.title}
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-            loading="lazy"
-            onError={() => setImageFailed(true)}
+            className="h-full w-full"
+            fallback={
+              <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+            }
           />
+        ) : expectingSgdbArt ? (
+          <SkeletonBox className="h-full w-full rounded-t-2xl" />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
             <Gamepad2 className="h-10 w-10 text-(--color-muted)" />

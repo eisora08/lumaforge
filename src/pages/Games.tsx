@@ -8,6 +8,7 @@ import {
 
 import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
+import { GridSkeleton } from "../components/common/Skeleton";
 
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
@@ -21,7 +22,7 @@ import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
-  const { games, loading, setSelectedGame, refresh } = useLibraryGames();
+  const { games, loading, initialLoading, setSelectedGame, refresh } = useLibraryGames();
   const { settings } = useSettings();
 
   const [filter, setFilter] = useState<string>("all");
@@ -130,7 +131,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                 <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Juegos</h1>
                 <p className="mt-1 text-sm text-(--color-muted)">
                   {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
-                  {loading && " (scanning...)"}
+                  {loading && !initialLoading && " · scanning..."}
                 </p>
               </div>
 
@@ -180,7 +181,12 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
               ))}
             </div>
 
-            {filteredGames.length === 0 ? (
+            {initialLoading ? (
+              <GridSkeleton
+                poster={(settings.libraryCardArtworkMode ?? "landscape") === "poster"}
+                count={8}
+              />
+            ) : filteredGames.length === 0 ? (
               <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
                 <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
                 <h2 className="mt-4 font-semibold text-(--color-text)">No games match</h2>

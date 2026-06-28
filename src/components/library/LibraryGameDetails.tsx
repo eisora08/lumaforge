@@ -31,6 +31,7 @@ import {
   getSteamSupportUrl,
   getSteamDbUrl,
 } from "../../utils/steamLinks";
+import AsyncImage from "../common/AsyncImage";
 
 type LibraryGameDetailsProps = {
   game: LibraryGame;
@@ -102,13 +103,13 @@ export default function LibraryGameDetails({
   onBack,
   onRefreshArtwork,
 }: LibraryGameDetailsProps) {
-  const [imageFailed, setImageFailed] = useState(false);
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [favorite, setFavorite] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
 
   const imageUrl = getHeroImageUrl(game, artwork);
+  const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
 
@@ -199,34 +200,30 @@ export default function LibraryGameDetails({
 
       {/* Hero banner */}
       <div className="relative h-72 shrink-0 overflow-hidden bg-white/5 lg:h-96">
-        {imageUrl && !imageFailed ? (
-          <img
-            src={imageUrl}
-            alt={game.title}
-            className="h-full w-full object-cover object-center"
-            onError={() => setImageFailed(true)}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-white/10 via-white/5 to-black/50">
-            <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
-          </div>
-        )}
+        <AsyncImage
+          src={imageUrl}
+          alt={game.title}
+          className="absolute inset-0 h-full w-full"
+          fallback={
+            <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-white/10 via-white/5 to-black/50">
+              <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
+            </div>
+          }
+        />
         <div className="absolute inset-0 bg-linear-to-t from-black/95 via-black/50 to-transparent" />
 
         {/* Logo overlay */}
-        {(() => {
-          const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
-          if (!logoUrl) return null;
-          return (
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-              <img
-                src={logoUrl}
-                alt={`${game.title} logo`}
-                className="max-h-28 max-w-[300px] object-contain drop-shadow-2xl lg:max-h-36 lg:max-w-[420px]"
-              />
-            </div>
-          );
-        })()}
+        {logoUrl ? (
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+            <img
+              src={logoUrl}
+              alt={`${game.title} logo`}
+              loading="lazy"
+              decoding="async"
+              className="max-h-28 max-w-[300px] object-contain drop-shadow-2xl lg:max-h-36 lg:max-w-[420px]"
+            />
+          </div>
+        ) : null}
 
         <div className="absolute bottom-0 left-0 right-0">
           <div className="mx-auto w-full max-w-[1440px] px-5 pb-5 lg:pb-6">

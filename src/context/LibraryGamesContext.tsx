@@ -11,6 +11,7 @@ type LibraryGamesState = {
   games: LibraryGame[];
   warnings: string[];
   loading: boolean;
+  initialLoading: boolean;
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   selectedGame: LibraryGame | null;
@@ -65,6 +66,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [games, setGames] = useState<LibraryGame[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedGame, setSelectedGame] = useState<LibraryGame | null>(null);
   const initDone = useRef(false);
@@ -74,6 +76,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     if (cached) {
       setGames(cached.games.map(mapCachedToLibraryGame));
       setWarnings(cached.warnings || []);
+      setInitialLoading(false);
       if (isCacheExpired(cached)) {
         setLoading(true);
         try {
@@ -96,6 +99,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         console.error("[LibraryGamesContext] scan error:", error);
       } finally {
         setLoading(false);
+        setInitialLoading(false);
       }
     }
   }
@@ -121,7 +125,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }
 
   return (
-    <LibraryGamesContext.Provider value={{ games, warnings, loading, selectedId, setSelectedId, selectedGame, setSelectedGame, refresh }}>
+    <LibraryGamesContext.Provider value={{ games, warnings, loading, initialLoading, selectedId, setSelectedId, selectedGame, setSelectedGame, refresh }}>
       {children}
     </LibraryGamesContext.Provider>
   );

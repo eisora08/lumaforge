@@ -1,12 +1,10 @@
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Gamepad2, Search } from "lucide-react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import type { LibraryGame } from "../../types/libraryGame";
-import {
-  Gamepad2,
+import AsyncImage from "../common/AsyncImage";
 
-} from "lucide-react";
 type Props = {
   onOpenGame?: () => void;
 };
@@ -87,12 +85,12 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
                     : "text-(--color-text) hover:bg-white/5"
                 }`}
               >
-                <div className="h-6 w-10 shrink-0 overflow-hidden rounded bg-white/5">
-                  {thumb ? (
-                    <img src={thumb} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[8px] text-(--color-muted)">--</div>
-                  )}
+                <div className="h-6 w-10 shrink-0 overflow-hidden rounded">
+                  <AsyncImage
+                    src={thumb}
+                    alt=""
+                    className="h-full w-full"
+                  />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium leading-tight">{game.title}</div>

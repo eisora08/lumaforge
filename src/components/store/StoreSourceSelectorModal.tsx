@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AsyncImage from "../common/AsyncImage";
 import {
   CheckCircle2,
   CircleX,
@@ -107,17 +108,16 @@ export default function StoreSourceSelectorModal({
         <div className="flex items-start justify-between gap-4 p-5">
           <div className="flex items-center gap-3">
             <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-white/5">
-              {game.imageUrl ? (
-                <img
-                  src={game.imageUrl}
-                  alt={game.title}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center">
-                  <Gamepad2 className="h-6 w-6 text-(--color-muted)" />
-                </div>
-              )}
+              <AsyncImage
+                src={game.imageUrl}
+                alt={game.title}
+                className="h-full w-full"
+                fallback={
+                  <div className="flex h-14 w-14 items-center justify-center">
+                    <Gamepad2 className="h-6 w-6 text-(--color-muted)" />
+                  </div>
+                }
+              />
             </div>
 
             <div className="min-w-0">

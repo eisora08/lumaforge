@@ -7,6 +7,8 @@ const FAILURE_TTL_MS = 60 * 60 * 1000;
 const BATCH_SIZE = 6;
 const BATCH_DELAY_MS = 300;
 
+const inFlightAppIds = new Set<number>();
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -84,7 +86,10 @@ export async function resolveArtworkForAppIds(
   console.debug("[SGDB] cache miss for", missing.length, "games");
 
   for (let i = 0; i < missing.length; i += BATCH_SIZE) {
-    const batch = missing.slice(i, i + BATCH_SIZE);
+    const batch = missing.slice(i, i + BATCH_SIZE).filter((id) => !inFlightAppIds.has(id));
+    if (batch.length === 0) continue;
+
+    batch.forEach((id) => inFlightAppIds.add(id));
     console.debug("[SGDB] fetch batch size", batch.length);
     try {
       await delay(BATCH_DELAY_MS);
@@ -110,6 +115,8 @@ export async function resolveArtworkForAppIds(
           failed: true,
         };
       }
+    } finally {
+      batch.forEach((id) => inFlightAppIds.delete(id));
     }
   }
 

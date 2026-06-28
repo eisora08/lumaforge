@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ExternalLink, Gamepad2 } from "lucide-react";
+import AsyncImage from "../../common/AsyncImage";
 
 import type { SteamAppMetadata } from "../../../types/gameMetadata";
 import { openExternalUrl } from "../../../services/externalLinks";
@@ -107,18 +108,16 @@ export default function StoreGameDlcSection({
                 className="w-44 shrink-0 cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 text-left transition hover:border-(--color-accent)/40"
               >
                 <div className="aspect-video overflow-hidden bg-white/5">
-                  {dlc.header_image ? (
-                    <img
-                      src={dlc.header_image}
-                      alt={dlc.name}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center">
-                      <Gamepad2 className="h-8 w-8 text-(--color-muted)" />
-                    </div>
-                  )}
+                  <AsyncImage
+                    src={dlc.header_image}
+                    alt={dlc.name}
+                    className="h-full w-full"
+                    fallback={
+                      <div className="flex h-full w-full items-center justify-center">
+                        <Gamepad2 className="h-8 w-8 text-(--color-muted)" />
+                      </div>
+                    }
+                  />
                 </div>
 
                 <div className="p-3">
