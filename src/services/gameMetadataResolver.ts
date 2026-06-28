@@ -98,6 +98,7 @@ function createFallbackMetadata(appId: number): SteamAppMetadata {
     pc_requirements: null,
     mac_requirements: null,
     linux_requirements: null,
+    screenshots: [],
     resolved: false,
   };
 }

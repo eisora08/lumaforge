@@ -36,6 +36,7 @@ export const defaultSettings: AppSettings = {
   cleanTempOnExit: false,
   compactMode: false,
   steamGridDbApiKey: "",
+  libraryCardArtworkMode: "landscape",
   gameScanFolders: [],
   scanLocalGames: false,
 };

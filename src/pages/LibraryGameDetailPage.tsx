@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
   launchSteamApp,
@@ -7,9 +7,12 @@ import {
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
+import { useSettings } from "../context/SettingsContext";
 
 import type { LibraryGame } from "../types/libraryGame";
+import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 
 import {
   showError,
@@ -22,9 +25,12 @@ type Props = {
 
 export default function LibraryGameDetailPage({ onBack }: Props) {
   const { selectedGame, setSelectedGame } = useLibraryGames();
+  const { settings } = useSettings();
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
+  const [artwork, setArtwork] = useState<SgdbArtworkData | null>(null);
   const currentRequest = useRef<number | null>(null);
+  const artworkRequest = useRef<number | null>(null);
 
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
   useEffect(() => {
@@ -75,6 +81,52 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
         }
       });
   }, [selectedGame]);
+
+  // Resolve SteamGridDB artwork after metadata is loaded
+  useEffect(() => {
+    if (!resolvedGame || !resolvedGame.appId) return;
+    const appIdNum = Number(resolvedGame.appId);
+    if (!appIdNum || !settings.steamGridDbApiKey) return;
+
+    const requestId = Date.now();
+    artworkRequest.current = requestId;
+
+    resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
+      .then((result) => {
+        if (artworkRequest.current !== requestId) return;
+        const entry = result[String(appIdNum)];
+        if (entry) {
+          setArtwork(entry);
+        }
+      })
+      .catch(() => {
+        // silent — artwork is optional
+      });
+  }, [resolvedGame, settings.steamGridDbApiKey]);
+
+  const handleRefreshArtwork = useCallback(async () => {
+    if (!selectedGame?.appId) {
+      showWarning("No App ID available for this game.", { title: "Artwork" });
+      return;
+    }
+    if (!settings.steamGridDbApiKey) {
+      showWarning("Add a SteamGridDB API key in Settings to fetch artwork.", { title: "Artwork" });
+      return;
+    }
+
+    const appIdNum = Number(selectedGame.appId);
+    const { clearArtworkCache } = await import("../services/storeArtworkResolver");
+    clearArtworkCache();
+
+    const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
+    const entry = result[String(appIdNum)];
+    if (entry) {
+      setArtwork(entry);
+      showWarning("Artwork refreshed.", { title: "Artwork" });
+    } else {
+      showWarning("No artwork found for this game.", { title: "Artwork" });
+    }
+  }, [selectedGame, settings.steamGridDbApiKey]);
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
@@ -134,12 +186,14 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
   return (
     <LibraryGameDetails
       game={displayGame}
+      artwork={artwork}
       loading={metadataLoading}
       onPlay={handlePlay}
       onInstall={handleInstall}
       onOpenSteam={handleOpenSteamStore}
       onOpenSteamDb={handleOpenSteamDb}
       onBack={handleBack}
+      onRefreshArtwork={handleRefreshArtwork}
     />
   );
 }

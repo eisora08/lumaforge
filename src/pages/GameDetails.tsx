@@ -1,23 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useGameDetails } from "../context/GameDetailsContext";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
-import { useSettings } from "../context/SettingsContext";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
-import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
 import type { PackageGame } from "../types/package";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
-import type { StoreArtwork } from "../types/storeArtwork";
 import type { PackageInstallStatus } from "../types/packageInstall";
 
 export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
   const { selectedGame, clearSelection } = useGameDetails();
-  const { settings } = useSettings();
 
   const [metadata, setMetadata] = useState<SteamAppMetadata | undefined>();
   const [reviewSummary, setReviewSummary] = useState<SteamReviewSummary | undefined>();
-  const [artwork, setArtwork] = useState<StoreArtwork | undefined>();
   const [installStatus] = useState<PackageInstallStatus>("not-installed");
 
   const packageGame: PackageGame | null = useMemo(() => {
@@ -58,7 +53,6 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
       try {
         const [summaries] = await Promise.all([
           resolveGameReviewSummaries(validAppIds),
-          resolveArtworkForAppIds(validAppIds, settings.steamGridDbApiKey),
         ]);
         if (cancelled) return;
         setReviewSummary(summaries[validAppIds[0]]);
@@ -67,24 +61,7 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     load();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdNum, settings.steamGridDbApiKey]);
-
-  useEffect(() => {
-    if (validAppIds.length === 0) return;
-    let cancelled = false;
-    async function load() {
-      try {
-        const [artworkResult] = await Promise.all([
-          resolveArtworkForAppIds(validAppIds, settings.steamGridDbApiKey),
-        ]);
-        if (cancelled) return;
-        setArtwork(artworkResult[String(validAppIds[0])]);
-      } catch { /* ignore */ }
-    }
-    load();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdNum, settings.steamGridDbApiKey]);
+  }, [appIdNum]);
 
   const handleBack = () => {
     clearSelection();
@@ -105,7 +82,6 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
         game={packageGame}
         metadata={metadata}
         reviewSummary={reviewSummary}
-        artwork={artwork}
         installStatus={installStatus}
         moreLikeThisGames={[]}
         onBack={handleBack}

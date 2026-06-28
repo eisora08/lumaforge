@@ -60,7 +60,7 @@ export default function StoreHorizontalSection({
           <button
             type="button"
             onClick={onViewAll}
-            className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
           >
             Ver todo
             <ArrowRight className="h-3.5 w-3.5" />
@@ -72,7 +72,7 @@ export default function StoreHorizontalSection({
         <button
           type="button"
           onClick={() => handleScroll("left")}
-          className="absolute left-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
+          className="absolute left-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
@@ -94,7 +94,7 @@ export default function StoreHorizontalSection({
         <button
           type="button"
           onClick={() => handleScroll("right")}
-          className="absolute right-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
+          className="absolute right-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
         >
           <ChevronRight className="h-5 w-5" />
         </button>

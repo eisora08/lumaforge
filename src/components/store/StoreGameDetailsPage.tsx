@@ -5,8 +5,6 @@ import type { PackageGame, PackageSource } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
-import type { StoreArtwork } from "../../types/storeArtwork";
-
 import { openExternalUrl } from "../../services/externalLinks";
 import {
   getSteamDbUrl,
@@ -32,7 +30,6 @@ type StoreGameDetailsPageProps = {
   game: PackageGame;
   metadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
-  artwork?: StoreArtwork;
   installStatus?: PackageInstallStatus;
   moreLikeThisGames?: StoreMoreLikeThisGame[];
   selectedSource?: PackageSource | null;
@@ -44,12 +41,9 @@ type StoreGameDetailsPageProps = {
 
 function getBestImage(
   game: PackageGame,
-  metadata?: SteamAppMetadata,
-  artwork?: StoreArtwork
+  metadata?: SteamAppMetadata
 ) {
   return (
-    artwork?.sgdbHeroUrl ||
-    artwork?.sgdbGridUrl ||
     metadata?.header_image ||
     metadata?.capsule_image ||
     metadata?.capsule_image_v5 ||
@@ -125,7 +119,6 @@ export default function StoreGameDetailsPage({
   game,
   metadata,
   reviewSummary,
-  artwork,
   installStatus = "not-installed",
   moreLikeThisGames = [],
   selectedSource,
@@ -139,13 +132,12 @@ export default function StoreGameDetailsPage({
 
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
-  const imageUrl = getBestImage(game, metadata, artwork);
+  const imageUrl = getBestImage(game, metadata);
   const galleryImages = [
-    artwork?.sgdbHeroUrl,
-    artwork?.sgdbGridUrl,
     metadata?.header_image,
     metadata?.capsule_image,
     metadata?.capsule_image_v5,
+    ...(metadata?.screenshots ?? []),
     game.imageUrl,
   ].filter((img): img is string => !!img);
   const platforms = getPlatforms(game, metadata);
@@ -231,7 +223,7 @@ export default function StoreGameDetailsPage({
       <button
         type="button"
         onClick={onBack}
-        className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Volver al Store

@@ -35,6 +35,8 @@ pub struct SteamAppMetadata {
     pub mac_requirements: Option<SystemRequirements>,
     pub linux_requirements: Option<SystemRequirements>,
 
+    pub screenshots: Vec<String>,
+
     pub resolved: bool,
 }
 

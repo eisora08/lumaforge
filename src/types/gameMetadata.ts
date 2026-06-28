@@ -37,5 +37,7 @@ export type SteamAppMetadata = {
   mac_requirements?: SystemRequirements | null;
   linux_requirements?: SystemRequirements | null;
 
+  screenshots?: string[];
+
   resolved: boolean;
 };

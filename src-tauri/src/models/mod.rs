@@ -15,3 +15,4 @@ pub mod steam_installed_game;
 pub mod sync_index;
 pub mod local_game;
 pub mod local_executable_game;
+pub mod artwork_cache;

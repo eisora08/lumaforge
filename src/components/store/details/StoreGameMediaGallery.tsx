@@ -151,7 +151,7 @@ export default function StoreGameMediaGallery({
               onClick={() => {
                 setSelectedIndex(idx);
               }}
-              className={`relative flex-shrink-0 overflow-hidden rounded-lg border-2 transition-all duration-200 ${
+              className={`relative cursor-pointer flex-shrink-0 overflow-hidden rounded-lg border-2 transition-all duration-200 ${
                 idx === safeIndex
                   ? "border-(--color-accent) ring-1 ring-(--color-accent)/50"
                   : "border-transparent opacity-70 hover:opacity-100"

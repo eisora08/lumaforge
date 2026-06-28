@@ -360,7 +360,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                       type="button"
                       onClick={handleCheckUpdates}
                       disabled={checkingUpdates || luaScripts.length === 0}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50"
                       title="Check Updates"
                     >
                       <RefreshCcw className={`h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`} />
@@ -371,7 +371,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                       type="button"
                       onClick={refresh}
                       disabled={loading}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                       title="Scan"
                     >
                       <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -395,13 +395,13 @@ export default function LibraryPage({ onNavigate }: Props) {
                     <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
                     <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
                     {(filter !== "all" || searchQuery) && (
-                      <button
-                        type="button"
-                        onClick={handleResetFilters}
-                        className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90"
-                      >
-                        Reset filters
-                      </button>
+                    <button
+                      type="button"
+                      onClick={handleResetFilters}
+                      className="mt-4 inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90"
+                    >
+                      Reset filters
+                    </button>
                     )}
                   </div>
                 ) : (
@@ -441,7 +441,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                             type="button"
                             disabled={currentPage <= 1}
                             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                            className="inline-flex items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
                           >
                             <ChevronLeft className="h-3.5 w-3.5" />
                           </button>
@@ -450,7 +450,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                               key={page}
                               type="button"
                               onClick={() => setCurrentPage(page)}
-                              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-xs font-medium transition ${
+                              className={`inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-xs font-medium transition ${
                                 page === currentPage
                                   ? "bg-(--color-accent)/20 text-(--color-accent)"
                                   : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
@@ -463,7 +463,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                             type="button"
                             disabled={currentPage >= totalPages}
                             onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                            className="inline-flex items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
                           >
                             <ChevronRight className="h-3.5 w-3.5" />
                           </button>

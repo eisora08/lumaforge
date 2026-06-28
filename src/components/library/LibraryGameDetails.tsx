@@ -16,13 +16,11 @@ import {
   MoreHorizontal,
   Play,
   Puzzle,
-  RefreshCcw,
-  ShieldCheck,
-  ShieldOff,
   Star,
   Trophy,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
+import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
 import {
@@ -36,6 +34,7 @@ import {
 
 type LibraryGameDetailsProps = {
   game: LibraryGame;
+  artwork?: SgdbArtworkData | null;
   loading?: boolean;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
@@ -46,10 +45,13 @@ type LibraryGameDetailsProps = {
   onOpenSteamDb?: (game: LibraryGame) => void;
   onOpenSourceSelector?: (game: LibraryGame) => void;
   onBack: () => void;
+  onRefreshArtwork?: () => void;
 };
 
-function getHeroImageUrl(game: LibraryGame): string | undefined {
-  return game.metadata?.library_hero_image
+function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null): string | undefined {
+  return artwork?.sgdbHeroUrl
+    || artwork?.sgdbGridUrl
+    || game.metadata?.library_hero_image
     || game.metadata?.background_image
     || game.metadata?.hero_image
     || game.metadata?.library_header_image
@@ -90,6 +92,7 @@ function StatInline({ icon, label, value }: { icon: React.ReactNode; label: stri
 
 export default function LibraryGameDetails({
   game,
+  artwork,
   loading = false,
   onPlay,
   onInstall,
@@ -97,6 +100,7 @@ export default function LibraryGameDetails({
   onOpenSteam,
   onOpenSteamDb,
   onBack,
+  onRefreshArtwork,
 }: LibraryGameDetailsProps) {
   const [imageFailed, setImageFailed] = useState(false);
   const [showFullDescription, setShowFullDescription] = useState(false);
@@ -104,7 +108,7 @@ export default function LibraryGameDetails({
   const [favorite, setFavorite] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
 
-  const imageUrl = getHeroImageUrl(game);
+  const imageUrl = getHeroImageUrl(game, artwork);
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
 
@@ -210,51 +214,22 @@ export default function LibraryGameDetails({
         <div className="absolute inset-0 bg-linear-to-t from-black/95 via-black/50 to-transparent" />
 
         {/* Logo overlay */}
-        {game.metadata?.logo_image && (
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <img
-              src={game.metadata.logo_image}
-              alt={`${game.title} logo`}
-              className="max-h-28 max-w-[300px] object-contain drop-shadow-2xl lg:max-h-36 lg:max-w-[420px]"
-            />
-          </div>
-        )}
+        {(() => {
+          const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
+          if (!logoUrl) return null;
+          return (
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+              <img
+                src={logoUrl}
+                alt={`${game.title} logo`}
+                className="max-h-28 max-w-[300px] object-contain drop-shadow-2xl lg:max-h-36 lg:max-w-[420px]"
+              />
+            </div>
+          );
+        })()}
 
         <div className="absolute bottom-0 left-0 right-0">
           <div className="mx-auto w-full max-w-[1440px] px-5 pb-5 lg:pb-6">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              {game.steamInstalled && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[10px] text-emerald-300">
-                  <ShieldCheck className="h-3 w-3" />
-                  Installed
-                </span>
-              )}
-              {game.isLuaActive && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-[10px] text-(--color-accent)">
-                  <FileCode2 className="h-3 w-3" />
-                  Lua Active
-                </span>
-              )}
-              {game.isLuaDisabled && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-500/20 bg-zinc-500/10 px-3 py-1 text-[10px] text-zinc-300">
-                  <ShieldOff className="h-3 w-3" />
-                  Lua Disabled
-                </span>
-              )}
-              {game.hasLuaSource && !game.hasLua && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[10px] text-emerald-300">
-                  <Download className="h-3 w-3" />
-                  Lua Ready
-                </span>
-              )}
-              {game.hasUpdate && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/10 px-3 py-1 text-[10px] text-yellow-300">
-                  <RefreshCcw className="h-3 w-3" />
-                  Update Available
-                </span>
-              )}
-            </div>
-
             <h1 className="line-clamp-1 text-2xl font-black text-white drop-shadow-sm lg:text-3xl">
               {game.title}
             </h1>
@@ -349,6 +324,13 @@ export default function LibraryGameDetails({
                         />
                       )}
                       <div className="border-t border-(--surface-active-border) my-1" />
+                      <DropdownItem
+                        label="Refresh Artwork"
+                        onClick={() => {
+                          setShowActions(false);
+                          onRefreshArtwork?.();
+                        }}
+                      />
                       <DropdownItem
                         label="Close"
                         onClick={() => setShowActions(false)}

@@ -85,7 +85,7 @@ export default function StoreMoreLikeThisSection({
                 key={game.appId}
                 type="button"
                 onClick={() => onOpenGame?.(game)}
-                className="group relative h-36 w-64 shrink-0 overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/25 text-left transition hover:border-(--color-accent)/40"
+                className="group relative h-36 w-64 shrink-0 cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/25 text-left transition hover:border-(--color-accent)/40"
               >
                 {imageUrl ? (
                   <img

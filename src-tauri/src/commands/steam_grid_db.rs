@@ -43,18 +43,21 @@ fn resolve_single(
                 grid_url: None,
                 grid_thumb_url: None,
                 hero_url: None,
+                logo_url: None,
             };
         }
     };
 
     let (grid_url, grid_thumb_url) = fetch_best_grid(client, api_key, game_id);
     let hero_url = fetch_first_hero(client, api_key, game_id);
+    let logo_url = fetch_first_logo(client, api_key, game_id);
 
     SteamGridDbArtwork {
         app_id,
         grid_url,
         grid_thumb_url,
         hero_url,
+        logo_url,
     }
 }
 
@@ -164,4 +167,49 @@ fn fetch_first_hero(
         .get("url")?
         .as_str()
         .map(|s| s.to_string())
+}
+
+fn fetch_first_logo(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+    game_id: u32,
+) -> Option<String> {
+    let url = format!("{}/logos/game/{}", BASE_URL, game_id);
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let json: serde_json::Value = response.json().ok()?;
+
+    json.get("data")?
+        .as_array()?
+        .first()?
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_steam_grid_db_types() {
+        let artwork = SteamGridDbArtwork {
+            app_id: 12345,
+            grid_url: Some("https://example.com/grid.jpg".into()),
+            grid_thumb_url: Some("https://example.com/thumb.jpg".into()),
+            hero_url: Some("https://example.com/hero.jpg".into()),
+            logo_url: Some("https://example.com/logo.png".into()),
+        };
+        assert_eq!(artwork.app_id, 12345);
+        assert_eq!(artwork.logo_url, Some("https://example.com/logo.png".into()));
+    }
 }

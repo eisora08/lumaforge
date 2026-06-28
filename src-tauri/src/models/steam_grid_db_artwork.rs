@@ -7,4 +7,5 @@ pub struct SteamGridDbArtwork {
     pub grid_url: Option<String>,
     pub grid_thumb_url: Option<String>,
     pub hero_url: Option<String>,
+    pub logo_url: Option<String>,
 }

@@ -21,6 +21,8 @@ export type AppSettings = {
 
   steamGridDbApiKey: string;
 
+  libraryCardArtworkMode: "landscape" | "poster";
+
   gameScanFolders: string[];
   scanLocalGames: boolean;
 };

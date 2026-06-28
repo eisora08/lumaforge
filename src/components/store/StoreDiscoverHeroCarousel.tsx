@@ -8,12 +8,9 @@ import {
 
 import type { PackageGame } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
-import type { StoreArtwork } from "../../types/storeArtwork";
-
 type StoreDiscoverHeroCarouselProps = {
   games: PackageGame[];
   storeMetadataByAppId: Record<number, SteamAppMetadata>;
-  artworkByAppId?: Record<string, StoreArtwork>;
   onOpenGame: (game: PackageGame) => void;
   onDownload?: (game: PackageGame) => void;
   onOpenSourceSelector?: (game: PackageGame) => void;
@@ -24,14 +21,10 @@ const AUTO_ADVANCE_MS = 7000;
 function getGameImage(
   game: PackageGame,
   metadataByAppId: Record<number, SteamAppMetadata>,
-  artworkByAppId?: Record<string, StoreArtwork>
 ): string | undefined {
   const meta = metadataByAppId[Number(game.appId)];
-  const artwork = artworkByAppId?.[game.appId];
 
   return (
-    artwork?.sgdbHeroUrl ||
-    artwork?.sgdbGridUrl ||
     meta?.header_image ||
     meta?.capsule_image ||
     meta?.capsule_image_v5 ||
@@ -43,7 +36,6 @@ function getGameImage(
 export default function StoreDiscoverHeroCarousel({
   games,
   storeMetadataByAppId,
-  artworkByAppId,
   onOpenGame,
   onDownload,
   onOpenSourceSelector,
@@ -85,7 +77,7 @@ export default function StoreDiscoverHeroCarousel({
   }
 
   const hasAvailableSource = current.sources.some((s) => s.available);
-  const currentImage = getGameImage(current, storeMetadataByAppId, artworkByAppId);
+  const currentImage = getGameImage(current, storeMetadataByAppId);
   const railGames = games.slice(0, 5);
 
   return (
@@ -104,7 +96,7 @@ export default function StoreDiscoverHeroCarousel({
               onOpenGame(current);
             }
           }}
-          className="relative aspect-[21/9] overflow-hidden bg-white/5"
+          className="relative aspect-[21/9] cursor-pointer overflow-hidden bg-white/5"
         >
           {currentImage ? (
             <img
@@ -133,7 +125,7 @@ export default function StoreDiscoverHeroCarousel({
                   e.stopPropagation();
                   onOpenGame(current);
                 }}
-                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:opacity-90"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:opacity-90"
               >
                 Details
               </button>
@@ -145,7 +137,7 @@ export default function StoreDiscoverHeroCarousel({
                     e.stopPropagation();
                     onDownload(current);
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/15"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/15"
                 >
                   <Download className="h-4 w-4" />
                   Download
@@ -159,7 +151,7 @@ export default function StoreDiscoverHeroCarousel({
                     e.stopPropagation();
                     onOpenSourceSelector(current);
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/15 hover:text-white"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/15 hover:text-white"
                 >
                   Source
                 </button>
@@ -175,7 +167,7 @@ export default function StoreDiscoverHeroCarousel({
                   e.stopPropagation();
                   handlePrev();
                 }}
-                className="absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
+                className="absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
@@ -186,7 +178,7 @@ export default function StoreDiscoverHeroCarousel({
                   e.stopPropagation();
                   handleNext();
                 }}
-                className="absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
+                className="absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
@@ -203,7 +195,7 @@ export default function StoreDiscoverHeroCarousel({
                     e.stopPropagation();
                     setActiveIndex(idx);
                   }}
-                  className={`h-2 rounded-full transition-all ${
+                  className={`h-2 cursor-pointer rounded-full transition-all ${
                     idx === safeIndex
                       ? "w-6 bg-(--color-accent)"
                       : "w-2 bg-white/40 hover:bg-white/60"
@@ -224,14 +216,14 @@ export default function StoreDiscoverHeroCarousel({
           <div className="space-y-2">
             {railGames.map((game, idx) => {
               const isActive = idx === safeIndex;
-              const railImage = getGameImage(game, storeMetadataByAppId, artworkByAppId);
+              const railImage = getGameImage(game, storeMetadataByAppId);
 
               return (
                 <button
                   key={game.appId}
                   type="button"
                   onClick={() => setActiveIndex(idx)}
-                  className={`flex w-full items-center gap-3 rounded-xl p-2 text-left transition ${
+                  className={`flex w-full cursor-pointer items-center gap-3 rounded-xl p-2 text-left transition ${
                     isActive
                       ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
                       : "hover:bg-white/5"

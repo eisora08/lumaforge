@@ -3,4 +3,5 @@ export type SteamGridDbArtwork = {
   gridUrl?: string;
   gridThumbUrl?: string;
   heroUrl?: string;
+  logoUrl?: string;
 };

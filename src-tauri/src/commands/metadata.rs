@@ -181,6 +181,16 @@ pub fn resolve_steam_app_metadata(
         let mac_requirements = parse_requirements(data, "mac_requirements");
         let linux_requirements = parse_requirements(data, "linux_requirements");
 
+        let screenshots = data
+            .get("screenshots")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| s.get("path_full").and_then(|u| u.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         output.push(SteamAppMetadata {
             app_id,
             name,
@@ -209,6 +219,7 @@ pub fn resolve_steam_app_metadata(
             pc_requirements,
             mac_requirements,
             linux_requirements,
+            screenshots,
             resolved: true,
         });
     }
@@ -288,6 +299,7 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         pc_requirements: None,
         mac_requirements: None,
         linux_requirements: None,
+        screenshots: Vec::new(),
         resolved: false,
     }
 }

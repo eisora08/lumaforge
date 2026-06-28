@@ -36,7 +36,7 @@ import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
 import { searchSteamStore } from "../services/steamStoreSearchResolver";
 import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
-import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
+
 
 import {
   showError,
@@ -49,7 +49,6 @@ import type { InstalledLuaScript } from "../types/installedLua";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
-import type { StoreArtwork } from "../types/storeArtwork";
 import type {
   SteamFeaturedCategory,
   SteamFeaturedItem,
@@ -157,10 +156,6 @@ export default function Store() {
 
   const [reviewSummaryByAppId, setReviewSummaryByAppId] = useState<
     Record<number, SteamReviewSummary>
-  >({});
-
-  const [artworkByAppId, setArtworkByAppId] = useState<
-    Record<string, StoreArtwork>
   >({});
 
   const [steamFeaturedCategories, setSteamFeaturedCategories] = useState<
@@ -747,40 +742,6 @@ export default function Store() {
     };
   }, [visibleAppIds]);
 
-  useEffect(() => {
-    if (visibleAppIds.length === 0) {
-      setArtworkByAppId({});
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadArtwork() {
-      try {
-        const artwork = await resolveArtworkForAppIds(
-          visibleAppIds,
-          settings.steamGridDbApiKey
-        );
-
-        if (!cancelled) {
-          setArtworkByAppId(artwork);
-        }
-      } catch (error) {
-        console.error(error);
-
-        if (!cancelled) {
-          setArtworkByAppId({});
-        }
-      }
-    }
-
-    loadArtwork();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [visibleAppIds, settings.steamGridDbApiKey]);
-
   const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {
     if (!selectedDetailGameWithOverlay) {
       return [];
@@ -1036,7 +997,6 @@ export default function Store() {
         game={gameWithOverlay}
         storeMetadata={storeMetadataByAppId[Number(game.appId)]}
         reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
-        artwork={artworkByAppId[game.appId]}
         onInstallComplete={refreshInstalledScripts}
         onOpenDetails={openDetailsForGame}
         onOpenSourceSelector={openSourceSelectorForGame}
@@ -1056,7 +1016,6 @@ export default function Store() {
           reviewSummary={
             reviewSummaryByAppId[Number(selectedDetailGameWithOverlay.appId)]
           }
-          artwork={artworkByAppId[selectedDetailGameWithOverlay.appId]}
           installStatus={
             installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
             "not-installed"
@@ -1087,7 +1046,7 @@ export default function Store() {
                 key={tab.id}
                 type="button"
                 onClick={() => handleStoreTabChange(tab.id)}
-                className={`relative px-3 py-1.5 text-sm font-medium transition ${
+                    className={`relative cursor-pointer px-3 py-1.5 text-sm font-medium transition ${
                   activeStoreTab === tab.id
                     ? "text-(--color-accent)"
                     : "text-(--color-muted) hover:text-(--color-text)"
@@ -1125,7 +1084,7 @@ export default function Store() {
           <button
             type="button"
             onClick={() => setActiveSectionId(null)}
-            className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             Volver al Store
@@ -1184,7 +1143,7 @@ export default function Store() {
               <button
                 type="button"
                 onClick={() => setActiveGenreSectionId(null)}
-                className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                className={`whitespace-nowrap cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                   activeGenreSectionId === null
                     ? "bg-(--color-accent) text-black"
                     : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
@@ -1198,7 +1157,7 @@ export default function Store() {
                   key={section.id}
                   type="button"
                   onClick={() => setActiveGenreSectionId(section.id)}
-                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  className={`whitespace-nowrap cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     activeGenreSectionId === section.id
                       ? "bg-(--color-accent) text-black"
                       : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
@@ -1250,7 +1209,6 @@ export default function Store() {
           <StoreDiscoverHeroCarousel
             games={featuredGames}
             storeMetadataByAppId={storeMetadataByAppId}
-            artworkByAppId={artworkByAppId}
             onOpenGame={openDetailsForGame}
             onDownload={handleGameDownload}
             onOpenSourceSelector={openSourceSelectorForGame}

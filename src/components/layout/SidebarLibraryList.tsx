@@ -1,13 +1,36 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
+import { useSettings } from "../../context/SettingsContext";
+import type { LibraryGame } from "../../types/libraryGame";
 
 type Props = {
   onOpenGame?: () => void;
 };
 
+function getSidebarImage(game: LibraryGame, mode: "landscape" | "poster"): string | undefined {
+  const meta = game.metadata;
+  if (mode === "poster") {
+    return (
+      game.imageUrl ||
+      meta?.capsule_image_v5 ||
+      meta?.capsule_image ||
+      meta?.header_image ||
+      undefined
+    );
+  }
+  return (
+    game.imageUrl ||
+    meta?.header_image ||
+    meta?.capsule_image_v5 ||
+    meta?.capsule_image ||
+    undefined
+  );
+}
+
 export default function SidebarLibraryList({ onOpenGame }: Props) {
   const { games, selectedGame, setSelectedGame } = useLibraryGames();
+  const { settings } = useSettings();
   const [query, setQuery] = useState("");
 
   const installed = useMemo(() => {
@@ -45,6 +68,7 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
         ) : (
           filtered.map((game) => {
             const isSelected = selectedGame?.id === game.id;
+            const thumb = getSidebarImage(game, settings.libraryCardArtworkMode);
             return (
               <button
                 key={game.id}
@@ -53,15 +77,15 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
                   setSelectedGame(game);
                   onOpenGame?.();
                 }}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
                   isSelected
                     ? "bg-(--color-accent)/10 text-(--color-accent)"
                     : "text-(--color-text) hover:bg-white/5"
                 }`}
               >
                 <div className="h-6 w-10 shrink-0 overflow-hidden rounded bg-white/5">
-                  {game.imageUrl ? (
-                    <img src={game.imageUrl} alt="" className="h-full w-full object-cover" />
+                  {thumb ? (
+                    <img src={thumb} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-[8px] text-(--color-muted)">--</div>
                   )}
@@ -70,7 +94,6 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
                   <div className="truncate font-medium leading-tight">{game.title}</div>
                   <div className="text-[10px] text-(--color-muted)">
                     {game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
-                    {game.isLuaDisabled && " · Disabled"}
                     {game.hasUpdate && " · Update"}
                   </div>
                 </div>

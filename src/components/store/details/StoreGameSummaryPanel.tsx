@@ -165,7 +165,7 @@ export default function StoreGameSummaryPanel({
             type="button"
             disabled={!canDownload}
             onClick={onDownload}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
             {canDownload ? getDownloadLabel(selectedSource) : "No Sources Available"}
@@ -175,7 +175,7 @@ export default function StoreGameSummaryPanel({
             type="button"
             disabled={totalSources === 0}
             onClick={onChangeSource}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Change Source
           </button>
@@ -184,7 +184,7 @@ export default function StoreGameSummaryPanel({
             <button
               type="button"
               onClick={onOpenSteam}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Steam
@@ -193,7 +193,7 @@ export default function StoreGameSummaryPanel({
             <button
               type="button"
               onClick={onOpenSteamDb}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
             >
               <Database className="h-3.5 w-3.5" />
               SteamDB

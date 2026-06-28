@@ -162,7 +162,7 @@ export default function StoreGameOverviewSection({
             <button
               type="button"
               onClick={() => setShowFullDescription(!showFullDescription)}
-              className="mt-1 text-sm font-medium text-(--color-accent) transition hover:opacity-80"
+              className="mt-1 cursor-pointer text-sm font-medium text-(--color-accent) transition hover:opacity-80"
             >
               {showFullDescription ? "Show less" : "Show more"}
             </button>

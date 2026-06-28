@@ -86,7 +86,7 @@ export default function StoreGameDlcSection({
             <button
               type="button"
               onClick={scrollLeft}
-              className="absolute -left-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-(--surface-active-border) bg-black/60 text-(--color-text) backdrop-blur-md transition hover:bg-black/80"
+              className="absolute -left-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-(--surface-active-border) bg-black/60 text-(--color-text) backdrop-blur-md transition hover:bg-black/80"
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
@@ -143,7 +143,7 @@ export default function StoreGameDlcSection({
             <button
               type="button"
               onClick={scrollRight}
-              className="absolute -right-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-(--surface-active-border) bg-black/60 text-(--color-text) backdrop-blur-md transition hover:bg-black/80"
+              className="absolute -right-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-(--surface-active-border) bg-black/60 text-(--color-text) backdrop-blur-md transition hover:bg-black/80"
             >
               <ArrowRight className="h-4 w-4" />
             </button>

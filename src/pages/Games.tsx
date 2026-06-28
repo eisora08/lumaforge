@@ -90,7 +90,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                   type="button"
                   onClick={refresh}
                   disabled={loading}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   title="Scan"
                 >
                   <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -100,7 +100,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                 <button
                   type="button"
                   onClick={() => setShowFilters(true)}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs transition ${
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs transition ${
                     filter !== "all"
                       ? "border-(--color-accent)/30 bg-(--color-accent)/10 text-(--color-accent)"
                       : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
@@ -120,7 +120,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                   key={f.key}
                   type="button"
                   onClick={() => setFilter(f.key)}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  className={`cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     filter === f.key
                       ? "bg-(--color-accent) text-black"
                       : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
@@ -165,7 +165,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                         key={f.key}
                         type="button"
                         onClick={() => { setFilter(f.key); setShowFilters(false); }}
-                        className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition ${
                           filter === f.key
                             ? "bg-(--color-accent) text-black"
                             : "border border-(--surface-active-border) bg-white/5 text-(--color-muted)"
@@ -180,7 +180,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
               <button
                 type="button"
                 onClick={() => { setFilter("all"); setShowFilters(false); }}
-                className="mt-4 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/10"
+                className="mt-4 w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/10"
               >
                 Reset
               </button>

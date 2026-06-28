@@ -344,10 +344,45 @@ export default function Settings() {
 
               <SettingsInput
                 label="API Key (optional)"
-                description="Used to fetch native poster, hero and logo artwork for Store cards."
+                description="Used to fetch native poster, hero and logo artwork for Library cards."
                 value={settings.steamGridDbApiKey}
                 onChange={(value) => updateSetting("steamGridDbApiKey", value)}
               />
+
+              <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                <div className="space-y-0.5">
+                  <label className="text-sm font-medium text-(--color-text)">
+                    Card artwork mode
+                  </label>
+                  <p className="text-xs text-(--color-muted)">
+                    Choose between landscape hero or poster grid images for library game cards.
+                  </p>
+                </div>
+                <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
+                  <button
+                    type="button"
+                    onClick={() => updateSetting("libraryCardArtworkMode", "landscape")}
+                    className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
+                      settings.libraryCardArtworkMode === "landscape"
+                        ? "bg-(--color-accent) text-black"
+                        : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                    }`}
+                  >
+                    Landscape
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateSetting("libraryCardArtworkMode", "poster")}
+                    className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
+                      settings.libraryCardArtworkMode === "poster"
+                        ? "bg-(--color-accent) text-black"
+                        : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                    }`}
+                  >
+                    Poster
+                  </button>
+                </div>
+              </div>
             </div>
           </SettingsSection>
         )}

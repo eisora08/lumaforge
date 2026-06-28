@@ -30,10 +30,17 @@ function setCache(cache: Record<string, CacheEntry>) {
   }
 }
 
+function tryClearDiskCache() {
+  import("./tauriArtworkCache")
+    .then((m) => m.default.clearAllArtworkCache())
+    .catch(() => {});
+}
+
 export type SgdbArtworkData = {
   sgdbGridUrl?: string;
   sgdbGridThumbUrl?: string;
   sgdbHeroUrl?: string;
+  sgdbLogoUrl?: string;
 };
 
 export async function resolveArtworkForAppIds(
@@ -58,6 +65,7 @@ export async function resolveArtworkForAppIds(
           if (entry.artwork.gridUrl) result[key].sgdbGridUrl = entry.artwork.gridUrl;
           if (entry.artwork.gridThumbUrl) result[key].sgdbGridThumbUrl = entry.artwork.gridThumbUrl;
           if (entry.artwork.heroUrl) result[key].sgdbHeroUrl = entry.artwork.heroUrl;
+          if (entry.artwork.logoUrl) result[key].sgdbLogoUrl = entry.artwork.logoUrl;
         }
         continue;
       }
@@ -73,19 +81,21 @@ export async function resolveArtworkForAppIds(
       const batchResult = await resolveSteamGridDbArtwork(batch, sgdbApiKey);
       for (const a of batchResult) {
         const key = String(a.appId);
-        if (a.gridUrl || a.heroUrl) {
-          result[key] = {};
-          if (a.gridUrl) result[key].sgdbGridUrl = a.gridUrl;
-          if (a.gridThumbUrl) result[key].sgdbGridThumbUrl = a.gridThumbUrl;
-          if (a.heroUrl) result[key].sgdbHeroUrl = a.heroUrl;
+        if (a.gridUrl || a.heroUrl || a.logoUrl) {
+          const data: SgdbArtworkData = {};
+          if (a.gridUrl) data.sgdbGridUrl = a.gridUrl;
+          if (a.gridThumbUrl) data.sgdbGridThumbUrl = a.gridThumbUrl;
+          if (a.heroUrl) data.sgdbHeroUrl = a.heroUrl;
+          if (a.logoUrl) data.sgdbLogoUrl = a.logoUrl;
+          result[key] = data;
         }
-        cache[key] = { artwork: a, timestamp: now, failed: !(a.gridUrl || a.heroUrl) };
+        cache[key] = { artwork: a, timestamp: now, failed: !(a.gridUrl || a.heroUrl || a.logoUrl) };
       }
     } catch {
       for (const appId of batch) {
         const key = String(appId);
         cache[key] = {
-          artwork: { appId, gridUrl: undefined, gridThumbUrl: undefined, heroUrl: undefined },
+          artwork: { appId, gridUrl: undefined, gridThumbUrl: undefined, heroUrl: undefined, logoUrl: undefined },
           timestamp: now,
           failed: true,
         };
@@ -97,10 +107,11 @@ export async function resolveArtworkForAppIds(
   return result;
 }
 
-export function clearArtworkCache() {
+export async function clearArtworkCache() {
   try {
     localStorage.removeItem(CACHE_KEY);
   } catch {
     /* ignore */
   }
+  tryClearDiskCache();
 }

@@ -8,8 +8,6 @@ import {
 import type { PackageGame, PackageSource } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
-import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
-
 import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 import { downloadAndInstallPackage } from "../../services/tauri";
@@ -27,7 +25,6 @@ type PackageCardProps = {
   game: PackageGame;
   storeMetadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
-  artwork?: SgdbArtworkData;
   onInstallComplete?: () => void;
   variant?: "landscape" | "poster";
   onOpenGame?: (game: PackageGame) => void;
@@ -41,12 +38,9 @@ function getBestCardImage(
   game: PackageGame,
   metadata?: SteamAppMetadata,
   variant?: "landscape" | "poster",
-  artwork?: SgdbArtworkData
 ): string | undefined {
   if (variant === "poster") {
     return (
-      artwork?.sgdbGridUrl ||
-      artwork?.sgdbGridThumbUrl ||
       metadata?.capsule_image_v5 ||
       metadata?.capsule_image ||
       game.imageUrl ||
@@ -56,7 +50,6 @@ function getBestCardImage(
   }
 
   return (
-    artwork?.sgdbHeroUrl ||
     metadata?.header_image ||
     game.imageUrl ||
     metadata?.capsule_image ||
@@ -98,7 +91,6 @@ function CardImage({
 export default function PackageCard({
   game,
   storeMetadata,
-  artwork,
   onInstallComplete,
   variant = "landscape",
   onOpenGame,
@@ -118,7 +110,7 @@ export default function PackageCard({
 
   const displayTitle = getStoreTitle(game, storeMetadata);
   const displayDeveloper = getStoreDeveloper(game, storeMetadata);
-  const displayImageUrl = getBestCardImage(game, storeMetadata, variant, artwork);
+  const displayImageUrl = getBestCardImage(game, storeMetadata, variant);
 
   const hasLuaReady = availableSources.length > 0;
 
@@ -244,7 +236,7 @@ export default function PackageCard({
       <button
         type="button"
         onClick={handleOpenDetails}
-        className="w-32 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/15"
+        className="w-32 cursor-pointer rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/15"
       >
         Details
       </button>
@@ -253,7 +245,7 @@ export default function PackageCard({
         <button
           type="button"
           onClick={handleDownloadAction}
-          className="flex w-32 items-center justify-center gap-1 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90"
+          className="flex w-32 cursor-pointer items-center justify-center gap-1 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90"
         >
           <Download className="h-3 w-3" />
           Download
@@ -263,7 +255,7 @@ export default function PackageCard({
       <button
         type="button"
         onClick={handleSourceButton}
-        className="w-32 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/15 hover:text-white"
+        className="w-32 cursor-pointer rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed"
         disabled={game.sources.length === 0}
       >
         Source

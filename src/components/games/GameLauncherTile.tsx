@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Download, ExternalLink, Gamepad2, Play } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
+import { useSettings } from "../../context/SettingsContext";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -10,9 +11,38 @@ type GameLauncherTileProps = {
   onInstall: (game: LibraryGame) => void;
 };
 
+function getTileImage(game: LibraryGame, mode: "landscape" | "poster"): string | undefined {
+  const meta = game.metadata;
+  if (mode === "poster") {
+    return (
+      game.imageUrl ||
+      meta?.capsule_image_v5 ||
+      meta?.capsule_image ||
+      meta?.header_image ||
+      undefined
+    );
+  }
+  return (
+    game.imageUrl ||
+    meta?.header_image ||
+    meta?.library_hero_image ||
+    meta?.hero_image ||
+    meta?.background_image ||
+    meta?.capsule_image_v5 ||
+    meta?.capsule_image ||
+    undefined
+  );
+}
+
 export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: GameLauncherTileProps) {
+  const { settings } = useSettings();
   const [imageFailed, setImageFailed] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+
+  const displayImage = useMemo(
+    () => getTileImage(game, settings.libraryCardArtworkMode),
+    [game, settings.libraryCardArtworkMode]
+  );
 
   function handleAction(e: React.MouseEvent, action: () => void) {
     e.stopPropagation();
@@ -28,9 +58,9 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
       onMouseLeave={() => setIsHovered(false)}
       onClick={() => onSelect(game)}
     >
-      {game.imageUrl && !imageFailed ? (
+      {displayImage && !imageFailed ? (
         <img
-          src={game.imageUrl}
+          src={displayImage}
           alt={game.title}
           className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
           loading="lazy"
@@ -56,7 +86,7 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
             <button
               type="button"
               onClick={(e) => handleAction(e, () => onPlay(game))}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
             >
               <Play className="h-3.5 w-3.5" />
               Play
@@ -66,7 +96,7 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
             <button
               type="button"
               onClick={(e) => handleAction(e, () => onInstall(game))}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-white/15 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-white/25"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-white/15 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-white/25 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
             >
               <Download className="h-3.5 w-3.5" />
               Install
@@ -80,7 +110,7 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
           <button
             type="button"
             onClick={(e) => handleAction(e, () => onSelect(game))}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-white/15 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-white/25"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-white/15 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-white/25 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
           >
             <ExternalLink className="h-3.5 w-3.5" />
             Details
