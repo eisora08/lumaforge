@@ -7,7 +7,7 @@ type Props = {
 };
 
 export default function SidebarLibraryList({ onOpenGame }: Props) {
-  const { games, selectedId, setSelectedId } = useLibraryGames();
+  const { games, selectedGame, setSelectedGame } = useLibraryGames();
   const [query, setQuery] = useState("");
 
   const installed = useMemo(() => {
@@ -44,13 +44,13 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
           <p className="py-2 text-center text-[10px] text-(--color-muted)">No games match.</p>
         ) : (
           filtered.map((game) => {
-            const isSelected = game.id === selectedId;
+            const isSelected = selectedGame?.id === game.id;
             return (
               <button
                 key={game.id}
                 type="button"
                 onClick={() => {
-                  setSelectedId(game.id);
+                  setSelectedGame(game);
                   onOpenGame?.();
                 }}
                 className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${

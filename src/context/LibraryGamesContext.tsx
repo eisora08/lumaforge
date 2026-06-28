@@ -11,6 +11,8 @@ type LibraryGamesState = {
   loading: boolean;
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
+  selectedGame: LibraryGame | null;
+  setSelectedGame: (game: LibraryGame | null) => void;
   refresh: () => Promise<void>;
 };
 
@@ -54,6 +56,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedGame, setSelectedGame] = useState<LibraryGame | null>(null);
   const initDone = useRef(false);
 
   async function load(settings: AppSettings) {
@@ -108,7 +111,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }
 
   return (
-    <LibraryGamesContext.Provider value={{ games, warnings, loading, selectedId, setSelectedId, refresh }}>
+    <LibraryGamesContext.Provider value={{ games, warnings, loading, selectedId, setSelectedId, selectedGame, setSelectedGame, refresh }}>
       {children}
     </LibraryGamesContext.Provider>
   );

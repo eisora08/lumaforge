@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Download, ExternalLink, Gamepad2, Play } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
+import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -17,6 +18,8 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
     e.stopPropagation();
     action();
   }
+
+  const action = getLauncherGamePrimaryAction(game);
 
   return (
     <div
@@ -49,7 +52,7 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
 
       {isHovered && (
         <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 bg-black/50 backdrop-blur-[2px]">
-          {game.isPlayable ? (
+          {action === "play" && (
             <button
               type="button"
               onClick={(e) => handleAction(e, () => onPlay(game))}
@@ -58,7 +61,8 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
               <Play className="h-3.5 w-3.5" />
               Play
             </button>
-          ) : game.isInstallable ? (
+          )}
+          {action === "install" && (
             <button
               type="button"
               onClick={(e) => handleAction(e, () => onInstall(game))}
@@ -67,7 +71,12 @@ export default function GameLauncherTile({ game, onSelect, onPlay, onInstall }: 
               <Download className="h-3.5 w-3.5" />
               Install
             </button>
-          ) : null}
+          )}
+          {action === "missing-path" && (
+            <span className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-medium text-zinc-400">
+              Missing Path
+            </span>
+          )}
           <button
             type="button"
             onClick={(e) => handleAction(e, () => onSelect(game))}

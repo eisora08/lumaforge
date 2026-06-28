@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
+import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 
 type LibraryGameDetailsProps = {
   game: LibraryGame;
@@ -64,6 +65,7 @@ export default function LibraryGameDetails({
   const [imageFailed, setImageFailed] = useState(false);
   const imageUrl = getImageUrl(game);
   const script = game.luaScripts[0];
+  const action = getLauncherGamePrimaryAction(game);
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -143,7 +145,7 @@ export default function LibraryGameDetails({
       <div className="flex-1 space-y-6 p-5 lg:p-7">
         {/* Main actions */}
         <div className="flex flex-wrap gap-2">
-          {game.isPlayable ? (
+          {action === "play" && (
             <button
               type="button"
               onClick={() => onPlay(game)}
@@ -152,7 +154,8 @@ export default function LibraryGameDetails({
               <Play className="h-4 w-4" />
               Play
             </button>
-          ) : game.isInstallable ? (
+          )}
+          {action === "install" && (
             <button
               type="button"
               onClick={() => onInstall(game)}
@@ -161,7 +164,12 @@ export default function LibraryGameDetails({
               <Download className="h-4 w-4" />
               Install
             </button>
-          ) : null}
+          )}
+          {action === "missing-path" && (
+            <span className="inline-flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-5 py-2.5 text-sm font-bold text-red-300">
+              Missing Path
+            </span>
+          )}
 
           {game.hasLuaSource && onSync && (
             <button

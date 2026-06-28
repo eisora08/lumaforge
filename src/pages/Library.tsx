@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ChevronLeft,
+  ChevronRight,
   FileCode2,
   FolderSearch,
   Library,
   RefreshCcw,
   Settings,
-  SlidersHorizontal,
 } from "lucide-react";
 
 import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
-import LibraryGameDetails from "../components/library/LibraryGameDetails";
+import LibraryFilterPanel from "../components/library/LibraryFilterPanel";
+import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFilterPanel";
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
 
 import { useSettings } from "../context/SettingsContext";
@@ -19,22 +21,19 @@ import {
   launchSteamApp,
   installSteamApp,
   scanInstalledLuaScripts,
-  setLuaScriptEnabled,
-  deleteLuaScript,
   computeFileHash,
   downloadAndInstallPackage,
   markSyncIndexItem,
 } from "../services/tauri";
 import { checkInstalledLuaUpdates } from "../services/installedLuaUpdateChecker";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
-import { openExternalUrl } from "../services/externalLinks";
-import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { SteamAppMetadata } from "../types/gameMetadata";
-import type { PackageSource } from "../types/package";
+import type { PackageGame, PackageSource } from "../types/package";
 import type { SyncIndexItem } from "../types/syncIndex";
+import type { AppPage } from "../types/navigation";
 
 import {
   showError,
@@ -42,9 +41,13 @@ import {
   showWarning,
 } from "../components/toast/GameToast";
 
-export default function LibraryPage() {
+type Props = {
+  onNavigate?: (page: AppPage) => void;
+};
+
+export default function LibraryPage({ onNavigate }: Props) {
   const { settings } = useSettings();
-  const { games, warnings, loading, selectedId, setSelectedId, refresh } = useLibraryGames();
+  const { games, warnings, loading, setSelectedGame, refresh } = useLibraryGames();
   const hasLuaPath = Boolean(settings.luaPath);
 
   const [luaScripts, setLuaScripts] = useState<InstalledLuaScript[]>([]);
@@ -52,8 +55,9 @@ export default function LibraryPage() {
   const [scanningLua, setScanningLua] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
-  const [filter, setFilter] = useState<string>("all");
-  const [showFilters, setShowFilters] = useState(false);
+  const [filter, setFilter] = useState<LibraryFilter>("all");
+  const [sort, setSort] = useState<LibrarySort>("name");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // On mount: scan Lua scripts from config/lua
   useEffect(() => {
@@ -136,15 +140,54 @@ export default function LibraryPage() {
   }, [games, luaGames]);
 
   const filteredGames = useMemo(() => {
-    return displayGames.filter((g) => {
+    let result = displayGames;
+
+    // Local search
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (g) => g.title.toLowerCase().includes(q) || g.appId?.toLowerCase().includes(q)
+      );
+    }
+
+    // Status filter
+    result = result.filter((g) => {
       if (filter === "lua" && !g.hasLua) return false;
       if (filter === "installed" && !g.isPlayable && !g.steamInstalled) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;
       return true;
     });
-  }, [displayGames, filter]);
 
-  const selectedGame = selectedId ? displayGames.find((g) => g.id === selectedId) || null : null;
+    // Sort
+    result = [...result].sort((a, b) => {
+      if (sort === "size") return (b.sizeOnDisk || 0) - (a.sizeOnDisk || 0);
+      if (sort === "updated") return (b.lastUpdated || 0) - (a.lastUpdated || 0);
+      return a.title.localeCompare(b.title);
+    });
+
+    return result;
+  }, [displayGames, filter, sort, searchQuery]);
+
+  const PAGE_SIZES = [12, 24, 36, 48] as const;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(24);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, sort, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredGames.length / pageSize));
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedGames = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredGames.slice(start, start + pageSize);
+  }, [filteredGames, currentPage, pageSize]);
 
   // Actions
   async function handlePlay(game: LibraryGame) {
@@ -191,20 +234,6 @@ export default function LibraryPage() {
     } finally {
       setCheckingUpdates(false);
     }
-  }
-
-  async function handleSyncGame(game: LibraryGame) {
-    const script = game.luaScripts[0];
-    if (!script || !hasLuaPath) {
-      showWarning("No Lua script to sync.", { title: "Cannot sync" });
-      return;
-    }
-    const availableSource = game.sources.find((s) => s.available && s.downloadUrl);
-    if (!availableSource) {
-      showWarning("No available source found.", { title: "No source" });
-      return;
-    }
-    await performDownload(game, availableSource);
   }
 
   async function handleDownloadSource(game: LibraryGame, source: PackageSource) {
@@ -267,86 +296,24 @@ export default function LibraryPage() {
     }
   }
 
-  async function handleToggleScript(game: LibraryGame) {
-    const script = game.luaScripts[0];
-    if (!script || !hasLuaPath) return;
-    try {
-      const result = await setLuaScriptEnabled({
-        luaPath: settings.luaPath,
-        fileName: script.file_name,
-        enabled: script.is_disabled,
-      });
-      showSuccess(result.message, { title: script.is_disabled ? "Lua enabled" : "Lua disabled" });
-      await scanLuaScripts();
-      await refresh();
-    } catch (error) {
-      console.error(error);
-      showError(error instanceof Error ? error.message : "Could not toggle Lua.", { title: "Error" });
-    }
-  }
-
-  async function handleDeleteScript(game: LibraryGame) {
-    const script = game.luaScripts[0];
-    if (!script || !hasLuaPath) return;
-    const accepted = window.confirm(`Delete ${script.file_name} permanently?`);
-    if (!accepted) return;
-    try {
-      await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
-      showSuccess("Lua deleted.", { title: "Deleted" });
-      setSelectedId(null);
-      await scanLuaScripts();
-      await refresh();
-    } catch (error) {
-      console.error(error);
-      showError(error instanceof Error ? error.message : "Could not delete Lua.", { title: "Error" });
-    }
-  }
-
-  function handleOpenSteamStore(game: LibraryGame) {
-    if (!game.appId) return;
-    openExternalUrl(getSteamStoreUrl(Number(game.appId))).catch(() =>
-      showError("Could not open Steam page.", { title: "Error" })
-    );
-  }
-
-  function handleOpenSteamDb(game: LibraryGame) {
-    if (!game.appId) return;
-    openExternalUrl(getSteamDbUrl(Number(game.appId))).catch(() =>
-      showError("Could not open SteamDB.", { title: "Error" })
-    );
-  }
-
-  function handleOpenSourceSelector(game: LibraryGame) {
-    setSourceSelectorGame(game);
-  }
-
-  const filters = [
-    { key: "all", label: "All", count: displayGames.length },
-    { key: "lua", label: "Lua", count: displayGames.filter((g) => g.hasLua).length },
-    { key: "installed", label: "Installed", count: displayGames.filter((g) => g.isPlayable || g.steamInstalled).length },
-    { key: "disabled", label: "Disabled", count: displayGames.filter((g) => g.isLuaDisabled).length },
-  ];
-
   const showLuaSetup = !hasLuaPath;
   const showEmptyLua = hasLuaPath && luaScripts.length === 0 && !scanningLua;
+
+  function handleOpenGame(game: LibraryGame) {
+    setSelectedGame(game);
+    onNavigate?.("library-game-detail");
+  }
+
+  function handleResetFilters() {
+    setFilter("all");
+    setSort("name");
+    setSearchQuery("");
+  }
 
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        {selectedGame ? (
-          <LibraryGameDetails
-            game={selectedGame}
-            onPlay={handlePlay}
-            onInstall={handleInstall}
-            onSync={handleSyncGame}
-            onToggleScript={handleToggleScript}
-            onDeleteScript={handleDeleteScript}
-            onOpenSteam={handleOpenSteamStore}
-            onOpenSteamDb={handleOpenSteamDb}
-            onOpenSourceSelector={handleOpenSourceSelector}
-            onBack={() => setSelectedId(null)}
-          />
-        ) : showLuaSetup ? (
+        {showLuaSetup ? (
           <div className="flex flex-1 items-center justify-center p-5 lg:p-7">
             <div className="max-w-md text-center">
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-(--color-accent)/20 bg-(--color-accent)/10">
@@ -373,106 +340,154 @@ export default function LibraryPage() {
           </div>
         ) : (
           <PageContainer className="py-5 lg:py-7">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
-                  <Library className="h-3.5 w-3.5" />
-                  Library
+            <div className="lg:grid lg:grid-cols-[1fr_280px] lg:gap-6">
+              <div className="min-w-0">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
+                      <Library className="h-3.5 w-3.5" />
+                      Library
+                    </div>
+                    <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Biblioteca</h1>
+                    <p className="mt-1 text-sm text-(--color-muted)">
+                      {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
+                      {loading && " (scanning...)"}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCheckUpdates}
+                      disabled={checkingUpdates || luaScripts.length === 0}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Check Updates"
+                    >
+                      <RefreshCcw className={`h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`} />
+                      <span className="hidden sm:inline">Updates</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={refresh}
+                      disabled={loading}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Scan"
+                    >
+                      <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                      <span className="hidden sm:inline">{loading ? "Scanning..." : "Scan"}</span>
+                    </button>
+                  </div>
                 </div>
-                <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Biblioteca</h1>
-                <p className="mt-1 text-sm text-(--color-muted)">
-                  {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
-                  {loading && " (scanning...)"}
-                </p>
+
+                {warnings.length > 0 && (
+                  <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
+                    <p className="mb-1 font-medium">Warnings:</p>
+                    <ul className="space-y-0.5">
+                      {warnings.map((w, i) => <li key={i}>• {w}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {paginatedGames.length === 0 ? (
+                  <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
+                    <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
+                    <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
+                    <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
+                    {(filter !== "all" || searchQuery) && (
+                      <button
+                        type="button"
+                        onClick={handleResetFilters}
+                        className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90"
+                      >
+                        Reset filters
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                      {paginatedGames.map((game) => (
+                        <GameLauncherTile
+                          key={game.id}
+                          game={game}
+                          onSelect={(g) => handleOpenGame(g)}
+                          onPlay={handlePlay}
+                          onInstall={handleInstall}
+                        />
+                      ))}
+                    </div>
+                    {/* Pagination */}
+                    <div className="mt-6 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs text-(--color-muted)">
+                        <span>Grid:</span>
+                        <select
+                          value={pageSize}
+                          onChange={(e) => {
+                            setPageSize(Number(e.target.value));
+                            setCurrentPage(1);
+                          }}
+                          className="rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-xs text-(--color-text) outline-none focus:border-(--color-accent)/40"
+                        >
+                          {PAGE_SIZES.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {totalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={currentPage <= 1}
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            className="inline-flex items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          </button>
+                          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                            <button
+                              key={page}
+                              type="button"
+                              onClick={() => setCurrentPage(page)}
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-xs font-medium transition ${
+                                page === currentPage
+                                  ? "bg-(--color-accent)/20 text-(--color-accent)"
+                                  : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            disabled={currentPage >= totalPages}
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            className="inline-flex items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleCheckUpdates}
-                  disabled={checkingUpdates || luaScripts.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Check Updates"
-                >
-                  <RefreshCcw className={`h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`} />
-                  <span className="hidden sm:inline">Updates</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={refresh}
-                  disabled={loading}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Scan"
-                >
-                  <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                  <span className="hidden sm:inline">{loading ? "Scanning..." : "Scan"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowFilters(true)}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs transition ${
-                    filter !== "all"
-                      ? "border-(--color-accent)/30 bg-(--color-accent)/10 text-(--color-accent)"
-                      : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
-                  }`}
-                  title="Filters"
-                >
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Filters</span>
-                </button>
+              <div className="hidden lg:block">
+                <LibraryFilterPanel
+                  filter={filter}
+                  sort={sort}
+                  query={searchQuery}
+                  filteredCount={filteredGames.length}
+                  totalCount={displayGames.length}
+                  onFilterChange={setFilter}
+                  onSortChange={setSort}
+                  onQueryChange={setSearchQuery}
+                  onReset={handleResetFilters}
+                />
               </div>
             </div>
-
-            {/* Filter pills */}
-            <div className="mb-5 flex flex-wrap items-center gap-2">
-              {filters.map((f) => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setFilter(f.key)}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    filter === f.key
-                      ? f.key === "disabled"
-                        ? "bg-zinc-500 text-white"
-                        : "bg-(--color-accent) text-black"
-                      : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
-                  }`}
-                >
-                  {f.label} ({f.count})
-                </button>
-              ))}
-            </div>
-
-            {warnings.length > 0 && (
-              <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
-                <p className="mb-1 font-medium">Warnings:</p>
-                <ul className="space-y-0.5">
-                  {warnings.map((w, i) => <li key={i}>• {w}</li>)}
-                </ul>
-              </div>
-            )}
-
-            {filteredGames.length === 0 ? (
-              <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
-                <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
-                <h2 className="mt-4 font-semibold text-(--color-text)">No games match these filters</h2>
-                <p className="mt-1.5 text-sm text-(--color-muted)">Try adjusting your search or filter.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {filteredGames.map((game) => (
-                  <GameLauncherTile
-                    key={game.id}
-                    game={game}
-                    onSelect={(g) => setSelectedId(g.id)}
-                    onPlay={handlePlay}
-                    onInstall={handleInstall}
-                  />
-                ))}
-              </div>
-            )}
           </PageContainer>
         )}
 
@@ -488,50 +503,14 @@ export default function LibraryPage() {
           } : null}
           selectedSource={sourceSelectorGame?.sources.find((s) => s.available)}
           onClose={() => setSourceSelectorGame(null)}
-          onDownloadSource={(source) => {
+          onDownloadSource={(source: PackageSource) => {
             if (sourceSelectorGame) handleDownloadSource(sourceSelectorGame, source);
           }}
-          onOpenDetails={(_game) => {
+          onOpenDetails={(_game: PackageGame) => {
             setSourceSelectorGame(null);
-            if (sourceSelectorGame) setSelectedId(sourceSelectorGame.id);
+            if (sourceSelectorGame) setSelectedGame(sourceSelectorGame);
           }}
         />
-
-        {showFilters && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFilters(false)}>
-            <div className="w-80 rounded-2xl border border-(--surface-active-border) bg-(--color-bg) p-5" onClick={(e) => e.stopPropagation()}>
-              <h3 className="mb-4 text-sm font-bold text-(--color-text)">Filters</h3>
-              <div className="space-y-3">
-                <div>
-                  <p className="mb-1.5 text-xs text-(--color-muted)">Status</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {filters.map((f) => (
-                      <button
-                        key={f.key}
-                        type="button"
-                        onClick={() => { setFilter(f.key); setShowFilters(false); }}
-                        className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                          filter === f.key
-                            ? "bg-(--color-accent) text-black"
-                            : "border border-(--surface-active-border) bg-white/5 text-(--color-muted)"
-                        }`}
-                      >
-                        {f.label} ({f.count})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setFilter("all"); setShowFilters(false); }}
-                className="mt-4 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/10"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

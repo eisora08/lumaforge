@@ -8,25 +8,16 @@ import {
 
 import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
-import LibraryGameDetails from "../components/library/LibraryGameDetails";
 
 import { useLibraryGames } from "../context/LibraryGamesContext";
-import {
-  launchSteamApp,
-  installSteamApp,
-} from "../services/tauri";
-import { openExternalUrl } from "../services/externalLinks";
-import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
+import { launchSteamApp, installSteamApp } from "../services/tauri";
 
 import type { LibraryGame } from "../types/libraryGame";
 
-import {
-  showError,
-  showWarning,
-} from "../components/toast/GameToast";
+import { showError, showWarning } from "../components/toast/GameToast";
 
-export default function GamesPage() {
-  const { games, loading, selectedId, setSelectedId, refresh } = useLibraryGames();
+export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
+  const { games, loading, setSelectedGame, refresh } = useLibraryGames();
 
   const [filter, setFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
@@ -43,8 +34,6 @@ export default function GamesPage() {
       return true;
     });
   }, [games, filter]);
-
-  const selectedGame = selectedId ? games.find((g) => g.id === selectedId) || null : null;
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
@@ -72,20 +61,6 @@ export default function GamesPage() {
     }
   }
 
-  function handleOpenSteamStore(game: LibraryGame) {
-    if (!game.appId) return;
-    openExternalUrl(getSteamStoreUrl(Number(game.appId))).catch(() =>
-      showError("Could not open Steam page.", { title: "Error" })
-    );
-  }
-
-  function handleOpenSteamDb(game: LibraryGame) {
-    if (!game.appId) return;
-    openExternalUrl(getSteamDbUrl(Number(game.appId))).catch(() =>
-      showError("Could not open SteamDB.", { title: "Error" })
-    );
-  }
-
   const filters = [
     { key: "all", label: "All", count: games.length },
     { key: "steam", label: "Steam", count: games.filter((g) => g.source === "steam").length },
@@ -96,17 +71,7 @@ export default function GamesPage() {
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        {selectedGame ? (
-          <LibraryGameDetails
-            game={selectedGame}
-            onPlay={handlePlay}
-            onInstall={handleInstall}
-            onOpenSteam={handleOpenSteamStore}
-            onOpenSteamDb={handleOpenSteamDb}
-            onBack={() => setSelectedId(null)}
-          />
-        ) : (
-          <PageContainer className="py-5 lg:py-7">
+        <PageContainer className="py-5 lg:py-7">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
@@ -178,15 +143,14 @@ export default function GamesPage() {
                   <GameLauncherTile
                     key={game.id}
                     game={game}
-                    onSelect={(g) => setSelectedId(g.id)}
+                    onSelect={(g) => { setSelectedGame(g); onNavigate?.("library-game-detail"); }}
                     onPlay={handlePlay}
                     onInstall={handleInstall}
                   />
                 ))}
               </div>
             )}
-          </PageContainer>
-        )}
+        </PageContainer>
 
         {showFilters && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFilters(false)}>

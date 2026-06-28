@@ -19,8 +19,8 @@ type Props = {
 };
 
 export default function LibraryGameDetailPage({ onBack }: Props) {
-  const { games, selectedId, setSelectedId } = useLibraryGames();
-  const game = selectedId ? games.find((g) => g.id === selectedId) || null : null;
+  const { selectedGame, setSelectedGame } = useLibraryGames();
+  const game = selectedGame;
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
@@ -63,7 +63,7 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
   }
 
   function handleBack() {
-    setSelectedId(null);
+    setSelectedGame(null);
     onBack?.();
   }
 

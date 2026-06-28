@@ -35,7 +35,7 @@ function App() {
       case "home":
         return <Home />;
       case "library":
-        return <Library />;
+        return <Library onNavigate={handleNavigate} />;
       case "games":
         return <Games />;
       case "store":
