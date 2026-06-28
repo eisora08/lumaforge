@@ -103,6 +103,11 @@ pub fn resolve_steam_app_metadata(
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
 
+        let background_image = data
+            .get("background")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
         let platforms = parse_platforms(data);
         let languages = parse_languages(data);
 
@@ -183,6 +188,13 @@ pub fn resolve_steam_app_metadata(
             header_image,
             capsule_image,
             capsule_image_v5,
+            library_hero_image: None,
+            background_image,
+            hero_image: None,
+            library_header_image: None,
+            wide_cover_image: None,
+            logo_image: None,
+            library_logo_image: None,
             platforms,
             languages,
             dlc_count,
@@ -255,6 +267,13 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         header_image: None,
         capsule_image: None,
         capsule_image_v5: None,
+        library_hero_image: None,
+        background_image: None,
+        hero_image: None,
+        library_header_image: None,
+        wide_cover_image: None,
+        logo_image: None,
+        library_logo_image: None,
         platforms: Vec::new(),
         languages: Vec::new(),
         dlc_count: 0,

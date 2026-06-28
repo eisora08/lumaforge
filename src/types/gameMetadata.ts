@@ -12,6 +12,14 @@ export type SteamAppMetadata = {
   capsule_image?: string | null;
   capsule_image_v5?: string | null;
 
+  library_hero_image?: string | null;
+  background_image?: string | null;
+  hero_image?: string | null;
+  library_header_image?: string | null;
+  wide_cover_image?: string | null;
+  logo_image?: string | null;
+  library_logo_image?: string | null;
+
   platforms: string[];
   languages: string[];
   dlc_count: number;

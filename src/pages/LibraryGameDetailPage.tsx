@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
   launchSteamApp,
@@ -5,6 +6,7 @@ import {
 } from "../services/tauri";
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
+import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 
 import type { LibraryGame } from "../types/libraryGame";
@@ -20,7 +22,59 @@ type Props = {
 
 export default function LibraryGameDetailPage({ onBack }: Props) {
   const { selectedGame, setSelectedGame } = useLibraryGames();
-  const game = selectedGame;
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
+  const currentRequest = useRef<number | null>(null);
+
+  // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
+  useEffect(() => {
+    if (!selectedGame) {
+      setResolvedGame(null);
+      setMetadataLoading(false);
+      return;
+    }
+
+    const appIdNum = selectedGame.appId ? Number(selectedGame.appId) : null;
+    if (!appIdNum) {
+      setResolvedGame(selectedGame);
+      setMetadataLoading(false);
+      return;
+    }
+
+    const meta = selectedGame.metadata;
+    const hasResolvedMetadata = meta && meta.resolved === true && !!meta.name && meta.name !== `Steam App ${appIdNum}`;
+    if (hasResolvedMetadata) {
+      setResolvedGame(selectedGame);
+      setMetadataLoading(false);
+      return;
+    }
+
+    const requestId = Date.now();
+    currentRequest.current = requestId;
+
+    setMetadataLoading(true);
+    setResolvedGame(selectedGame);
+    resolveGameMetadata([appIdNum])
+      .then((result) => {
+        if (currentRequest.current !== requestId) return;
+        const resolvedMeta = result[appIdNum];
+        if (resolvedMeta) {
+          setResolvedGame({
+            ...selectedGame,
+            metadata: resolvedMeta,
+            imageUrl: selectedGame.imageUrl || resolvedMeta.header_image || resolvedMeta.capsule_image || resolvedMeta.capsule_image_v5 || undefined,
+          });
+        }
+      })
+      .catch(() => {
+        // keep original game if resolution fails
+      })
+      .finally(() => {
+        if (currentRequest.current === requestId) {
+          setMetadataLoading(false);
+        }
+      });
+  }, [selectedGame]);
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
@@ -67,7 +121,7 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
     onBack?.();
   }
 
-  if (!game) {
+  if (!selectedGame) {
     return (
       <div className="flex h-full items-center justify-center p-5 lg:p-7">
         <p className="text-(--color-muted)">No game selected.</p>
@@ -75,9 +129,12 @@ export default function LibraryGameDetailPage({ onBack }: Props) {
     );
   }
 
+  const displayGame = resolvedGame || selectedGame;
+
   return (
     <LibraryGameDetails
-      game={game}
+      game={displayGame}
+      loading={metadataLoading}
       onPlay={handlePlay}
       onInstall={handleInstall}
       onOpenSteam={handleOpenSteamStore}
