@@ -25,6 +25,8 @@ pub fn run() {
             commands::sync::check_package_update,
             commands::sync::mark_sync_index_item,
             commands::steam::scan_steam_installed_games,
+            commands::game::scan_local_games,
+            commands::game::scan_local_game_folders,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

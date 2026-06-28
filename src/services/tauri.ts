@@ -12,6 +12,8 @@ import type { SteamFeaturedCategory } from "../types/steamFeatured";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 import type { SteamGridDbArtwork } from "../types/steamGridDb";
 import type { SteamInstalledGame } from "../types/steamInstalled";
+import type { LocalDiscoveredGame } from "../types/localGame";
+import type { LocalExecutableGame } from "../types/localExecutableGame";
 import type { SyncIndex, SyncIndexItem, SyncCheckResult } from "../types/syncIndex";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
@@ -170,11 +172,31 @@ export async function scanSteamInstalledGames(params?: {
   steamPath?: string;
   luaPath?: string;
   depotcachePath?: string;
+  gameScanFolders?: string[];
 }): Promise<SteamInstalledGame[]> {
   return await invoke<SteamInstalledGame[]>("scan_steam_installed_games", {
     steamPath: params?.steamPath ?? null,
     luaPath: params?.luaPath ?? null,
     depotcachePath: params?.depotcachePath ?? null,
+    gameScanFolders: params?.gameScanFolders ?? null,
+  });
+}
+
+export async function scanLocalGames(params: {
+  folders: string[];
+  maxDepth?: number;
+}): Promise<LocalDiscoveredGame[]> {
+  return await invoke<LocalDiscoveredGame[]>("scan_local_games", {
+    folders: params.folders,
+    maxDepth: params.maxDepth ?? null,
+  });
+}
+
+export async function scanLocalGameFolders(
+  folders: string[]
+): Promise<LocalExecutableGame[]> {
+  return await invoke<LocalExecutableGame[]>("scan_local_game_folders", {
+    folders,
   });
 }
 

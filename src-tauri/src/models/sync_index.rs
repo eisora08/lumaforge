@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncIndexItem {
     pub app_id: String,
     pub source_key: String,
@@ -26,6 +27,7 @@ pub struct SyncIndex {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncCheckResult {
     pub app_id: String,
     pub status: String,

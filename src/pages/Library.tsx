@@ -4,10 +4,11 @@ import {
   FolderSearch,
   Library,
   RefreshCcw,
-  Search,
   Settings,
+  SlidersHorizontal,
 } from "lucide-react";
 
+import PageContainer from "../components/layout/PageContainer";
 import InstalledGameTile from "../components/installed/InstalledGameTile";
 import InstalledGameDetails from "../components/installed/InstalledGameDetails";
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
@@ -40,6 +41,8 @@ import {
   showWarning,
 } from "../components/toast/GameToast";
 
+import LibraryFilterPanel, { type LibraryViewMode } from "../components/filters/LibraryFilterPanel";
+
 function buildLibraryGame(
   script: InstalledLuaScript,
   metadata: Record<number, SteamAppMetadata>,
@@ -66,6 +69,8 @@ function buildLibraryGame(
 export default function LibraryPage() {
   const { settings } = useSettings();
 
+  const [localQuery, setLocalQuery] = useState("");
+  const [viewMode, setViewMode] = useState<LibraryViewMode>("grid");
   const [scripts, setScripts] = useState<InstalledLuaScript[]>([]);
   const [gameMetadata, setGameMetadata] = useState<Record<number, SteamAppMetadata>>({});
   const [steamInstalledGames, setSteamInstalledGames] = useState<Record<string, boolean>>({});
@@ -74,11 +79,13 @@ export default function LibraryPage() {
   const [scanningSteam, setScanningSteam] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
 
-  const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sortBy, setSortBy] = useState<LibrarySort>("name");
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [sourceSelectorGame, setSourceSelectorGame] = useState<InstalledLibraryGame | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [luaReadyOnly, setLuaReadyOnly] = useState(false);
+  const [updatesOnly, setUpdatesOnly] = useState(false);
 
   const hasLuaPath = Boolean(settings.luaPath);
 
@@ -105,6 +112,7 @@ export default function LibraryPage() {
         steamPath: settings.steamRoot || undefined,
         luaPath: settings.luaPath || undefined,
         depotcachePath: settings.depotcachePath || undefined,
+        gameScanFolders: settings.gameScanFolders.length > 0 ? settings.gameScanFolders : undefined,
       });
       const map: Record<string, boolean> = {};
       for (const g of games) {
@@ -350,7 +358,7 @@ export default function LibraryPage() {
   }, [scripts, gameMetadata, steamInstalledGames]);
 
   const filteredGames = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedQuery = localQuery.trim().toLowerCase();
     return libraryGames
       .filter((game) => {
         const matchesQuery =
@@ -363,7 +371,9 @@ export default function LibraryPage() {
           (filter === "disabled" && game.installStatus === "disabled") ||
           (filter === "lua-ready" && game.hasAvailableSource) ||
           (filter === "updates" && game.hasUpdate);
-        return matchesQuery && matchesFilter;
+        const matchesLuaReady = !luaReadyOnly || (game.hasAvailableSource && game.installStatus !== "active");
+        const matchesUpdates = !updatesOnly || game.hasUpdate;
+        return matchesQuery && matchesFilter && matchesLuaReady && matchesUpdates;
       })
       .sort((a, b) => {
         if (sortBy === "name") return a.title.localeCompare(b.title);
@@ -380,7 +390,7 @@ export default function LibraryPage() {
         }
         return 0;
       });
-  }, [libraryGames, query, filter, sortBy]);
+  }, [libraryGames, localQuery, filter, sortBy, luaReadyOnly, updatesOnly]);
 
   const selectedGame = selectedAppId
     ? libraryGames.find((g) => g.appId === selectedAppId) || null
@@ -460,7 +470,7 @@ export default function LibraryPage() {
             onBack={() => setSelectedAppId(null)}
           />
         ) : (
-          <div className="p-5 lg:p-7">
+          <PageContainer className="py-5 lg:py-7">
             {/* Header row */}
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -478,16 +488,19 @@ export default function LibraryPage() {
 
               {/* Compact actions */}
               <div className="flex items-center gap-2">
-                {/* Search */}
-                <div className="flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
-                  <Search className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search..."
-                    className="w-28 bg-transparent text-xs text-(--color-text) outline-none placeholder:text-(--color-muted)"
-                  />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFilters(true)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs transition ${
+                    filter !== "all" || luaReadyOnly
+                      ? "border-(--color-accent)/30 bg-(--color-accent)/10 text-(--color-accent)"
+                      : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                  }`}
+                  title="Filters"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Filters</span>
+                </button>
 
                 <select
                   value={sortBy}
@@ -582,7 +595,7 @@ export default function LibraryPage() {
                 ))}
               </div>
             )}
-          </div>
+          </PageContainer>
         )}
       </div>
 
@@ -606,6 +619,34 @@ export default function LibraryPage() {
         onOpenDetails={(game) => {
           setSourceSelectorGame(null);
           setSelectedAppId(game.appId);
+        }}
+      />
+
+      <LibraryFilterPanel
+        open={showFilters}
+        statusFilter={filter === "all" ? "all" : filter === "active" ? "active" : "disabled"}
+        sortBy={sortBy}
+        luaReadyOnly={luaReadyOnly}
+        updatesOnly={updatesOnly}
+        localQuery={localQuery}
+        viewMode={viewMode}
+        count={filteredGames.length}
+        total={libraryGames.length}
+        onLocalQueryChange={setLocalQuery}
+        onStatusFilterChange={(status) => setFilter(status === "all" ? "all" : status === "active" ? "active" : "disabled")}
+        onSortByChange={setSortBy}
+        onLuaReadyOnlyChange={setLuaReadyOnly}
+        onUpdatesOnlyChange={setUpdatesOnly}
+        onViewModeChange={setViewMode}
+        onClose={() => setShowFilters(false)}
+        onReset={() => {
+          setLocalQuery("");
+          setFilter("all");
+          setSortBy("name");
+          setLuaReadyOnly(false);
+          setUpdatesOnly(false);
+          setViewMode("grid");
+          setShowFilters(false);
         }}
       />
     </div>

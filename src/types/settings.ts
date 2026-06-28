@@ -20,6 +20,9 @@ export type AppSettings = {
   compactMode: boolean;
 
   steamGridDbApiKey: string;
+
+  gameScanFolders: string[];
+  scanLocalGames: boolean;
 };
 
 export type AppSettingsKey = keyof AppSettings;

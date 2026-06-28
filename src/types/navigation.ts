@@ -8,4 +8,6 @@ export type AppPage =
   | "activity"
   | "verification"
   | "tools"
-  | "settings";
+  | "settings"
+  | "game-details"
+  | "global-search";

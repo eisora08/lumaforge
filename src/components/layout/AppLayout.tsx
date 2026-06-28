@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
+import { SearchProvider } from "../../context/SearchContext";
 import { AppPage } from "../../types/navigation";
 
 type AppLayoutProps = {
@@ -32,11 +33,17 @@ export default function AppLayout({
         />
 
         <div className="flex min-w-0 flex-1 flex-col lf-page">
-          <TopBar onOpenSidebar={() => setIsSidebarOpen(true)} />
+          <SearchProvider>
+            <TopBar
+              onOpenSidebar={() => setIsSidebarOpen(true)}
+              activePage={activePage}
+              onNavigate={onNavigate}
+            />
 
-          <main className="min-h-0 flex-1 overflow-y-auto">
-            {children}
-          </main>
+            <main className="min-h-0 flex-1 overflow-y-auto">
+              {children}
+            </main>
+          </SearchProvider>
         </div>
       </div>
     </div>

@@ -1,13 +1,97 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+fn debug_log(msg: impl std::fmt::Display) {
+    eprintln!("[steam-scan] {}", msg);
+}
 
 use crate::models::steam_installed_game::SteamInstalledGame;
 use crate::models::steam_paths::SteamPaths;
 use crate::utils::path_utils;
 
+struct SteamLibraryPath {
+    library_root: PathBuf,
+    steamapps_path: PathBuf,
+    common_path: PathBuf,
+}
+
 #[tauri::command]
 pub fn detect_steam_paths() -> Option<SteamPaths> {
     path_utils::detect_steam_paths()
+}
+
+fn normalize_steam_library_path(input: &Path) -> Option<SteamLibraryPath> {
+    if !input.exists() {
+        return None;
+    }
+
+    let leaf = input.file_name().and_then(|n| n.to_str());
+
+    // Case 1: input is directly a steamapps folder
+    //   e.g. E:\SteamLibrary\steamapps
+    if leaf == Some("steamapps") && input.is_dir() {
+        let parent = input.parent()?;
+        let common = input.join("common");
+        return Some(SteamLibraryPath {
+            library_root: parent.to_path_buf(),
+            steamapps_path: input.to_path_buf(),
+            common_path: if common.is_dir() { common } else { input.join("common") },
+        });
+    }
+
+    // Case 2: input is a common folder directly
+    //   e.g. E:\SteamLibrary\steamapps\common
+    if leaf == Some("common") && input.is_dir() {
+        if let Some(parent) = input.parent() {
+            if parent.file_name().and_then(|n| n.to_str()) == Some("steamapps") {
+                let library_root = parent.parent()?;
+                return Some(SteamLibraryPath {
+                    library_root: library_root.to_path_buf(),
+                    steamapps_path: parent.to_path_buf(),
+                    common_path: input.to_path_buf(),
+                });
+            }
+        }
+    }
+
+    // Case 3: input/steamapps exists (steam root or library root)
+    //   e.g. C:\Program Files (x86)\Steam Luma
+    //   e.g. E:\SteamLibrary
+    let steamapps = input.join("steamapps");
+    if steamapps.is_dir() {
+        let common = steamapps.join("common");
+        return Some(SteamLibraryPath {
+            library_root: input.to_path_buf(),
+            steamapps_path: steamapps.clone(),
+            common_path: if common.is_dir() { common } else { steamapps.join("common") },
+        });
+    }
+
+    None
+}
+
+fn is_valid_steamapps_path(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    if path.join("common").is_dir() {
+        return true;
+    }
+    if path.join("libraryfolders.vdf").is_file() {
+        return true;
+    }
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if let Some(name_str) = name.to_str() {
+                if name_str.starts_with("appmanifest_") && name_str.ends_with(".acf") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 #[tauri::command]
@@ -15,27 +99,123 @@ pub fn scan_steam_installed_games(
     steam_path: Option<String>,
     lua_path: Option<String>,
     depotcache_path: Option<String>,
+    game_scan_folders: Option<Vec<String>>,
 ) -> Result<Vec<SteamInstalledGame>, String> {
-    let root = resolve_steam_root(steam_path.as_deref(), lua_path.as_deref(), depotcache_path.as_deref());
-    let root = match root {
-        Some(r) => r,
-        None => return Ok(Vec::new()),
-    };
+    debug_log("===== Steam scan start =====");
 
-    let steamapps_dir = root.join("steamapps");
-    if !steamapps_dir.exists() || !steamapps_dir.is_dir() {
-        return Ok(Vec::new());
+    // ---- Step 1: collect candidate paths from every source ----
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(ref sp) = steam_path {
+        candidates.push(PathBuf::from(sp));
+        debug_log(format_args!("candidate from steamPath: {}", sp));
+    }
+    if let Some(ref lp) = lua_path {
+        candidates.push(PathBuf::from(lp));
+        debug_log(format_args!("candidate from luaPath: {}", lp));
+    }
+    if let Some(ref dp) = depotcache_path {
+        candidates.push(PathBuf::from(dp));
+        debug_log(format_args!("candidate from depotcachePath: {}", dp));
+    }
+    if let Some(ref folders) = game_scan_folders {
+        for f in folders {
+            candidates.push(PathBuf::from(f));
+            debug_log(format_args!("candidate from gameScanFolders: {}", f));
+        }
     }
 
-    let root_str = root.to_string_lossy().to_string();
-    let library_paths = collect_library_paths(&steamapps_dir);
+    // Add auto-detected Steam root if not already present
+    if let Some(sp) = path_utils::detect_steam_paths() {
+        let p = PathBuf::from(&sp.steam_root);
+        let p_lower = p.to_string_lossy().to_lowercase();
+        let already = candidates.iter().any(|c| c.to_string_lossy().to_lowercase() == p_lower);
+        if !already {
+            debug_log(format_args!("candidate from auto-detect: {}", p.display()));
+            candidates.push(p);
+        }
+    }
 
+    debug_log(format_args!("total candidates: {}", candidates.len()));
+
+    // ---- Step 2: normalize each candidate into SteamLibraryPath ----
+    let mut normalized_libs: Vec<SteamLibraryPath> = Vec::new();
+    let mut seen_steamapps: HashSet<String> = HashSet::new();
+
+    for candidate in &candidates {
+        let Some(lib_path) = normalize_steam_library_path(candidate) else {
+            debug_log(format_args!("candidate not valid: {}", candidate.display()));
+            continue;
+        };
+
+        if !is_valid_steamapps_path(&lib_path.steamapps_path) {
+            debug_log(format_args!("steamapps path not valid: {}", lib_path.steamapps_path.display()));
+            continue;
+        }
+
+        let key = lib_path.steamapps_path.to_string_lossy().to_lowercase();
+        if seen_steamapps.insert(key) {
+            debug_log(format_args!(
+                "normalized: root={}, steamapps={}, common={}",
+                lib_path.library_root.display(),
+                lib_path.steamapps_path.display(),
+                lib_path.common_path.display()
+            ));
+            normalized_libs.push(lib_path);
+        }
+    }
+
+    debug_log(format_args!("unique normalized steamapps paths: {}", normalized_libs.len()));
+
+    // ---- Step 3: expand via libraryfolders.vdf ----
+    let mut all_steamapps_dirs: Vec<(PathBuf, PathBuf)> = Vec::new(); // (steamapps_path, common_path)
+    let mut seen_all: HashSet<String> = HashSet::new();
+
+    for lib in &normalized_libs {
+        let key = lib.steamapps_path.to_string_lossy().to_lowercase();
+        if seen_all.insert(key) {
+            all_steamapps_dirs.push((lib.steamapps_path.clone(), lib.common_path.clone()));
+        }
+
+        let vdf_path = lib.steamapps_path.join("libraryfolders.vdf");
+        if !vdf_path.is_file() {
+            continue;
+        }
+
+        let extra_roots = collect_library_roots_from_vdf(&vdf_path);
+        for root_path in extra_roots {
+            // The VDF path is a library root like D:\SteamLibrary
+            // Normalize it to find steamapps/common
+            if let Some(extra_lib) = normalize_steam_library_path(&root_path) {
+                let extra_key = extra_lib.steamapps_path.to_string_lossy().to_lowercase();
+                if seen_all.insert(extra_key) {
+                    debug_log(format_args!("extra library from VDF: root={}, steamapps={}, common={}",
+                        extra_lib.library_root.display(),
+                        extra_lib.steamapps_path.display(),
+                        extra_lib.common_path.display()
+                    ));
+                    all_steamapps_dirs.push((extra_lib.steamapps_path, extra_lib.common_path));
+                }
+            } else {
+                debug_log(format_args!("VDF library root not valid: {}", root_path.display()));
+            }
+        }
+    }
+
+    debug_log(format_args!("total steamapps dirs to scan: {}", all_steamapps_dirs.len()));
+
+    // ---- Step 4: scan appmanifest files in each steamapps dir ----
     let mut games = Vec::new();
+    let mut manifest_count = 0;
+    let debug_app_id: u32 = 2358720;
 
-    for lib_path in &library_paths {
-        let entries = match fs::read_dir(lib_path) {
+    for (steamapps_dir, common_path) in &all_steamapps_dirs {
+        let entries = match fs::read_dir(steamapps_dir) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(_) => {
+                debug_log(format_args!("cannot read steamapps dir: {}", steamapps_dir.display()));
+                continue;
+            }
         };
 
         for entry in entries.flatten() {
@@ -50,157 +230,85 @@ pub fn scan_steam_installed_games(
             if !file_name.starts_with("appmanifest_") || !file_name.ends_with(".acf") {
                 continue;
             }
-            if let Some(game) = parse_appmanifest(&path, lib_path, &root_str) {
+            manifest_count += 1;
+            if let Some(game) = parse_appmanifest(&path, common_path, steamapps_dir) {
+                if game.app_id == debug_app_id {
+                    debug_log(format_args!(
+                        "  app {} ({}): manifest={:?}, install_path={:?}, is_installed={}",
+                        game.app_id, game.name, game.manifest_path, game.install_path, game.is_installed
+                    ));
+                }
                 games.push(game);
             }
         }
     }
 
+    debug_log(format_args!("manifests found: {}, games parsed: {}", manifest_count, games.len()));
+    let installed_count = games.iter().filter(|g| g.is_installed).count();
+    debug_log(format_args!("installed games: {}", installed_count));
+    debug_log("===== Steam scan end =====");
     Ok(games)
 }
 
-fn resolve_steam_root(
-    steam_path: Option<&str>,
-    lua_path: Option<&str>,
-    depotcache_path: Option<&str>,
-) -> Option<PathBuf> {
-    // 1. Direct steam_path
-    if let Some(sp) = steam_path {
-        let p = PathBuf::from(sp);
-        if is_valid_steam_root(&p) {
-            return Some(p);
-        }
-    }
-
-    // 2. Derive from lua_path: lua is at {root}/config/lua
-    if let Some(lp) = lua_path {
-        let p = PathBuf::from(lp);
-        // Navigate up from config/lua to root
-        if let Some(parent) = p.parent().and_then(|p| p.parent()) {
-            if is_valid_steam_root(parent) {
-                return Some(parent.to_path_buf());
-            }
-        }
-    }
-
-    // 3. Derive from depotcache_path: depotcache is at {root}/depotcache
-    if let Some(dp) = depotcache_path {
-        let p = PathBuf::from(dp);
-        if let Some(parent) = p.parent() {
-            if is_valid_steam_root(parent) {
-                return Some(parent.to_path_buf());
-            }
-        }
-    }
-
-    // 4. Try auto-detection (registry / common paths)
-    path_utils::detect_steam_paths()
-        .and_then(|sp| {
-            let p = PathBuf::from(&sp.steam_root);
-            if is_valid_steam_root(&p) { Some(p) } else { None }
-        })
-}
-
-fn is_valid_steam_root(path: &Path) -> bool {
-    if !path.exists() || !path.is_dir() {
-        return false;
-    }
-    let steamapps = path.join("steamapps");
-    if !steamapps.exists() || !steamapps.is_dir() {
-        return false;
-    }
-    true
-}
-
-fn collect_library_paths(steamapps_dir: &Path) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    // Always include the main steamapps
-    paths.push(steamapps_dir.to_path_buf());
-
-    let libraryfolders_path = steamapps_dir.join("libraryfolders.vdf");
-    if !libraryfolders_path.exists() {
-        return paths;
-    }
-
-    let content = match fs::read_to_string(&libraryfolders_path) {
+/// Parse libraryfolders.vdf and return library root paths (not yet joined with steamapps).
+fn collect_library_roots_from_vdf(vdf_path: &Path) -> Vec<PathBuf> {
+    let content = match fs::read_to_string(vdf_path) {
         Ok(c) => c,
-        Err(_) => return paths,
+        Err(_) => return Vec::new(),
     };
 
-    // Parse both old flat format and new nested format
-    let lines: Vec<&str> = content.lines().collect();
+    let mut roots = Vec::new();
+    let lines: Vec<&str> = content.lines().map(|l| l.trim()).collect();
     let mut i = 0;
+    let mut depth: u32 = 0;
+    let mut in_libraryfolders = false;
 
     while i < lines.len() {
-        let trimmed = lines[i].trim();
+        let line = lines[i];
 
-        // Look for a quoted line that starts a block: "0", "1", etc.
-        if trimmed.starts_with('"') && trimmed.ends_with('{') {
-            // This is a library entry block start: "0" {
-            // Check if the value is right after the key on the same line
-            let inner = &trimmed[1..trimmed.len() - 1].trim();
-            let key_parts: Vec<&str> = inner.splitn(2, '"').collect();
-            let key = if key_parts.len() > 1 {
-                key_parts[0].trim()
-            } else {
-                inner
-            };
-
-            if key.parse::<u32>().is_ok() {
-                // Nested format: look for "path" inside this block
-                let block_content = read_vdf_block(&lines, &mut i);
-                for block_line in &block_content {
-                    if let Some(path) = extract_vdf_key_value(block_line, "path") {
-                        let lib_steamapps = PathBuf::from(&path).join("steamapps");
-                        if lib_steamapps.exists() && lib_steamapps.is_dir() {
-                            paths.push(lib_steamapps);
-                        }
-                        break;
-                    }
+        if line == "{" {
+            depth += 1;
+            i += 1;
+            continue;
+        }
+        if line == "}" {
+            if depth > 0 {
+                depth -= 1;
+                if depth == 0 {
+                    in_libraryfolders = false;
                 }
-                continue;
             }
+            i += 1;
+            continue;
         }
 
-        // Flat format: "0" "C:\\path"
-        if let Some(path) = extract_vdf_flat_path(trimmed) {
-            let lib_steamapps = PathBuf::from(&path).join("steamapps");
-            if lib_steamapps.exists() && lib_steamapps.is_dir() {
-                paths.push(lib_steamapps);
+        if let Some((key, value)) = parse_vdf_line(line) {
+            if !in_libraryfolders && key.to_lowercase() == "libraryfolders" {
+                in_libraryfolders = true;
+                i += 1;
+                continue;
+            }
+
+            if in_libraryfolders {
+                if key == "path" && depth >= 2 {
+                    let decoded = value.replace("\\\\", "\\");
+                    roots.push(PathBuf::from(&decoded));
+                } else if depth == 1 && !value.is_empty() {
+                    let decoded = value.replace("\\\\", "\\");
+                    roots.push(PathBuf::from(&decoded));
+                }
             }
         }
 
         i += 1;
     }
 
-    // Deduplicate
-    paths.sort();
-    paths.dedup();
-
-    paths
+    roots.sort();
+    roots.dedup();
+    roots
 }
 
-fn read_vdf_block(lines: &[&str], start: &mut usize) -> Vec<String> {
-    let mut depth = 1;
-    let mut content = Vec::new();
-    *start += 1;
-
-    while *start < lines.len() && depth > 0 {
-        let line = lines[*start].trim();
-        if line == "{" {
-            depth += 1;
-        } else if line == "}" {
-            depth -= 1;
-        } else if depth > 0 {
-            content.push(lines[*start].trim().to_string());
-        }
-        *start += 1;
-    }
-
-    content
-}
-
-fn extract_vdf_key_value(line: &str, target_key: &str) -> Option<String> {
+fn parse_vdf_line(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
     if !trimmed.starts_with('"') {
         return None;
@@ -209,37 +317,15 @@ fn extract_vdf_key_value(line: &str, target_key: &str) -> Option<String> {
     if parts.len() < 5 {
         return None;
     }
-    let key = parts[1].trim().to_lowercase();
-    if key == target_key {
-        Some(parts[3].trim().to_string())
-    } else {
-        None
-    }
-}
-
-fn extract_vdf_flat_path(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if !trimmed.contains('"') {
-        return None;
-    }
-    let parts: Vec<&str> = trimmed.split('"').collect();
-    if parts.len() < 5 {
-        return None;
-    }
-    let key = parts[1].trim();
-    if key.parse::<u32>().is_ok() {
-        let value = parts[3].trim();
-        if !value.is_empty() {
-            return Some(value.to_string());
-        }
-    }
-    None
+    let key = parts[1].trim().to_string();
+    let value = parts[3].trim().to_string();
+    Some((key, value))
 }
 
 fn parse_appmanifest(
     path: &Path,
-    library_steamapps_dir: &Path,
-    steam_root: &str,
+    common_path: &Path,
+    steamapps_dir: &Path,
 ) -> Option<SteamInstalledGame> {
     let content = fs::read_to_string(path).ok()?;
     let mut app_id: Option<u32> = None;
@@ -276,13 +362,11 @@ fn parse_appmanifest(
     let app_id = app_id?;
     let install_dir_val = install_dir;
     let manifest_path = path.to_string_lossy().to_string();
+    let steamapps_path_str = steamapps_dir.to_string_lossy().to_string();
+    let library_root = steamapps_dir.parent().map(|p| p.to_string_lossy().to_string());
 
     let install_path = install_dir_val.as_ref().map(|dir| {
-        library_steamapps_dir
-            .join("common")
-            .join(dir)
-            .to_string_lossy()
-            .to_string()
+        common_path.join(dir).to_string_lossy().to_string()
     });
 
     let install_dir_exists = install_path
@@ -296,8 +380,9 @@ fn parse_appmanifest(
         app_id,
         name: name.unwrap_or_else(|| format!("Steam App {}", app_id)),
         install_dir: install_dir_val,
-        library_path: library_steamapps_dir.to_string_lossy().to_string(),
-        steam_root: Some(steam_root.to_string()),
+        library_path: steamapps_path_str.clone(),
+        steam_root: library_root,
+        steamapps_path: steamapps_path_str,
         manifest_path,
         install_path,
         state_flags,

@@ -36,6 +36,8 @@ export const defaultSettings: AppSettings = {
   cleanTempOnExit: false,
   compactMode: false,
   steamGridDbApiKey: "",
+  gameScanFolders: [],
+  scanLocalGames: false,
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);

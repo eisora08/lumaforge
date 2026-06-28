@@ -13,3 +13,5 @@ pub mod steam_store_search;
 pub mod steam_grid_db_artwork;
 pub mod steam_installed_game;
 pub mod sync_index;
+pub mod local_game;
+pub mod local_executable_game;

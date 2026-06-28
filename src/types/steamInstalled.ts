@@ -4,6 +4,7 @@ export type SteamInstalledGame = {
   installDir: string | null;
   libraryPath: string;
   steamRoot: string | null;
+  steamappsPath: string;
   manifestPath: string;
   installPath: string | null;
   stateFlags: number | null;
