@@ -53,6 +53,11 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cancelledRef = useRef(false);
 
+  // Debug: log state transitions
+  useEffect(() => {
+    console.debug("[Launch] transition ->", launchInfo.state, launchInfo.pid != null ? `pid=${launchInfo.pid}` : "");
+  }, [launchInfo.state, launchInfo.pid]);
+
   // Reset launch state when the selected game changes
   useEffect(() => {
     setLaunchInfo({ state: "idle" });
@@ -102,6 +107,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
   // --- Launch actions ---
   async function launchGame(game: LibraryGame) {
+    cancelledRef.current = false;
     console.debug("[Launch] clicked", {
       gameId: game.id,
       title: game.title,
@@ -110,7 +116,6 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       state: launchInfo.state,
     });
 
-    if (cancelledRef.current) return;
     setLaunchInfo({ state: "launching", launchedAt: Date.now() });
 
     try {
@@ -163,7 +168,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         // Ignore termination errors during cancel
       }
     }
-    cancelledRef.current = false;
+    cancelledRef.current = true;
     setLaunchInfo({ state: "idle" });
   }
 
@@ -187,7 +192,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     } else {
       // Steam game with no PID — can't safely kill
       console.debug("[Launch] no PID — cannot stop Steam game safely");
-      setLaunchInfo({ state: "running", error: "Cannot close Steam game safely" });
+      showWarning("LumaForge cannot safely close this Steam game yet.", { title: "Stop game" });
+      setLaunchInfo({ state: "running" });
     }
   }
 

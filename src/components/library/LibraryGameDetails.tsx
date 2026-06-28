@@ -514,7 +514,7 @@ export default function LibraryGameDetails({
                       <button
                         type="button"
                         onClick={() => onCancelLaunch?.()}
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-[0.97]"
+                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                       >
                         <X className="h-4 w-4" />
                         Cancel
@@ -530,7 +530,7 @@ export default function LibraryGameDetails({
                       <button
                         type="button"
                         onClick={() => setShowStopModal(true)}
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-[0.97]"
+                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                       >
                         <Square className="h-4 w-4" />
                         Stop
@@ -546,9 +546,9 @@ export default function LibraryGameDetails({
                       <button
                         type="button"
                         disabled
-                        className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-bold text-(--color-muted) opacity-60"
+                        className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black opacity-60 transition"
                       >
-                        <Square className="h-4 w-4" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                         Stopping...
                       </button>
                       <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
