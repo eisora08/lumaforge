@@ -50,7 +50,6 @@ import type { GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements } from "../../services/steamAchievementsResolver";
 import { useSettings } from "../../context/SettingsContext";
 import AchievementsModal from "./AchievementsModal";
-import StopGameModal from "./StopGameModal";
 import type { AppPage } from "../../types/navigation";
 
 type LibraryGameDetailsProps = {
@@ -70,7 +69,7 @@ type LibraryGameDetailsProps = {
   onNavigate?: (page: AppPage) => void;
   launchInfo?: GameLaunchInfo;
   onCancelLaunch?: () => void;
-  onStopGame?: () => void;
+  onOpenStopModal?: () => void;
 };
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null): string | undefined {
@@ -158,18 +157,24 @@ export default function LibraryGameDetails({
   onNavigate,
   launchInfo,
   onCancelLaunch,
-  onStopGame,
+  onOpenStopModal,
 }: LibraryGameDetailsProps) {
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [favorite, setFavorite] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
 
+  console.debug("[LaunchButton] render", {
+    gameId: game.id,
+    title: game.title,
+    appId: game.appId,
+    state: launchInfo?.state,
+  });
+
   const { settings } = useSettings();
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(null);
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
-  const [showStopModal, setShowStopModal] = useState(false);
 
   const imageUrl = getHeroImageUrl(game, artwork);
   const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
@@ -492,6 +497,10 @@ export default function LibraryGameDetails({
                     <button
                       type="button"
                       onClick={() => {
+                        console.debug("[LaunchButton] click", {
+                          state: launchInfo?.state,
+                          action: "play",
+                        });
                         recordGameLaunch();
                         addActivity({
                           gameId: game.id,
@@ -511,50 +520,69 @@ export default function LibraryGameDetails({
                   )}
                   {launchInfo?.state === "launching" && (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => onCancelLaunch?.()}
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                      >
-                        <X className="h-4 w-4" />
-                        Cancel
-                      </button>
-                      <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Launching...
-                      </span>
+                      <div className="inline-flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.debug("[LaunchButton] click", {
+                              state: launchInfo.state,
+                              action: "cancel",
+                            });
+                            onCancelLaunch?.();
+                          }}
+                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                        >
+                          <X className="h-4 w-4" />
+                          Cancel
+                        </button>
+                        <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Launching...
+                        </span>
+                      </div>
                     </>
                   )}
                   {launchInfo?.state === "running" && (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => setShowStopModal(true)}
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                      >
-                        <Square className="h-4 w-4" />
-                        Stop
-                      </button>
-                      <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                        Running
-                      </span>
+                      <div className="inline-flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.debug("[LaunchButton] click", {
+                              state: launchInfo.state,
+                              action: "stop",
+                            });
+                            console.debug("[Launch] opening stop modal", game.id);
+                            onOpenStopModal?.();
+                          }}
+                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                        >
+                          <Square className="h-4 w-4" />
+                          Stop
+                        </button>
+                        <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
+                          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                          Running
+                        </span>
+                      </div>
                     </>
                   )}
                   {launchInfo?.state === "stopping" && (
                     <>
-                      <button
-                        type="button"
-                        disabled
-                        className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black opacity-60 transition"
-                      >
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Stopping...
-                      </button>
-                      <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Stopping...
-                      </span>
+                      <div className="inline-flex items-center gap-3">
+                        <button
+                          type="button"
+                          disabled
+                          className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black opacity-60 transition"
+                        >
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Stopping...
+                        </button>
+                        <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Stopping...
+                        </span>
+                      </div>
                     </>
                   )}
                   {launchInfo?.state === "error" && launchInfo.error && (
@@ -1207,16 +1235,6 @@ export default function LibraryGameDetails({
               .catch(() => setAchievementsLoading(false));
           }}
           refreshing={achievementsLoading}
-        />
-      )}
-      {showStopModal && (
-        <StopGameModal
-          gameTitle={game.title}
-          onConfirm={() => {
-            setShowStopModal(false);
-            onStopGame?.();
-          }}
-          onCancel={() => setShowStopModal(false)}
         />
       )}
     </div>

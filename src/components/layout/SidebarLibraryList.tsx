@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Gamepad2, Search } from "lucide-react";
+import { Gamepad2, Loader2, Search } from "lucide-react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
+import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import type { LibraryGame } from "../../types/libraryGame";
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
@@ -33,6 +34,7 @@ function getSidebarImage(game: LibraryGame, mode: "landscape" | "poster"): strin
 export default function SidebarLibraryList({ onOpenGame }: Props) {
   const { games, selectedGame, setSelectedGame, loading, initialLoading } = useLibraryGames();
   const { settings } = useSettings();
+  const { getState } = useGameSession();
   const [query, setQuery] = useState("");
 
   const installed = useMemo(() => {
@@ -84,6 +86,10 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
           filtered.map((game) => {
             const isSelected = selectedGame?.id === game.id;
             const thumb = getSidebarImage(game, settings.libraryCardArtworkMode);
+            const gk = computeGameKey(game);
+            const gs = getState(gk);
+            const isRunning = gs === "running";
+            const isLaunching = gs === "launching";
             return (
               <button
                 key={game.id}
@@ -98,18 +104,29 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
                     : "text-(--color-text) hover:bg-white/5"
                 }`}
               >
-                <div className="h-6 w-10 shrink-0 overflow-hidden rounded">
+                <div className="relative h-6 w-10 shrink-0 overflow-hidden rounded">
                   <AsyncImage
                     src={thumb}
                     alt=""
                     className="h-full w-full"
                   />
+                  {isRunning && (
+                    <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-400 ring-1 ring-black/50" />
+                  )}
+                  {isLaunching && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+                      <Loader2 className="h-3 w-3 animate-spin text-white" />
+                    </span>
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium leading-tight">{game.title}</div>
+                  <div className="flex items-center gap-1.5">
+                    {isRunning && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
+                    <span className="truncate font-medium leading-tight">{game.title}</span>
+                  </div>
                   <div className="text-[10px] text-(--color-muted)">
-                    {game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
-                    {game.hasUpdate && " · Update"}
+                    {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
+                    {!isRunning && !isLaunching && game.hasUpdate && " · Update"}
                   </div>
                 </div>
               </button>

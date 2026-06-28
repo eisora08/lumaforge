@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { launchSteamApp, launchExecutable, terminateProcess, isProcessRunning } from "../services/tauri";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { launchSteamApp, launchExecutable, terminateProcess } from "../services/tauri";
+import { useGameSession, computeGameKey } from "../context/GameSessionContext";
 import type { LibraryGame } from "../types/libraryGame";
+import type { GameSessionState } from "../context/GameSessionContext";
 
-export type GameLaunchState = "idle" | "launching" | "running" | "stopping" | "error";
+export type GameLaunchState = GameSessionState;
 
 export type GameLaunchInfo = {
   state: GameLaunchState;
@@ -11,134 +13,147 @@ export type GameLaunchInfo = {
   error?: string;
 };
 
-const POLL_INTERVAL_MS = 5000;
-
-export function useGameLaunchState(_gameId: string) {
-  const [launchInfo, setLaunchInfo] = useState<GameLaunchInfo>({ state: "idle" });
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+export function useGameLaunchState(gameKey: string) {
+  const session = useGameSession();
   const cancelledRef = useRef(false);
-  const gameRef = useRef<LibraryGame | null>(null);
+  const launchTokenRef = useRef<symbol | null>(null);
+  const launchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Cleanup polling on unmount
   useEffect(() => {
     return () => {
       cancelledRef.current = true;
-      if (pollRef.current !== null) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
+      launchTokenRef.current = null;
+      if (launchTimeoutRef.current !== null) {
+        clearTimeout(launchTimeoutRef.current);
+        launchTimeoutRef.current = null;
       }
     };
-  }, []);
+  }, [gameKey]);
 
-  // Poll process lifecycle while running with PID
-  useEffect(() => {
-    if (launchInfo.state === "running" && launchInfo.pid != null) {
-      if (pollRef.current !== null) clearInterval(pollRef.current);
-      pollRef.current = setInterval(async () => {
-        try {
-          const running = await isProcessRunning(launchInfo.pid!);
-          if (!running && !cancelledRef.current) {
-            setLaunchInfo({ state: "idle" });
+  const currentSession = session.getSession(gameKey);
+  const state = session.getState(gameKey);
+
+  const launchInfo: GameLaunchInfo = useMemo(
+    () => ({
+      state,
+      pid: currentSession?.pid,
+      launchedAt: currentSession?.launchedAt,
+      error: currentSession?.errorMessage,
+    }),
+    [state, currentSession?.pid, currentSession?.launchedAt, currentSession?.errorMessage]
+  );
+
+  const launchGame = useCallback(
+    async (game: LibraryGame) => {
+      cancelledRef.current = false;
+      const token = Symbol("launch");
+      launchTokenRef.current = token;
+
+      const computedKey = computeGameKey(game);
+
+      console.debug("[Launch] clicked", {
+        gameKey: computedKey,
+        title: game.title,
+        appId: game.appId,
+        state: session.getState(computedKey),
+      });
+
+      session.startLaunching({
+        gameKey: computedKey,
+        gameId: game.id,
+        appId: game.appId,
+        title: game.title,
+        source: game.source === "steam" ? "steam" : "local",
+        executablePath: game.executablePath,
+      });
+
+      try {
+        if (game.source === "steam" && game.appId) {
+          await launchSteamApp(Number(game.appId));
+          launchTimeoutRef.current = setTimeout(() => {
+            launchTimeoutRef.current = null;
+            if (launchTokenRef.current !== token || cancelledRef.current) {
+              console.debug("[Launch] cancelled during steam delay, clearing");
+              session.clearSession(computedKey);
+              return;
+            }
+            console.debug("[Launch] marking running (steam)");
+            session.markRunning(computedKey, { softSession: true });
+          }, 2000);
+        } else if (game.source === "local" && game.executablePath) {
+          const result = await launchExecutable(game.executablePath);
+          if (launchTokenRef.current !== token || cancelledRef.current) {
+            console.debug("[Launch] cancelled during local launch, clearing");
+            session.clearSession(computedKey);
+            return;
           }
-        } catch {
-          // Silently ignore poll errors
-        }
-      }, POLL_INTERVAL_MS);
-    } else {
-      if (pollRef.current !== null) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    }
-    return () => {
-      if (pollRef.current !== null) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [launchInfo.state, launchInfo.pid]);
-
-  const launchGame = useCallback(async (game: LibraryGame) => {
-    gameRef.current = game;
-    if (cancelledRef.current) return;
-    setLaunchInfo({ state: "launching", launchedAt: Date.now() });
-
-    try {
-      if (game.source === "steam" && game.appId) {
-        await launchSteamApp(Number(game.appId));
-        // Steam games: soft running state (no PID tracking)
-        if (!cancelledRef.current) {
-          setLaunchInfo({ state: "running", launchedAt: Date.now() });
-        }
-      } else if (game.source === "local" && game.executablePath) {
-        const result = await launchExecutable(game.executablePath);
-        if (!cancelledRef.current) {
-          setLaunchInfo({
-            state: "running",
-            pid: result.pid,
-            launchedAt: Date.now(),
-          });
-        }
-      } else {
-        setLaunchInfo({ state: "error", error: "Cannot launch this game" });
-      }
-    } catch (err) {
-      if (!cancelledRef.current) {
-        setLaunchInfo({ state: "error", error: String(err) });
-        // Reset to idle after a short delay
-        setTimeout(() => {
-          if (!cancelledRef.current) {
-            setLaunchInfo({ state: "idle" });
+          session.markRunning(computedKey, { pid: result.pid });
+        } else {
+          if (launchTokenRef.current === token) {
+            console.warn("[Launch] cannot determine launch method", game.id);
+            session.clearSession(computedKey);
           }
-        }, 2000);
+        }
+      } catch (err) {
+        console.warn("[Launch] failed", err);
+        if (launchTokenRef.current === token && !cancelledRef.current) {
+          session.clearSession(computedKey);
+        }
       }
-    }
-  }, []);
+    },
+    [session]
+  );
 
   const cancelLaunch = useCallback(async () => {
-    const current = launchInfo;
-    if (current.state !== "launching") return;
+    const currentState = session.getState(gameKey);
+    if (currentState !== "launching") return;
 
-    // If we have a PID (local EXE), terminate it
-    if (current.pid != null) {
+    const currentSession = session.getSession(gameKey);
+
+    console.debug("[Launch] cancel clicked", {
+      gameKey,
+      state: currentState,
+      pid: currentSession?.pid,
+    });
+
+    cancelledRef.current = true;
+    launchTokenRef.current = null;
+
+    if (launchTimeoutRef.current !== null) {
+      clearTimeout(launchTimeoutRef.current);
+      launchTimeoutRef.current = null;
+    }
+
+    if (currentSession?.pid != null) {
       try {
-        await terminateProcess(current.pid);
+        await terminateProcess(currentSession.pid);
       } catch {
         // Ignore termination errors during cancel
       }
     }
-    cancelledRef.current = false;
-    setLaunchInfo({ state: "idle" });
-  }, [launchInfo]);
+
+    session.clearSession(gameKey);
+  }, [session, gameKey]);
 
   const stopGame = useCallback(async () => {
-    const current = launchInfo;
-    if (current.state !== "running") return;
-
-    setLaunchInfo({ ...current, state: "stopping" });
-
-    if (current.pid != null) {
-      try {
-        await terminateProcess(current.pid);
-        setLaunchInfo({ state: "idle" });
-      } catch (err) {
-        setLaunchInfo({ state: "running", pid: current.pid, error: String(err) });
-      }
-    } else {
-      // Steam game with no PID — can't safely kill
-      setLaunchInfo({ state: "running", error: "Cannot close Steam game safely" });
-    }
-  }, [launchInfo]);
+    await session.stopSession(gameKey);
+  }, [session, gameKey]);
 
   const resetToIdle = useCallback(() => {
-    setLaunchInfo({ state: "idle" });
-  }, []);
+    cancelledRef.current = false;
+    launchTokenRef.current = null;
+    if (launchTimeoutRef.current !== null) {
+      clearTimeout(launchTimeoutRef.current);
+      launchTimeoutRef.current = null;
+    }
+    session.clearSession(gameKey);
+  }, [session, gameKey]);
 
   const clearError = useCallback(() => {
-    if (launchInfo.state === "error") {
-      setLaunchInfo({ state: "idle" });
+    if (state === "error") {
+      session.clearSession(gameKey);
     }
-  }, [launchInfo.state]);
+  }, [session, gameKey, state]);
 
   return {
     launchInfo,

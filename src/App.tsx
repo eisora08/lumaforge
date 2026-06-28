@@ -16,6 +16,7 @@ import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
 import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
 import { GameDetailsProvider } from "./context/GameDetailsContext";
+import { GameSessionProvider } from "./context/GameSessionContext";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
@@ -95,6 +96,7 @@ function App() {
 
   return (
     <>
+      <GameSessionProvider>
       <GameDetailsProvider>
         <AppLayout activePage={activePage} onNavigate={handleNavigate}>
           <div key={activePage} className="lf-fade-in">
@@ -102,6 +104,7 @@ function App() {
           </div>
         </AppLayout>
       </GameDetailsProvider>
+      </GameSessionProvider>
       <InstallerProgressListener />
       <GameToastViewport />
     </>
