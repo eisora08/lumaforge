@@ -14,3 +14,4 @@ pub mod steam_grid_db;
 pub mod artwork_cache;
 pub mod steam_achievements;
 pub mod sync;
+pub mod process;

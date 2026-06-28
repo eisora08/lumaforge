@@ -14,15 +14,18 @@ import {
   Gamepad2,
   HardDrive,
   LifeBuoy,
+  Loader2,
   Lock,
   MessageCircle,
   MoreHorizontal,
   Play,
   Puzzle,
   RefreshCw,
+  Square,
   Star,
   Trophy,
   Unlock,
+  X,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
@@ -42,10 +45,12 @@ import { useGameActivity } from "../../context/GameActivityContext";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
+import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements } from "../../services/steamAchievementsResolver";
 import { useSettings } from "../../context/SettingsContext";
 import AchievementsModal from "./AchievementsModal";
+import StopGameModal from "./StopGameModal";
 import type { AppPage } from "../../types/navigation";
 
 type LibraryGameDetailsProps = {
@@ -63,6 +68,9 @@ type LibraryGameDetailsProps = {
   onBack: () => void;
   onRefreshArtwork?: () => void;
   onNavigate?: (page: AppPage) => void;
+  launchInfo?: GameLaunchInfo;
+  onCancelLaunch?: () => void;
+  onStopGame?: () => void;
 };
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null): string | undefined {
@@ -148,6 +156,9 @@ export default function LibraryGameDetails({
   onBack,
   onRefreshArtwork,
   onNavigate,
+  launchInfo,
+  onCancelLaunch,
+  onStopGame,
 }: LibraryGameDetailsProps) {
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -158,6 +169,7 @@ export default function LibraryGameDetails({
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(null);
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
+  const [showStopModal, setShowStopModal] = useState(false);
 
   const imageUrl = getHeroImageUrl(game, artwork);
   const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
@@ -475,25 +487,82 @@ export default function LibraryGameDetails({
             {/* Play / Install button */}
             <div className="shrink-0">
               {action === "play" && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    recordGameLaunch();
-                    addActivity({
-                      gameId: game.id,
-                      appId: appIdStr,
-                      kind: "game-launched",
-                      title: "Game launched",
-                      source: "local",
-                      severity: "info",
-                    });
-                    onPlay(game);
-                  }}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                >
-                  <Play className="h-4 w-4" />
-                  Play
-                </button>
+                <>
+                  {(!launchInfo || launchInfo.state === "idle" || launchInfo.state === "error") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        recordGameLaunch();
+                        addActivity({
+                          gameId: game.id,
+                          appId: appIdStr,
+                          kind: "game-launched",
+                          title: "Game launched",
+                          source: "local",
+                          severity: "info",
+                        });
+                        onPlay(game);
+                      }}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      <Play className="h-4 w-4" />
+                      Play
+                    </button>
+                  )}
+                  {launchInfo?.state === "launching" && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onCancelLaunch?.()}
+                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-[0.97]"
+                      >
+                        <X className="h-4 w-4" />
+                        Cancel
+                      </button>
+                      <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Launching...
+                      </span>
+                    </>
+                  )}
+                  {launchInfo?.state === "running" && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowStopModal(true)}
+                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-[0.97]"
+                      >
+                        <Square className="h-4 w-4" />
+                        Stop
+                      </button>
+                      <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                        Running
+                      </span>
+                    </>
+                  )}
+                  {launchInfo?.state === "stopping" && (
+                    <>
+                      <button
+                        type="button"
+                        disabled
+                        className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-bold text-(--color-muted) opacity-60"
+                      >
+                        <Square className="h-4 w-4" />
+                        Stopping...
+                      </button>
+                      <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Stopping...
+                      </span>
+                    </>
+                  )}
+                  {launchInfo?.state === "error" && launchInfo.error && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-red-400">
+                      {launchInfo.error}
+                    </span>
+                  )}
+                </>
               )}
               {action === "install" && (
                 <button
@@ -1138,6 +1207,16 @@ export default function LibraryGameDetails({
               .catch(() => setAchievementsLoading(false));
           }}
           refreshing={achievementsLoading}
+        />
+      )}
+      {showStopModal && (
+        <StopGameModal
+          gameTitle={game.title}
+          onConfirm={() => {
+            setShowStopModal(false);
+            onStopGame?.();
+          }}
+          onCancel={() => setShowStopModal(false)}
         />
       )}
     </div>

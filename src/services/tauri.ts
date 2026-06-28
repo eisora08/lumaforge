@@ -297,6 +297,15 @@ export type SteamAppcacheSchemaEntry = {
   icon?: string;
   icon_gray?: string;
   hidden?: boolean;
+  stat_id?: number;
+  bit?: number;
+};
+
+export type SteamAppcacheParsedProgress = {
+  api_name: string;
+  unlocked: boolean;
+  stat_id: number;
+  value: number;
 };
 
 export type SteamAppcacheScanResult = {
@@ -308,6 +317,8 @@ export type SteamAppcacheScanResult = {
   schema_file_modified?: number;
   parsed_achievements: SteamAppcacheAchievement[];
   parsed_schema: SteamAppcacheSchemaEntry[];
+  parsed_progress: SteamAppcacheParsedProgress[];
+  parser_confidence: string;
   progress_available: boolean;
   error_reason?: string;
 };
@@ -386,4 +397,23 @@ export async function resolveSteamGridDbArtwork(
       apiKey,
     }
   );
+}
+
+// --- Process management ---
+
+export type SpawnResult = {
+  pid?: number;
+  launched: boolean;
+};
+
+export async function launchExecutable(path: string): Promise<SpawnResult> {
+  return await invoke<SpawnResult>("launch_executable", { path });
+}
+
+export async function terminateProcess(pid: number): Promise<void> {
+  return await invoke<void>("terminate_process", { pid });
+}
+
+export async function isProcessRunning(pid: number): Promise<boolean> {
+  return await invoke<boolean>("is_process_running", { pid });
 }

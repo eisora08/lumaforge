@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager};
 use crate::models::steam_appcache_achievements::{
   AchievementsAppSchemaResult, AppAchievementCache, AppAchievementCacheEntry,
   AppAchievementPercentagesEntry, AchievementsAppSchemaEntry, AchievementsAppPercentagesFile,
-  SteamAppcacheAchievement, SteamAppcacheScanResult, SteamAppcacheSchemaEntry,
+  SteamAppcacheAchievement, SteamAppcacheParsedProgress, SteamAppcacheScanResult, SteamAppcacheSchemaEntry,
 };
 
 fn build_client() -> Result<reqwest::blocking::Client, String> {
@@ -357,6 +357,149 @@ fn try_parse_stats_proto(data: &[u8]) -> Result<Vec<SteamAppcacheAchievement>, S
   Ok(achievements)
 }
 
+/// Extract (stat_id, value) pairs from a stats file sub-message using known proto field numbers.
+/// StatValue message: field 1 (tag=8, varint) = stat_id, field 2 (tag=16, varint) = value.
+fn parse_stat_value_from_submsg(data: &[u8]) -> Option<(u32, u32)> {
+  let mut pos = 0;
+  let mut stat_id: Option<u32> = None;
+  let mut value: Option<u32> = None;
+
+  while pos < data.len() {
+    let (tag, p) = read_varint(data, pos)?;
+    pos = p;
+    let fn_num = field_number(tag);
+    let wt = wire_type(tag);
+
+    if wt == 0 {
+      let (val, p) = read_varint(data, pos)?;
+      pos = p;
+      if fn_num == 1 {
+        stat_id = Some(val as u32);
+      } else if fn_num == 2 {
+        value = Some(val as u32);
+      }
+    } else {
+      pos = skip_field(data, pos, wt)?;
+    }
+  }
+
+  match (stat_id, value) {
+    (Some(sid), Some(v)) => Some((sid, v)),
+    _ => None,
+  }
+}
+
+/// Parse the full stats file binary looking for (stat_id, value) pairs.
+/// Returns a map of stat_id → value and a confidence indicator.
+fn try_parse_stats_proto_v2(data: &[u8]) -> Result<(Vec<(u32, u32)>, usize), String> {
+  let sub_msgs = collect_sub_messages(data);
+
+  if sub_msgs.is_empty() {
+    return Err("No protobuf sub-messages found in stats file".to_string());
+  }
+
+  let mut pairs: Vec<(u32, u32)> = Vec::new();
+  for msg in &sub_msgs {
+    if let Some((stat_id, value)) = parse_stat_value_from_submsg(&msg.raw) {
+      if !pairs.iter().any(|(sid, _)| *sid == stat_id) {
+        pairs.push((stat_id, value));
+      }
+    }
+  }
+
+  if pairs.is_empty() {
+    return Err("No stat_id-value pairs found in stats file".to_string());
+  }
+
+  let unique_count = pairs.len();
+  diag_log(format!("Stats proto v2 parsed {} unique stat_id-value pairs", unique_count));
+  Ok((pairs, unique_count))
+}
+
+/// Build matched progress from schema entries and stats stat_id→value map.
+/// Uses bitfield matching when schema entry has `bit`, otherwise checks value directly.
+fn match_progress_from_pairs(
+  schema: &[SteamAppcacheSchemaEntry],
+  pairs: &[(u32, u32)],
+) -> (Vec<SteamAppcacheParsedProgress>, u32, u32) {
+  let mut progress = Vec::new();
+  let mut matched = 0u32;
+  let mut total_with_ids = 0u32;
+
+  for entry in schema {
+    let sid = match entry.stat_id {
+      Some(s) => s,
+      None => continue,
+    };
+    total_with_ids += 1;
+
+    // Find matching stat value
+    if let Some((_, value)) = pairs.iter().find(|(sid2, _)| *sid2 == sid) {
+      matched += 1;
+      let unlocked = match entry.bit {
+        Some(b) => (value & (1u32 << b)) != 0,
+        None => *value != 0,
+      };
+      progress.push(SteamAppcacheParsedProgress {
+        api_name: entry.api_name.clone(),
+        unlocked,
+        stat_id: sid,
+        value: *value,
+      });
+    }
+  }
+
+  (progress, matched, total_with_ids)
+}
+
+/// Determine parser confidence level based on matching results.
+fn determine_confidence(total_with_ids: u32, matched: u32, pairs_count: usize) -> String {
+  if total_with_ids == 0 && pairs_count > 0 {
+    // We found stat values but no schema entries have stat_ids (schema didn't parse them)
+    "low".to_string()
+  } else if total_with_ids == 0 {
+    "none".to_string()
+  } else if matched >= total_with_ids {
+    "high".to_string()
+  } else if matched >= total_with_ids / 2 {
+    "medium".to_string()
+  } else if matched > 0 {
+    "low".to_string()
+  } else {
+    "none".to_string()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Binary inspection utilities
+// ---------------------------------------------------------------------------
+
+/// Format bytes as hex preview (first N bytes, truncated for display).
+#[allow(dead_code)]
+fn hex_preview(data: &[u8], max_len: usize) -> String {
+  let preview = if data.len() > max_len { &data[..max_len] } else { data };
+  let hex: Vec<String> = preview.iter().map(|b| format!("{:02x}", b)).collect();
+  hex.join(" ")
+}
+
+/// Safe read a little-endian u32 from a slice, returning None if out of bounds.
+#[allow(dead_code)]
+fn read_le_u32(data: &[u8], pos: usize) -> Option<u32> {
+  if pos + 4 > data.len() {
+    return None;
+  }
+  Some(u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]))
+}
+
+/// Safe read a little-endian i32 from a slice, returning None if out of bounds.
+#[allow(dead_code)]
+fn read_le_i32(data: &[u8], pos: usize) -> Option<i32> {
+  if pos + 4 > data.len() {
+    return None;
+  }
+  Some(i32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]))
+}
+
 // ---------------------------------------------------------------------------
 // Proto-based parser for UserGameStatsSchema_*.bin
 // ---------------------------------------------------------------------------
@@ -381,6 +524,45 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
     return None;
   }
 
+  // Extract stat_id (field 10 ≈ tag 80, varint) and bit (field 11 ≈ tag 88, varint)
+  let mut stat_id: Option<u32> = None;
+  let mut bit: Option<u32> = None;
+  let mut pos = 0;
+  while pos < data.len() {
+    let (tag, p) = match read_varint(data, pos) {
+      Some(t) => t,
+      None => break,
+    };
+    pos = p;
+    let fn_num = field_number(tag);
+    let wt = wire_type(tag);
+    if wt == 0 {
+      // Varint field
+      let (val, p) = match read_varint(data, pos) {
+        Some(v) => v,
+        None => break,
+      };
+      pos = p;
+      // Field 10 = stat_id (known proto field)
+      if fn_num == 10 && val <= 500 {
+        stat_id = Some(val as u32);
+      }
+      // Field 11 = bit index (known proto field)
+      if fn_num == 11 && val <= 63 {
+        bit = Some(val as u32);
+      }
+    } else {
+      pos = match skip_field(data, pos, wt) {
+        Some(p) => p,
+        None => break,
+      };
+    }
+  }
+
+  if stat_id.is_some() || bit.is_some() {
+    diag_log(format!("Schema entry: api_name={}, stat_id={:?}, bit={:?}", api_name, stat_id, bit));
+  }
+
   Some(SteamAppcacheSchemaEntry {
     api_name,
     display_name,
@@ -388,6 +570,8 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
     icon: None,
     icon_gray: None,
     hidden: None,
+    stat_id,
+    bit,
   })
 }
 
@@ -538,6 +722,8 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
       icon: None,
       icon_gray: None,
       hidden: None,
+      stat_id: None,
+      bit: None,
     });
   }
 
@@ -638,6 +824,8 @@ pub fn scan_steam_appcache_achievements(
       schema_file_modified: None,
       parsed_achievements: vec![],
       parsed_schema: vec![],
+      parsed_progress: vec![],
+      parser_confidence: "none".to_string(),
       progress_available: false,
       error_reason: Some("stats-directory-not-found".to_string()),
     });
@@ -652,25 +840,31 @@ pub fn scan_steam_appcache_achievements(
     schema_file_modified: None,
     parsed_achievements: vec![],
     parsed_schema: vec![],
+    parsed_progress: vec![],
+    parser_confidence: "none".to_string(),
     progress_available: false,
     error_reason: None,
   };
 
+  // Track the stats file path for v2 binary progress parsing
+  let mut stats_path_used: Option<PathBuf> = None;
+
   // --- Stats file ---
   if let Some(ref acc_id) = steam_account_id {
-    let stats_path = stats_dir.join(format!("UserGameStats_{}_{}.bin", acc_id, app_id));
-    if stats_path.is_file() {
+    let stats_path_candidate = stats_dir.join(format!("UserGameStats_{}_{}.bin", acc_id, app_id));
+    if stats_path_candidate.is_file() {
       result.stats_file_found = true;
-      let meta = fs::metadata(&stats_path).ok();
+      stats_path_used = Some(stats_path_candidate.clone());
+      let meta = fs::metadata(&stats_path_candidate).ok();
       result.stats_file_size = meta.as_ref().map(|m| m.len());
       result.stats_file_modified = meta
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
 
-      diag_log(format!("Stats file FOUND: {} ({} bytes)", stats_path.display(), result.stats_file_size.unwrap_or(0)));
+      diag_log(format!("Stats file FOUND: {} ({} bytes)", stats_path_candidate.display(), result.stats_file_size.unwrap_or(0)));
 
-      match read_and_parse_stats(&stats_path) {
+      match read_and_parse_stats(&stats_path_candidate) {
         Ok(achievements) => {
           let unlocked_count = achievements.iter().filter(|a| a.unlocked).count();
           result.parsed_achievements = achievements;
@@ -681,7 +875,7 @@ pub fn scan_steam_appcache_achievements(
         }
       }
     } else {
-      diag_log(format!("Stats file NOT FOUND: {}", stats_path.display()));
+      diag_log(format!("Stats file NOT FOUND: no candidate for account_id"));
     }
   } else {
     // No account_id — discover candidates
@@ -712,6 +906,7 @@ pub fn scan_steam_appcache_achievements(
 
       if let Some((best, mod_time)) = candidates.first() {
         result.stats_file_found = true;
+        stats_path_used = Some(best.clone());
         let meta = fs::metadata(best).ok();
         result.stats_file_size = meta.as_ref().map(|m| m.len());
         result.stats_file_modified = Some(*mod_time);
@@ -758,21 +953,61 @@ pub fn scan_steam_appcache_achievements(
     diag_log(format!("Schema file NOT FOUND: {}", schema_path.display()));
   }
 
-  // Determine progress_available
-  result.progress_available = result.parsed_achievements.iter().any(|a| a.unlocked)
-    || (result.parsed_achievements.len() > 0
-      && result
-        .parsed_achievements
-        .iter()
-        .any(|a| a.unlock_time.is_some()));
+  // --- v2 binary progress parser: match schema stat_id→bit against stats values ---
+  if result.parsed_schema.iter().any(|e| e.stat_id.is_some()) {
+    if let Some(ref stats_path) = stats_path_used {
+      match fs::read(stats_path) {
+        Ok(raw_data) => {
+          diag_log(format!("Running v2 stats parser on {} ({} bytes)", stats_path.display(), raw_data.len()));
+          match try_parse_stats_proto_v2(&raw_data) {
+            Ok((pairs, count)) => {
+              let (matched_progress, matched, total_with_ids) = match_progress_from_pairs(&result.parsed_schema, &pairs);
+              let confidence = determine_confidence(total_with_ids, matched, count);
+              result.parsed_progress = matched_progress;
+              result.parser_confidence = confidence.clone();
+              diag_log(format!(
+                "v2 parser: {} pairs, {} schema with ids, {} matched, confidence={}",
+                count, total_with_ids, matched, confidence
+              ));
+              // If confidence is medium or high, use v2 progress
+              if (confidence == "high" || confidence == "medium") && !result.parsed_progress.is_empty() {
+                result.progress_available = true;
+                diag_log("v2 parser achieved confidence >= medium — marking progress_available");
+              }
+            }
+            Err(e) => {
+              diag_log(format!("v2 stats parser failed: {}", e));
+            }
+          }
+        }
+        Err(e) => {
+          diag_log(format!("Failed to re-read stats file for v2 parser: {}", e));
+        }
+      }
+    }
+  } else {
+    diag_log("No schema entries with stat_id found — v2 parser not applicable");
+  }
+
+  // Fallback: if v2 didn't set progress, check v1 results
+  if !result.progress_available {
+    result.progress_available = result.parsed_achievements.iter().any(|a| a.unlocked)
+      || (result.parsed_achievements.len() > 0
+        && result
+          .parsed_achievements
+          .iter()
+          .any(|a| a.unlock_time.is_some()));
+  }
 
   diag_log(format!(
-    "=== Scan done: stats={}, schema={}, achievements={}, schema_entries={}, progress={}, error={:?} ===",
+    "=== Scan done: stats={}, schema={}, achievements={}, schema_entries={}, progress={}, parsed_progress={}, confidence={}, error={:?} ===",
     result.stats_file_found,
     result.schema_file_found,
     result.parsed_achievements.len(),
     result.parsed_schema.len(),
     result.progress_available,
+    result.parsed_progress.len(),
+    result.parser_confidence,
     result.error_reason
   ));
 
@@ -804,7 +1039,7 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
 
   // Write summary.json
   let mut summary = data.summary;
-  summary.cache_version = Some(5);
+  summary.cache_version = Some(6);
   let summary_path = cache_dir.join("summary.json");
   let summary_content =
     serde_json::to_string_pretty(&summary).map_err(|e| format!("Failed to serialize summary: {}", e))?;
@@ -934,14 +1169,29 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
 
   let schema_dir = PathBuf::from(&path);
   if !schema_dir.is_dir() {
-    return Err(format!("Schema folder not found: {}", schema_dir.display()));
+    return Err(format!("[AchievementsSchema] Schema folder not found: {}", schema_dir.display()));
   }
 
-  // Read achievements.json
-  let achievements_path = schema_dir.join("achievements.json");
-  if !achievements_path.is_file() {
-    return Err(format!("achievements.json not found in: {}", schema_dir.display()));
-  }
+  // Support two layouts:
+  // 1. Direct: {path}/achievements.json
+  // 2. App subdir: {path}/{app_id}/achievements.json
+  let base_dir: PathBuf;
+  let achievements_path = if schema_dir.join("achievements.json").is_file() {
+    base_dir = schema_dir.clone();
+    schema_dir.join("achievements.json")
+  } else {
+    let sub_dir = schema_dir.join(app_id.to_string());
+    let sub_path = sub_dir.join("achievements.json");
+    if sub_path.is_file() {
+      base_dir = sub_dir.clone();
+      diag_log(format!("[AchievementsSchema] Found in app subdirectory: {}", sub_path.display()));
+      sub_path
+    } else {
+      return Err(format!("[AchievementsSchema] achievements.json not found in {} or {}", schema_dir.display(), sub_dir.display()));
+    }
+  };
+
+  diag_log(format!("[AchievementsSchema] Reading achievements from: {}", achievements_path.display()));
 
   let raw_entries: Vec<AchievementsAppSchemaEntry> = serde_json::from_str(
     &fs::read_to_string(&achievements_path)
@@ -949,10 +1199,10 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
   )
   .map_err(|e| format!("Failed to parse achievements.json: {}", e))?;
 
-  diag_log(format!("Read {} entries from achievements.json", raw_entries.len()));
+  diag_log(format!("[AchievementsSchema] Parsed {} entries", raw_entries.len()));
 
-  // Read achievementpercentages.json (optional)
-  let pcts_path = schema_dir.join("achievementpercentages.json");
+  // Read achievementpercentages.json (optional) from same base_dir
+  let pcts_path = base_dir.join("achievementpercentages.json");
   let pct_map: std::collections::HashMap<String, f64> = if pcts_path.is_file() {
     match serde_json::from_str::<AchievementsAppPercentagesFile>(
       &fs::read_to_string(&pcts_path).map_err(|e| format!("Failed to read achievementpercentages.json: {}", e))?,
@@ -985,11 +1235,11 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
       let description = resolve_localized(&entry.description, &entry.name);
 
       let icon_url = entry.icon_path.and_then(|p| {
-        let full_path = schema_dir.join(&p);
+        let full_path = base_dir.join(&p);
         embed_image_as_data_url(&full_path)
       });
       let icon_gray_url = entry.icon_gray_path.and_then(|p| {
-        let full_path = schema_dir.join(&p);
+        let full_path = base_dir.join(&p);
         embed_image_as_data_url(&full_path)
       });
 
@@ -1019,9 +1269,10 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
     .collect();
 
   diag_log(format!(
-    "Normalized {} achievements, {} percentages from app schema",
+    "[AchievementsSchema] Normalized {} achievements, {} percentages, {} icons embedded",
     achievements.len(),
-    achievement_percentages.len()
+    achievement_percentages.len(),
+    achievements.iter().filter(|a| a.icon_url.is_some() || a.icon_gray_url.is_some()).count(),
   ));
 
   Ok(AchievementsAppSchemaResult {

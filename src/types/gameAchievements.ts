@@ -8,6 +8,8 @@ export type GameAchievement = {
   unlocked: boolean;
   unlockTime?: number;
   rarityPercent?: number;
+  statId?: number;
+  bit?: number;
 };
 
 export type GameAchievementsSummary = {

@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
-  launchSteamApp,
   installSteamApp,
+  launchSteamApp,
+  launchExecutable,
+  terminateProcess,
+  isProcessRunning,
 } from "../services/tauri";
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
@@ -20,6 +23,17 @@ import {
   showWarning,
 } from "../components/toast/GameToast";
 
+type GameLaunchState = "idle" | "launching" | "running" | "stopping" | "error";
+
+type GameLaunchInfo = {
+  state: GameLaunchState;
+  pid?: number;
+  launchedAt?: number;
+  error?: string;
+};
+
+const POLL_INTERVAL_MS = 5000;
+
 type Props = {
   onBack?: () => void;
   onNavigate?: (page: AppPage) => void;
@@ -33,6 +47,149 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [artwork, setArtwork] = useState<SgdbArtworkData | null>(null);
   const currentRequest = useRef<number | null>(null);
   const artworkRequest = useRef<number | null>(null);
+
+  // --- Launch state management (per-game, resets when selectedGame changes) ---
+  const [launchInfo, setLaunchInfo] = useState<GameLaunchInfo>({ state: "idle" });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cancelledRef = useRef(false);
+
+  // Reset launch state when the selected game changes
+  useEffect(() => {
+    setLaunchInfo({ state: "idle" });
+    cancelledRef.current = false;
+    if (pollRef.current !== null) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    // Cleanup on unmount
+    return () => {
+      cancelledRef.current = true;
+      if (pollRef.current !== null) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [selectedGame?.id]);
+
+  // Poll process lifecycle while running with PID
+  useEffect(() => {
+    if (launchInfo.state === "running" && launchInfo.pid != null) {
+      if (pollRef.current !== null) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        try {
+          const running = await isProcessRunning(launchInfo.pid!);
+          if (!running && !cancelledRef.current) {
+            console.debug("[Launch] process exited, resetting state");
+            setLaunchInfo({ state: "idle" });
+          }
+        } catch {
+          // Ignore poll errors
+        }
+      }, POLL_INTERVAL_MS);
+    } else {
+      if (pollRef.current !== null) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    }
+    return () => {
+      if (pollRef.current !== null) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [launchInfo.state, launchInfo.pid]);
+
+  // --- Launch actions ---
+  async function launchGame(game: LibraryGame) {
+    console.debug("[Launch] clicked", {
+      gameId: game.id,
+      title: game.title,
+      appId: game.appId,
+      executablePath: game.executablePath,
+      state: launchInfo.state,
+    });
+
+    if (cancelledRef.current) return;
+    setLaunchInfo({ state: "launching", launchedAt: Date.now() });
+
+    try {
+      if (game.source === "steam" && game.appId) {
+        console.debug("[Launch] using steam url", `steam://run/${game.appId}`);
+        await launchSteamApp(Number(game.appId));
+        console.debug("[Launch] steam dispatch success");
+        // Steam games: soft running state (no PID tracking available)
+        if (!cancelledRef.current) {
+          setLaunchInfo({ state: "running", launchedAt: Date.now() });
+        }
+      } else if (game.source === "local" && game.executablePath) {
+        console.debug("[Launch] using local exe", game.executablePath);
+        const result = await launchExecutable(game.executablePath);
+        console.debug("[Launch] local exe result", result);
+        if (!cancelledRef.current) {
+          setLaunchInfo({
+            state: "running",
+            pid: result.pid,
+            launchedAt: Date.now(),
+          });
+        }
+      } else {
+        console.warn("[Launch] cannot determine launch method for game", game.id);
+        setLaunchInfo({ state: "error", error: "Cannot launch this game" });
+      }
+    } catch (err) {
+      console.warn("[Launch] failed", err);
+      if (!cancelledRef.current) {
+        setLaunchInfo({ state: "error", error: String(err) });
+        setTimeout(() => {
+          if (!cancelledRef.current) {
+            setLaunchInfo({ state: "idle" });
+          }
+        }, 2000);
+      }
+    }
+  }
+
+  async function cancelLaunch() {
+    const current = launchInfo;
+    if (current.state !== "launching") return;
+
+    console.debug("[Launch] cancel clicked, pid=", current.pid);
+
+    if (current.pid != null) {
+      try {
+        await terminateProcess(current.pid);
+      } catch {
+        // Ignore termination errors during cancel
+      }
+    }
+    cancelledRef.current = false;
+    setLaunchInfo({ state: "idle" });
+  }
+
+  async function stopGame() {
+    const current = launchInfo;
+    if (current.state !== "running") return;
+
+    console.debug("[Launch] stop clicked, pid=", current.pid);
+
+    setLaunchInfo({ ...current, state: "stopping" });
+
+    if (current.pid != null) {
+      try {
+        await terminateProcess(current.pid);
+        console.debug("[Launch] process terminated");
+        setLaunchInfo({ state: "idle" });
+      } catch (err) {
+        console.warn("[Launch] terminate failed", err);
+        setLaunchInfo({ state: "running", pid: current.pid, error: String(err) });
+      }
+    } else {
+      // Steam game with no PID — can't safely kill
+      console.debug("[Launch] no PID — cannot stop Steam game safely");
+      setLaunchInfo({ state: "running", error: "Cannot close Steam game safely" });
+    }
+  }
 
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
   useEffect(() => {
@@ -138,13 +295,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
-      try {
-        await launchSteamApp(Number(game.appId));
-      } catch (err) {
-        showError(String(err), { title: "Error" });
-      }
+      await launchGame(game);
     } else if (game.source === "local" && game.executablePath) {
-      showWarning("Local executable launching is not available yet.", { title: "Not available" });
+      await launchGame(game);
     } else {
       showWarning("This game cannot be launched yet.", { title: "Not available" });
     }
@@ -203,6 +356,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       onBack={handleBack}
       onRefreshArtwork={handleRefreshArtwork}
       onNavigate={onNavigate}
+      launchInfo={launchInfo}
+      onCancelLaunch={cancelLaunch}
+      onStopGame={stopGame}
     />
   );
 }

@@ -15,6 +15,18 @@ pub struct SteamAppcacheSchemaEntry {
   pub icon: Option<String>,
   pub icon_gray: Option<String>,
   pub hidden: Option<bool>,
+  #[serde(default)]
+  pub stat_id: Option<u32>,
+  #[serde(default)]
+  pub bit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SteamAppcacheParsedProgress {
+  pub api_name: String,
+  pub unlocked: bool,
+  pub stat_id: u32,
+  pub value: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +39,8 @@ pub struct SteamAppcacheScanResult {
   pub schema_file_modified: Option<u64>,
   pub parsed_achievements: Vec<SteamAppcacheAchievement>,
   pub parsed_schema: Vec<SteamAppcacheSchemaEntry>,
+  pub parsed_progress: Vec<SteamAppcacheParsedProgress>,
+  pub parser_confidence: String,
   pub progress_available: bool,
   pub error_reason: Option<String>,
 }

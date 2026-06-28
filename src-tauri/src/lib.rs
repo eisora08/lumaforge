@@ -44,6 +44,9 @@ pub fn run() {
             commands::steam_achievements::read_achievements_app_schema_folder,
             commands::game::scan_local_games,
             commands::game::scan_local_game_folders,
+            commands::process::launch_executable,
+            commands::process::terminate_process,
+            commands::process::is_process_running,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

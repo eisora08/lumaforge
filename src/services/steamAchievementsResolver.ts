@@ -8,14 +8,11 @@ import {
   writeAchievementCache,
   readAchievementsAppSchemaFolder,
 } from "./tauri";
-import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData } from "./tauri";
+import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, SteamAppcacheSchemaEntry, SteamAppcacheParsedProgress } from "./tauri";
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const SCHEMA_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days for schema-only cache
-const ACHIEVEMENT_CACHE_VERSION = 5;
-
-// Future: implement real UserGameStats_{AccountID}_{AppID}.bin parser using statId/bit from schema.
-// Do not fake it now. Do not guess bitfields unless parser is proven.
+const ACHIEVEMENT_CACHE_VERSION = 6;
 
 function isLocalizationToken(value: string): boolean {
   const v = value.trim();
@@ -241,11 +238,23 @@ function buildSchemaOnlySummary(
 function buildAppcacheSummary(
   appId: string,
   localAchievements: { api_name: string; unlocked: boolean; unlock_time?: number }[],
-  schemaEntries: { api_name: string; display_name?: string }[],
+  schemaEntries: SteamAppcacheSchemaEntry[],
   progressAvailable: boolean,
+  parsedProgress?: SteamAppcacheParsedProgress[],
+  parserConfidence?: string,
 ): GameAchievementsSummary {
   // Filter out schema entries with token-only display names (safety net for Rust side)
   const cleanSchema = schemaEntries.filter((s) => !s.display_name || hasValidDisplayName(s.display_name));
+
+  // Determine if v2 binary parser data should be used
+  const useV2Progress = parserConfidence === "high" || parserConfidence === "medium";
+
+  const v2ProgressMap: Map<string, SteamAppcacheParsedProgress> = new Map();
+  if (useV2Progress && parsedProgress) {
+    for (const p of parsedProgress) {
+      v2ProgressMap.set(p.api_name, p);
+    }
+  }
 
   const apiNameSet = new Set<string>();
   for (const a of localAchievements) apiNameSet.add(a.api_name);
@@ -255,13 +264,20 @@ function buildAppcacheSummary(
   for (const apiName of apiNameSet) {
     const local = localAchievements.find((a) => a.api_name === apiName);
     const schema = cleanSchema.find((s) => s.api_name === apiName);
+    const v2p = v2ProgressMap.get(apiName);
+
+    // Use v2 binary progress when available, otherwise fall back to v1 text parser
+    const unlocked = v2p !== undefined ? v2p.unlocked : (local?.unlocked ?? false);
+    const unlockTime = local?.unlock_time ? local.unlock_time * 1000 : undefined;
 
     achievements.push({
       id: apiName,
       apiName,
       name: schema?.display_name ?? apiName,
-      unlocked: local?.unlocked ?? false,
-      unlockTime: local?.unlock_time ? local.unlock_time * 1000 : undefined,
+      unlocked,
+      unlockTime,
+      statId: schema?.stat_id,
+      bit: schema?.bit,
     });
   }
 
@@ -507,6 +523,8 @@ export async function resolveSteamAchievements(params: {
           appcacheResult.parsed_achievements,
           appcacheResult.parsed_schema,
           appcacheResult.progress_available,
+          appcacheResult.parsed_progress,
+          appcacheResult.parser_confidence,
         );
         console.debug(`[steamAchievementsResolver] App ${appIdStr}: appcache gave ${appcacheSummary.achievements.length} achievements, progressAvailable=${appcacheSummary.progressAvailable}`);
       } else if (appcacheResult.stats_file_found || appcacheResult.schema_file_found) {
@@ -516,6 +534,35 @@ export async function resolveSteamAchievements(params: {
       }
     } catch (err) {
       console.warn(`[steamAchievementsResolver] App ${appIdStr}: local appcache scan failed:`, err);
+    }
+  }
+
+  // 4b. If appcache gave no valid schema, try Achievements app schema path as fallback
+  if (!appcacheSummary && params.achievementSchemaPath) {
+    console.debug(`[steamAchievementsResolver] App ${appIdStr}: appcache had no valid schema, trying Achievements app schema folder...`);
+    try {
+      const appSchema = await readAchievementsAppSchemaFolder(params.achievementSchemaPath, appIdNum);
+      if (appSchema.achievements.length > 0) {
+        // Convert to schemaMap for existing buildSchemaOnlySummary
+        const schemaMap: Map<string, SchemaAchievement> = new Map();
+        for (const a of appSchema.achievements) {
+          schemaMap.set(a.api_name, {
+            name: a.api_name,
+            displayName: a.name,
+            description: a.description,
+            icon: a.icon_url,
+            icongray: a.icon_gray_url,
+          });
+          // Also merge percentages from app schema
+          if (a.rarity_percent != null && globalPctMap[a.api_name] == null) {
+            globalPctMap[a.api_name] = a.rarity_percent;
+          }
+        }
+        appcacheSummary = buildSchemaOnlySummary(appIdStr, schemaMap, globalPctMap);
+        console.debug(`[steamAchievementsResolver] App ${appIdStr}: loaded ${appSchema.achievements.length} achievements from Achievements app schema folder`);
+      }
+    } catch (err) {
+      console.debug(`[steamAchievementsResolver] App ${appIdStr}: Achievements app schema folder failed:`, err);
     }
   }
 
