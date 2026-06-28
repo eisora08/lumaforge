@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Gamepad2 } from "lucide-react";
+import { ChevronRight, Gamepad2 } from "lucide-react";
 
 import type { PackageGame } from "../../types/package";
 
@@ -25,14 +25,15 @@ const CATEGORY_FILTERS = [
   { id: "Featured", label: "Featured" },
   { id: "DLC", label: "DLC" },
   { id: "Installed", label: "Installed" },
+  { id: "Store", label: "Store" },
 ];
 
 const CATEGORY_STYLES: Record<string, string> = {
-  "Lua Ready": "border-(--color-accent)/25 bg-(--color-accent)/10 text-(--color-accent)",
-  Featured: "border-yellow-500/25 bg-yellow-500/10 text-yellow-300",
-  DLC: "border-blue-500/25 bg-blue-500/10 text-blue-300",
-  Installed: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
-  Store: "border-purple-500/25 bg-purple-500/10 text-purple-300",
+  "Lua Ready": "border-(--color-accent)/20 bg-(--color-accent)/8 text-(--color-accent)",
+  Featured: "border-yellow-500/20 bg-yellow-500/8 text-yellow-300",
+  DLC: "border-blue-500/20 bg-blue-500/8 text-blue-300",
+  Installed: "border-emerald-500/20 bg-emerald-500/8 text-emerald-300",
+  Store: "border-purple-400/20 bg-purple-400/8 text-purple-300",
 };
 
 const GROUP_ORDER = ["Today", "This Week", "Earlier"] as const;
@@ -53,7 +54,7 @@ export default function StoreNewsFeed({
   })).filter((g) => g.items.length > 0);
 
   return (
-    <section className="space-y-5">
+    <section className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-(--color-text)">News</h2>
         <p className="mt-1 text-sm text-(--color-muted)">
@@ -67,10 +68,10 @@ export default function StoreNewsFeed({
             key={filter.label}
             type="button"
             onClick={() => setActiveCategory(filter.id)}
-            className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition ${
+            className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
               activeCategory === filter.id
                 ? "bg-(--color-accent) text-black"
-                : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
             }`}
           >
             {filter.label}
@@ -79,20 +80,22 @@ export default function StoreNewsFeed({
       </div>
 
       {grouped.length === 0 ? (
-        <section className="rounded-2xl border border-(--surface-active-border) bg-white/5 p-10 text-center">
-          <Gamepad2 className="mx-auto h-10 w-10 text-(--color-muted)" />
+        <section className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/[0.04]">
+            <Gamepad2 className="h-7 w-7 text-(--color-muted)" />
+          </div>
           <h3 className="mt-4 font-semibold text-(--color-text)">
             No news yet
           </h3>
-          <p className="mt-2 text-sm text-(--color-muted)">
+          <p className="mt-1.5 text-sm text-(--color-muted)">
             Store updates and supported games will appear here.
           </p>
         </section>
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-10">
           {grouped.map(({ group, items: groupItems }) => (
             <div key={group}>
-              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+              <h3 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-(--color-muted)">
                 {group}
               </h3>
 
@@ -135,43 +138,45 @@ function NewsCard({ item, onOpenGame }: NewsCardProps) {
           onOpenGame(item.game);
         }
       }}
-      className={`overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition ${
+      className={`group overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/[0.03] transition ${
         isClickable
-          ? "cursor-pointer hover:bg-white/[0.07]"
+          ? "cursor-pointer hover:border-white/15 hover:bg-white/[0.06]"
           : ""
       }`}
     >
-      <div className="flex flex-col sm:flex-row">
+      <div className={`flex flex-col sm:flex-row ${!item.imageUrl ? "sm:items-center" : ""}`}>
         {item.imageUrl && (
-          <div className="aspect-video w-full shrink-0 overflow-hidden bg-white/5 sm:h-auto sm:w-44 sm:aspect-auto">
+          <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-white/[0.04] sm:h-[160px] sm:w-56 sm:aspect-auto">
             <img
               src={item.imageUrl}
               alt={item.title}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
               loading="lazy"
             />
           </div>
         )}
 
-        <div className="flex flex-1 flex-col justify-center p-4">
-          <span
-            className={`mb-2 inline-flex w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium ${CATEGORY_STYLES[item.category] || CATEGORY_STYLES.Store}`}
-          >
-            {item.category}
-          </span>
+        <div className={`flex flex-1 flex-col justify-center ${item.imageUrl ? "p-4 sm:p-5" : "px-4 py-5"}`}>
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium leading-normal ${CATEGORY_STYLES[item.category] || CATEGORY_STYLES.Store}`}
+            >
+              {item.category}
+            </span>
+          </div>
 
-          <h3 className="text-sm font-semibold text-(--color-text)">
+          <h3 className="mt-2 text-sm font-semibold leading-snug text-(--color-text)">
             {item.title}
           </h3>
 
-          <p className="mt-1 text-xs leading-relaxed text-(--color-muted)">
+          <p className="mt-1.5 text-xs leading-relaxed text-(--color-muted) line-clamp-2">
             {item.description}
           </p>
 
           {isClickable && (
-            <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-(--color-accent)">
-              <ExternalLink className="h-3 w-3" />
+            <span className="mt-3 inline-flex items-center gap-0.5 text-xs font-medium text-(--color-accent) opacity-0 transition group-hover:opacity-100">
               View Details
+              <ChevronRight className="h-3.5 w-3.5" />
             </span>
           )}
         </div>
