@@ -1,33 +1,23 @@
-import {
-  CircleCheck,
-  Clock,
-  Download,
-  Info,
-} from "lucide-react";
+import { Activity, Clock, Info } from "lucide-react";
+import { useGameActivity } from "../../context/GameActivityContext";
 
-const activities = [
-  {
-    title: "Sistema iniciado",
-    description: "LumaForge está listo para detectar Steam.",
-    icon: CircleCheck,
-    color: "text-emerald-400",
-  },
-  {
-    title: "Esperando API",
-    description:
-      "La conexión con el catálogo remoto aún no ha sido configurada.",
-    icon: Download,
-    color: "text-orange-400",
-  },
-  {
-    title: "Sin instalaciones recientes",
-    description: "Los paquetes instalados aparecerán en este historial.",
-    icon: Clock,
-    color: "text-(--color-muted)",
-  },
-];
+function formatTimestamp(ts: number) {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
 
 export default function ActivityFeed() {
+  const { activities } = useGameActivity();
+  const recent = activities.slice(0, 5);
+
   return (
     <section className="lf-surface rounded-2xl border p-5">
       <div className="mb-4 flex items-center justify-between">
@@ -38,29 +28,41 @@ export default function ActivityFeed() {
         <Info className="h-4 w-4 text-(--color-muted)" />
       </div>
 
-      <div className="space-y-4">
-        {activities.map((activity) => {
-          const Icon = activity.icon;
-
-          return (
-            <div key={activity.title} className="flex gap-3">
+      {recent.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 py-6 text-center">
+          <Clock className="h-8 w-8 text-(--color-muted)" />
+          <p className="text-sm text-(--color-muted)">
+            Sin actividad reciente
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {recent.map((activity) => (
+            <div key={activity.id} className="flex gap-3">
               <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5">
-                <Icon className={`h-4 w-4 ${activity.color}`} />
+                <Activity className="h-4 w-4 text-(--color-muted)" />
               </div>
 
-              <div className="min-w-0">
-                <h3 className="text-sm font-medium text-(--color-text)">
-                  {activity.title}
-                </h3>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-sm font-medium text-(--color-text)">
+                    {activity.title}
+                  </h3>
+                  <span className="shrink-0 text-[11px] text-(--color-muted)">
+                    {formatTimestamp(activity.createdAt)}
+                  </span>
+                </div>
 
-                <p className="mt-1 text-xs leading-5 text-(--color-muted)">
-                  {activity.description}
-                </p>
+                {activity.description && (
+                  <p className="mt-1 text-xs leading-5 text-(--color-muted)">
+                    {activity.description}
+                  </p>
+                )}
               </div>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

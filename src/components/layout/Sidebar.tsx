@@ -1,6 +1,7 @@
 import type { ElementType } from "react";
 
 import {
+  Activity,
   Award,
   Store,
   Download,
@@ -37,6 +38,7 @@ const mainItems: SidebarItem[] = [
   { label: "Biblioteca", page: "library", icon: Library },
   { label: "Tienda", page: "store", icon: Store },
   { label: "Descargas", page: "downloads", icon: Download },
+  { label: "Actividad", page: "activity", icon: Activity },
   { label: "Logros", page: "achievements", icon: Award },
 ];
 

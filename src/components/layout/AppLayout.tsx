@@ -3,6 +3,7 @@ import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import { SearchProvider } from "../../context/SearchContext";
 import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
+import { GameActivityProvider } from "../../context/GameActivityContext";
 import { AppPage } from "../../types/navigation";
 
 type AppLayoutProps = {
@@ -24,6 +25,7 @@ export default function AppLayout({
       <div className="lf-backdrop" />
 
       <LibraryGamesProvider>
+        <GameActivityProvider>
         <div className="relative z-10 flex h-screen w-full">
           <Sidebar
             isOpen={isSidebarOpen}
@@ -48,6 +50,7 @@ export default function AppLayout({
             </SearchProvider>
           </div>
         </div>
+        </GameActivityProvider>
       </LibraryGamesProvider>
     </div>
   );
