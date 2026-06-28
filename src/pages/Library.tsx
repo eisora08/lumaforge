@@ -20,6 +20,7 @@ import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
   launchSteamApp,
   installSteamApp,
+  deleteLuaScript,
   scanInstalledLuaScripts,
   computeFileHash,
   downloadAndInstallPackage,
@@ -213,6 +214,23 @@ export default function LibraryPage({ onNavigate }: Props) {
       }
     } else {
       showWarning("This game cannot be installed through Steam because it has no AppID.", { title: "Not available" });
+    }
+  }
+
+  async function handleDeleteScript(game: LibraryGame) {
+    const script = game.luaScripts[0];
+    if (!script) {
+      showWarning("No Lua script to delete.", { title: "No script" });
+      return;
+    }
+    if (!window.confirm(`Delete Lua script "${script.file_name}" for ${game.title}?`)) return;
+    try {
+      await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
+      showSuccess("Lua script deleted.", { title: "Deleted" });
+      await scanLuaScripts();
+      await refresh();
+    } catch (err) {
+      showError(String(err), { title: "Error" });
     }
   }
 
@@ -414,6 +432,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                           onSelect={(g) => handleOpenGame(g)}
                           onPlay={handlePlay}
                           onInstall={handleInstall}
+                          onDeleteScript={handleDeleteScript}
                         />
                       ))}
                     </div>

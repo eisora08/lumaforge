@@ -1,5 +1,7 @@
 import { useState } from "react";
 import {
+  Eye,
+  EyeOff,
   Palette,
   Globe,
   FolderCog,
@@ -62,6 +64,7 @@ export default function Settings() {
   } = useSettings();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>("paths");
+  const [showSgdbKey, setShowSgdbKey] = useState(false);
   const [newScanFolder, setNewScanFolder] = useState("");
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
@@ -342,12 +345,33 @@ export default function Settings() {
                 SteamGridDB Artwork
               </div>
 
-              <SettingsInput
-                label="API Key (optional)"
-                description="Used to fetch native poster, hero and logo artwork for Library cards."
-                value={settings.steamGridDbApiKey}
-                onChange={(value) => updateSetting("steamGridDbApiKey", value)}
-              />
+              <label className="block">
+                <div className="mb-2">
+                  <p className="text-sm font-medium text-(--color-text)">
+                    API Key (optional)
+                  </p>
+                  <p className="mt-1 text-xs text-(--color-muted)">
+                    Used to fetch native poster, hero and logo artwork for Library cards.
+                  </p>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showSgdbKey ? "text" : "password"}
+                    value={settings.steamGridDbApiKey}
+                    onChange={(e) => updateSetting("steamGridDbApiKey", e.target.value)}
+                    className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                    placeholder="Enter your SteamGridDB API key"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSgdbKey(!showSgdbKey)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                    tabIndex={-1}
+                  >
+                    {showSgdbKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </label>
 
               <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
                 <div className="space-y-0.5">

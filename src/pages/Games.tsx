@@ -10,17 +10,35 @@ import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
 
 import { useLibraryGames } from "../context/LibraryGamesContext";
-import { launchSteamApp, installSteamApp } from "../services/tauri";
+import { useSettings } from "../context/SettingsContext";
+import { launchSteamApp, installSteamApp, deleteLuaScript } from "../services/tauri";
 
 import type { LibraryGame } from "../types/libraryGame";
 
-import { showError, showWarning } from "../components/toast/GameToast";
+import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
   const { games, loading, setSelectedGame, refresh } = useLibraryGames();
+  const { settings } = useSettings();
 
   const [filter, setFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
+
+  async function handleDeleteScript(game: LibraryGame) {
+    const script = game.luaScripts[0];
+    if (!script) {
+      showWarning("No Lua script to delete.", { title: "No script" });
+      return;
+    }
+    if (!window.confirm(`Delete Lua script "${script.file_name}" for ${game.title}?`)) return;
+    try {
+      await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
+      showSuccess("Lua script deleted.", { title: "Deleted" });
+      await refresh();
+    } catch (err) {
+      showError(String(err), { title: "Error" });
+    }
+  }
 
   const filteredGames = useMemo(() => {
     const wukong = games.find((g) => g.appId === "2358720");
@@ -146,6 +164,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                     onSelect={(g) => { setSelectedGame(g); onNavigate?.("library-game-detail"); }}
                     onPlay={handlePlay}
                     onInstall={handleInstall}
+                    onDeleteScript={handleDeleteScript}
                   />
                 ))}
               </div>

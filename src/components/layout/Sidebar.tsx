@@ -4,6 +4,7 @@ import {
   Award,
   Store,
   Download,
+  Library,
   Gamepad2,
   Home,
   Menu,
@@ -34,7 +35,7 @@ type SidebarItem = {
 
 const mainItems: SidebarItem[] = [
   { label: "Inicio", page: "home", icon: Home },
-  { label: "Biblioteca", page: "library", icon: Gamepad2 },
+  { label: "Biblioteca", page: "library", icon: Library },
   { label: "Tienda", page: "store", icon: Store },
   { label: "Descargas", page: "downloads", icon: Download },
   { label: "Logros", page: "achievements", icon: Award },

@@ -3,7 +3,10 @@ import { Search } from "lucide-react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import type { LibraryGame } from "../../types/libraryGame";
+import {
+  Gamepad2,
 
+} from "lucide-react";
 type Props = {
   onOpenGame?: () => void;
 };
@@ -48,7 +51,8 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
   return (
     <div className="flex flex-col">
       <div className="mb-2 flex items-center justify-between px-1">
-        <span className="text-xs font-bold text-(--color-text)">Mi Biblioteca</span>
+         <Gamepad2 className="h-4.5 w-4.5" />
+        <span className="text-xs font-bold text-(--color-text)">Juegos</span>
         <span className="text-[10px] text-(--color-muted)">{installed.length} games</span>
       </div>
 
