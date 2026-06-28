@@ -5,6 +5,7 @@ import type { PackageGame, PackageSource } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
+import type { StoreArtwork } from "../../types/storeArtwork";
 
 import { openExternalUrl } from "../../services/externalLinks";
 import {
@@ -31,6 +32,7 @@ type StoreGameDetailsPageProps = {
   game: PackageGame;
   metadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
+  artwork?: StoreArtwork;
   installStatus?: PackageInstallStatus;
   moreLikeThisGames?: StoreMoreLikeThisGame[];
   selectedSource?: PackageSource | null;
@@ -40,8 +42,14 @@ type StoreGameDetailsPageProps = {
   onSelectSourceKey?: (sourceKey: string) => void;
 };
 
-function getBestImage(game: PackageGame, metadata?: SteamAppMetadata) {
+function getBestImage(
+  game: PackageGame,
+  metadata?: SteamAppMetadata,
+  artwork?: StoreArtwork
+) {
   return (
+    artwork?.sgdbHeroUrl ||
+    artwork?.sgdbGridUrl ||
     metadata?.header_image ||
     metadata?.capsule_image ||
     metadata?.capsule_image_v5 ||
@@ -117,6 +125,7 @@ export default function StoreGameDetailsPage({
   game,
   metadata,
   reviewSummary,
+  artwork,
   installStatus = "not-installed",
   moreLikeThisGames = [],
   selectedSource,
@@ -130,8 +139,10 @@ export default function StoreGameDetailsPage({
 
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
-  const imageUrl = getBestImage(game, metadata);
+  const imageUrl = getBestImage(game, metadata, artwork);
   const galleryImages = [
+    artwork?.sgdbHeroUrl,
+    artwork?.sgdbGridUrl,
     metadata?.header_image,
     metadata?.capsule_image,
     metadata?.capsule_image_v5,

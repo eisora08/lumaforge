@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -8,13 +7,13 @@ import {
 } from "lucide-react";
 
 import type { PackageGame } from "../../types/package";
-import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
+import type { StoreArtwork } from "../../types/storeArtwork";
 
 type StoreDiscoverHeroCarouselProps = {
   games: PackageGame[];
   storeMetadataByAppId: Record<number, SteamAppMetadata>;
-  installedStatusByAppId: Map<string, PackageInstallStatus>;
+  artworkByAppId?: Record<string, StoreArtwork>;
   onOpenGame: (game: PackageGame) => void;
   onDownload?: (game: PackageGame) => void;
   onOpenSourceSelector?: (game: PackageGame) => void;
@@ -24,11 +23,15 @@ const AUTO_ADVANCE_MS = 7000;
 
 function getGameImage(
   game: PackageGame,
-  metadataByAppId: Record<number, SteamAppMetadata>
+  metadataByAppId: Record<number, SteamAppMetadata>,
+  artworkByAppId?: Record<string, StoreArtwork>
 ): string | undefined {
   const meta = metadataByAppId[Number(game.appId)];
+  const artwork = artworkByAppId?.[game.appId];
 
   return (
+    artwork?.sgdbHeroUrl ||
+    artwork?.sgdbGridUrl ||
     meta?.header_image ||
     meta?.capsule_image ||
     meta?.capsule_image_v5 ||
@@ -40,7 +43,7 @@ function getGameImage(
 export default function StoreDiscoverHeroCarousel({
   games,
   storeMetadataByAppId,
-  installedStatusByAppId,
+  artworkByAppId,
   onOpenGame,
   onDownload,
   onOpenSourceSelector,
@@ -81,9 +84,8 @@ export default function StoreDiscoverHeroCarousel({
     setActiveIndex((prev) => (prev + 1) % games.length);
   }
 
-  const currentInstallStatus = installedStatusByAppId.get(current.appId);
   const hasAvailableSource = current.sources.some((s) => s.available);
-  const currentImage = getGameImage(current, storeMetadataByAppId);
+  const currentImage = getGameImage(current, storeMetadataByAppId, artworkByAppId);
   const railGames = games.slice(0, 5);
 
   return (
@@ -123,21 +125,6 @@ export default function StoreDiscoverHeroCarousel({
             <h2 className="max-w-xl text-2xl font-black text-white lg:text-3xl">
               {current.title}
             </h2>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {currentInstallStatus === "active" && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Installed
-                </span>
-              )}
-
-              {hasAvailableSource && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
-                  Lua Ready
-                </span>
-              )}
-            </div>
 
             <div className="mt-4 flex flex-wrap gap-2 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100 md:absolute md:bottom-0 md:left-0 md:right-0 md:p-6 md:lg:p-8">
               <button
@@ -237,8 +224,7 @@ export default function StoreDiscoverHeroCarousel({
           <div className="space-y-2">
             {railGames.map((game, idx) => {
               const isActive = idx === safeIndex;
-              const railImage = getGameImage(game, storeMetadataByAppId);
-              const railInstalled = installedStatusByAppId.get(game.appId);
+              const railImage = getGameImage(game, storeMetadataByAppId, artworkByAppId);
 
               return (
                 <button
@@ -269,12 +255,6 @@ export default function StoreDiscoverHeroCarousel({
                     <p className="line-clamp-1 text-sm font-medium text-(--color-text)">
                       {game.title}
                     </p>
-
-                    {railInstalled === "active" && (
-                      <p className="mt-0.5 text-[11px] text-emerald-300">
-                        Installed
-                      </p>
-                    )}
                   </div>
                 </button>
               );

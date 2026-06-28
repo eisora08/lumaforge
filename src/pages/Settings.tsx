@@ -196,6 +196,20 @@ export default function Settings() {
             );
           })}
         </div>
+
+        <div className="mt-6 space-y-4">
+          <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+            <Crosshair className="h-4 w-4" />
+            SteamGridDB Artwork
+          </div>
+
+          <SettingsInput
+            label="API Key (optional)"
+            description="Used to fetch native poster, hero and logo artwork for Store cards."
+            value={settings.steamGridDbApiKey}
+            onChange={(value) => updateSetting("steamGridDbApiKey", value)}
+          />
+        </div>
       </SettingsSection>
 
       <SettingsSection

@@ -1,5 +1,4 @@
 import {
-  CheckCircle2,
   Gamepad2,
   Star,
 } from "lucide-react";
@@ -75,12 +74,11 @@ export default function StoreMoreLikeThisSection({
         </div>
       ) : (
         <div className="mt-4 flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {games.map(({ game, metadata, reviewSummary, installStatus }) => {
+          {games.map(({ game, metadata, reviewSummary }) => {
             const title = getTitle(game, metadata);
             const developer = getDeveloper(game, metadata);
             const imageUrl = getImage(game, metadata);
             const reviewLabel = getReviewLabel(reviewSummary);
-            const hasSources = game.sources.some((source) => source.available);
 
             return (
               <button
@@ -103,21 +101,6 @@ export default function StoreMoreLikeThisSection({
                 )}
 
                 <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/35 to-transparent" />
-
-                <div className="absolute left-3 right-3 top-3 flex flex-wrap gap-1.5">
-                  {installStatus === "active" && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
-                      <CheckCircle2 className="h-3 w-3" />
-                      Installed
-                    </span>
-                  )}
-
-                  {hasSources && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-2 py-0.5 text-[10px] text-(--color-accent)">
-                      Lua Ready
-                    </span>
-                  )}
-                </div>
 
                 <div className="absolute bottom-3 left-3 right-3">
                   <h3 className="line-clamp-1 text-sm font-bold text-white">

@@ -36,6 +36,7 @@ import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
 import { searchSteamStore } from "../services/steamStoreSearchResolver";
 import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
+import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 
 import {
   showError,
@@ -48,6 +49,7 @@ import type { InstalledLuaScript } from "../types/installedLua";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
+import type { StoreArtwork } from "../types/storeArtwork";
 import type {
   SteamFeaturedCategory,
   SteamFeaturedItem,
@@ -155,6 +157,10 @@ export default function Store() {
 
   const [reviewSummaryByAppId, setReviewSummaryByAppId] = useState<
     Record<number, SteamReviewSummary>
+  >({});
+
+  const [artworkByAppId, setArtworkByAppId] = useState<
+    Record<string, StoreArtwork>
   >({});
 
   const [steamFeaturedCategories, setSteamFeaturedCategories] = useState<
@@ -741,6 +747,40 @@ export default function Store() {
     };
   }, [visibleAppIds]);
 
+  useEffect(() => {
+    if (visibleAppIds.length === 0) {
+      setArtworkByAppId({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadArtwork() {
+      try {
+        const artwork = await resolveArtworkForAppIds(
+          visibleAppIds,
+          settings.steamGridDbApiKey
+        );
+
+        if (!cancelled) {
+          setArtworkByAppId(artwork);
+        }
+      } catch (error) {
+        console.error(error);
+
+        if (!cancelled) {
+          setArtworkByAppId({});
+        }
+      }
+    }
+
+    loadArtwork();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleAppIds, settings.steamGridDbApiKey]);
+
   const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {
     if (!selectedDetailGameWithOverlay) {
       return [];
@@ -972,7 +1012,7 @@ export default function Store() {
     await downloadFromSource(game, source);
   }
 
-  async function handlePosterDownload(game: PackageGame) {
+  async function handleGameDownload(game: PackageGame) {
     const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
     const source = getBestAvailableSource(gameWithOverlay);
 
@@ -996,30 +1036,11 @@ export default function Store() {
         game={gameWithOverlay}
         storeMetadata={storeMetadataByAppId[Number(game.appId)]}
         reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
-        installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
+        artwork={artworkByAppId[game.appId]}
         onInstallComplete={refreshInstalledScripts}
         onOpenDetails={openDetailsForGame}
         onOpenSourceSelector={openSourceSelectorForGame}
-        onDownload={handlePosterDownload}
-      />
-    );
-  }
-
-  function renderPosterCard(game: PackageGame) {
-    const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
-
-    return (
-      <PackageCard
-        key={game.appId}
-        variant="poster"
-        game={gameWithOverlay}
-        storeMetadata={storeMetadataByAppId[Number(game.appId)]}
-        reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
-        installStatus={installedStatusByAppId.get(game.appId) ?? "not-installed"}
-        onOpenDetails={openDetailsForGame}
-        onOpenGame={openDetailsForGame}
-        onOpenSourceSelector={openSourceSelectorForGame}
-        onDownload={handlePosterDownload}
+        onDownload={handleGameDownload}
       />
     );
   }
@@ -1035,6 +1056,7 @@ export default function Store() {
           reviewSummary={
             reviewSummaryByAppId[Number(selectedDetailGameWithOverlay.appId)]
           }
+          artwork={artworkByAppId[selectedDetailGameWithOverlay.appId]}
           installStatus={
             installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
             "not-installed"
@@ -1119,8 +1141,8 @@ export default function Store() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-            {activeSection.games.map(renderPosterCard)}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {activeSection.games.map(renderStoreCard)}
           </div>
         </section>
       ) : isSearchResultsView ? (
@@ -1149,8 +1171,8 @@ export default function Store() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                {mergedResults.map(renderPosterCard)}
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {mergedResults.map(renderStoreCard)}
               </div>
             </section>
           );
@@ -1200,8 +1222,8 @@ export default function Store() {
               {filteredBrowseGames.length === 0 ? (
                 <StoreEmptyState />
               ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                  {filteredBrowseGames.map(renderPosterCard)}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {filteredBrowseGames.map(renderStoreCard)}
                 </div>
               )}
             </div>
@@ -1213,8 +1235,8 @@ export default function Store() {
         ) : (
           <section className="space-y-5">
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-              {luaReadyGames.map(renderPosterCard)}
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {luaReadyGames.map(renderStoreCard)}
             </div>
           </section>
         )
@@ -1228,9 +1250,9 @@ export default function Store() {
           <StoreDiscoverHeroCarousel
             games={featuredGames}
             storeMetadataByAppId={storeMetadataByAppId}
-            installedStatusByAppId={installedStatusByAppId}
+            artworkByAppId={artworkByAppId}
             onOpenGame={openDetailsForGame}
-            onDownload={handlePosterDownload}
+            onDownload={handleGameDownload}
             onOpenSourceSelector={openSourceSelectorForGame}
           />
 
@@ -1299,48 +1321,62 @@ export default function Store() {
 
 function StoreLoadingState() {
   return (
-    <section className="lf-surface rounded-2xl border p-10 text-center">
-      <PackageSearch className="mx-auto h-10 w-10 animate-pulse text-(--color-accent)" />
+    <div className="space-y-6 animate-pulse">
+      <div className="aspect-[21/9] rounded-3xl bg-white/5" />
 
-      <h2 className="mt-4 font-semibold text-(--color-text)">
-        Buscando juegos
-      </h2>
+      <div className="space-y-4">
+        <div className="h-5 w-48 rounded bg-white/5" />
+        <div className="flex gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="aspect-video w-95 shrink-0 rounded-2xl bg-white/5" />
+          ))}
+        </div>
+      </div>
 
-      <p className="mt-2 text-sm text-(--color-muted)">
-        Consultando providers habilitados...
-      </p>
-    </section>
+      <div className="space-y-4">
+        <div className="h-5 w-56 rounded bg-white/5" />
+        <div className="flex gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="aspect-video w-95 shrink-0 rounded-2xl bg-white/5" />
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
 function StoreEmptyState() {
   return (
-    <section className="lf-surface rounded-2xl border p-10 text-center">
-      <PackageSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
+    <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/[0.04]">
+        <PackageSearch className="h-7 w-7 text-(--color-muted)" />
+      </div>
 
       <h2 className="mt-4 font-semibold text-(--color-text)">
-        No se encontraron juegos
+        No games match these filters
       </h2>
 
-      <p className="mt-2 text-sm text-(--color-muted)">
-        Prueba con otro AppID, nombre o provider.
+      <p className="mt-1.5 text-sm text-(--color-muted)">
+        Try adjusting your filters or clearing them.
       </p>
-    </section>
+    </div>
   );
 }
 
 function StoreLuaReadyEmptyState() {
   return (
-    <section className="lf-surface rounded-2xl border p-10 text-center">
-      <Gamepad2 className="mx-auto h-10 w-10 text-(--color-muted)" />
+    <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/[0.04]">
+        <Gamepad2 className="h-7 w-7 text-(--color-muted)" />
+      </div>
 
       <h2 className="mt-4 font-semibold text-(--color-text)">
         No Lua-ready games found yet
       </h2>
 
-      <p className="mt-2 text-sm text-(--color-muted)">
-        Try searching for games or configuring a provider in Settings.
+      <p className="mt-1.5 text-sm text-(--color-muted)">
+        Try configuring a provider in Settings or searching for games.
       </p>
-    </section>
+    </div>
   );
 }

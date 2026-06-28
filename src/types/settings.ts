@@ -18,6 +18,8 @@ export type AppSettings = {
   detailedLogs: boolean;
   cleanTempOnExit: boolean;
   compactMode: boolean;
+
+  steamGridDbApiKey: string;
 };
 
 export type AppSettingsKey = keyof AppSettings;

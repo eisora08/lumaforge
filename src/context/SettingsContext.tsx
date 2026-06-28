@@ -35,6 +35,7 @@ export const defaultSettings: AppSettings = {
   detailedLogs: true,
   cleanTempOnExit: false,
   compactMode: false,
+  steamGridDbApiKey: "",
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);

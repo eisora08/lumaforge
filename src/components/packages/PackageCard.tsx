@@ -1,16 +1,14 @@
 import { useMemo, useState } from "react";
 
 import {
-  CheckCircle2,
   Download,
   Gamepad2,
-  PauseCircle,
 } from "lucide-react";
 
 import type { PackageGame, PackageSource } from "../../types/package";
-import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
+import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 
 import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
@@ -29,7 +27,7 @@ type PackageCardProps = {
   game: PackageGame;
   storeMetadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
-  installStatus?: PackageInstallStatus;
+  artwork?: SgdbArtworkData;
   onInstallComplete?: () => void;
   variant?: "landscape" | "poster";
   onOpenGame?: (game: PackageGame) => void;
@@ -39,41 +37,31 @@ type PackageCardProps = {
   onDownloadSource?: (game: PackageGame, source: PackageSource) => void;
 };
 
-function getInstallBadge(status: PackageInstallStatus) {
-  if (status === "active") {
-    return {
-      label: "Installed",
-      icon: CheckCircle2,
-      className: "border-emerald-500/25 bg-emerald-500/15 text-emerald-300",
-    };
+function getBestCardImage(
+  game: PackageGame,
+  metadata?: SteamAppMetadata,
+  variant?: "landscape" | "poster",
+  artwork?: SgdbArtworkData
+): string | undefined {
+  if (variant === "poster") {
+    return (
+      artwork?.sgdbGridUrl ||
+      artwork?.sgdbGridThumbUrl ||
+      metadata?.capsule_image_v5 ||
+      metadata?.capsule_image ||
+      game.imageUrl ||
+      metadata?.header_image ||
+      undefined
+    );
   }
 
-  if (status === "disabled") {
-    return {
-      label: "Disabled",
-      icon: PauseCircle,
-      className: "border-yellow-500/25 bg-yellow-500/15 text-yellow-300",
-    };
-  }
-
-  return null;
-}
-
-function getBestStoreImage(game: PackageGame, metadata?: SteamAppMetadata) {
   return (
+    artwork?.sgdbHeroUrl ||
     metadata?.header_image ||
+    game.imageUrl ||
     metadata?.capsule_image ||
     metadata?.capsule_image_v5 ||
-    game.imageUrl
-  );
-}
-
-function getBestPosterImage(game: PackageGame, metadata?: SteamAppMetadata) {
-  return (
-    metadata?.capsule_image_v5 ||
-    metadata?.capsule_image ||
-    metadata?.header_image ||
-    game.imageUrl
+    undefined
   );
 }
 
@@ -85,10 +73,32 @@ function getStoreDeveloper(game: PackageGame, metadata?: SteamAppMetadata) {
   return metadata?.developer || game.developer || "Developer unknown";
 }
 
+function CardImage({
+  src,
+  alt,
+  objectClass,
+  onError,
+}: {
+  src: string;
+  alt: string;
+  objectClass: string;
+  onError: () => void;
+}) {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={`h-full w-full transition duration-500 ${objectClass}`}
+      loading="lazy"
+      onError={onError}
+    />
+  );
+}
+
 export default function PackageCard({
   game,
   storeMetadata,
-  installStatus = "not-installed",
+  artwork,
   onInstallComplete,
   variant = "landscape",
   onOpenGame,
@@ -105,13 +115,10 @@ export default function PackageCard({
 
   const availableSources = game.sources.filter((source) => source.available);
   const bestSource = useMemo(() => getBestAvailableSource(game), [game]);
-  const installBadge = getInstallBadge(installStatus);
 
   const displayTitle = getStoreTitle(game, storeMetadata);
   const displayDeveloper = getStoreDeveloper(game, storeMetadata);
-  const displayImageUrl = variant === "poster"
-    ? getBestPosterImage(game, storeMetadata)
-    : getBestStoreImage(game, storeMetadata);
+  const displayImageUrl = getBestCardImage(game, storeMetadata, variant, artwork);
 
   const hasLuaReady = availableSources.length > 0;
 
@@ -264,31 +271,6 @@ export default function PackageCard({
     </div>
   );
 
-  const cardFaceBadges = (
-    <div className="absolute left-2 top-2 z-10 flex flex-wrap gap-1.5">
-      {installBadge &&
-        (() => {
-          const Icon = installBadge.icon;
-
-          return (
-            <span
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur-md ${installBadge.className}`}
-            >
-              <Icon className="h-2.5 w-2.5" />
-              {installBadge.label}
-            </span>
-          );
-        })()}
-
-      {hasLuaReady && (
-        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur-md">
-          <CheckCircle2 className="h-2.5 w-2.5" />
-          Lua Ready
-        </span>
-      )}
-    </div>
-  );
-
   if (variant === "poster") {
     return (
       <>
@@ -301,30 +283,19 @@ export default function PackageCard({
               handleOpenDetails();
             }
           }}
-          className="group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
+          className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
         >
-          <div className="relative aspect-[4/5] w-full shrink-0 overflow-hidden">
+          <div className="relative w-full shrink-0 overflow-hidden">
             {displayImageUrl && !imageFailed ? (
-              <img
+              <CardImage
                 src={displayImageUrl}
                 alt={displayTitle}
-                className="h-full w-full object-cover object-[center_20%] transition duration-500 group-hover:scale-105"
-                loading="lazy"
+                objectClass="object-cover group-hover:scale-105"
                 onError={() => setImageFailed(true)}
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-white/5">
                 <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
-              </div>
-            )}
-
-            {cardFaceBadges}
-
-            {game.sources.length > 0 && (
-              <div className="absolute right-2 top-2 z-10">
-                <span className="rounded-full border border-white/10 bg-black/35 px-2 py-0.5 text-[10px] text-white/70 backdrop-blur-md">
-                  {availableSources.length}/{game.sources.length}
-                </span>
               </div>
             )}
 
@@ -372,11 +343,10 @@ export default function PackageCard({
         className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
       >
         {displayImageUrl && !imageFailed ? (
-          <img
+          <CardImage
             src={displayImageUrl}
             alt={displayTitle}
-            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-            loading="lazy"
+            objectClass="object-cover group-hover:scale-105"
             onError={() => setImageFailed(true)}
           />
         ) : (
@@ -387,44 +357,10 @@ export default function PackageCard({
 
         <div className="absolute inset-0 bg-linear-to-t from-black/85 via-black/20 to-transparent" />
 
-        <div className="absolute left-3 right-3 top-3 z-10 flex items-start justify-between gap-2">
-          <div className="flex flex-wrap gap-1.5">
-            {installBadge &&
-              (() => {
-                const InstallIcon = installBadge.icon;
-
-                return (
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium backdrop-blur-md ${installBadge.className}`}
-                  >
-                    <InstallIcon className="h-3 w-3" />
-                    {installBadge.label}
-                  </span>
-                );
-              })()}
-
-            {hasLuaReady && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-medium text-emerald-300 backdrop-blur-md">
-                <CheckCircle2 className="h-3 w-3" />
-                Lua Ready
-              </span>
-            )}
-          </div>
-
-          <span className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[11px] text-white/70 backdrop-blur-md">
-            {availableSources.length} source
-            {availableSources.length === 1 ? "" : "s"}
-          </span>
-        </div>
-
         <div className="absolute bottom-0 left-0 right-0 z-10 p-4">
           <h3 className="line-clamp-1 text-lg font-black text-white drop-shadow">
             {displayTitle}
           </h3>
-
-          <p className="mt-1 line-clamp-1 text-xs text-white/70">
-            App ID: {game.appId} · {displayDeveloper}
-          </p>
         </div>
 
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/82 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">

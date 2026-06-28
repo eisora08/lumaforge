@@ -18,6 +18,7 @@ pub fn run() {
             commands::reviews::resolve_steam_review_summaries,
             commands::store::resolve_steam_featured_categories,
             commands::store_search::resolve_steam_store_search,
+            commands::steam_grid_db::resolve_steamgriddb_artwork,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

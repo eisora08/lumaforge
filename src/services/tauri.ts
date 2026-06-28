@@ -10,6 +10,7 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
 import type { SteamFeaturedCategory } from "../types/steamFeatured";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
+import type { SteamGridDbArtwork } from "../types/steamGridDb";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -138,4 +139,17 @@ export async function resolveSteamStoreSearch(params: {
     language: params.language,
     limit: params.limit,
   });
+}
+
+export async function resolveSteamGridDbArtwork(
+  appIds: number[],
+  apiKey: string
+): Promise<SteamGridDbArtwork[]> {
+  return await invoke<SteamGridDbArtwork[]>(
+    "resolve_steamgriddb_artwork",
+    {
+      appIds,
+      apiKey,
+    }
+  );
 }
