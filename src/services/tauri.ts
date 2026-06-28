@@ -349,6 +349,7 @@ export type AppAchievementSummaryData = {
   progress_available: boolean;
   source: string;
   updated_at: number;
+  cache_version?: number;
 };
 
 export type AppAchievementCache = {

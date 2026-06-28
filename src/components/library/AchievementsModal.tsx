@@ -27,8 +27,10 @@ export default function AchievementsModal({ summary, appIdStr, onClose, onRefres
   const filtered = useMemo(() => {
     let list = summary.achievements;
 
-    if (filter === "unlocked") list = list.filter((a) => a.unlocked);
-    else if (filter === "locked") list = list.filter((a) => !a.unlocked);
+    if (summary.progressAvailable) {
+      if (filter === "unlocked") list = list.filter((a) => a.unlocked);
+      else if (filter === "locked") list = list.filter((a) => !a.unlocked);
+    }
 
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -106,7 +108,7 @@ export default function AchievementsModal({ summary, appIdStr, onClose, onRefres
         <div className="flex flex-wrap items-center gap-3 border-b border-(--surface-active-border) px-5 py-3">
           {/* Filter */}
           <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
-            {(["all", "unlocked", "locked"] as FilterMode[]).map((f) => (
+            {(["all"] as FilterMode[]).concat(summary.progressAvailable ? ["unlocked", "locked"] : []).map((f) => (
               <button
                 key={f}
                 type="button"

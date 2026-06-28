@@ -13,8 +13,8 @@ export type GameAchievement = {
 export type GameAchievementsSummary = {
   appId: string;
   total: number;
-  unlocked: number;
-  percent: number;
+  unlocked?: number;
+  percent?: number;
   progressAvailable: boolean;
   achievements: GameAchievement[];
   source:

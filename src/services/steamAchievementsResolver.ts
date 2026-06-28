@@ -11,6 +11,27 @@ import {
 import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData } from "./tauri";
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const SCHEMA_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days for schema-only cache
+const ACHIEVEMENT_CACHE_VERSION = 5;
+
+// Future: implement real UserGameStats_{AccountID}_{AppID}.bin parser using statId/bit from schema.
+// Do not fake it now. Do not guess bitfields unless parser is proven.
+
+function isLocalizationToken(value: string): boolean {
+  const v = value.trim();
+  if (!v) return true;
+  if (/^NEW_ACHIEVEMENT/i.test(v)) return true;
+  if (/_NAME$|_DESC$|_DESCRIPTION$/i.test(v)) return true;
+  // All caps + underscores + digits
+  if (/^[A-Z0-9_]+$/.test(v) && v.includes('_')) return true;
+  // No lowercase and has underscores
+  if (!/[a-z]/.test(v) && v.includes('_')) return true;
+  return false;
+}
+
+function hasValidDisplayName(name: string): boolean {
+  return !isLocalizationToken(name) && /[a-zA-Z]/.test(name) && name.trim().length >= 2;
+}
 
 function normalizeValidAppId(value: unknown): string | null {
   const appId = String(value ?? "").trim();
@@ -180,14 +201,17 @@ function mergeAchievements(params: {
     return a.name.localeCompare(b.name);
   });
 
-  const unlocked = achievements.filter((a) => a.unlocked).length;
   const total = achievements.length;
 
   return {
     appId,
     total,
-    unlocked,
-    percent: total > 0 ? Math.round((unlocked / total) * 100) : 0,
+    ...(progressAvailable
+      ? {
+          unlocked: achievements.filter((a) => a.unlocked).length,
+          percent: total > 0 ? Math.round((achievements.filter((a) => a.unlocked).length / total) * 100) : 0,
+        }
+      : {}),
     progressAvailable,
     achievements,
     source,
@@ -220,14 +244,17 @@ function buildAppcacheSummary(
   schemaEntries: { api_name: string; display_name?: string }[],
   progressAvailable: boolean,
 ): GameAchievementsSummary {
+  // Filter out schema entries with token-only display names (safety net for Rust side)
+  const cleanSchema = schemaEntries.filter((s) => !s.display_name || hasValidDisplayName(s.display_name));
+
   const apiNameSet = new Set<string>();
   for (const a of localAchievements) apiNameSet.add(a.api_name);
-  for (const s of schemaEntries) apiNameSet.add(s.api_name);
+  for (const s of cleanSchema) apiNameSet.add(s.api_name);
 
   const achievements: GameAchievement[] = [];
   for (const apiName of apiNameSet) {
     const local = localAchievements.find((a) => a.api_name === apiName);
-    const schema = schemaEntries.find((s) => s.api_name === apiName);
+    const schema = cleanSchema.find((s) => s.api_name === apiName);
 
     achievements.push({
       id: apiName,
@@ -243,14 +270,17 @@ function buildAppcacheSummary(
     return a.name.localeCompare(b.name);
   });
 
-  const unlocked = achievements.filter((a) => a.unlocked).length;
   const total = achievements.length;
 
   return {
     appId,
     total,
-    unlocked,
-    percent: total > 0 ? Math.round((unlocked / total) * 100) : 0,
+    ...(progressAvailable
+      ? {
+          unlocked: achievements.filter((a) => a.unlocked).length,
+          percent: total > 0 ? Math.round((achievements.filter((a) => a.unlocked).length / total) * 100) : 0,
+        }
+      : {}),
     progressAvailable,
     achievements,
     source: "steam-appcache",
@@ -320,8 +350,8 @@ function summaryToCacheData(summary: GameAchievementsSummary): {
   const summaryData: AppAchievementSummaryData = {
     app_id: summary.appId,
     total: summary.total,
-    unlocked: summary.unlocked,
-    percent: summary.percent,
+    unlocked: summary.unlocked ?? 0,
+    percent: summary.percent ?? 0,
     progress_available: summary.progressAvailable,
     source: summary.source,
     updated_at: summary.updatedAt ?? Date.now(),
@@ -364,13 +394,20 @@ export async function resolveSteamAchievements(params: {
 
   const lang = params.language ?? "english";
 
-  // Try LumaForge disk cache first (real progress only)
+  // Try LumaForge disk cache first (real progress only, or schema-only cache)
   if (!params.forceRefresh) {
     try {
       const cached = await readAchievementCache(appIdNum);
-      if (cached && cached.summary.progress_available && Date.now() - cached.summary.updated_at < CACHE_TTL_MS) {
-        console.debug(`[steamAchievementsResolver] App ${appIdStr}: using disk cache (${cached.achievements.length} achievements, progress=${cached.summary.progress_available})`);
-        return cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
+      if (cached && cached.summary.cache_version === ACHIEVEMENT_CACHE_VERSION) {
+        if (cached.summary.progress_available && Date.now() - cached.summary.updated_at < CACHE_TTL_MS) {
+          console.debug(`[steamAchievementsResolver] App ${appIdStr}: using disk cache (${cached.achievements.length} achievements, progress=${cached.summary.progress_available})`);
+          return cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
+        }
+        // Schema-only cache: use if progress is still unavailable and cache is fresh enough
+        if (!cached.summary.progress_available && cached.summary.source === "schema-only" && Date.now() - cached.summary.updated_at < SCHEMA_CACHE_TTL_MS) {
+          console.debug(`[steamAchievementsResolver] App ${appIdStr}: using schema-only cache (${cached.achievements.length} achievements)`);
+          return cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
+        }
       }
     } catch (err) {
       console.warn(`[steamAchievementsResolver] App ${appIdStr}: disk cache read failed:`, err);
@@ -519,8 +556,8 @@ export async function resolveSteamAchievements(params: {
     summary = buildUnavailableSummary(appIdStr, playerHttpStatus === "403" ? "api-403" : "no-data");
   }
 
-  // Save to disk cache if we have achievements and progress is available
-  if (summary.achievements.length > 0 && summary.progressAvailable) {
+  // Save to disk cache if we have achievements (progress or schema-only)
+  if (summary.achievements.length > 0) {
     try {
       const { achievements, pcts, summaryData } = summaryToCacheData(summary);
       await writeAchievementCache(appIdNum, {
@@ -528,7 +565,7 @@ export async function resolveSteamAchievements(params: {
         achievement_percentages: pcts,
         summary: summaryData,
       });
-      console.debug(`[steamAchievementsResolver] App ${appIdStr}: cached ${achievements.length} achievements to disk`);
+      console.debug(`[steamAchievementsResolver] App ${appIdStr}: cached ${achievements.length} achievements to disk (progress=${summary.progressAvailable})`);
     } catch (err) {
       console.warn(`[steamAchievementsResolver] App ${appIdStr}: failed to write disk cache:`, err);
     }
@@ -540,3 +577,10 @@ export async function resolveSteamAchievements(params: {
 export function clearAchievementsCache() {
   // No-op for now; disk cache will be managed separately
 }
+
+// TODO (future): Implement real UserGameStats_{AccountID}_{AppID}.bin parser using statId/bit from schema.
+// Current appcache parsers are best-effort text/protobuf scans. A real parser would:
+// 1. Read the schema (statId, bit) from either appcache schema or Achievements app JSON
+// 2. Map statId+bit to achievement API names
+// 3. Read the stats file using the known stat offsets
+// Do not fake it. Do not guess bitfields unless parser is proven.

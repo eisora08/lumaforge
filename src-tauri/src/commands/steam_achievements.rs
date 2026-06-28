@@ -375,6 +375,12 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
     })
     .map(|s| s.trim().to_string());
 
+  // Reject entries where display_name is a localization token
+  if display_name.as_deref().map_or(true, |d| !is_valid_display_name(d)) {
+    diag_log(format!("Proto parser skipped token-only schema entry: api_name={}, display_name={:?}", api_name, display_name));
+    return None;
+  }
+
   Some(SteamAppcacheSchemaEntry {
     api_name,
     display_name,
@@ -406,6 +412,58 @@ fn try_parse_schema_proto(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry>, 
   }
 
   Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// Token detection for schema quality gate
+// ---------------------------------------------------------------------------
+
+/// Check if a string looks like an internal localization token rather than
+/// a user-facing achievement name.
+/// Examples: NEW_ACHIEVEMENT_1_0_NAME, NEW_ACHIEVEMENT_1_0_DESC,
+///           ACHIEVEMENT_1_0_NAME, ACH_1_NAME
+fn is_probably_localization_token(s: &str) -> bool {
+  let trimmed = s.trim();
+  if trimmed.is_empty() {
+    return true;
+  }
+  // Starts with NEW_ACHIEVEMENT
+  if trimmed.starts_with("NEW_ACHIEVEMENT") {
+    return true;
+  }
+  // Contains _NAME or _DESC suffix
+  if trimmed.ends_with("_NAME") || trimmed.ends_with("_DESC") || trimmed.ends_with("_DESCRIPTION") {
+    return true;
+  }
+  // All uppercase + underscores + digits (no lowercase) -> token
+  if trimmed.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()) && trimmed.contains('_') {
+    return true;
+  }
+  // No lowercase letters at all and has underscores -> likely token
+  if !trimmed.chars().any(|c| c.is_ascii_lowercase()) && trimmed.contains('_') {
+    return true;
+  }
+  false
+}
+
+/// Check if a display name is a valid human-readable name (not a token).
+fn is_valid_display_name(s: &str) -> bool {
+  let trimmed = s.trim();
+  if trimmed.is_empty() {
+    return false;
+  }
+  if is_probably_localization_token(trimmed) {
+    return false;
+  }
+  // Must have at least one letter
+  if !trimmed.chars().any(|c| c.is_alphabetic()) {
+    return false;
+  }
+  // Must have at least some variety (not just "ACH_123")
+  if trimmed.len() < 3 {
+    return false;
+  }
+  true
 }
 
 // ---------------------------------------------------------------------------
@@ -465,15 +523,34 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
           && s.chars().any(|c| c.is_ascii_uppercase())
       })
       .cloned();
+
+    // Apply quality gate: skip entries with token-only display names
+    let clean_name = display_name.as_deref().filter(|d| is_valid_display_name(d));
+    if clean_name.is_none() {
+      diag_log(format!("Skipping token-only schema entry: api_name={}, display_name={:?}", name, display_name));
+      continue;
+    }
+
     entries.push(SteamAppcacheSchemaEntry {
       api_name: name.clone(),
-      display_name,
+      display_name: clean_name.map(|s| s.to_string()),
       description: None,
       icon: None,
       icon_gray: None,
       hidden: None,
     });
   }
+
+  // Quality gate: require at least some entries passed the filter
+  if entries.is_empty() {
+    return Err("All schema entries were rejected (token-only)".to_string());
+  }
+
+  // Warn if most entries were rejected
+  if entries.len() < names.len() / 2 {
+    diag_log(format!("Quality gate: {}/{} schema entries passed (many rejected as tokens)", entries.len(), names.len()));
+  }
+
   Ok(entries)
 }
 
@@ -726,9 +803,11 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
   diag_log(format!("Writing achievement cache for app_id={} to {:?}", app_id, cache_dir));
 
   // Write summary.json
+  let mut summary = data.summary;
+  summary.cache_version = Some(5);
   let summary_path = cache_dir.join("summary.json");
   let summary_content =
-    serde_json::to_string_pretty(&data.summary).map_err(|e| format!("Failed to serialize summary: {}", e))?;
+    serde_json::to_string_pretty(&summary).map_err(|e| format!("Failed to serialize summary: {}", e))?;
   fs::write(&summary_path, &summary_content)
     .map_err(|e| format!("Failed to write summary: {}", e))?;
 

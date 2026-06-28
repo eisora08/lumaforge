@@ -1022,15 +1022,13 @@ export default function LibraryGameDetails({
                         </div>
                       ))}
                     </div>
-                    {achievementsSummary.achievements.length > 5 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowAchievementsModal(true)}
-                        className="w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                      >
-                        View all achievements
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowAchievementsModal(true)}
+                      className="w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      View all achievements
+                    </button>
                   </div>
                 ) : achievementsSummary && achievementsSummary.source === "unavailable" && game.achievementsSupported ? (
                   <div className="mt-3">

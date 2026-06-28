@@ -59,6 +59,8 @@ pub struct AppAchievementSummary {
   pub progress_available: bool,
   pub source: String,
   pub updated_at: u64,
+  #[serde(default)]
+  pub cache_version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
