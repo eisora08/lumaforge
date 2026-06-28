@@ -11,6 +11,8 @@ import type { SteamReviewSummary } from "../types/gameReview";
 import type { SteamFeaturedCategory } from "../types/steamFeatured";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 import type { SteamGridDbArtwork } from "../types/steamGridDb";
+import type { SteamInstalledGame } from "../types/steamInstalled";
+import type { SyncIndex, SyncIndexItem, SyncCheckResult } from "../types/syncIndex";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -138,6 +140,41 @@ export async function resolveSteamStoreSearch(params: {
     countryCode: params.countryCode,
     language: params.language,
     limit: params.limit,
+  });
+}
+
+export async function computeFileHash(filePath: string): Promise<string> {
+  return await invoke<string>("compute_file_hash", { filePath });
+}
+
+export async function readSyncIndex(): Promise<SyncIndex> {
+  return await invoke<SyncIndex>("read_sync_index");
+}
+
+export async function writeSyncIndex(index: SyncIndex): Promise<void> {
+  return await invoke<void>("write_sync_index", { index });
+}
+
+export async function checkPackageUpdate(
+  appId: string,
+  sourceKey: string
+): Promise<SyncCheckResult> {
+  return await invoke<SyncCheckResult>("check_package_update", { appId, sourceKey });
+}
+
+export async function markSyncIndexItem(item: SyncIndexItem): Promise<void> {
+  return await invoke<void>("mark_sync_index_item", { item });
+}
+
+export async function scanSteamInstalledGames(params?: {
+  steamPath?: string;
+  luaPath?: string;
+  depotcachePath?: string;
+}): Promise<SteamInstalledGame[]> {
+  return await invoke<SteamInstalledGame[]>("scan_steam_installed_games", {
+    steamPath: params?.steamPath ?? null,
+    luaPath: params?.luaPath ?? null,
+    depotcachePath: params?.depotcachePath ?? null,
   });
 }
 

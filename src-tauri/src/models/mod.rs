@@ -11,3 +11,5 @@ pub mod steam_review_summary;
 pub mod steam_featured;
 pub mod steam_store_search;
 pub mod steam_grid_db_artwork;
+pub mod steam_installed_game;
+pub mod sync_index;
