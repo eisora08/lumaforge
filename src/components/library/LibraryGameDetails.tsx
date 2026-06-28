@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   ArrowLeft,
   BookMarked,
   BookOpen,
+  Calendar,
   Cloud,
   Clock,
   Database,
@@ -16,6 +18,7 @@ import {
   MoreHorizontal,
   Play,
   Puzzle,
+  RefreshCw,
   Star,
   Trophy,
 } from "lucide-react";
@@ -32,6 +35,10 @@ import {
   getSteamDbUrl,
 } from "../../utils/steamLinks";
 import AsyncImage from "../common/AsyncImage";
+import { SkeletonBox } from "../common/Skeleton";
+import { useGameActivity } from "../../context/GameActivityContext";
+import { resolveSteamGameNews } from "../../services/steamNewsResolver";
+import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 
 type LibraryGameDetailsProps = {
   game: LibraryGame;
@@ -132,6 +139,122 @@ export default function LibraryGameDetails({
   const categories = game.metadata?.categories || [];
 
   const appIdNum = game.appId ? Number(game.appId) : null;
+  const appIdStr = game.appId;
+  const { activities } = useGameActivity();
+  const [steamNews, setSteamNews] = useState<SteamNewsItem[]>([]);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState<string | null>(null);
+
+  const gameActivities: GameActivityItem[] = useMemo(() => {
+    const fromContext = activities.filter(
+      (a) => a.gameId === game.id || (appIdStr && a.appId === appIdStr)
+    );
+    if (fromContext.length > 0) return fromContext;
+
+    const fallback: GameActivityItem[] = [];
+    const now = Date.now();
+    let idx = 0;
+
+    if (game.steamInstalled) {
+      fallback.push({
+        id: `fb-act-${idx++}`,
+        gameId: game.id,
+        appId: appIdStr,
+        kind: "game-installed",
+        title: "Installed detected",
+        description: `Game is installed on this system.`,
+        createdAt: game.lastUpdated || now,
+        source: "steam",
+        severity: "success",
+      });
+    }
+
+    if (game.hasLua && game.luaScripts.length > 0) {
+      if (game.isLuaDisabled) {
+        fallback.push({
+          id: `fb-act-${idx++}`,
+          gameId: game.id,
+          appId: appIdStr,
+          kind: "lua-disabled",
+          title: "Lua disabled",
+          description: `Lua script "${game.luaScripts[0].file_name}" is disabled.`,
+          createdAt: now,
+          source: "lua",
+          severity: "warning",
+        });
+      } else {
+        fallback.push({
+          id: `fb-act-${idx++}`,
+          gameId: game.id,
+          appId: appIdStr,
+          kind: "lua-installed",
+          title: "Lua installed",
+          description: `Lua script "${game.luaScripts[0].file_name}" is active.`,
+          createdAt: now,
+          source: "lua",
+          severity: "success",
+        });
+      }
+    }
+
+    if (game.metadata?.dlc_count && game.metadata.dlc_count > 0) {
+      fallback.push({
+        id: `fb-act-${idx++}`,
+        gameId: game.id,
+        appId: appIdStr,
+        kind: "dlc-detected",
+        title: "DLC detected",
+        description: `${game.metadata.dlc_count} DLC items available.`,
+        createdAt: now,
+        source: "provider",
+        severity: "info",
+      });
+    }
+
+    if (game.metadata?.resolved) {
+      fallback.push({
+        id: `fb-act-${idx++}`,
+        gameId: game.id,
+        appId: appIdStr,
+        kind: "metadata-refreshed",
+        title: "Metadata loaded",
+        description: `Game metadata resolved for "${game.metadata.name || game.title}".`,
+        createdAt: now,
+        source: "system",
+        severity: "info",
+      });
+    }
+
+    return fallback;
+  }, [activities, game.id, appIdStr, game.steamInstalled, game.hasLua, game.luaScripts, game.isLuaDisabled, game.metadata, game.lastUpdated, game.title]);
+
+  const fetchSteamNews = useCallback(() => {
+    if (!appIdStr) {
+      setSteamNews([]);
+      setNewsError(null);
+      return;
+    }
+
+    setNewsLoading(true);
+    setNewsError(null);
+
+    resolveSteamGameNews(appIdStr)
+      .then(({ items, stale }) => {
+        setSteamNews(items);
+        setNewsLoading(false);
+        if (stale && items.length > 0) {
+          setNewsError("Cached results — couldn't refresh from Steam.");
+        }
+      })
+      .catch(() => {
+        setNewsError("Could not load Steam updates right now.");
+        setNewsLoading(false);
+      });
+  }, [appIdStr]);
+
+  useEffect(() => {
+    fetchSteamNews();
+  }, [fetchSteamNews]);
 
   useEffect(() => {
     if (!showActions) return;
@@ -425,17 +548,107 @@ export default function LibraryGameDetails({
                 </section>
               )}
 
-              {/* Release date */}
-              {game.metadata?.release_date && (
-                <section>
-                  <h2 className="mb-3 text-base font-bold text-(--color-text)">
-                    Release Date
-                  </h2>
-                  <p className="text-sm text-(--color-text)/70">
-                    {game.metadata.release_date}
-                  </p>
-                </section>
-              )}
+              {/* Updates — Steam news only */}
+              <section>
+                <h2 className="mb-3 text-base font-bold text-(--color-text)">
+                  <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
+                  Updates
+                </h2>
+
+                {!appIdStr ? (
+                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
+                    <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
+                    <p className="mt-2 text-sm text-(--color-muted)">
+                      Game updates are only available for Steam apps.
+                    </p>
+                  </div>
+                ) : newsLoading ? (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
+                      <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
+                      <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
+                      <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
+                      <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                    </div>
+                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
+                      <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
+                      <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
+                      <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
+                      <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                    </div>
+                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3">
+                      <div className="mb-2 h-3 w-20 animate-pulse rounded bg-white/5" />
+                      <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
+                      <div className="mt-2 h-3 w-full animate-pulse rounded bg-white/5" />
+                      <div className="mt-1 h-3 w-2/3 animate-pulse rounded bg-white/5" />
+                    </div>
+                  </div>
+                ) : newsError && steamNews.length === 0 ? (
+                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
+                    <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
+                    <p className="mt-2 text-sm text-(--color-muted)">
+                      {newsError}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={fetchSteamNews}
+                      className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-3.5 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Retry
+                    </button>
+                  </div>
+                ) : steamNews.length > 0 ? (
+                  <div className="space-y-3">
+                    {newsError && (
+                      <p className="text-xs text-amber-400/80 text-center">
+                        {newsError}
+                      </p>
+                    )}
+                    {steamNews.map((news) => (
+                      <SteamNewsCard key={news.gid} news={news} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
+                    <RefreshCw className="mx-auto h-6 w-6 text-(--color-muted)" />
+                    <p className="mt-2 text-sm text-(--color-muted)">
+                      No recent game updates found.
+                    </p>
+                  </div>
+                )}
+              </section>
+
+              {/* Activity */}
+              <section>
+                <h2 className="mb-3 text-base font-bold text-(--color-text)">
+                  <Activity className="mr-2 inline h-4 w-4 text-(--color-accent)" />
+                  Activity
+                </h2>
+
+                {loading ? (
+                  <div className="space-y-3">
+                    <SkeletonBox className="h-14 w-full" />
+                    <SkeletonBox className="h-14 w-full" />
+                  </div>
+                ) : gameActivities.length > 0 ? (
+                  <div className="space-y-2">
+                    {gameActivities.map((act) => (
+                      <ActivityRow key={act.id} activity={act} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
+                    <Activity className="mx-auto h-6 w-6 text-(--color-muted)" />
+                    <p className="mt-2 text-sm text-(--color-muted)">
+                      No activity yet.
+                    </p>
+                    <p className="mt-0.5 text-xs text-(--color-muted)/60">
+                      Game scans, launches and Lua sync activity will appear here.
+                    </p>
+                  </div>
+                )}
+              </section>
             </div>
 
             {/* Right: Side panel */}
@@ -517,6 +730,17 @@ export default function LibraryGameDetails({
                 </div>
               </div>
 
+              {/* Release Date */}
+              <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
+                <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
+                  <Calendar className="mr-1.5 inline h-3.5 w-3.5" />
+                  Release Date
+                </h3>
+                <p className="mt-1 text-sm text-(--color-text)">
+                  {game.metadata?.release_date || "Unknown"}
+                </p>
+              </div>
+
               {/* Lua section */}
               {(script || game.hasLua || game.hasLuaSource) && (
                 <div className="mt-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
@@ -566,6 +790,148 @@ export default function LibraryGameDetails({
               )}
             </aside>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const SEVERITY_ICONS: Record<string, React.ReactNode> = {
+  success: <Activity className="h-3.5 w-3.5 text-emerald-400" />,
+  warning: <Activity className="h-3.5 w-3.5 text-amber-400" />,
+  error: <Activity className="h-3.5 w-3.5 text-red-400" />,
+};
+
+function formatTimestamp(ts: number) {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+type ActivityRowProps = {
+  activity: GameActivityItem;
+};
+
+function ActivityRow({ activity }: ActivityRowProps) {
+  return (
+    <div className="flex gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3 transition hover:border-white/15 hover:bg-white/[0.06]">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5">
+        {SEVERITY_ICONS[activity.severity ?? "info"] ?? (
+          <Activity className="h-3.5 w-3.5 text-(--color-muted)" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-sm font-medium text-(--color-text)">
+            {activity.title}
+          </span>
+          <span className="shrink-0 text-[10px] text-(--color-muted)">
+            {formatTimestamp(activity.createdAt)}
+          </span>
+        </div>
+        {activity.description && (
+          <p className="mt-0.5 text-xs leading-relaxed text-(--color-muted)">
+            {activity.description}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const CATEGORY_BG: Record<string, string> = {
+  "MAJOR UPDATE": "bg-purple-500/15 text-purple-300",
+  "UPDATE": "bg-blue-500/15 text-blue-300",
+  "EVENT": "bg-amber-500/15 text-amber-300",
+  "NEWS": "bg-gray-500/15 text-gray-300",
+};
+
+function formatNewsDate(ts: number): string {
+  const d = new Date(ts);
+  const months = [
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+  ];
+  const month = months[d.getMonth()];
+  const day = d.getDate();
+  const year = d.getFullYear();
+  const now = new Date();
+  if (year === now.getFullYear()) {
+    return `${month} ${day}`;
+  }
+  return `${month} ${day}, ${year}`;
+}
+
+function SteamNewsCard({ news }: { news: SteamNewsItem }) {
+  const categoryStyle = CATEGORY_BG[news.category] ?? "bg-gray-500/15 text-gray-300";
+  const [imgError, setImgError] = useState(false);
+
+  return (
+    <div className="group rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-0 transition hover:border-white/15 hover:bg-white/[0.06]">
+      {/* Date label */}
+      <div className="px-3 pt-2.5 pb-1">
+        <span className="text-[10px] font-bold tracking-wider text-(--color-muted)/60">
+          {formatNewsDate(news.date)}
+        </span>
+      </div>
+
+      {/* Inner content */}
+      <div className="flex gap-3 px-3 pb-3">
+        {/* Thumbnail */}
+        {news.thumbnail && !imgError && (
+          <div className="mt-0.5 h-16 w-28 shrink-0 overflow-hidden rounded-lg bg-white/5">
+            <img
+              src={news.thumbnail}
+              alt=""
+              loading="lazy"
+              className="h-full w-full object-cover"
+              onError={() => setImgError(true)}
+            />
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1">
+          {/* Category + external link */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase leading-tight tracking-wider ${categoryStyle}`}
+            >
+              {news.category}
+            </span>
+            {news.url && news.isExternalUrl && (
+              <ExternalLink className="h-3 w-3 shrink-0 text-(--color-muted)/40" />
+            )}
+          </div>
+
+          {/* Title */}
+          {news.url ? (
+            <a
+              href={news.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 block text-sm font-semibold text-(--color-text) transition hover:text-(--color-accent)"
+            >
+              {news.title}
+            </a>
+          ) : (
+            <p className="mt-1 text-sm font-semibold text-(--color-text)">
+              {news.title}
+            </p>
+          )}
+
+          {/* Summary */}
+          {news.summary && (
+            <p className="mt-1 text-xs leading-relaxed text-(--color-muted) line-clamp-2">
+              {news.summary}
+            </p>
+          )}
         </div>
       </div>
     </div>

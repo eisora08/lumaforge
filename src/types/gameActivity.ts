@@ -35,3 +35,19 @@ export type GameUpdateItem = {
   kind: "sync" | "metadata" | "dlc" | "provider" | "local";
   status?: "available" | "completed" | "failed" | "info";
 };
+
+export type SteamNewsItem = {
+  gid: string;
+  title: string;
+  url: string;
+  isExternalUrl: boolean;
+  author: string;
+  contents: string;
+  summary: string;
+  feedLabel: string;
+  date: number;
+  feedName: string;
+  category: string;
+  appId: string;
+  thumbnail?: string;
+};
