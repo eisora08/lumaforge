@@ -38,6 +38,7 @@ import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
 import { useGameActivity } from "../../context/GameActivityContext";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
+import { useGamePlayStats } from "../../services/gamePlayStats";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 
 type LibraryGameDetailsProps = {
@@ -88,6 +89,16 @@ function stripHtml(html?: string | null): string {
   return html.replace(/<[^>]*>/g, "").replace(/&[^;]+;/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function uniqueLabels(items: string[]): string[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function StatInline({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="inline-flex items-center gap-1.5 text-xs text-(--color-muted)">
@@ -135,12 +146,34 @@ export default function LibraryGameDetails({
     ? longDescText.slice(0, 300) + "…"
     : longDescText;
 
-  const genres = game.metadata?.genres || [];
-  const categories = game.metadata?.categories || [];
+  const genres = useMemo(
+    () => uniqueLabels(game.metadata?.genres || []),
+    [game.id, game.metadata?.genres]
+  );
+  const categories = useMemo(
+    () => uniqueLabels(game.metadata?.categories || []),
+    [game.id, game.metadata?.categories]
+  );
 
   const appIdNum = game.appId ? Number(game.appId) : null;
   const appIdStr = game.appId;
-  const { activities } = useGameActivity();
+  const { activities, addActivity } = useGameActivity();
+  const { stats: playStats, recordLaunch: recordGameLaunch } = useGamePlayStats(game.id);
+
+  const cloudStatus = categories.includes("Steam Cloud") ? "Supported" : "Not tracked";
+  const achievementsStatus = categories.includes("Steam Achievements") ? "Supported" : "Unavailable";
+
+  const lastPlayed = playStats?.lastPlayedAt
+    ? formatTimestamp(playStats.lastPlayedAt)
+    : "Never";
+
+  const playTimeDisplay = playStats && playStats.playtimeMinutes > 0
+    ? (() => {
+        const h = Math.floor(playStats.playtimeMinutes / 60);
+        const m = playStats.playtimeMinutes % 60;
+        return h > 0 ? `${h}h ${m}m` : `${m}m`;
+      })()
+    : "Not tracked";
   const [steamNews, setSteamNews] = useState<SteamNewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState<string | null>(null);
@@ -370,7 +403,18 @@ export default function LibraryGameDetails({
               {action === "play" && (
                 <button
                   type="button"
-                  onClick={() => onPlay(game)}
+                  onClick={() => {
+                    recordGameLaunch();
+                    addActivity({
+                      gameId: game.id,
+                      appId: appIdStr,
+                      kind: "game-launched",
+                      title: "Game launched",
+                      source: "local",
+                      severity: "info",
+                    });
+                    onPlay(game);
+                  }}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 >
                   <Play className="h-4 w-4" />
@@ -396,11 +440,11 @@ export default function LibraryGameDetails({
 
             {/* Inline stats */}
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1">
-              <StatInline icon={<Cloud className="h-5 w-5" />} label="Cloud Status" value="Not tracked" />
-              <StatInline icon={<Clock className="h-5 w-5" />} label="Last Played" value="Never" />
-              <StatInline icon={<Trophy className="h-5 w-5" />} label="Play Time" value="Not tracked" />
+              <StatInline icon={<Cloud className="h-5 w-5" />} label="Cloud Status" value={cloudStatus} />
+              <StatInline icon={<Clock className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
+              <StatInline icon={<Trophy className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
               <StatInline icon={<HardDrive className="h-5 w-5" />} label="Size" value={formatBytes(game.sizeOnDisk)} />
-              <StatInline icon={<Star className="h-5 w-5" />} label="Achievements" value="Unavailable" />
+              <StatInline icon={<Star className="h-5 w-5" />} label="Achievements" value={achievementsStatus} />
             </div>
 
             {/* Right side: Actions + Favorite */}
@@ -827,6 +871,8 @@ const SEVERITY_ICONS: Record<string, React.ReactNode> = {
 };
 
 function formatTimestamp(ts: number) {
+  if (!ts || ts <= 0 || ts < 1000000000000) return "Recently";
+
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
