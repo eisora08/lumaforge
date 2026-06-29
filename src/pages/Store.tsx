@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Gamepad2,
@@ -205,30 +205,28 @@ export default function Store() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.luaPath]);
 
+  const featuredRequestRef = useRef(0);
+
   useEffect(() => {
-    let cancelled = false;
+    const requestId = ++featuredRequestRef.current;
 
     async function loadSteamFeaturedCategories() {
       try {
         const categories = await resolveFeaturedStoreCategories();
 
-        if (!cancelled) {
+        if (requestId === featuredRequestRef.current) {
           setSteamFeaturedCategories(categories);
         }
       } catch (error) {
         console.error(error);
 
-        if (!cancelled) {
+        if (requestId === featuredRequestRef.current) {
           setSteamFeaturedCategories([]);
         }
       }
     }
 
     loadSteamFeaturedCategories();
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const steamStoreSections = useMemo(() => {
@@ -676,36 +674,36 @@ export default function Store() {
     return Array.from(appIds);
   }, [results, steamStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame]);
 
+  const metadataRequestRef = useRef(0);
+
   useEffect(() => {
     if (visibleAppIds.length === 0) {
       setStoreMetadataByAppId({});
       return;
     }
 
-    let cancelled = false;
+    const requestId = ++metadataRequestRef.current;
 
     async function loadStoreMetadata() {
       try {
         const metadata = await resolveGameMetadata(visibleAppIds);
 
-        if (!cancelled) {
+        if (requestId === metadataRequestRef.current) {
           setStoreMetadataByAppId(metadata);
         }
       } catch (error) {
         console.error(error);
 
-        if (!cancelled) {
+        if (requestId === metadataRequestRef.current) {
           setStoreMetadataByAppId({});
         }
       }
     }
 
     loadStoreMetadata();
-
-    return () => {
-      cancelled = true;
-    };
   }, [visibleAppIds]);
+
+  const reviewRequestRef = useRef(0);
 
   useEffect(() => {
     if (visibleAppIds.length === 0) {
@@ -713,29 +711,25 @@ export default function Store() {
       return;
     }
 
-    let cancelled = false;
+    const requestId = ++reviewRequestRef.current;
 
     async function loadReviewSummaries() {
       try {
         const summaries = await resolveGameReviewSummaries(visibleAppIds);
 
-        if (!cancelled) {
+        if (requestId === reviewRequestRef.current) {
           setReviewSummaryByAppId(summaries);
         }
       } catch (error) {
         console.error(error);
 
-        if (!cancelled) {
+        if (requestId === reviewRequestRef.current) {
           setReviewSummaryByAppId({});
         }
       }
     }
 
     loadReviewSummaries();
-
-    return () => {
-      cancelled = true;
-    };
   }, [visibleAppIds]);
 
   const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {

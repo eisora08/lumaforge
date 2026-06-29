@@ -42,23 +42,31 @@ function buildSteamMap(stats: SteamUserGameStats[]): SteamStatsMap {
   return map;
 }
 
+const ENABLE_VERBOSE_STATS_LOGS = false;
+
 export async function loadSteamStats(
   steamPath?: string,
   appIds?: number[],
 ): Promise<SteamStatsMap> {
   try {
-    console.debug(`[SteamStats] Loading for ${appIds?.length ?? "all"} apps, steamPath=${steamPath ?? "auto"}`);
+    if (ENABLE_VERBOSE_STATS_LOGS) {
+      console.debug(`[SteamStats] Loading for ${appIds?.length ?? "all"} apps, steamPath=${steamPath ?? "auto"}`);
+    }
     const stats = await scanSteamUserGameStats({ steamPath, appIds });
-    console.debug(`[SteamStats] Backend returned ${stats.length} entries`);
-    if (stats.length > 0) {
-      console.debug(`[SteamStats] First 3:`, stats.slice(0, 3).map(s => ({ appId: s.appId, lastPlayed: s.lastPlayed, playtime: s.playtimeMinutes, cloud: s.cloudStatus })));
+    if (ENABLE_VERBOSE_STATS_LOGS) {
+      console.debug(`[SteamStats] Backend returned ${stats.length} entries`);
+      if (stats.length > 0) {
+        console.debug(`[SteamStats] First 3:`, stats.slice(0, 3).map(s => ({ appId: s.appId, lastPlayed: s.lastPlayed, playtime: s.playtimeMinutes, cloud: s.cloudStatus })));
+      }
     }
     cacheSteamStats(stats);
     return buildSteamMap(stats);
   } catch (err) {
     console.warn("[gameStatsService] Failed to load Steam stats:", err);
     const cached = loadCachedSteamStats();
-    console.debug(`[SteamStats] Falling back to cache: ${cached.size} entries`);
+    if (ENABLE_VERBOSE_STATS_LOGS) {
+      console.debug(`[SteamStats] Falling back to cache: ${cached.size} entries`);
+    }
     return cached;
   }
 }
@@ -98,10 +106,12 @@ export function mergeSteamStatsIntoGames(
       game.steamCloudStatus = stat.cloudStatus;
     }
   }
-  console.debug(`[SteamStats] Merged stats for ${matched}/${games.length} games`);
-  if (matched === 0 && steamStats.size > 0) {
-    console.debug(`[SteamStats] Stats available for appIds:`, Array.from(steamStats.keys()));
-    console.debug(`[SteamStats] Game appIds:`, games.map(g => ({ id: g.id, appId: g.appId })));
+  if (ENABLE_VERBOSE_STATS_LOGS) {
+    console.debug(`[SteamStats] Merged stats for ${matched}/${games.length} games`);
+    if (matched === 0 && steamStats.size > 0) {
+      console.debug(`[SteamStats] Stats available for appIds:`, Array.from(steamStats.keys()));
+      console.debug(`[SteamStats] Game appIds:`, games.map(g => ({ id: g.id, appId: g.appId })));
+    }
   }
 }
 

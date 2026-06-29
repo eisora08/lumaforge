@@ -143,13 +143,34 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   async function load(settings: AppSettings) {
     const cached = loadCachedGames();
     if (cached) {
-      let loaded = cached.games.map(mapCachedToLibraryGame);
-      loaded = await enrichWithStats(loaded);
+      const loaded = cached.games.map(mapCachedToLibraryGame);
       setGames(loaded);
       setWarnings(cached.warnings || []);
       setInitialLoading(false);
+      // Enrich with stats in background
+      setTimeout(async () => {
+        const enriched = await enrichWithStats(loaded);
+        setGames(enriched);
+      }, 50);
+      // Background refresh if cache expired
       if (isCacheExpired(cached)) {
         setLoading(true);
+        setTimeout(async () => {
+          try {
+            const result = await resolveLibraryGames(settings);
+            const enriched = await enrichWithStats(result.games);
+            setGames(enriched);
+            setWarnings(result.warnings);
+          } catch (error) {
+            console.error("[LibraryGamesContext] scan error:", error);
+          } finally {
+            setLoading(false);
+          }
+        }, 200);
+      }
+    } else {
+      setLoading(true);
+      setTimeout(async () => {
         try {
           const result = await resolveLibraryGames(settings);
           const enriched = await enrichWithStats(result.games);
@@ -159,28 +180,16 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           console.error("[LibraryGamesContext] scan error:", error);
         } finally {
           setLoading(false);
+          setInitialLoading(false);
         }
-      }
-    } else {
-      setLoading(true);
-      try {
-        const result = await resolveLibraryGames(settings);
-        const enriched = await enrichWithStats(result.games);
-        setGames(enriched);
-        setWarnings(result.warnings);
-      } catch (error) {
-        console.error("[LibraryGamesContext] scan error:", error);
-      } finally {
-        setLoading(false);
-        setInitialLoading(false);
-      }
+      }, 50);
     }
   }
 
   useEffect(() => {
     if (initDone.current) return;
     initDone.current = true;
-    load(settings);
+    setTimeout(() => load(settings), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
