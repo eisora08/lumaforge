@@ -464,3 +464,122 @@ export async function writeStoreReviewCache(
 export async function clearStoreCache(): Promise<void> {
   return await invoke("clear_store_cache");
 }
+
+// --- Library cache ---
+
+export type LibraryAppInfoEntry = {
+  app_id: string;
+  name: string | null;
+  header_image: string | null;
+  cover_path: string | null;
+  grid_path: string | null;
+  hero_path: string | null;
+  logo_path: string | null;
+  icon_path: string | null;
+  updated_at: number | null;
+};
+
+export type LibraryAppInfoMap = Record<string, LibraryAppInfoEntry>;
+
+export type LibraryGameDetailsEntry = {
+  app_id: string;
+  source: string;
+  updated_at: number;
+  data: unknown;
+};
+
+export type GameMediaCacheEntry = {
+  game_key: string;
+  app_id: string | null;
+  title: string | null;
+  cover_path: string | null;
+  grid_path: string | null;
+  hero_path: string | null;
+  logo_path: string | null;
+  icon_path: string | null;
+  quick_cover_path: string | null;
+  updated_at: number | null;
+};
+
+export type GameMediaUrls = {
+  cover_url: string | null;
+  grid_url: string | null;
+  hero_url: string | null;
+  logo_url: string | null;
+  icon_url: string | null;
+  quick_cover_url: string | null;
+};
+
+export type ImportResult = {
+  imported_covers: number;
+  imported_details: number;
+  imported_app_info: boolean;
+};
+
+export async function readLibraryAppinfo(): Promise<LibraryAppInfoMap> {
+  return await invoke<LibraryAppInfoMap>("read_library_appinfo");
+}
+
+export async function writeLibraryAppinfo(
+  appinfo: LibraryAppInfoMap
+): Promise<void> {
+  return await invoke<void>("write_library_appinfo", { appinfo });
+}
+
+export async function updateLibraryAppinfoEntry(
+  appId: string,
+  entry: LibraryAppInfoEntry
+): Promise<void> {
+  return await invoke<void>("update_library_appinfo_entry", {
+    appId,
+    entry,
+  });
+}
+
+export async function readLibraryGameDetails(
+  appId: string
+): Promise<LibraryGameDetailsEntry | null> {
+  return await invoke<LibraryGameDetailsEntry | null>(
+    "read_library_game_details",
+    { appId }
+  );
+}
+
+export async function writeLibraryGameDetails(
+  appId: string,
+  entry: LibraryGameDetailsEntry
+): Promise<void> {
+  return await invoke<void>("write_library_game_details", {
+    appId,
+    entry,
+  });
+}
+
+export async function libraryGetGameMediaCache(
+  gameKey: string
+): Promise<GameMediaCacheEntry | null> {
+  return await invoke<GameMediaCacheEntry | null>(
+    "library_get_game_media_cache",
+    { gameKey }
+  );
+}
+
+export async function librarySaveGameMediaCache(
+  gameKey: string,
+  entry: GameMediaCacheEntry
+): Promise<GameMediaCacheEntry> {
+  return await invoke<GameMediaCacheEntry>("library_save_game_media_cache", {
+    gameKey,
+    entry,
+  });
+}
+
+export async function libraryClearGameMediaCache(
+  gameKey: string
+): Promise<void> {
+  return await invoke<void>("library_clear_game_media_cache", { gameKey });
+}
+
+export async function libraryClearAllGameMediaCache(): Promise<void> {
+  return await invoke<void>("library_clear_all_game_media_cache");
+}

@@ -17,3 +17,4 @@ pub mod sync;
 pub mod process;
 pub mod game_media_cache;
 pub mod store_cache;
+pub mod library_cache;
