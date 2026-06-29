@@ -30,6 +30,10 @@ function getSidebarImage(
 ): string | undefined {
   const meta = game.metadata;
 
+  // Sidebar uses small thumbnail: prioritize icon if available, then cover/landscape
+  const canonicalIcon = canonicalAppInfo?.media?.iconPath;
+  if (canonicalIcon) return canonicalIcon;
+
   if (mode === "poster") {
     return (
       canonicalAppInfo?.media?.coverPath ||

@@ -15,7 +15,7 @@ use crate::commands::media_cache::{process_and_save_with_dedup, repair_hash_inde
 // ---------------------------------------------------------------------------
 
 const ENABLE_VERBOSE_GAME_CACHE_LOGS: bool = false;
-const ENABLE_VERBOSE_MEDIA_CACHE_LOGS: bool = false;
+const ENABLE_VERBOSE_MEDIA_CACHE_LOGS: bool = true;
 
 #[inline]
 fn log(msg: &str) {
@@ -492,41 +492,58 @@ pub fn update_game_appinfo_media(
         }
     };
 
-    entry.name = entry.name.or(name);
+    // Name priority: existing entry.name > incoming name param > store-details > fallback
+    if entry.name.is_some() {
+        // Keep existing name
+    } else if let Some(ref n) = name {
+        entry.name = Some(n.clone());
+    } else {
+        // Try store-details for name
+        let store_path = get_store_details_path(&app_handle, &app_id);
+        if let Ok(sp) = store_path {
+            if sp.exists() {
+                if let Ok(sc) = fs::read_to_string(&sp) {
+                    if let Ok(sd) = serde_json::from_str::<StoreDetails>(&sc) {
+                        if let Some(n) = sd.data.get("name").and_then(|v| v.as_str()) {
+                            entry.name = Some(n.to_string());
+                            media_log(&format!("[AppInfoUpdate] resolved name from store-details: {}", n));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-    // Validate paths: only keep paths that point to existing files
-    // This prevents appinfo.json from referencing deleted/missing media.
+    // Merge incoming paths with existing paths: incoming non-null values
+    // override, null values fall through to existing (preserving paths that
+    // were set by previous calls). Each path is validated against disk.
+    let existing = entry.media.as_ref();
+
+    let merge_path = |incoming: &Option<String>, existing: Option<&String>| -> Option<String> {
+        // If incoming is Some(path) and file exists, use it
+        if let Some(p) = incoming {
+            if std::path::Path::new(p).exists() {
+                media_log(&format!("[AppInfoUpdate] {} path set: {}", app_id, p));
+                return Some(p.clone());
+            }
+            media_log(&format!("[AppInfoUpdate] incoming path missing, checking existing: {}", p));
+        }
+        // Fall through to existing if it exists on disk
+        if let Some(ep) = existing {
+            if std::path::Path::new(ep).exists() {
+                return Some(ep.clone());
+            }
+            media_log(&format!("[AppInfoUpdate] stripping stale existing path: {}", ep));
+        }
+        None
+    };
+
     let validated_media = GameMediaPaths {
-        cover_path: media.cover_path.as_ref().and_then(|p| {
-            if std::path::Path::new(p).exists() { media.cover_path.clone() } else {
-                media_log(&format!("stripped missing cover_path for {}: {}", app_id, p));
-                None
-            }
-        }),
-        landscape_path: media.landscape_path.as_ref().and_then(|p| {
-            if std::path::Path::new(p).exists() { media.landscape_path.clone() } else {
-                media_log(&format!("stripped missing landscape_path for {}: {}", app_id, p));
-                None
-            }
-        }),
-        background_path: media.background_path.as_ref().and_then(|p| {
-            if std::path::Path::new(p).exists() { media.background_path.clone() } else {
-                media_log(&format!("stripped missing background_path for {}: {}", app_id, p));
-                None
-            }
-        }),
-        logo_path: media.logo_path.as_ref().and_then(|p| {
-            if std::path::Path::new(p).exists() { media.logo_path.clone() } else {
-                media_log(&format!("stripped missing logo_path for {}: {}", app_id, p));
-                None
-            }
-        }),
-        icon_path: media.icon_path.as_ref().and_then(|p| {
-            if std::path::Path::new(p).exists() { media.icon_path.clone() } else {
-                media_log(&format!("stripped missing icon_path for {}: {}", app_id, p));
-                None
-            }
-        }),
+        cover_path: merge_path(&media.cover_path, existing.and_then(|m| m.cover_path.as_ref())),
+        landscape_path: merge_path(&media.landscape_path, existing.and_then(|m| m.landscape_path.as_ref())),
+        background_path: merge_path(&media.background_path, existing.and_then(|m| m.background_path.as_ref())),
+        logo_path: merge_path(&media.logo_path, existing.and_then(|m| m.logo_path.as_ref())),
+        icon_path: merge_path(&media.icon_path, existing.and_then(|m| m.icon_path.as_ref())),
     };
 
     entry.media = Some(validated_media);
@@ -1005,7 +1022,9 @@ pub fn get_game_media_paths(
 
 // ---------------------------------------------------------------------------
 // repair_appinfo_media_paths — validate all paths in appinfo.json and strip
-// any that point to non-existent files. Returns true if any paths were removed.
+// any that point to non-existent files. Also scans disk for media files that
+// exist but are not referenced in appinfo.json and adds them.
+// Returns true if any changes were made.
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1028,52 +1047,105 @@ pub fn repair_appinfo_media_paths(
         Err(_) => return Ok(false),
     };
 
-    let media = match entry.media {
-        Some(ref m) => m,
-        None => return Ok(false),
-    };
-
+    let existing_media = entry.media.clone();
     let mut changed = false;
 
-    let cover_path = media.cover_path.as_ref().and_then(|p| {
-        if std::path::Path::new(p).exists() { media.cover_path.clone() } else {
+    // Scan disk for all media files
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+
+    let disk_check = |filename: &str| -> Option<String> {
+        let p = media_dir.join(filename);
+        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+    };
+
+    let disk_cover = disk_check("cover.jpg");
+    let disk_landscape = disk_check("landscape.jpg");
+    let disk_background = disk_check("background.jpg");
+    let disk_logo = disk_check("logo.png");
+    let disk_icon = disk_check("icon.png");
+
+    media_log(&format!("[AppInfoRepair] {} existing files {{ cover={}, landscape={}, background={}, logo={}, icon={} }}",
+        app_id, disk_cover.is_some(), disk_landscape.is_some(), disk_background.is_some(), disk_logo.is_some(), disk_icon.is_some()));
+
+    media_log(&format!("[AppInfoRepair] {} before media {{ cover={:?}, landscape={:?}, background={:?}, logo={:?}, icon={:?} }}",
+        app_id,
+        existing_media.as_ref().and_then(|m| m.cover_path.as_ref()),
+        existing_media.as_ref().and_then(|m| m.landscape_path.as_ref()),
+        existing_media.as_ref().and_then(|m| m.background_path.as_ref()),
+        existing_media.as_ref().and_then(|m| m.logo_path.as_ref()),
+        existing_media.as_ref().and_then(|m| m.icon_path.as_ref()),
+    ));
+
+    // For each role: validate existing path, fall through to disk file
+    let cover_path = existing_media.as_ref().and_then(|m| m.cover_path.as_ref())
+        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
             media_log(&format!("repair: stripping missing cover_path for {}: {}", app_id, p));
             changed = true;
             None
-        }
-    });
+        })
+        .or_else(|| {
+            if let Some(dp) = disk_cover.clone() {
+                media_log(&format!("repair: adding cover_path from disk for {}", app_id));
+                changed = true;
+                Some(dp)
+            } else { None }
+        });
 
-    let landscape_path = media.landscape_path.as_ref().and_then(|p| {
-        if std::path::Path::new(p).exists() { media.landscape_path.clone() } else {
+    let landscape_path = existing_media.as_ref().and_then(|m| m.landscape_path.as_ref())
+        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
             media_log(&format!("repair: stripping missing landscape_path for {}: {}", app_id, p));
             changed = true;
             None
-        }
-    });
+        })
+        .or_else(|| {
+            if let Some(dp) = disk_landscape.clone() {
+                media_log(&format!("repair: adding landscape_path from disk for {}", app_id));
+                changed = true;
+                Some(dp)
+            } else { None }
+        });
 
-    let background_path = media.background_path.as_ref().and_then(|p| {
-        if std::path::Path::new(p).exists() { media.background_path.clone() } else {
+    let background_path = existing_media.as_ref().and_then(|m| m.background_path.as_ref())
+        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
             media_log(&format!("repair: stripping missing background_path for {}: {}", app_id, p));
             changed = true;
             None
-        }
-    });
+        })
+        .or_else(|| {
+            if let Some(dp) = disk_background.clone() {
+                media_log(&format!("repair: adding background_path from disk for {}", app_id));
+                changed = true;
+                Some(dp)
+            } else { None }
+        });
 
-    let logo_path = media.logo_path.as_ref().and_then(|p| {
-        if std::path::Path::new(p).exists() { media.logo_path.clone() } else {
+    let logo_path = existing_media.as_ref().and_then(|m| m.logo_path.as_ref())
+        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
             media_log(&format!("repair: stripping missing logo_path for {}: {}", app_id, p));
             changed = true;
             None
-        }
-    });
+        })
+        .or_else(|| {
+            if let Some(dp) = disk_logo.clone() {
+                media_log(&format!("repair: adding logo_path from disk for {}", app_id));
+                changed = true;
+                Some(dp)
+            } else { None }
+        });
 
-    let icon_path = media.icon_path.as_ref().and_then(|p| {
-        if std::path::Path::new(p).exists() { media.icon_path.clone() } else {
+    let icon_path = existing_media.as_ref().and_then(|m| m.icon_path.as_ref())
+        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
             media_log(&format!("repair: stripping missing icon_path for {}: {}", app_id, p));
             changed = true;
             None
-        }
-    });
+        })
+        .or_else(|| {
+            if let Some(dp) = disk_icon.clone() {
+                media_log(&format!("repair: adding icon_path from disk for {}", app_id));
+                changed = true;
+                Some(dp)
+            } else { None }
+        });
 
     if !changed {
         return Ok(false);
@@ -1086,6 +1158,24 @@ pub fn repair_appinfo_media_paths(
         logo_path,
         icon_path,
     });
+
+    // Also try to resolve name from store-details if still null
+    if entry.name.is_none() {
+        let store_path = get_store_details_path(&app_handle, &app_id);
+        if let Ok(sp) = store_path {
+            if sp.exists() {
+                if let Ok(sc) = fs::read_to_string(&sp) {
+                    if let Ok(sd) = serde_json::from_str::<StoreDetails>(&sc) {
+                        if let Some(name) = sd.data.get("name").and_then(|v| v.as_str()) {
+                            entry.name = Some(name.to_string());
+                            media_log(&format!("repair: resolved name from store-details for {}: {}", app_id, name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     entry.updated_at = Some(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1098,7 +1188,16 @@ pub fn repair_appinfo_media_paths(
     fs::write(&path, &new_content)
         .map_err(|e| format!("Failed to write repaired appinfo: {}", e))?;
 
-    log(&format!("appinfo media paths repaired for {} (stale paths stripped)", app_id));
+    media_log(&format!("[AppInfoRepair] {} after media {{ cover={:?}, landscape={:?}, background={:?}, logo={:?}, icon={:?} }}",
+        app_id,
+        entry.media.as_ref().and_then(|m| m.cover_path.as_ref()),
+        entry.media.as_ref().and_then(|m| m.landscape_path.as_ref()),
+        entry.media.as_ref().and_then(|m| m.background_path.as_ref()),
+        entry.media.as_ref().and_then(|m| m.logo_path.as_ref()),
+        entry.media.as_ref().and_then(|m| m.icon_path.as_ref()),
+    ));
+
+    log(&format!("appinfo media paths repaired for {} (stale paths stripped, disk paths added)", app_id));
     Ok(true)
 }
 

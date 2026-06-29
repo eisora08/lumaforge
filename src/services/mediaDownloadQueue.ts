@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { updateGameAppinfoMedia } from "./tauri";
+import { invalidateResolvedMediaCache } from "./gameCacheService";
 
 const ENABLE_VERBOSE_MEDIA_QUEUE_LOGS = false;
 
@@ -12,7 +14,7 @@ export type MediaDownloadJob = {
   id: string;
   appId: string;
   provider: "steam" | "steamgriddb" | "manual";
-  mediaType: "landscape" | "cover";
+  mediaType: "landscape" | "cover" | "background" | "logo" | "icon";
   url: string;
   target: "canonical";
   priority: "high" | "normal" | "low";
@@ -78,6 +80,45 @@ function notify(event: MediaQueueEvent) {
   }
 }
 
+function mediaTypeToField(mediaType: string): keyof import("./tauri").GameMediaPaths {
+  switch (mediaType) {
+    case "landscape": return "landscapePath";
+    case "cover": return "coverPath";
+    case "background": return "backgroundPath";
+    case "logo": return "logoPath";
+    case "icon": return "iconPath";
+    default: return "landscapePath";
+  }
+}
+
+const pendingAppInfoUpdates = new Map<string, Record<string, string | null>>();
+let appInfoFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushAppInfoUpdates() {
+  appInfoFlushTimer = null;
+  for (const [appId, fields] of pendingAppInfoUpdates) {
+    const media: Record<string, string | null> = {
+      coverPath: fields.coverPath ?? null,
+      backgroundPath: fields.backgroundPath ?? null,
+      logoPath: fields.logoPath ?? null,
+      iconPath: fields.iconPath ?? null,
+      landscapePath: fields.landscapePath ?? null,
+    };
+    updateGameAppinfoMedia(appId, null, media as any, null).catch(() => {});
+    // Invalidate in-memory cache so UI picks up new paths
+    invalidateResolvedMediaCache(appId);
+  }
+  pendingAppInfoUpdates.clear();
+}
+
+function queueAppInfoUpdate(appId: string, field: string, path: string | null) {
+  const existing = pendingAppInfoUpdates.get(appId) ?? {};
+  existing[field] = path;
+  pendingAppInfoUpdates.set(appId, existing);
+  if (appInfoFlushTimer) clearTimeout(appInfoFlushTimer);
+  appInfoFlushTimer = setTimeout(flushAppInfoUpdates, 500);
+}
+
 function tryProcessNext() {
   if (activeJobs.size >= MAX_CONCURRENT) return;
   if (pendingQueue.length === 0) {
@@ -103,18 +144,29 @@ async function performDownload(entry: InternalJob, key: string) {
   const { job } = entry;
 
   try {
+    // Wrap in try-catch to handle stale callback IDs after app reload/unmount
     const result = await invoke<string | null>("safe_download_image", {
       url: job.url,
       appId: job.appId,
       mediaType: job.mediaType,
       target: job.target,
       forceRefresh: job.forceRefresh ?? false,
+    }).catch((err: any) => {
+      // Tauri callback ID warnings are non-fatal after app reload
+      const msg = String(err ?? "");
+      if (msg.includes("Couldn't find callback id") || msg.includes("callback")) {
+        log("stale callback ignored for", key);
+        return null;
+      }
+      throw err;
     });
 
     if (result !== null) {
       recentlyCompleted.add(key);
       recentlyFailed.delete(key);
       log("success", key, result);
+      // Update appinfo with the downloaded file path (batched debounced)
+      queueAppInfoUpdate(job.appId, mediaTypeToField(job.mediaType), result);
       notify({ type: "success", job, result: { success: true, appId: job.appId, mediaType: job.mediaType, localPath: result }, queueSize: pendingQueue.length });
       entry.resolve({ success: true, appId: job.appId, mediaType: job.mediaType, localPath: result });
     } else {
@@ -278,5 +330,8 @@ export function isAppIdInFlight(appId: string): boolean {
 export function clearMediaQueueState() {
   recentlyCompleted.clear();
   recentlyFailed.clear();
+  pendingAppInfoUpdates.clear();
+  if (appInfoFlushTimer) clearTimeout(appInfoFlushTimer);
+  appInfoFlushTimer = null;
   log("cleared dedup state");
 }

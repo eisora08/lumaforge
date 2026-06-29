@@ -83,16 +83,24 @@ type LibraryGameDetailsProps = {
   onOpenStopModal?: () => void;
 };
 
+const ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS = true;
+
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
   // Hero priority: background.jpg > landscape.jpg > remote background/header > cover.jpg as last local fallback > placeholder
-  if (canonicalAppInfo?.media?.backgroundPath) return canonicalAppInfo.media.backgroundPath;
-  if (canonicalAppInfo?.media?.landscapePath) return canonicalAppInfo.media.landscapePath;
-  if (mediaEntry?.hero_path) return mediaEntry.hero_path;
-  if (mediaEntry?.grid_path) return mediaEntry.grid_path;
-  if (appInfoEntry?.header_image) return appInfoEntry.header_image;
-  if (artwork?.sgdbHeroUrl) return artwork.sgdbHeroUrl;
-  if (artwork?.sgdbGridUrl) return artwork.sgdbGridUrl;
-  return game.metadata?.library_hero_image
+  if (canonicalAppInfo?.media?.backgroundPath) {
+    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: backgroundPath");
+    return canonicalAppInfo.media.backgroundPath;
+  }
+  if (canonicalAppInfo?.media?.landscapePath) {
+    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: landscapePath");
+    return canonicalAppInfo.media.landscapePath;
+  }
+  if (mediaEntry?.hero_path) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: mediaEntry.hero_path"); return mediaEntry.hero_path; }
+  if (mediaEntry?.grid_path) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: mediaEntry.grid_path"); return mediaEntry.grid_path; }
+  if (appInfoEntry?.header_image) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: appInfoEntry.header_image"); return appInfoEntry.header_image; }
+  if (artwork?.sgdbHeroUrl) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: sgdbHeroUrl"); return artwork.sgdbHeroUrl; }
+  if (artwork?.sgdbGridUrl) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: sgdbGridUrl"); return artwork.sgdbGridUrl; }
+  const remoteSrc = game.metadata?.library_hero_image
     || game.metadata?.background_image
     || game.metadata?.hero_image
     || game.metadata?.library_header_image
@@ -100,11 +108,19 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.capsule_image
     || game.metadata?.wide_cover_image
     || game.metadata?.capsule_image_v5
-    || game.imageUrl
-    || canonicalAppInfo?.media?.coverPath
-    || mediaEntry?.cover_path
-    || canonicalDiskFallback
-    || undefined;
+    || game.imageUrl;
+  if (remoteSrc) {
+    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: remote metadata");
+    return remoteSrc;
+  }
+  if (canonicalAppInfo?.media?.coverPath) {
+    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: coverPath (fallback)");
+    return canonicalAppInfo.media.coverPath;
+  }
+  if (mediaEntry?.cover_path) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: mediaEntry.cover_path"); return mediaEntry.cover_path; }
+  if (canonicalDiskFallback) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: canonicalDiskFallback"); return canonicalDiskFallback; }
+  if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: none (placeholder)");
+  return undefined;
 }
 
 function formatBytes(bytes?: number): string {
@@ -210,10 +226,20 @@ export default function LibraryGameDetails({
     : rawImageUrl;
   const heroFallbackPath = rawImageIsLocal ? rawImageUrl : null;
 
-  const rawLogoUrl = canonicalAppInfo?.media?.logoPath
-    || artwork?.sgdbLogoUrl
-    || game.metadata?.logo_image
-    || game.metadata?.library_logo_image;
+  const rawLogoUrl = (() => {
+    const src = canonicalAppInfo?.media?.logoPath
+      || artwork?.sgdbLogoUrl
+      || game.metadata?.logo_image
+      || game.metadata?.library_logo_image;
+    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
+      if (canonicalAppInfo?.media?.logoPath) console.log("[LibraryDetails] selected logo source: logoPath");
+      else if (artwork?.sgdbLogoUrl) console.log("[LibraryDetails] selected logo source: sgdbLogoUrl");
+      else if (game.metadata?.logo_image) console.log("[LibraryDetails] selected logo source: logo_image");
+      else if (game.metadata?.library_logo_image) console.log("[LibraryDetails] selected logo source: library_logo_image");
+      else console.log("[LibraryDetails] selected logo source: none");
+    }
+    return src;
+  })();
   const logoUrl = rawLogoUrl && isLocalPath(rawLogoUrl)
     ? (localPathToUrl(rawLogoUrl) ?? undefined)
     : rawLogoUrl;

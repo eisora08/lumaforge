@@ -100,20 +100,25 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
   }
 
   // Read appinfo.json from disk
-  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  let appInfo = await getGameAppInfo(appId).catch(() => null);
 
   // Validate all paths against disk (once per session)
   if (!isAppInfoRepaired(appId)) {
     try {
-      // First, repair any stale paths in appinfo.json
-      repairAppinfoMediaPaths(appId).catch(() => {});
+      // First, repair stale paths AND add disk-only paths in appinfo.json
+      // This updates appinfo on disk. We re-read appInfo afterward.
+      await repairAppinfoMediaPaths(appId).catch(() => {});
+
+      // Re-read appinfo after repair (it may have been updated with disk paths)
+      const repairedAppInfo = await getGameAppInfo(appId).catch(() => null);
+      if (repairedAppInfo) {
+        appInfo = repairedAppInfo;
+      }
 
       const diskPaths = await resolveGameMediaPaths(appId);
       markAppInfoRepaired(appId);
 
       if (diskPaths) {
-        // Build validated media: use disk paths where files exist,
-        // keep appinfo paths only for files that are pending (e.g. being downloaded)
         const hasDiskFiles = !!(diskPaths.landscapePath || diskPaths.coverPath || diskPaths.backgroundPath || diskPaths.logoPath || diskPaths.iconPath);
         const hasAppInfoMedia = !!(appInfo?.media?.landscapePath || appInfo?.media?.coverPath || appInfo?.media?.backgroundPath || appInfo?.media?.logoPath || appInfo?.media?.iconPath);
 
@@ -169,8 +174,9 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
           appInfo.media = validatedMedia;
           return appInfo;
         }
+        const fallbackName = (appInfo as GameAppInfo | null)?.name ?? null;
         if (hasDiskFiles) {
-          return { appId, provider: "steam", name: null, updatedAt: null, media: validatedMedia, remote: null };
+          return { appId, provider: "steam", name: fallbackName, updatedAt: null, media: validatedMedia, remote: null };
         }
       }
     } catch {
@@ -187,6 +193,11 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
 // Clear the session cache (e.g. after artwork refresh)
 export function clearResolvedMediaSessionCache(): void {
   resolvedMediaSessionCache.clear();
+}
+
+// Invalidate cache for a specific appId (e.g. after a media download updates appinfo)
+export function invalidateResolvedMediaCache(appId: string): void {
+  resolvedMediaSessionCache.delete(appId);
 }
 
 // ---------------------------------------------------------------------------
@@ -326,12 +337,15 @@ export async function cacheMediaForGame(
     }
   }
 
-  // Update canonical appinfo
+  // Update canonical appinfo (merge with existing)
   try {
     await updateGameAppinfoMedia(appId, name, paths, null);
   } catch {
     // non-critical
   }
+
+  // Invalidate session cache to force re-read on next access
+  invalidateResolvedMediaCache(appId);
 
   // Update artwork.json
   if (sgdbRef) {
