@@ -26,10 +26,11 @@ function buildFromSteam(
   metadata: Record<number, SteamAppMetadata>,
 ): LibraryGame {
   const meta = metadata[steam.appId];
+  const metaName = meta?.resolved ? meta.name : undefined;
   return {
     id: stableIdFromString("steam", String(steam.appId)),
     appId: String(steam.appId),
-    title: meta?.name || steam.name || `Steam App ${steam.appId}`,
+    title: steam.name || metaName || `Steam App ${steam.appId}`,
     source: "steam",
     installDir: steam.installDir || undefined,
     libraryPath: steam.libraryPath,
@@ -82,12 +83,13 @@ function buildFromLuaScript(
 ): LibraryGame {
   const appId = script.app_id;
   const meta = metadata[appId];
+  const metaName = meta?.resolved ? meta.name : undefined;
   const id = stableIdFromString("lua", String(appId));
   const isDisabled = script.is_disabled;
   return {
     id,
     appId: String(appId),
-    title: meta?.name || `Steam App ${appId}`,
+    title: metaName || `Steam App ${appId}`,
     source: "lua",
     imageUrl: getImageUrl(meta),
     metadata: meta,

@@ -26,6 +26,8 @@ import { InfoBlock } from "./details/StoreGameDetailPrimitives";
 import StoreMoreLikeThisSection from "./StoreMoreLikeThisSection";
 import type { StoreMoreLikeThisGame } from "./StoreMoreLikeThisSection";
 
+import { SkeletonBox, SkeletonHero } from "../common/Skeleton";
+
 type StoreGameDetailsPageProps = {
   game: PackageGame;
   metadata?: SteamAppMetadata;
@@ -130,6 +132,8 @@ export default function StoreGameDetailsPage({
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
 
+  const metadataLoading = !metadata?.resolved;
+
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
@@ -216,6 +220,35 @@ export default function StoreGameDetailsPage({
 
   function handleDownloadFromSource(source: PackageSource) {
     onDownloadSource?.(source);
+  }
+
+  if (metadataLoading) {
+    return (
+      <div className="space-y-6">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Volver al Store
+        </button>
+        <SkeletonHero />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <SkeletonBox className="h-20 rounded-xl" />
+              <SkeletonBox className="h-20 rounded-xl" />
+              <SkeletonBox className="h-20 rounded-xl" />
+            </div>
+            <SkeletonBox className="h-32 w-full rounded-xl" />
+          </div>
+          <aside className="space-y-4">
+            <SkeletonBox className="h-64 w-full rounded-xl" />
+          </aside>
+        </div>
+      </div>
+    );
   }
 
   return (

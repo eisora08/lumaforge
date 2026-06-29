@@ -432,3 +432,35 @@ export async function isProcessRunning(pid: number): Promise<boolean> {
 export async function listProcesses(): Promise<ProcessInfo[]> {
   return await invoke<ProcessInfo[]>("list_processes");
 }
+
+// --- Store cache ---
+
+export async function readStoreMetadataCache(
+  appId: number
+): Promise<{ app_id: number; data: SteamAppMetadata; updated_at: number; version: number } | null> {
+  return await invoke("read_store_metadata_cache", { appId });
+}
+
+export async function writeStoreMetadataCache(
+  appId: number,
+  entry: { app_id: number; data: SteamAppMetadata; updated_at: number; version: number }
+): Promise<void> {
+  return await invoke("write_store_metadata_cache", { appId, entry });
+}
+
+export async function readStoreReviewCache(
+  appId: number
+): Promise<{ app_id: number; data: SteamReviewSummary; updated_at: number; version: number } | null> {
+  return await invoke("read_store_review_cache", { appId });
+}
+
+export async function writeStoreReviewCache(
+  appId: number,
+  entry: { app_id: number; data: SteamReviewSummary; updated_at: number; version: number }
+): Promise<void> {
+  return await invoke("write_store_review_cache", { appId, entry });
+}
+
+export async function clearStoreCache(): Promise<void> {
+  return await invoke("clear_store_cache");
+}

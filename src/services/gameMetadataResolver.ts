@@ -1,72 +1,107 @@
-import { resolveSteamAppMetadata } from "./tauri";
-import { SteamAppMetadata } from "../types/gameMetadata";
+import { resolveSteamAppMetadata, readStoreMetadataCache, writeStoreMetadataCache } from "./tauri";
+import type { SteamAppMetadata } from "../types/gameMetadata";
 
-const CACHE_KEY = "lumaforge-steam-app-metadata-cache-v3";
+const ENABLE_VERBOSE_STORE_CACHE_LOGS = false;
 
-const OLD_CACHE_KEYS = [
-  "lumaforge-steam-app-metadata-cache",
-  "lumaforge-steam-app-metadata-cache-v2",
-];
+const inMemoryCache = new Map<number, SteamAppMetadata>();
 
-OLD_CACHE_KEYS.forEach((key) => localStorage.removeItem(key));
-
-type MetadataCache = Record<string, SteamAppMetadata>;
-
-export function loadMetadataCache(): MetadataCache {
-  try {
-    const rawCache = localStorage.getItem(CACHE_KEY);
-
-    if (!rawCache) {
-      return {};
-    }
-
-    return JSON.parse(rawCache) as MetadataCache;
-  } catch {
-    return {};
+function log(...args: unknown[]) {
+  if (ENABLE_VERBOSE_STORE_CACHE_LOGS) {
+    console.debug("[MetadataResolver]", ...args);
   }
 }
 
-function loadCache(): MetadataCache {
-  return loadMetadataCache();
+export function loadMetadataCache(): Record<string, SteamAppMetadata> {
+  const result: Record<string, SteamAppMetadata> = {};
+  for (const [appId, meta] of inMemoryCache) {
+    result[String(appId)] = meta;
+  }
+  return result;
 }
 
-function saveCache(cache: MetadataCache) {
-  localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null> {
+  try {
+    const cached = await readStoreMetadataCache(appId);
+    if (cached && cached.data) {
+      log("app-data cache hit for", appId);
+      return cached.data as SteamAppMetadata;
+    }
+  } catch {
+    // corrupt or missing
+  }
+  return null;
+}
+
+async function saveToAppCache(appId: number, data: SteamAppMetadata): Promise<void> {
+  try {
+    await writeStoreMetadataCache(appId, {
+      app_id: appId,
+      data,
+      updated_at: Date.now(),
+      version: 1,
+    });
+  } catch {
+    // non-critical
+  }
 }
 
 export async function resolveGameMetadata(
   appIds: number[]
 ): Promise<Record<number, SteamAppMetadata>> {
   const uniqueAppIds = Array.from(new Set(appIds));
-  const cache = loadCache();
+  const result: Record<number, SteamAppMetadata> = {};
+  const missingAppIds: number[] = [];
 
-  const missingAppIds = uniqueAppIds.filter(
-    (appId) => !cache[String(appId)]
-  );
-
-  if (missingAppIds.length > 0) {
-    const resolved = await resolveSteamAppMetadata(missingAppIds);
-
-    resolved.forEach((metadata) => {
-      cache[String(metadata.app_id)] = metadata;
-    });
-
-    saveCache(cache);
+  for (const appId of uniqueAppIds) {
+    const cached = inMemoryCache.get(appId);
+    if (cached) {
+      result[appId] = cached;
+    } else {
+      missingAppIds.push(appId);
+    }
   }
 
-  return uniqueAppIds.reduce<Record<number, SteamAppMetadata>>(
-    (result, appId) => {
-      result[appId] =
-        cache[String(appId)] ?? createFallbackMetadata(appId);
+  if (missingAppIds.length === 0) {
+    return result;
+  }
 
-      return result;
-    },
-    {}
-  );
+  const toFetch: number[] = [];
+
+  for (const appId of missingAppIds) {
+    const fromDisk = await loadFromAppCache(appId);
+    if (fromDisk) {
+      inMemoryCache.set(appId, fromDisk);
+      result[appId] = fromDisk;
+    } else {
+      toFetch.push(appId);
+    }
+  }
+
+  if (toFetch.length === 0) {
+    return result;
+  }
+
+  const resolved = await resolveSteamAppMetadata(toFetch);
+
+  for (const meta of resolved) {
+    if (meta.resolved) {
+      inMemoryCache.set(meta.app_id, meta);
+      saveToAppCache(meta.app_id, meta);
+    }
+    result[meta.app_id] = meta;
+  }
+
+  for (const appId of toFetch) {
+    if (!result[appId]) {
+      result[appId] = createFallbackMetadata(appId);
+    }
+  }
+
+  return result;
 }
 
 export function clearGameMetadataCache() {
-  localStorage.removeItem(CACHE_KEY);
+  inMemoryCache.clear();
 }
 
 function createFallbackMetadata(appId: number): SteamAppMetadata {

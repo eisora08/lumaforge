@@ -49,8 +49,14 @@ export async function loadSteamStats(
   appIds?: number[],
 ): Promise<SteamStatsMap> {
   try {
+    if (!appIds || appIds.length === 0) {
+      if (ENABLE_VERBOSE_STATS_LOGS) {
+        console.debug("[SteamStats] No appIds provided, skipping full scan");
+      }
+      return new Map();
+    }
     if (ENABLE_VERBOSE_STATS_LOGS) {
-      console.debug(`[SteamStats] Loading for ${appIds?.length ?? "all"} apps, steamPath=${steamPath ?? "auto"}`);
+      console.debug(`[SteamStats] Loading for ${appIds.length} apps, steamPath=${steamPath ?? "auto"}`);
     }
     const stats = await scanSteamUserGameStats({ steamPath, appIds });
     if (ENABLE_VERBOSE_STATS_LOGS) {

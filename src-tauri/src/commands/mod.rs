@@ -16,3 +16,4 @@ pub mod steam_achievements;
 pub mod sync;
 pub mod process;
 pub mod game_media_cache;
+pub mod store_cache;

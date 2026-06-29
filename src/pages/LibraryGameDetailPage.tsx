@@ -6,6 +6,7 @@ import {
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import { loadSteamStats, mergeSteamStatsIntoGames } from "../services/gameStatsService";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
@@ -179,6 +180,21 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         // silent — artwork is optional
       });
   }, [resolvedGame, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
+
+  // Lazy per-game stats refresh
+  useEffect(() => {
+    if (!resolvedGame || !resolvedGame.appId) return;
+    const appIdNum = Number(resolvedGame.appId);
+    if (!Number.isFinite(appIdNum)) return;
+
+    loadSteamStats(settings.steamRoot || undefined, [appIdNum])
+      .then((statsMap) => {
+        const games = [resolvedGame];
+        mergeSteamStatsIntoGames(games, statsMap);
+        setResolvedGame({ ...games[0] });
+      })
+      .catch(() => { /* non-critical */ });
+  }, [resolvedGame?.appId, settings.steamRoot]);
 
   const handleRefreshArtwork = useCallback(async () => {
     if (!selectedGame?.appId) {

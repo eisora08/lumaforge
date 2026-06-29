@@ -178,7 +178,7 @@ export default function PackagesToolbar({
                       <button
                         type="button"
                         onClick={() => handleSelectItem(item)}
-                        className="flex w-full items-center gap-3 rounded-xl p-2.5 text-left transition hover:bg-white/10"
+                        className="flex w-full cursor-pointer items-center gap-3 rounded-xl p-2.5 text-left transition hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-(--color-accent)"
                       >
                         <div className="h-16 w-28 shrink-0 overflow-hidden rounded-lg bg-white/5">
                           {item.imageUrl ? (

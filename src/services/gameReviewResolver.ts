@@ -1,61 +1,97 @@
-import { resolveSteamReviewSummaries } from "./tauri";
+import { resolveSteamReviewSummaries, readStoreReviewCache, writeStoreReviewCache } from "./tauri";
 import type { SteamReviewSummary } from "../types/gameReview";
 
-const CACHE_KEY = "lumaforge-steam-review-summary-cache";
+const ENABLE_VERBOSE_STORE_CACHE_LOGS = false;
 
-type ReviewCache = Record<string, SteamReviewSummary>;
+const inMemoryCache = new Map<number, SteamReviewSummary>();
 
-function loadCache(): ReviewCache {
-  try {
-    const rawCache = localStorage.getItem(CACHE_KEY);
-
-    if (!rawCache) {
-      return {};
-    }
-
-    return JSON.parse(rawCache) as ReviewCache;
-  } catch {
-    return {};
+function log(...args: unknown[]) {
+  if (ENABLE_VERBOSE_STORE_CACHE_LOGS) {
+    console.debug("[ReviewResolver]", ...args);
   }
 }
 
-function saveCache(cache: ReviewCache) {
-  localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+async function loadFromAppCache(appId: number): Promise<SteamReviewSummary | null> {
+  try {
+    const cached = await readStoreReviewCache(appId);
+    if (cached && cached.data) {
+      log("app-data cache hit for", appId);
+      return cached.data as SteamReviewSummary;
+    }
+  } catch {
+    // corrupt or missing
+  }
+  return null;
+}
+
+async function saveToAppCache(appId: number, data: SteamReviewSummary): Promise<void> {
+  try {
+    await writeStoreReviewCache(appId, {
+      app_id: appId,
+      data,
+      updated_at: Date.now(),
+      version: 1,
+    });
+  } catch {
+    // non-critical
+  }
 }
 
 export async function resolveGameReviewSummaries(
   appIds: number[]
 ): Promise<Record<number, SteamReviewSummary>> {
   const uniqueAppIds = Array.from(new Set(appIds));
-  const cache = loadCache();
+  const result: Record<number, SteamReviewSummary> = {};
+  const missingAppIds: number[] = [];
 
-  const missingAppIds = uniqueAppIds.filter(
-    (appId) => !cache[String(appId)]
-  );
-
-  if (missingAppIds.length > 0) {
-    const resolved = await resolveSteamReviewSummaries(missingAppIds);
-
-    resolved.forEach((summary) => {
-      cache[String(summary.app_id)] = summary;
-    });
-
-    saveCache(cache);
+  for (const appId of uniqueAppIds) {
+    const cached = inMemoryCache.get(appId);
+    if (cached) {
+      result[appId] = cached;
+    } else {
+      missingAppIds.push(appId);
+    }
   }
 
-  return uniqueAppIds.reduce<Record<number, SteamReviewSummary>>(
-    (result, appId) => {
-      result[appId] =
-        cache[String(appId)] ?? createFallbackReviewSummary(appId);
+  if (missingAppIds.length === 0) {
+    return result;
+  }
 
-      return result;
-    },
-    {}
-  );
+  const toFetch: number[] = [];
+
+  for (const appId of missingAppIds) {
+    const fromDisk = await loadFromAppCache(appId);
+    if (fromDisk) {
+      inMemoryCache.set(appId, fromDisk);
+      result[appId] = fromDisk;
+    } else {
+      toFetch.push(appId);
+    }
+  }
+
+  if (toFetch.length === 0) {
+    return result;
+  }
+
+  const resolved = await resolveSteamReviewSummaries(toFetch);
+
+  for (const summary of resolved) {
+    inMemoryCache.set(summary.app_id, summary);
+    result[summary.app_id] = summary;
+    saveToAppCache(summary.app_id, summary);
+  }
+
+  for (const appId of toFetch) {
+    if (!result[appId]) {
+      result[appId] = createFallbackReviewSummary(appId);
+    }
+  }
+
+  return result;
 }
 
 export function clearGameReviewSummaryCache() {
-  localStorage.removeItem(CACHE_KEY);
+  inMemoryCache.clear();
 }
 
 function createFallbackReviewSummary(appId: number): SteamReviewSummary {

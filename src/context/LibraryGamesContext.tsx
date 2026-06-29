@@ -15,6 +15,22 @@ import { useSettings } from "./SettingsContext";
 
 const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
 
+const OLD_CACHE_KEYS = [
+  "lumaforge-steam-app-metadata-cache-v3",
+  "lumaforge-steam-review-summary-cache",
+  "lumaforge-steam-store-search-cache",
+  "lumaforge-steam-store-search-cache-v1",
+  "lumaforge-steam-store-search-cache-v2",
+];
+
+function cleanupOldCacheKeys() {
+  for (const key of OLD_CACHE_KEYS) {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  }
+}
+
+cleanupOldCacheKeys();
+
 function loadStoredSelectedId(): string | null {
   try {
     return localStorage.getItem(SELECTED_GAME_KEY);
@@ -127,11 +143,13 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       const appIds = games
         .map((g) => Number(g.appId))
         .filter((id): id is number => Number.isFinite(id));
-      const steamStats = await loadSteamStats(
-        settings.steamRoot || undefined,
-        appIds.length > 0 ? appIds : undefined,
-      );
-      mergeSteamStatsIntoGames(games, steamStats);
+      if (appIds.length > 0) {
+        const steamStats = await loadSteamStats(
+          settings.steamRoot || undefined,
+          appIds,
+        );
+        mergeSteamStatsIntoGames(games, steamStats);
+      }
     } catch {
       // stats are non-critical
     }

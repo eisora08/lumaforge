@@ -54,6 +54,8 @@ import type {
   SteamFeaturedItem,
 } from "../types/steamFeatured";
 
+import { SkeletonBox, SkeletonHero, GridSkeleton } from "../components/common/Skeleton";
+
 type StoreTab = "discover" | "browse" | "lua-ready" | "news";
 
 const STORE_TABS: { id: StoreTab; label: string }[] = [
@@ -69,6 +71,9 @@ type StoreSectionModel = {
   description: string;
   games: PackageGame[];
 };
+
+const METADATA_CONCURRENCY = 5;
+const REVIEW_CONCURRENCY = 3;
 
 function mapSteamFeaturedItemToPackageGame(
   item: SteamFeaturedItem
@@ -117,6 +122,55 @@ function dedupeGames(games: PackageGame[]): PackageGame[] {
     if (seen.has(game.appId)) return false;
     seen.add(game.appId);
     return true;
+  });
+}
+
+function batchedLoad<T>(
+  items: number[],
+  loader: (batch: number[]) => Promise<Record<number, T>>,
+  concurrency: number
+): Promise<Record<number, T>> {
+  return new Promise((resolve) => {
+    let index = 0;
+    const result: Record<number, T> = {};
+    let active = 0;
+    let done = false;
+
+    function next() {
+      while (active < concurrency && index < items.length) {
+        const start = index;
+        const end = Math.min(start + concurrency, items.length);
+        const batch = items.slice(start, end);
+        index = end;
+        active++;
+
+        loader(batch).then((partial) => {
+          Object.assign(result, partial);
+          active--;
+          if (index >= items.length && active === 0 && !done) {
+            done = true;
+            resolve(result);
+          } else {
+            next();
+          }
+        }).catch(() => {
+          active--;
+          if (index >= items.length && active === 0 && !done) {
+            done = true;
+            resolve(result);
+          } else {
+            next();
+          }
+        });
+      }
+    }
+
+    if (items.length === 0) {
+      resolve(result);
+      return;
+    }
+
+    next();
   });
 }
 
@@ -619,12 +673,15 @@ export default function Store() {
     ? providerOverlayByAppId[selectedDetailGame.appId] ?? selectedDetailGame
     : null;
 
+  // Stable key for visibleAppIds to prevent render loops
+  const appIdScopeKeyRef = useRef("");
+
+  // Visible appIds for metadata loading - does NOT depend on storeMetadataByAppId
   const visibleAppIds = useMemo(() => {
     const appIds = new Set<number>();
 
     results.forEach((game) => {
       const appId = Number(game.appId);
-
       if (Number.isFinite(appId)) {
         appIds.add(appId);
       }
@@ -633,7 +690,6 @@ export default function Store() {
     steamStoreSections.forEach((section) => {
       section.games.forEach((game) => {
         const appId = Number(game.appId);
-
         if (Number.isFinite(appId)) {
           appIds.add(appId);
         }
@@ -642,7 +698,6 @@ export default function Store() {
 
     steamSearchItems.forEach((item) => {
       const appId = Number(item.appId);
-
       if (Number.isFinite(appId)) {
         appIds.add(appId);
       }
@@ -650,87 +705,103 @@ export default function Store() {
 
     steamSubmittedSearchGames.forEach((game) => {
       const appId = Number(game.appId);
-
       if (Number.isFinite(appId)) {
         appIds.add(appId);
       }
     });
 
+    // Only add selected detail game's appId (not DLC - DLC is loaded in the detail page)
     if (selectedDetailGame) {
       const appId = Number(selectedDetailGame.appId);
-
       if (Number.isFinite(appId)) {
         appIds.add(appId);
       }
-
-      const dlcIds = storeMetadataByAppId[appId]?.dlc_app_ids ?? [];
-      dlcIds.forEach((id) => {
-        if (Number.isFinite(id)) {
-          appIds.add(id);
-        }
-      });
     }
 
     return Array.from(appIds);
+    // NOTE: storeMetadataByAppId intentionally NOT in deps to avoid render loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [results, steamStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame]);
 
-  const metadataRequestRef = useRef(0);
+  const visibleAppIdsKey = visibleAppIds.join(",");
 
+  // Only reload metadata when the key actually changes
   useEffect(() => {
+    if (visibleAppIdsKey === appIdScopeKeyRef.current) return;
+    appIdScopeKeyRef.current = visibleAppIdsKey;
+
     if (visibleAppIds.length === 0) {
       setStoreMetadataByAppId({});
       return;
     }
 
-    const requestId = ++metadataRequestRef.current;
+    let cancelled = false;
 
     async function loadStoreMetadata() {
       try {
-        const metadata = await resolveGameMetadata(visibleAppIds);
+        const metadata = await batchedLoad(
+          visibleAppIds,
+          resolveGameMetadata,
+          METADATA_CONCURRENCY
+        );
 
-        if (requestId === metadataRequestRef.current) {
+        if (!cancelled) {
           setStoreMetadataByAppId(metadata);
         }
       } catch (error) {
         console.error(error);
 
-        if (requestId === metadataRequestRef.current) {
+        if (!cancelled) {
           setStoreMetadataByAppId({});
         }
       }
     }
 
     loadStoreMetadata();
-  }, [visibleAppIds]);
 
-  const reviewRequestRef = useRef(0);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleAppIdsKey]);
 
   useEffect(() => {
+    if (visibleAppIdsKey === appIdScopeKeyRef.current) return;
+
     if (visibleAppIds.length === 0) {
       setReviewSummaryByAppId({});
       return;
     }
 
-    const requestId = ++reviewRequestRef.current;
+    let cancelled = false;
 
     async function loadReviewSummaries() {
       try {
-        const summaries = await resolveGameReviewSummaries(visibleAppIds);
+        const summaries = await batchedLoad(
+          visibleAppIds,
+          resolveGameReviewSummaries,
+          REVIEW_CONCURRENCY
+        );
 
-        if (requestId === reviewRequestRef.current) {
+        if (!cancelled) {
           setReviewSummaryByAppId(summaries);
         }
       } catch (error) {
         console.error(error);
 
-        if (requestId === reviewRequestRef.current) {
+        if (!cancelled) {
           setReviewSummaryByAppId({});
         }
       }
     }
 
     loadReviewSummaries();
-  }, [visibleAppIds]);
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleAppIdsKey]);
 
   const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {
     if (!selectedDetailGameWithOverlay) {
@@ -855,7 +926,8 @@ export default function Store() {
     setSteamSearchItems([]);
     setSteamSubmittedSearchGames([]);
 
-    openDetailsForGame(game);
+    // Open details immediately with partial data - metadata loads inside
+    setSelectedDetailGame(game);
   }
 
   function handleStoreTabChange(tab: StoreTab) {
@@ -1270,24 +1342,14 @@ export default function Store() {
 function StoreLoadingState() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="aspect-[21/9] rounded-3xl bg-white/5" />
-
+      <SkeletonHero />
       <div className="space-y-4">
-        <div className="h-5 w-48 rounded bg-white/5" />
-        <div className="flex gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="aspect-video w-95 shrink-0 rounded-2xl bg-white/5" />
-          ))}
-        </div>
+        <SkeletonBox className="h-5 w-48" />
+        <GridSkeleton count={4} />
       </div>
-
       <div className="space-y-4">
-        <div className="h-5 w-56 rounded bg-white/5" />
-        <div className="flex gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="aspect-video w-95 shrink-0 rounded-2xl bg-white/5" />
-          ))}
-        </div>
+        <SkeletonBox className="h-5 w-56" />
+        <GridSkeleton count={4} />
       </div>
     </div>
   );
