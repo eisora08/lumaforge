@@ -15,6 +15,7 @@ import { SummaryLine } from "./StoreGameDetailPrimitives";
 
 import type { PackageGame, PackageSource } from "../../../types/package";
 import type { PackageInstallStatus } from "../../../types/packageInstall";
+import type { SourceCheckStatus } from "../../../services/sourceAvailabilityCacheService";
 
 type StoreGameSummaryPanelProps = {
   game: PackageGame;
@@ -24,10 +25,12 @@ type StoreGameSummaryPanelProps = {
   availableSources: number;
   totalSources: number;
   selectedSource?: PackageSource | null;
+  sourceStatus?: SourceCheckStatus;
   onDownload?: () => void;
   onChangeSource?: () => void;
   onOpenSteam: () => void;
   onOpenSteamDb: () => void;
+  onRefreshSources?: () => void;
 };
 
 function getInstallBadge(status: PackageInstallStatus) {
@@ -71,14 +74,23 @@ export default function StoreGameSummaryPanel({
   availableSources,
   totalSources,
   selectedSource,
+  sourceStatus = "idle",
   onDownload,
   onChangeSource,
   onOpenSteam,
   onOpenSteamDb,
+  onRefreshSources,
 }: StoreGameSummaryPanelProps) {
-  const hasLuaReady = availableSources > 0;
+  const isChecking = sourceStatus === "checking";
+  const isReady = sourceStatus === "ready" || availableSources > 0;
+  const isNone = sourceStatus === "none" && availableSources === 0;
+  const isError = sourceStatus === "error";
+  const isTimeout = sourceStatus === "timeout";
+
+  const hasLuaReady = isReady && availableSources > 0;
   const installBadge = getInstallBadge(installStatus);
-  const canDownload = !!selectedSource?.available;
+  const canDownload = isReady && !!selectedSource?.available;
+  const needsRetry = isError || isTimeout;
 
   return (
     <div className="space-y-4">
@@ -120,14 +132,32 @@ export default function StoreGameSummaryPanel({
                 );
               })()}
 
-            {hasLuaReady && (
+            {isChecking && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/15 px-2.5 py-1 text-xs font-medium text-yellow-300">
+                Checking sources...
+              </span>
+            )}
+
+            {isReady && hasLuaReady && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-300">
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 Lua Ready
               </span>
             )}
 
-            {totalSources > 0 && (
+            {isNone && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
+                No Sources Available
+              </span>
+            )}
+
+            {needsRetry && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
+                Source check failed
+              </span>
+            )}
+
+            {totalSources > 0 && !isChecking && (
               <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
                 {availableSources}/{totalSources} Sources
               </span>
@@ -137,7 +167,20 @@ export default function StoreGameSummaryPanel({
       </div>
 
       <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
-        {selectedSource && (
+        {isChecking && (
+          <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-(--color-muted)">
+                Selected Source
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
+              <span>Awaiting provider response...</span>
+            </div>
+          </div>
+        )}
+
+        {!isChecking && isReady && selectedSource && (
           <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-(--color-muted)">
@@ -160,6 +203,19 @@ export default function StoreGameSummaryPanel({
           </div>
         )}
 
+        {!isChecking && !isReady && (
+          <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-(--color-muted)">
+                Selected Source
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
+              <span>{isNone ? "None" : needsRetry ? "Check failed" : "None"}</span>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-2">
           <button
             type="button"
@@ -168,17 +224,35 @@ export default function StoreGameSummaryPanel({
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
-            {canDownload ? getDownloadLabel(selectedSource) : "No Sources Available"}
+            {isChecking
+              ? "Checking sources..."
+              : isReady && canDownload
+                ? getDownloadLabel(selectedSource)
+                : isNone
+                  ? "No Sources Available"
+                  : needsRetry
+                    ? "Source check failed"
+                    : "No Sources Available"}
           </button>
 
           <button
             type="button"
-            disabled={totalSources === 0}
+            disabled={isChecking || totalSources === 0}
             onClick={onChangeSource}
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Change Source
+            {isChecking ? "Checking sources..." : isReady ? "Change Source" : "Sources: None"}
           </button>
+
+          {needsRetry && onRefreshSources && (
+            <button
+              type="button"
+              onClick={onRefreshSources}
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-4 py-2 text-sm font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
+            >
+              Retry Sources
+            </button>
+          )}
 
           <div className="grid grid-cols-2 gap-2 pt-1">
             <button
@@ -222,9 +296,15 @@ export default function StoreGameSummaryPanel({
           <SummaryLine
             label="Sources"
             value={
-              totalSources > 0
-                ? `${availableSources}/${totalSources} available`
-                : "None"
+              isChecking
+                ? "Checking..."
+                : isReady
+                  ? `${availableSources}/${totalSources} available`
+                  : isNone
+                    ? "None"
+                    : needsRetry
+                      ? "Check failed"
+                      : "None"
             }
           />
           <SummaryLine label="Developer" value={developer} />

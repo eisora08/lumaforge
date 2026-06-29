@@ -2,14 +2,40 @@ import { mockPackages } from "../data/mockPackages";
 import { defaultApiProviders } from "../data/providers";
 import { checkProviderAvailability } from "./tauri";
 
-import { AppSettings } from "../types/settings";
-import { ApiProviderDefinition, ApiProviderId } from "../types/provider";
-import {
+import type { AppSettings } from "../types/settings";
+import type { ApiProviderDefinition, ApiProviderId } from "../types/provider";
+import type {
   ProviderSearchParams,
   ProviderSearchProviderReport,
   ProviderSearchResult,
 } from "../types/providerSearch";
-import { PackageGame, PackageSource } from "../types/package";
+import type { PackageGame, PackageSource } from "../types/package";
+
+const ENABLE_VERBOSE_SOURCE_LOGS = false;
+
+function log(...args: unknown[]) {
+  if (ENABLE_VERBOSE_SOURCE_LOGS) {
+    console.log("[ProviderSearch]", ...args);
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`Timeout after ${ms}ms: ${label}`));
+    }, ms);
+    promise.then(
+      (val) => {
+        window.clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
 
 export function getEnabledProviderIds(settings: AppSettings): ApiProviderId[] {
   return defaultApiProviders
@@ -165,12 +191,22 @@ async function searchRealProviderAvailability(
     }
 
     try {
-      const availability = await checkProviderAvailability({
-        url: availabilityUrl,
-        successCode: provider.successCode,
-        unavailableCode: provider.unavailableCode,
-        headers: authHeaders,
-      });
+      log(`start { appId: "${appId}", provider: "${provider.id}" }`);
+      const availability = await withTimeout(
+        checkProviderAvailability({
+          url: availabilityUrl,
+          successCode: provider.successCode,
+          unavailableCode: provider.unavailableCode,
+          headers: authHeaders,
+        }),
+        10000,
+        `checkProviderAvailability(${provider.id}, ${appId})`
+      );
+      if (availability.available) {
+        log(`exact appId match { appId: "${appId}", provider: "${provider.id}" }`);
+      } else {
+        log(`no sources { appId: "${appId}", provider: "${provider.id}" }`);
+      }
 
       providerReports.push({
         providerId: provider.id,

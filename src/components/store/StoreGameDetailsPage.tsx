@@ -5,6 +5,7 @@ import type { PackageGame, PackageSource } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
+import type { SourceCheckStatus } from "../../services/sourceAvailabilityCacheService";
 import { openExternalUrl } from "../../services/externalLinks";
 import {
   getSteamDbUrl,
@@ -37,10 +38,12 @@ type StoreGameDetailsPageProps = {
   installStatus?: PackageInstallStatus;
   moreLikeThisGames?: StoreMoreLikeThisGame[];
   selectedSource?: PackageSource | null;
+  sourceStatus?: SourceCheckStatus;
   onBack: () => void;
   onDownloadSource?: (source: PackageSource) => void;
   onOpenGame?: (game: PackageGame) => void;
   onSelectSourceKey?: (sourceKey: string) => void;
+  onRefreshSources?: () => void;
 };
 
 function getBestImage(
@@ -126,10 +129,12 @@ export default function StoreGameDetailsPage({
   installStatus = "not-installed",
   moreLikeThisGames = [],
   selectedSource,
+  sourceStatus = "idle",
   onBack,
   onDownloadSource,
   onOpenGame,
   onSelectSourceKey,
+  onRefreshSources,
 }: StoreGameDetailsPageProps) {
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
@@ -366,10 +371,12 @@ export default function StoreGameDetailsPage({
               availableSources={availableSources.length}
               totalSources={game.sources.length}
               selectedSource={selectedSource ?? bestSource}
+              sourceStatus={sourceStatus}
               onDownload={handleDownload}
               onChangeSource={() => setSourceSelectorOpen(true)}
               onOpenSteam={handleOpenSteam}
               onOpenSteamDb={handleOpenSteamDb}
+              onRefreshSources={onRefreshSources}
             />
           </aside>
         </div>

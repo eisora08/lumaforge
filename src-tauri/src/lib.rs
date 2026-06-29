@@ -106,6 +106,8 @@ pub fn run() {
             commands::startup_snapshot::write_startup_snapshot,
             commands::startup_snapshot::clear_startup_snapshot,
             commands::startup_snapshot::validate_snapshot_media_paths,
+            commands::source_cache::read_source_availability_index,
+            commands::source_cache::write_source_availability_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

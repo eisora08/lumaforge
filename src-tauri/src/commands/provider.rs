@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::models::provider_check::ProviderAvailabilityResult;
 
@@ -16,6 +17,7 @@ pub fn check_provider_availability(
     let client = reqwest::blocking::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .redirect(reqwest::redirect::Policy::limited(5))
+        .timeout(Duration::from_secs(8))
         .build()
         .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
 

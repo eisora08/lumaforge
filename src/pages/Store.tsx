@@ -36,6 +36,21 @@ import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { resolveFeaturedStoreCategories } from "../services/steamFeaturedResolver";
 import { searchSteamStore } from "../services/steamStoreSearchResolver";
 import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
+import {
+  loadSourceAvailabilityIndex,
+  getSourceAvailability,
+  updateSourceAvailability,
+  buildSourceAvailabilityFromProviders,
+} from "../services/sourceAvailabilityCacheService";
+import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
+
+const ENABLE_VERBOSE_SOURCE_LOGS = false;
+
+function log(...args: unknown[]) {
+  if (ENABLE_VERBOSE_SOURCE_LOGS) {
+    console.log("[SourceResolve]", ...args);
+  }
+}
 
 
 import {
@@ -238,6 +253,17 @@ export default function Store() {
   const [activeGenreSectionId, setActiveGenreSectionId] = useState<
     string | null
   >(null);
+
+  const [sourcesLoadingByAppId, setSourcesLoadingByAppId] = useState<
+    Record<string, boolean>
+  >({});
+
+  const sourceCacheLoadedRef = useRef(false);
+  useEffect(() => {
+    if (sourceCacheLoadedRef.current) return;
+    sourceCacheLoadedRef.current = true;
+    loadSourceAvailabilityIndex().catch(() => {});
+  }, []);
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -893,21 +919,107 @@ export default function Store() {
     setSourceSelectorGame(game);
   }
 
+  const sourceResolveReqRef = useRef(0);
+
   function openDetailsForGame(game: PackageGame) {
-    setSelectedDetailGame(game);
+    const requestId = ++sourceResolveReqRef.current;
+    const cached = getSourceAvailability(game.appId);
+    const appId = game.appId;
+
+    log(`start { appId: "${appId}", title: "${game.title}" }`);
+
+    if (cached) {
+      log(`cache hit { appId: "${appId}", status: "${cached.status}" }`);
+
+      if (cached.status === "ready" && game.sources.length === 0) {
+        const hydratedGame: PackageGame = {
+          ...game,
+          sources: cached.availableSources.map((s) => ({
+            providerId: s.id as any,
+            providerName: s.name,
+            fileType: s.type as any,
+            available: s.status === "ready",
+            downloadUrl: s.packageUrl,
+          })),
+        };
+        setSelectedDetailGame(hydratedGame);
+      } else {
+        setSelectedDetailGame(game);
+      }
+
+      if (cached.status === "ready" || cached.status === "none") {
+        return;
+      }
+    } else {
+      setSelectedDetailGame(game);
+    }
+
     setActiveSectionId(null);
+
+    setSourcesLoadingByAppId((current) => ({
+      ...current,
+      [appId]: true,
+    }));
+    updateSourceAvailability(appId, {
+      appId,
+      title: game.title,
+      status: "checking",
+      luaReady: false,
+      availableSources: [],
+      sourceCount: 0,
+      totalProviderCount: 0,
+      updatedAt: Math.floor(Date.now() / 1000),
+    }).catch(() => {});
 
     resolveProviderOverlaysForStoreGames([game], settings)
       .then((overlays) => {
-        const overlayGame = overlays[game.appId];
+        const overlayGame = overlays[appId];
         if (overlayGame) {
           setProviderOverlayByAppId((current) => ({
             ...current,
-            [game.appId]: overlayGame,
+            [appId]: overlayGame,
           }));
         }
+
+        const resolvedGame = overlayGame ?? game;
+        const totalProviders = resolvedGame.sources.length;
+
+        const entry = buildSourceAvailabilityFromProviders(
+          appId,
+          game.title,
+          resolvedGame.sources,
+          totalProviders
+        );
+        log(`saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
+
+        updateSourceAvailability(appId, entry).catch(() => {});
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const isTimeout = message.toLowerCase().includes("timeout");
+
+        log(`${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
+
+        updateSourceAvailability(appId, {
+          appId,
+          title: game.title,
+          status: isTimeout ? "timeout" : "error",
+          luaReady: false,
+          availableSources: [],
+          sourceCount: 0,
+          totalProviderCount: 0,
+          updatedAt: Math.floor(Date.now() / 1000),
+        }).catch(() => {});
+      })
+      .finally(() => {
+        if (requestId !== sourceResolveReqRef.current) {
+          return;
+        }
+        setSourcesLoadingByAppId((current) => ({
+          ...current,
+          [appId]: false,
+        }));
+      });
   }
 
   function handleSelectSearchItem(item: StoreSearchDropdownItem) {
@@ -1070,6 +1182,22 @@ export default function Store() {
     );
   }
 
+  const selectedAppId = selectedDetailGameWithOverlay?.appId;
+  const isLoadingSources =
+    selectedAppId ? sourcesLoadingByAppId[selectedAppId] ?? false : false;
+  const cachedEntry: SourceAvailabilityGameEntry | undefined =
+    selectedAppId ? getSourceAvailability(selectedAppId) : undefined;
+
+  const sourceStatus: SourceCheckStatus =
+    isLoadingSources
+      ? "checking"
+      : cachedEntry
+        ? cachedEntry.status
+        : selectedDetailGameWithOverlay &&
+            selectedDetailGameWithOverlay.sources.some((s) => s.available)
+          ? "ready"
+          : "none";
+
   if (selectedDetailGameWithOverlay) {
     return (
       <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
@@ -1086,6 +1214,7 @@ export default function Store() {
             "not-installed"
           }
           selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
+          sourceStatus={sourceStatus}
           moreLikeThisGames={selectedDetailRelatedGames}
           onBack={handleBackFromDetails}
           onDownloadSource={handleDownloadSource}
@@ -1096,6 +1225,70 @@ export default function Store() {
               [selectedDetailGameWithOverlay.appId]: sourceKey,
             }))
           }
+          onRefreshSources={() => {
+            const game = selectedDetailGameWithOverlay;
+            if (!game) return;
+            const appId = game.appId;
+
+            log(`retry { appId: "${appId}" }`);
+
+            setSourcesLoadingByAppId((current) => ({
+              ...current,
+              [appId]: true,
+            }));
+            updateSourceAvailability(appId, {
+              appId,
+              title: game.title,
+              status: "checking",
+              luaReady: false,
+              availableSources: [],
+              sourceCount: 0,
+              totalProviderCount: 0,
+              updatedAt: Math.floor(Date.now() / 1000),
+            }).catch(() => {});
+
+            resolveProviderOverlaysForStoreGames([game], settings)
+              .then((overlays) => {
+                const overlayGame = overlays[appId];
+                if (overlayGame) {
+                  setProviderOverlayByAppId((current) => ({
+                    ...current,
+                    [appId]: overlayGame,
+                  }));
+                }
+                const resolvedGame = overlayGame ?? game;
+                const totalProviders = resolvedGame.sources.length;
+                const entry = buildSourceAvailabilityFromProviders(
+                  appId,
+                  game.title,
+                  resolvedGame.sources,
+                  totalProviders
+                );
+                log(`saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
+                updateSourceAvailability(appId, entry).catch(() => {});
+              })
+              .catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                const isTimeout = message.toLowerCase().includes("timeout");
+                log(`${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
+                updateSourceAvailability(appId, {
+                  appId,
+                  title: game.title,
+                  status: isTimeout ? "timeout" : "error",
+                  luaReady: false,
+                  availableSources: [],
+                  sourceCount: 0,
+                  totalProviderCount: 0,
+                  updatedAt: Math.floor(Date.now() / 1000),
+                }).catch(() => {});
+              })
+              .finally(() => {
+                setSourcesLoadingByAppId((current) => ({
+                  ...current,
+                  [appId]: false,
+                }));
+              });
+          }}
         />
       </div>
     );
