@@ -96,6 +96,7 @@ pub fn run() {
             commands::game_cache::resolve_game_media_paths,
             commands::game_cache::get_game_media_paths,
             commands::game_cache::repair_appinfo_media_paths,
+            commands::game_cache::repair_media_roles,
             commands::game_cache::read_game_media_data_url,
             commands::media_cache::get_media_cache_stats,
             commands::media_cache::compact_media_cache,

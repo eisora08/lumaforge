@@ -16,6 +16,7 @@ import {
   resolveGameMediaPaths,
   readGameMediaDataUrl,
   repairAppinfoMediaPaths,
+  repairMediaRoles,
 } from "./tauri";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
@@ -105,7 +106,10 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
   // Validate all paths against disk (once per session)
   if (!isAppInfoRepaired(appId)) {
     try {
-      // First, repair stale paths AND add disk-only paths in appinfo.json
+      // First, fix any misclassified media files (e.g. vertical landscape.jpg)
+      // so the file names match actual image orientation before scanning disk paths.
+      await repairMediaRoles(appId).catch(() => {});
+      // Then repair stale paths AND add disk-only paths in appinfo.json
       // This updates appinfo on disk. We re-read appInfo afterward.
       await repairAppinfoMediaPaths(appId).catch(() => {});
 

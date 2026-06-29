@@ -75,7 +75,7 @@ export async function resolveArtworkForAppIds(
       }
     } catch {
       memoryCache.set(String(appId), {
-        artwork: { appId, gridUrl: undefined, gridThumbUrl: undefined, heroUrl: undefined, logoUrl: undefined, iconUrl: undefined },
+        artwork: { appId, gridUrl: undefined, gridThumbUrl: undefined, gridHorizontalUrl: undefined, gridHorizontalThumbUrl: undefined, heroUrl: undefined, logoUrl: undefined, iconUrl: undefined },
         timestamp: now,
         failed: true,
       });
@@ -90,12 +90,18 @@ export async function resolveArtworkForAppIds(
 
 function buildSgdbData(a: SteamGridDbArtwork): SgdbArtworkData {
   const data: SgdbArtworkData = {};
-  if (a.gridUrl) data.sgdbGridUrl = a.gridUrl;
-  if (a.gridThumbUrl) data.sgdbGridThumbUrl = a.gridThumbUrl;
+  // Horizontal grid (wide) -> landscape
+  if (a.gridHorizontalUrl) data.sgdbGridUrl = a.gridHorizontalUrl;
+  if (a.gridHorizontalThumbUrl) data.sgdbGridThumbUrl = a.gridHorizontalThumbUrl;
+  // Vertical grid (poster) -> cover
+  if (a.gridUrl) data.sgdbCoverUrl = a.gridUrl;
+  if (a.gridThumbUrl && !data.sgdbGridThumbUrl) data.sgdbGridThumbUrl = a.gridThumbUrl;
+  // Hero -> background
   if (a.heroUrl) data.sgdbHeroUrl = a.heroUrl;
   if (a.logoUrl) data.sgdbLogoUrl = a.logoUrl;
   if (a.iconUrl) data.sgdbIconUrl = a.iconUrl;
-  if (a.gridUrl) data.sgdbCoverUrl = a.gridUrl;
+  // Fallback: if no horizontal grid, use vertical grid as landscape fallback
+  if (!data.sgdbGridUrl && a.gridUrl) data.sgdbGridUrl = a.gridUrl;
   return data;
 }
 

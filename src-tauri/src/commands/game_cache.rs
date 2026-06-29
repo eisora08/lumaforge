@@ -9,6 +9,7 @@ use crate::models::game_cache::{
 };
 use crate::models::library_cache::{LibraryAppInfoEntry, LibraryGameDetailsEntry, GameMediaCacheEntry};
 use crate::commands::media_cache::{process_and_save_with_dedup, repair_hash_index};
+use crate::utils::image_utils;
 
 // ---------------------------------------------------------------------------
 // Debug flags
@@ -797,39 +798,71 @@ fn safe_single_download(
         }
     };
 
+    // Classify image by aspect ratio to ensure role matches actual dimensions.
+    // This prevents vertical/poster images from being saved as landscape.jpg.
+    let actual_role = match image_utils::classify_image_role(&bytes, media_type) {
+        Ok(Some(role)) => role,
+        Ok(None) => {
+            media_log(&format!("[MediaClassify] rejected {} for {} — skipping", media_type, _app_id));
+            return Ok(None);
+        }
+        Err(e) => {
+            media_log(&format!("[MediaClassify] classification error for {}: {}", media_type, e));
+            // Fall through to original media_type
+            media_type.to_string()
+        }
+    };
+
+    // If reclassified to a different role, adjust dest_path
+    let (actual_dest_path, actual_media_type) = if actual_role != media_type {
+        let new_filename = match actual_role.as_str() {
+            "cover" => "cover.jpg",
+            "landscape" => "landscape.jpg",
+            "background" => "background.jpg",
+            "logo" => "logo.png",
+            "icon" => "icon.png",
+            _ => media_type,
+        };
+        let new_path = dest_path.parent().unwrap().join(new_filename);
+        media_log(&format!("[MediaClassify] reclassified {} -> {}, path: {}", media_type, actual_role, new_path.display()));
+        (new_path, actual_role)
+    } else {
+        (dest_path.to_path_buf(), media_type.to_string())
+    };
+
     // Write to temp file first, then rename for atomicity.
     // The hash index is updated by process_and_save_with_dedup with the
     // final filename (landscape.jpg / cover.jpg), never .tmp.
-    let temp_path = dest_path.with_extension("tmp");
-    media_log(&format!("temp write start — {} -> {}", media_type, temp_path.display()));
-    match process_and_save_with_dedup(&bytes, &temp_path, media_type) {
+    let temp_path = actual_dest_path.with_extension("tmp");
+    media_log(&format!("temp write start — {} -> {}", actual_media_type, temp_path.display()));
+    match process_and_save_with_dedup(&bytes, &temp_path, &actual_media_type) {
         Ok(_) => {
-            media_log(&format!("temp write success — {} ({} bytes)", media_type, bytes.len()));
-            let _ = fs::remove_file(dest_path);
-            match fs::rename(&temp_path, dest_path) {
+            media_log(&format!("temp write success — {} ({} bytes)", actual_media_type, bytes.len()));
+            let _ = fs::remove_file(&actual_dest_path);
+            match fs::rename(&temp_path, &actual_dest_path) {
                 Ok(_) => {
-                    media_log(&format!("rename temp to final — {} -> {}", temp_path.display(), dest_path.display()));
+                    media_log(&format!("rename temp to final — {} -> {}", temp_path.display(), actual_dest_path.display()));
                     // Defensive: ensure hash index points to final file, not .tmp
-                    if let Some(parent) = dest_path.parent() {
+                    if let Some(parent) = actual_dest_path.parent() {
                         let _ = repair_hash_index(parent);
                     }
-                    log(&format!("safe_download: saved {} ({} bytes)", media_type, bytes.len()));
-                    Ok(Some(dest_path.to_string_lossy().to_string()))
+                    log(&format!("safe_download: saved {} ({} bytes)", actual_media_type, bytes.len()));
+                    Ok(Some(actual_dest_path.to_string_lossy().to_string()))
                 }
                 Err(e) => {
                     // Rename failed — try copy as fallback, never return .tmp path
                     media_log(&format!("rename failed ({}), trying copy", e));
-                    match fs::copy(&temp_path, dest_path) {
+                    match fs::copy(&temp_path, &actual_dest_path) {
                         Ok(_) => {
                             let _ = fs::remove_file(&temp_path);
-                            media_log(&format!("final path returned — {}", dest_path.display()));
-                            log(&format!("safe_download: saved {} via copy ({} bytes)", media_type, bytes.len()));
-                            Ok(Some(dest_path.to_string_lossy().to_string()))
+                            media_log(&format!("final path returned — {}", actual_dest_path.display()));
+                            log(&format!("safe_download: saved {} via copy ({} bytes)", actual_media_type, bytes.len()));
+                            Ok(Some(actual_dest_path.to_string_lossy().to_string()))
                         }
                         Err(e2) => {
                             media_log(&format!("copy also failed: {}", e2));
                             let _ = fs::remove_file(&temp_path);
-                            log(&format!("safe_download: rename AND copy failed for {}: {}, {}", media_type, e, e2));
+                            log(&format!("safe_download: rename AND copy failed for {}: {}, {}", actual_media_type, e, e2));
                             Ok(None)
                         }
                     }
@@ -837,13 +870,13 @@ fn safe_single_download(
             }
         }
         Err(e) => {
-            log(&format!("safe_download: processing error for {}: {}", media_type, e));
+            log(&format!("safe_download: processing error for {}: {}", actual_media_type, e));
             // Fallback: raw save (to final path, never .tmp)
             let _ = fs::remove_file(&temp_path);
-            match fs::write(dest_path, &bytes) {
+            match fs::write(&actual_dest_path, &bytes) {
                 Ok(_) => {
-                    log(&format!("safe_download: fallback raw save for {}", media_type));
-                    Ok(Some(dest_path.to_string_lossy().to_string()))
+                    log(&format!("safe_download: fallback raw save for {}", actual_media_type));
+                    Ok(Some(actual_dest_path.to_string_lossy().to_string()))
                 }
                 Err(e2) => {
                     log(&format!("safe_download: fallback write error: {}", e2));
@@ -1199,6 +1232,137 @@ pub fn repair_appinfo_media_paths(
 
     log(&format!("appinfo media paths repaired for {} (stale paths stripped, disk paths added)", app_id));
     Ok(true)
+}
+
+// ---------------------------------------------------------------------------
+// repair_media_roles — inspect each cached image and fix misclassified files.
+// e.g. if landscape.jpg is actually a vertical cover, move it to cover.jpg.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn repair_media_roles(
+    app_handle: AppHandle,
+    app_id: String,
+) -> Result<bool, String> {
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+    if !media_dir.exists() {
+        return Ok(false);
+    }
+
+    let mut changed = false;
+
+    // Check landscape.jpg
+    let landscape_path = media_dir.join("landscape.jpg");
+    if landscape_path.exists() {
+        if let Ok(bytes) = fs::read(&landscape_path) {
+            match image_utils::classify_image_role(&bytes, "landscape") {
+                Ok(Some(role)) if role == "landscape" => {
+                    media_log(&format!("[MediaRepair] landscape.jpg is valid for {}", app_id));
+                }
+                Ok(Some(role)) if role == "cover" => {
+                    // landscape.jpg is actually a cover — move to cover.jpg if missing
+                    let cover_path = media_dir.join("cover.jpg");
+                    if !cover_path.exists() {
+                        media_log(&format!("[MediaRepair] moved landscape.jpg to cover.jpg for {}", app_id));
+                        let _ = fs::rename(&landscape_path, &cover_path);
+                        changed = true;
+                    } else {
+                        // cover.jpg already exists — just remove the misclassified landscape.jpg
+                        media_log(&format!("[MediaRepair] removed misclassified landscape.jpg (vertical) for {}", app_id));
+                        let _ = fs::remove_file(&landscape_path);
+                        changed = true;
+                    }
+                }
+                Ok(None) => {
+                    media_log(&format!("[MediaRepair] landscape.jpg has invalid aspect — removing for {}", app_id));
+                    let _ = fs::remove_file(&landscape_path);
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Check cover.jpg — if it's actually a landscape and landscape is missing, move it
+    let cover_path = media_dir.join("cover.jpg");
+    if cover_path.exists() {
+        let landscape_path = media_dir.join("landscape.jpg");
+        if !landscape_path.exists() {
+            if let Ok(bytes) = fs::read(&cover_path) {
+                match image_utils::classify_image_role(&bytes, "cover") {
+                    Ok(Some(role)) if role == "landscape" => {
+                        media_log(&format!("[MediaRepair] moved cover.jpg to landscape.jpg for {}", app_id));
+                        let _ = fs::rename(&cover_path, &landscape_path);
+                        changed = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Check background.jpg — if it's vertical, remove it
+    let background_path = media_dir.join("background.jpg");
+    if background_path.exists() {
+        if let Ok(bytes) = fs::read(&background_path) {
+            match image_utils::classify_image_role(&bytes, "background") {
+                Ok(Some(role)) if role == "background" => {
+                    media_log(&format!("[MediaRepair] background.jpg is valid for {}", app_id));
+                }
+                Ok(Some(role)) if role == "landscape" => {
+                    // Accept landscape-as-background if no real background
+                    media_log(&format!("[MediaRepair] background.jpg is landscape (acceptable) for {}", app_id));
+                }
+                Ok(Some(role)) if role == "cover" => {
+                    media_log(&format!("[MediaRepair] background.jpg is vertical/cover — removing for {}", app_id));
+                    let _ = fs::remove_file(&background_path);
+                    changed = true;
+                }
+                Ok(None) => {
+                    media_log(&format!("[MediaRepair] background.jpg has invalid aspect — removing for {}", app_id));
+                    let _ = fs::remove_file(&background_path);
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Update appinfo to match repaired files
+    if changed {
+        let path = get_appinfo_path(&app_handle, &app_id)?;
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(mut entry) = serde_json::from_str::<GameAppInfo>(&content) {
+                    let disk_cover = { let p = media_dir.join("cover.jpg"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
+                    let disk_landscape = { let p = media_dir.join("landscape.jpg"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
+                    let disk_background = { let p = media_dir.join("background.jpg"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
+                    let disk_logo = { let p = media_dir.join("logo.png"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
+                    let disk_icon = { let p = media_dir.join("icon.png"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
+
+                    entry.media = Some(GameMediaPaths {
+                        cover_path: disk_cover,
+                        landscape_path: disk_landscape,
+                        background_path: disk_background,
+                        logo_path: disk_logo,
+                        icon_path: disk_icon,
+                    });
+                    entry.updated_at = Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    );
+                    if let Ok(json) = serde_json::to_string_pretty(&entry) {
+                        let _ = fs::write(&path, &json);
+                    }
+                    media_log(&format!("[MediaRepair] appinfo updated for {}", app_id));
+                }
+            }
+        }
+    }
+
+    Ok(changed)
 }
 
 // ---------------------------------------------------------------------------

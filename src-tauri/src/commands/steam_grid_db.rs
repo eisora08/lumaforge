@@ -42,6 +42,8 @@ fn resolve_single(
                 app_id,
                 grid_url: None,
                 grid_thumb_url: None,
+                grid_horizontal_url: None,
+                grid_horizontal_thumb_url: None,
                 hero_url: None,
                 logo_url: None,
                 icon_url: None,
@@ -49,7 +51,8 @@ fn resolve_single(
         }
     };
 
-    let (grid_url, grid_thumb_url) = fetch_best_grid(client, api_key, game_id);
+    let (grid_url, grid_thumb_url) = fetch_best_vertical_grid(client, api_key, game_id);
+    let (grid_horizontal_url, grid_horizontal_thumb_url) = fetch_best_horizontal_grid(client, api_key, game_id);
     let hero_url = fetch_first_hero(client, api_key, game_id);
     let logo_url = fetch_first_logo(client, api_key, game_id);
     let icon_url = fetch_first_icon(client, api_key, game_id);
@@ -58,6 +61,8 @@ fn resolve_single(
         app_id,
         grid_url,
         grid_thumb_url,
+        grid_horizontal_url,
+        grid_horizontal_thumb_url,
         hero_url,
         logo_url,
         icon_url,
@@ -94,10 +99,10 @@ fn resolve_game_id(
         .map(|id| id as u32)
 }
 
-/// Fetch grids for a game, preferring 600×900 poster grids.
+/// Fetch vertical/poster grids (600×900) for cover images.
 /// Prefers static (non-animated) images.
 /// Returns (best_url, best_thumb_url).
-fn fetch_best_grid(
+fn fetch_best_vertical_grid(
     client: &reqwest::blocking::Client,
     api_key: &str,
     game_id: u32,
@@ -127,6 +132,75 @@ fn fetch_best_grid(
     let chosen = grids.iter().find(|g| {
         g.get("animated").and_then(|a| a.as_bool()).unwrap_or(false) == false
     }).or_else(|| grids.first());
+
+    let chosen = match chosen {
+        Some(g) => g,
+        None => return (None, None),
+    };
+
+    let url = chosen
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let thumb = chosen
+        .get("thumb")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    (url, thumb)
+}
+
+/// Fetch horizontal/landscape grids (aspect ratio >= 1.30) for landscape images.
+/// Does NOT filter by dimensions — fetches all grids and picks the best horizontal one.
+/// Prefers static (non-animated) images.
+/// Returns (best_url, best_thumb_url).
+fn fetch_best_horizontal_grid(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+    game_id: u32,
+) -> (Option<String>, Option<String>) {
+    let url = format!("{}/grids/game/{}", BASE_URL, game_id);
+
+    let response = match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+    {
+        Ok(resp) if resp.status().is_success() => resp,
+        _ => return (None, None),
+    };
+
+    let json: serde_json::Value = match response.json() {
+        Ok(v) => v,
+        Err(_) => return (None, None),
+    };
+
+    let grids = match json.get("data").and_then(|d| d.as_array()) {
+        Some(arr) => arr,
+        None => return (None, None),
+    };
+
+    // Find static horizontal grids (aspect >= 1.30)
+    let horizontal: Vec<&serde_json::Value> = grids.iter()
+        .filter(|g| {
+            let animated = g.get("animated").and_then(|a| a.as_bool()).unwrap_or(false);
+            if animated { return false; }
+            let w = g.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as f64;
+            let h = g.get("height").and_then(|v| v.as_u64()).unwrap_or(1) as f64;
+            if h == 0.0 { return false; }
+            let aspect = w / h;
+            aspect >= 1.30
+        })
+        .collect();
+
+    if horizontal.is_empty() {
+        return (None, None);
+    }
+
+    // Pick the one with largest width (highest quality)
+    let chosen = horizontal.iter().max_by_key(|g| {
+        g.get("width").and_then(|v| v.as_u64()).unwrap_or(0)
+    });
 
     let chosen = match chosen {
         Some(g) => g,
@@ -242,11 +316,14 @@ mod tests {
             app_id: 12345,
             grid_url: Some("https://example.com/grid.jpg".into()),
             grid_thumb_url: Some("https://example.com/thumb.jpg".into()),
+            grid_horizontal_url: Some("https://example.com/grid-h.jpg".into()),
+            grid_horizontal_thumb_url: Some("https://example.com/thumb-h.jpg".into()),
             hero_url: Some("https://example.com/hero.jpg".into()),
             logo_url: Some("https://example.com/logo.png".into()),
             icon_url: Some("https://example.com/icon.png".into()),
         };
         assert_eq!(artwork.app_id, 12345);
         assert_eq!(artwork.logo_url, Some("https://example.com/logo.png".into()));
+        assert_eq!(artwork.grid_horizontal_url, Some("https://example.com/grid-h.jpg".into()));
     }
 }

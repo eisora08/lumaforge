@@ -1,6 +1,99 @@
 use std::path::Path;
 
-/// Target dimensions per media role.
+// ---------------------------------------------------------------------------
+// Aspect ratio thresholds for media role classification
+// ---------------------------------------------------------------------------
+
+/// Maximum aspect ratio (width/height) for a cover/poster image.
+/// Vertical images like 600x900 (0.667), 810x1080 (0.75), 600x800 (0.75).
+pub const COVER_MAX_ASPECT: f64 = 0.85;
+
+/// Minimum aspect ratio for a landscape image.
+/// Horizontal images like 920x430 (2.14), 1280x720 (1.78), 1920x1080 (1.78).
+pub const LANDSCAPE_MIN_ASPECT: f64 = 1.30;
+
+/// Preferred minimum aspect ratio for a background/hero image.
+/// Wide images like 1920x620 (3.10).
+pub const BACKGROUND_PREFERRED_ASPECT: f64 = 2.0;
+
+/// Acceptable minimum aspect ratio for background when no better source exists.
+pub const BACKGROUND_ACCEPTABLE_ASPECT: f64 = 1.60;
+
+/// Returns (width, height) of an image from raw bytes.
+pub fn get_image_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| format!("Decode failed: {}", e))?;
+    Ok((img.width(), img.height()))
+}
+
+/// Classify an image for the intended media role based on aspect ratio.
+/// Returns the actual role the image should be saved as.
+/// If the image is invalid for the intended role, it may be reclassified or rejected.
+pub fn classify_image_role(
+    bytes: &[u8],
+    intended_role: &str,
+) -> Result<Option<String>, String> {
+    let (w, h) = get_image_dimensions(bytes)?;
+    let aspect = w as f64 / h as f64;
+
+    println!("[MediaClassify] role candidate: {}", intended_role);
+    println!("[MediaClassify] dimensions: {}x{}", w, h);
+    println!("[MediaClassify] aspect ratio: {:.4}", aspect);
+
+    match intended_role {
+        "cover" => {
+            if aspect <= COVER_MAX_ASPECT {
+                println!("[MediaClassify] accepted role: cover");
+                Ok(Some("cover".to_string()))
+            } else if aspect >= LANDSCAPE_MIN_ASPECT {
+                println!("[MediaClassify] reclassified cover -> landscape");
+                Ok(Some("landscape".to_string()))
+            } else {
+                println!("[MediaClassify] rejected invalid cover role");
+                Ok(None)
+            }
+        }
+        "landscape" => {
+            if aspect >= LANDSCAPE_MIN_ASPECT {
+                println!("[MediaClassify] accepted role: landscape");
+                Ok(Some("landscape".to_string()))
+            } else if aspect <= COVER_MAX_ASPECT {
+                println!("[MediaClassify] reclassified landscape -> cover");
+                Ok(Some("cover".to_string()))
+            } else {
+                println!("[MediaClassify] rejected invalid landscape role");
+                Ok(None)
+            }
+        }
+        "background" => {
+            if aspect >= BACKGROUND_PREFERRED_ASPECT {
+                println!("[MediaClassify] accepted role: background (wide)");
+                Ok(Some("background".to_string()))
+            } else if aspect >= BACKGROUND_ACCEPTABLE_ASPECT {
+                println!("[MediaClassify] accepted role: background (acceptable)");
+                Ok(Some("background".to_string()))
+            } else if aspect >= LANDSCAPE_MIN_ASPECT {
+                println!("[MediaClassify] reclassified background -> landscape");
+                Ok(Some("landscape".to_string()))
+            } else if aspect <= COVER_MAX_ASPECT {
+                println!("[MediaClassify] reclassified background -> cover");
+                Ok(Some("cover".to_string()))
+            } else {
+                println!("[MediaClassify] rejected invalid background role");
+                Ok(None)
+            }
+        }
+        "logo" | "icon" => {
+            Ok(Some(intended_role.to_string()))
+        }
+        _ => {
+            println!("[MediaClassify] unknown role: {}", intended_role);
+            Ok(Some(intended_role.to_string()))
+        }
+    }
+}
+
+/// Target dimension per media role.
 /// (max_width, max_height) — None means no constraint.
 pub struct TargetSize {
     pub max_width: Option<u32>,

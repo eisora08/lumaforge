@@ -904,6 +904,16 @@ export async function repairAppinfoMediaPaths(appId: string): Promise<boolean> {
   }
 }
 
+// repair_media_roles — inspect cached images and fix misclassified files
+// (e.g. vertical image saved as landscape.jpg)
+export async function repairMediaRoles(appId: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>("repair_media_roles", { appId });
+  } catch {
+    return false;
+  }
+}
+
 // Appinfo/artwork update helpers
 export type GameRemoteRefsInput = {
   header_image: string | null;
