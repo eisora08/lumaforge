@@ -583,3 +583,28 @@ export async function libraryClearGameMediaCache(
 export async function libraryClearAllGameMediaCache(): Promise<void> {
   return await invoke<void>("library_clear_all_game_media_cache");
 }
+
+// --- Unprefixed convenience aliases for library cache wrappers ---
+
+export async function getGameMediaCache(
+  gameKey: string
+): Promise<GameMediaCacheEntry | null> {
+  return await libraryGetGameMediaCache(gameKey);
+}
+
+export async function saveGameMediaCache(
+  gameKey: string,
+  entry: GameMediaCacheEntry
+): Promise<GameMediaCacheEntry> {
+  return await librarySaveGameMediaCache(gameKey, entry);
+}
+
+export async function clearGameMediaCache(
+  gameKey: string
+): Promise<void> {
+  return await libraryClearGameMediaCache(gameKey);
+}
+
+export async function clearAllGameMediaCache(): Promise<void> {
+  return await libraryClearAllGameMediaCache();
+}
