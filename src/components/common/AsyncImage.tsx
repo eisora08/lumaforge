@@ -15,7 +15,9 @@ type AsyncImageProps = {
   fallbackLocalPath?: string | null;
 };
 
+const ENABLE_VERBOSE_ASYNCIMAGE_LOGS = false;
 const failedAssetSrcSet = new Set<string>();
+const failedLocalPathSet = new Set<string>();
 const successfulDataUrlCache = new Map<string, string>();
 
 function isAssetUrl(s: string): boolean {
@@ -65,8 +67,10 @@ export default function AsyncImage({
         setDisplaySrc(cached);
         return;
       }
+      if (failedLocalPathSet.has(fallbackLocalPath)) {
+        return;
+      }
       if (isAssetUrl(src) && failedAssetSrcSet.has(src)) {
-        failedAssetSrcSet.add(src);
         triggerDataUrlFallback(src, fallbackLocalPath);
         return;
       }
@@ -85,8 +89,10 @@ export default function AsyncImage({
           setDisplaySrc(cached);
           return;
         }
+        if (failedLocalPathSet.has(fallbackLocalPath)) {
+          return;
+        }
         if (isAssetUrl(src) && failedAssetSrcSet.has(src)) {
-          failedAssetSrcSet.add(src);
           triggerDataUrlFallback(src, fallbackLocalPath);
           return;
         }
@@ -109,43 +115,31 @@ export default function AsyncImage({
       return;
     }
 
-    dataUrlAttemptedRef.current = true;
+    // Skip already-failed paths
+    if (failedLocalPathSet.has(localPath)) {
+      setFailed(true);
+      onErrorRef.current?.();
+      return;
+    }
 
-    console.warn("[AsyncImage] asset failed, trying data URL fallback", {
-      src: originalSrc.slice(0, 80),
-      fallbackLocalPath: localPath,
-    });
+    dataUrlAttemptedRef.current = true;
 
     readGameMediaDataUrl(localPath)
       .then((dataUrl) => {
         if (!mountedRef.current) return;
         if (!dataUrl || !dataUrl.startsWith("data:")) {
-          console.warn("[AsyncImage] data URL fallback returned invalid data", {
-            fallbackLocalPath: localPath,
-            prefix: dataUrl?.slice(0, 40),
-          });
           setFailed(true);
           onErrorRef.current?.();
           return;
         }
         successfulDataUrlCache.set(localPath, dataUrl);
-        console.debug("[AsyncImage] data URL fallback loaded", {
-          fallbackLocalPath: localPath,
-          byteLengthApprox: dataUrl.length,
-        });
         setFailed(false);
         setDisplaySrc(dataUrl);
       })
       .catch((err) => {
         const errStr = String(err);
-        // If the file was not found on disk, log once and stop retrying
         if (errStr.includes("os error 2") || errStr.includes("Invalid path") || errStr.includes("file not found") || errStr.includes("No such file")) {
-          console.warn("[AsyncImage] local fallback file missing", { fallbackLocalPath: localPath, error: errStr });
-        } else {
-          console.warn("[AsyncImage] data URL fallback failed", {
-            fallbackLocalPath: localPath,
-            error: errStr,
-          });
+          failedLocalPathSet.add(localPath);
         }
         if (mountedRef.current) {
           setFailed(true);
@@ -157,10 +151,12 @@ export default function AsyncImage({
   function handleLoad() {
     if (!mountedRef.current) return;
     setLoaded(true);
-    const cur = displaySrc;
-    console.debug("[AsyncImage] image loaded", {
-      currentSrcPrefix: cur ? cur.slice(0, 40) : null,
-    });
+    if (ENABLE_VERBOSE_ASYNCIMAGE_LOGS) {
+      const cur = displaySrc;
+      console.debug("[AsyncImage] image loaded", {
+        currentSrcPrefix: cur ? cur.slice(0, 40) : null,
+      });
+    }
     onLoadRef.current?.();
   }
 

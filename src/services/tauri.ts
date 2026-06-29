@@ -788,6 +788,60 @@ export type MigrationSummary = {
   errors: string[];
 };
 
+export type ValidatedMediaPaths = {
+  coverPath: string | null;
+  coverExists: boolean;
+  landscapePath: string | null;
+  landscapeExists: boolean;
+  backgroundPath: string | null;
+  backgroundExists: boolean;
+  logoPath: string | null;
+  logoExists: boolean;
+  iconPath: string | null;
+  iconExists: boolean;
+};
+
+// Validate snapshot media paths — batch check which local files exist
+export async function validateSnapshotMediaPaths(
+  media: SnapshotGameMediaForValidation,
+): Promise<ValidatedMediaPaths> {
+  try {
+    return await invoke<ValidatedMediaPaths>("validate_snapshot_media_paths", { media });
+  } catch {
+    return {
+      coverPath: media.coverPath,
+      coverExists: !!media.coverPath,
+      landscapePath: media.landscapePath,
+      landscapeExists: !!media.landscapePath,
+      backgroundPath: media.backgroundPath,
+      backgroundExists: !!media.backgroundPath,
+      logoPath: media.logoPath,
+      logoExists: !!media.logoPath,
+      iconPath: media.iconPath,
+      iconExists: !!media.iconPath,
+    };
+  }
+}
+
+export type SnapshotGameMediaForValidation = {
+  landscapePath: string | null;
+  coverPath: string | null;
+  backgroundPath: string | null;
+  logoPath: string | null;
+  iconPath: string | null;
+};
+
+// Batch read canonical appinfos (lightweight, no network)
+export async function readCanonicalAppinfos(
+  appIds: string[],
+): Promise<Record<string, GameAppInfo>> {
+  try {
+    return await invoke<Record<string, GameAppInfo>>("read_canonical_appinfos", { appIds });
+  } catch {
+    return {};
+  }
+}
+
 // GameAppInfo CRUD
 export async function getGameAppInfo(appId: string): Promise<GameAppInfo | null> {
   try {

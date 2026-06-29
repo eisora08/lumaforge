@@ -6,6 +6,15 @@ import type { SteamUserGameStats } from "../types/steamUserStats";
 const STEAM_CACHE_KEY = "lumaforge-steam-user-stats-cache-v1";
 let cachedSteamStats: SteamUserGameStats[] | null = null;
 
+// Startup guard: prevent stats scanning in the first 30 seconds after module load.
+// This ensures boot tasks and initial render complete before any stats work.
+const STATS_STARTUP_GUARD_MS = 30_000;
+const moduleLoadedAt = Date.now();
+
+function isWithinStartupGuard(): boolean {
+  return Date.now() - moduleLoadedAt < STATS_STARTUP_GUARD_MS;
+}
+
 type SteamStatsMap = Map<number, SteamUserGameStats>;
 
 function loadCachedSteamStats(): SteamStatsMap {
@@ -55,6 +64,17 @@ export async function loadSteamStats(
       }
       return new Map();
     }
+
+    // Startup guard: skip any stats scan during first 30s after module load
+    if (isWithinStartupGuard()) {
+      if (ENABLE_VERBOSE_STATS_LOGS) {
+        console.debug(`[SteamStats] Within startup guard (${Date.now() - moduleLoadedAt}ms), deferring stats for ${appIds.length} apps`);
+      }
+      const cached = loadCachedSteamStats();
+      if (cached.size > 0) return cached;
+      return new Map();
+    }
+
     if (ENABLE_VERBOSE_STATS_LOGS) {
       console.debug(`[SteamStats] Loading for ${appIds.length} apps, steamPath=${steamPath ?? "auto"}`);
     }

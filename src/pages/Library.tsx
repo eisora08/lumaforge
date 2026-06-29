@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -55,6 +55,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const { settings } = useSettings();
   const { games, warnings, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
   const hasLuaPath = Boolean(settings.luaPath);
+  const [, startTransition] = useTransition();
 
   const [luaScripts, setLuaScripts] = useState<InstalledLuaScript[]>([]);
   const [luaMetadata, setLuaMetadata] = useState<Record<number, SteamAppMetadata>>({});
@@ -125,12 +126,6 @@ export default function LibraryPage({ onNavigate }: Props) {
     for (const luaGame of luaGames) {
       const existing = merged.findIndex((g) => g.id === luaGame.id || g.appId === luaGame.appId);
       if (existing >= 0) {
-        if (luaGame.appId === "2358720" && existing >= 0) {
-          console.debug("[Library] Merging Lua into Wukong:", {
-            before: { isPlayable: merged[existing].isPlayable, isInstallable: merged[existing].isInstallable, steamInstalled: merged[existing].steamInstalled },
-            lua: { isPlayable: luaGame.isPlayable, isInstallable: luaGame.isInstallable },
-          });
-        }
         // Merge Lua-specific fields into existing game — preserve Steam core fields
         merged[existing] = {
           ...merged[existing],
@@ -393,9 +388,11 @@ export default function LibraryPage({ onNavigate }: Props) {
   }
 
   function handleResetFilters() {
-    setFilter("all");
-    setSort("name");
-    setSearchQuery("");
+    startTransition(() => {
+      setFilter("all");
+      setSort("name");
+      setSearchQuery("");
+    });
   }
 
   return (
@@ -543,7 +540,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                           <button
                             type="button"
                             disabled={currentPage <= 1}
-                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            onClick={() => startTransition(() => setCurrentPage((p) => Math.max(1, p - 1)))}
                             className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
                           >
                             <ChevronLeft className="h-3.5 w-3.5" />
@@ -552,7 +549,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                             <button
                               key={page}
                               type="button"
-                              onClick={() => setCurrentPage(page)}
+                              onClick={() => startTransition(() => setCurrentPage(page))}
                               className={`inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-xs font-medium transition ${
                                 page === currentPage
                                   ? "bg-(--color-accent)/20 text-(--color-accent)"
@@ -565,7 +562,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                           <button
                             type="button"
                             disabled={currentPage >= totalPages}
-                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            onClick={() => startTransition(() => setCurrentPage((p) => Math.min(totalPages, p + 1)))}
                             className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
                           >
                             <ChevronRight className="h-3.5 w-3.5" />

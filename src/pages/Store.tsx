@@ -869,14 +869,14 @@ export default function Store() {
     setSelectedDetailGame(null);
 
     if (games.length > 0) {
-      resolveProviderOverlaysForStoreGames(games, settings).then(
-        (overlays) => {
+      resolveProviderOverlaysForStoreGames(games, settings)
+        .then((overlays) => {
           setProviderOverlayByAppId((current) => ({
             ...current,
             ...overlays,
           }));
-        }
-      ).catch(console.error);
+        })
+        .catch(() => {});
     }
   }
 
@@ -893,27 +893,21 @@ export default function Store() {
     setSourceSelectorGame(game);
   }
 
-  async function openDetailsForGame(game: PackageGame) {
+  function openDetailsForGame(game: PackageGame) {
     setSelectedDetailGame(game);
     setActiveSectionId(null);
 
-    try {
-      const overlays = await resolveProviderOverlaysForStoreGames(
-        [game],
-        settings
-      );
-
-      const overlayGame = overlays[game.appId];
-
-      if (overlayGame) {
-        setProviderOverlayByAppId((current) => ({
-          ...current,
-          [game.appId]: overlayGame,
-        }));
-      }
-    } catch (error) {
-      console.error(error);
-    }
+    resolveProviderOverlaysForStoreGames([game], settings)
+      .then((overlays) => {
+        const overlayGame = overlays[game.appId];
+        if (overlayGame) {
+          setProviderOverlayByAppId((current) => ({
+            ...current,
+            [game.appId]: overlayGame,
+          }));
+        }
+      })
+      .catch(() => {});
   }
 
   function handleSelectSearchItem(item: StoreSearchDropdownItem) {

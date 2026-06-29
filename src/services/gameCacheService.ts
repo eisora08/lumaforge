@@ -18,6 +18,7 @@ import {
   repairAppinfoMediaPaths,
   repairMediaRoles,
 } from "./tauri";
+import { invalidateCanonicalMediaCache, notifyMediaUpdated } from "./startupSnapshotService";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import type {
@@ -74,6 +75,27 @@ function getCachedResolvedMedia(appId: string): GameMediaPaths | null | undefine
     return resolvedMediaSessionCache.get(appId) ?? null;
   }
   return undefined; // not in cache
+}
+
+// Seed the session cache from a startup snapshot to avoid disk checks
+// during initial render. Call this once during boot before any component
+// tries to resolve media.
+export function seedResolvedMediaCacheFromSnapshot(
+  snapshotGames: Array<{ appId: string; media: { landscapePath: string | null; coverPath: string | null; backgroundPath: string | null; logoPath: string | null; iconPath: string | null } }>,
+): void {
+  for (const g of snapshotGames) {
+    const media: GameMediaPaths = {
+      landscapePath: g.media.landscapePath ?? null,
+      coverPath: g.media.coverPath ?? null,
+      backgroundPath: g.media.backgroundPath ?? null,
+      logoPath: g.media.logoPath ?? null,
+      iconPath: g.media.iconPath ?? null,
+    };
+    const hasAny = !!(media.landscapePath || media.coverPath || media.backgroundPath || media.logoPath || media.iconPath);
+    resolvedMediaSessionCache.set(g.appId, hasAny ? media : null);
+    // Mark as repaired so loadGameAppInfoWithMediaFallback skips the expensive path
+    markAppInfoRepaired(g.appId);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +197,9 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
               console.log(`[MediaCache] appinfo updated for ${appId}`);
             }
             updateGameAppinfoMedia(appId, name, validatedMedia, remote).catch(() => {});
+            // Notify snapshot service so it picks up the repaired paths
+            invalidateCanonicalMediaCache(appId);
+            notifyMediaUpdated(appId).catch(() => {});
           }
         }
 
@@ -356,6 +381,10 @@ export async function cacheMediaForGame(
 
   // Invalidate session cache to force re-read on next access
   invalidateResolvedMediaCache(appId);
+
+  // Notify snapshot service so startup-snapshot.json picks up new paths
+  invalidateCanonicalMediaCache(appId);
+  notifyMediaUpdated(appId).catch(() => {});
 
   // Update artwork.json
   if (sgdbRef) {
@@ -555,7 +584,52 @@ export type ResolvedSidebarMedia = {
   icon: MediaItemInfo;
 };
 
+// Resolve sidebar media with optional snapshot paths.
+// When snapshotMedia is provided, disk check is skipped entirely.
 export async function resolveSidebarMedia(
+  appId: string,
+  appInfo?: GameAppInfo | null,
+  snapshotMedia?: GameMediaPaths | null,
+): Promise<ResolvedSidebarMedia> {
+  if (snapshotMedia) {
+    return resolveSidebarMediaFromPaths(appId, appInfo, snapshotMedia);
+  }
+  return resolveSidebarMediaWithDiskCheck(appId, appInfo);
+}
+
+// Fast path: use snapshot/cached paths without any disk I/O
+function resolveSidebarMediaFromPaths(
+  _appId: string,
+  appInfo?: GameAppInfo | null,
+  snapshotMedia?: GameMediaPaths | null,
+): ResolvedSidebarMedia {
+  const resolveRole = (
+    path: string | null | undefined,
+  ): MediaItemInfo => {
+    if (path && !isTmpPath(path)) {
+      return { src: localPathToUrl(path), localPath: path, exists: true };
+    }
+    return { src: null, localPath: null, exists: false };
+  };
+
+  const getPath = (role: keyof GameMediaPaths): string | null | undefined => {
+    // Priority: snapshot > appinfo > null
+    if (snapshotMedia && snapshotMedia[role]) return snapshotMedia[role];
+    if (appInfo?.media && appInfo.media[role]) return appInfo.media[role];
+    return null;
+  };
+
+  return {
+    landscape: resolveRole(getPath("landscapePath")),
+    cover: resolveRole(getPath("coverPath")),
+    background: resolveRole(getPath("backgroundPath")),
+    logo: resolveRole(getPath("logoPath")),
+    icon: resolveRole(getPath("iconPath")),
+  };
+}
+
+// Slow path: disk check fallback
+async function resolveSidebarMediaWithDiskCheck(
   appId: string,
   appInfo?: GameAppInfo | null,
 ): Promise<ResolvedSidebarMedia> {

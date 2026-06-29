@@ -95,25 +95,20 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   async function handleConfirmStop() {
-    console.debug("[StopModal] confirm stop", { gameKey });
     setShowStopModal(false);
     await session.stopSession(gameKey);
   }
 
   function handleMarkAsStopped() {
-    console.debug("[StopModal] mark as stopped", { gameKey });
     setShowStopModal(false);
     session.clearSession(gameKey);
   }
 
   function handleOpenStopModal() {
-    console.debug("[LaunchButton] opening stop modal", { gameKey });
-    console.debug("[StopModal] set open true", { gameKey });
     setShowStopModal(true);
   }
 
   async function handleFindProcess() {
-    console.debug("[StopModal] find process", { gameKey });
     const candidate = await session.findGameProcessForSession(gameKey);
     if (candidate) {
       showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, { title: "Process found" });

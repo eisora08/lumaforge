@@ -22,3 +22,4 @@ pub mod steam_appcache_achievements;
 pub mod game_media_cache;
 pub mod library_cache;
 pub mod game_cache;
+pub mod startup_snapshot;

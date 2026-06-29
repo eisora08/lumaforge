@@ -4,6 +4,9 @@
 // Heavy work (SteamGridDB, full scans, media prewarm) remains background/lazy.
 // ---------------------------------------------------------------------------
 
+import { loadStartupSnapshot, hydrateStartupSnapshotMedia, saveStartupSnapshot, flushPendingAppInfoUpdates } from "./startupSnapshotService";
+import type { StartupSnapshot } from "./startupSnapshotService";
+
 export type BootStatus =
   | "booting"
   | "ready"
@@ -12,6 +15,8 @@ export type BootStatus =
 
 export type BootTaskId =
   | "load-settings"
+  | "load-startup-snapshot"
+  | "hydrate-snapshot-media"
   | "load-library-cache"
   | "load-appinfo-index"
   | "hydrate-sessions"
@@ -26,6 +31,7 @@ export type BootLogEntry = {
   elapsedMs: number;
 };
 
+const ENABLE_VERBOSE_BOOT_LOGS = false;
 const MAX_SPLASH_TIMEOUT_MS = 10_000;
 
 let _bootStatus: BootStatus = "booting";
@@ -34,6 +40,20 @@ let _bootError: string | null = null;
 let _bootLog: BootLogEntry[] = [];
 let _listeners: Set<() => void> = new Set();
 let _bootPromise: Promise<void> | null = null;
+let _snapshotLoaded: StartupSnapshot | null = null;
+let _snapshotResolve: (() => void) | null = null;
+let _snapshotReady: Promise<void> = new Promise((resolve) => {
+  _snapshotResolve = resolve;
+});
+
+export function getBootSnapshot(): StartupSnapshot | null {
+  return _snapshotLoaded;
+}
+
+export async function waitForBootSnapshot(): Promise<StartupSnapshot | null> {
+  await _snapshotReady;
+  return _snapshotLoaded;
+}
 
 function notify(): void {
   for (const fn of _listeners) {
@@ -47,11 +67,11 @@ function track(taskId: BootTaskId, fn: () => Promise<void>): Promise<void> {
     _bootLog.push({ taskId, status, error, elapsedMs: Math.round(performance.now() - start) });
   };
 
-  console.log("[Boot] task start:", taskId);
+  if (ENABLE_VERBOSE_BOOT_LOGS) console.log("[Boot] task start:", taskId);
   log("started");
   return fn()
     .then(() => {
-      console.log("[Boot] task done:", taskId);
+      if (ENABLE_VERBOSE_BOOT_LOGS) console.log("[Boot] task done:", taskId);
       log("done");
       _bootProgress = Math.min(100, _bootProgress + 15);
       notify();
@@ -95,7 +115,7 @@ export function subscribe(fn: () => void): () => void {
 export async function runBootTasks(): Promise<void> {
   if (_bootPromise) return _bootPromise;
 
-  console.log("[Boot] start");
+  if (ENABLE_VERBOSE_BOOT_LOGS) console.log("[Boot] start");
   _bootStatus = "booting";
   _bootProgress = 0;
   _bootError = null;
@@ -109,50 +129,84 @@ export async function runBootTasks(): Promise<void> {
     (async () => {
       // Task 1: Load settings (already handled by SettingsProvider — just confirm)
       await track("load-settings", async () => {
-        // Settings are loaded by SettingsContext before App mounts
-        // This is a lightweight confirmation
         return Promise.resolve();
       });
 
-      // Task 2: Load cached library games/index
+      // Task 2: Load startup snapshot (cache-first — no heavy work)
+      await track("load-startup-snapshot", async () => {
+        try {
+          _snapshotLoaded = await loadStartupSnapshot();
+          if (_snapshotLoaded) {
+            const gameCount = _snapshotLoaded.library.games.length;
+            const sidebarCount = _snapshotLoaded.sidebar.items.length;
+            console.log(`[BootSnapshot] hydrated from file — games: ${gameCount}, sidebar items: ${sidebarCount}`);
+          }
+        } catch {
+          _snapshotLoaded = null;
+        }
+        // NOTE: _snapshotResolve is called AFTER hydrate-snapshot-media below
+      });
+
+      // Task 3: Hydrate snapshot media from canonical appinfo / physical files
+      await track("hydrate-snapshot-media", async () => {
+        if (!_snapshotLoaded) return;
+        try {
+          // Flush any pending appinfo updates before reading canonical
+          await flushPendingAppInfoUpdates(2000);
+          const result = await hydrateStartupSnapshotMedia(_snapshotLoaded);
+          console.log(
+            `[BootSnapshot] loaded games: ${_snapshotLoaded.library.games.length}`
+          );
+          console.log(
+            `[BootSnapshot] synced from appinfo — ready: ${result.readyCount}, ` +
+            `partial: ${result.partialCount}, missing: ${result.missingCount}, stale: ${result.staleCount}`
+          );
+          console.log(`[BootSnapshot] mediaReadyAppIds: ${_snapshotLoaded.indexes.mediaReadyAppIds.length}`);
+          if (result.changed) {
+            await saveStartupSnapshot(_snapshotLoaded);
+            console.log("[BootSnapshot] wrote repaired snapshot");
+          } else {
+            console.log("[BootSnapshot] snapshot already up-to-date — no repair needed");
+          }
+        } catch (err) {
+          console.warn("[BootSnapshot] hydrate error:", String(err));
+        }
+      });
+
+      // Resolve snapshot promise AFTER repair so consumers get repaired data
+      if (_snapshotResolve) _snapshotResolve();
+
+      // Task 4: Load cached library games/index
       await track("load-library-cache", async () => {
-        // LibraryGamesContext handles this — just await a tick to let it start
         return new Promise((resolve) => setTimeout(resolve, 50));
       });
 
-      // Task 3: Load appinfo/media index (lightweight)
+      // Task 5: Load appinfo/media index (lightweight)
       await track("load-appinfo-index", async () => {
-        // Prewarm canonical appinfo caches for known games
-        // Only reads index — no downloads
         return Promise.resolve();
       });
 
-      // Task 4: Hydrate running game sessions
+      // Task 6: Hydrate running game sessions
       await track("hydrate-sessions", async () => {
-        // GameSessionProvider handles hydration from localStorage
-        // Lightweight — just tick
         return new Promise((resolve) => setTimeout(resolve, 30));
       });
 
-      // Task 5: Initialize Store cache services
+      // Task 7: Initialize Store cache services
       await track("init-store-cache", async () => {
-        // Store cache is initialized lazily — just confirm infrastructure is ready
         return Promise.resolve();
       });
 
-      // Task 6: Initialize image resolver caches
+      // Task 8: Initialize image resolver caches
       await track("init-image-caches", async () => {
-        // Prewarm the resolvedSrcCache by touching a known path
-        // No downloads, no heavy work
         return Promise.resolve();
       });
 
-      // Task 7: Confirm frontend mounted (already mounted since we're running)
+      // Task 9: Confirm frontend mounted
       await track("confirm-mounted", async () => {
         return Promise.resolve();
       });
 
-      console.log("[Boot] ready");
+      if (ENABLE_VERBOSE_BOOT_LOGS) console.log("[Boot] ready");
       _bootStatus = "ready";
       _bootProgress = 100;
       notify();
@@ -169,7 +223,6 @@ export async function runBootTasks(): Promise<void> {
     _bootError = (err as Error).message ?? "Boot failed";
     _bootProgress = 80;
     notify();
-    // Never crash — fallback to main UI
   });
 
   return _bootPromise;
@@ -181,5 +234,9 @@ export function resetBootState(): void {
   _bootError = null;
   _bootLog = [];
   _bootPromise = null;
+  _snapshotLoaded = null;
+  _snapshotReady = new Promise((resolve) => {
+    _snapshotResolve = resolve;
+  });
   notify();
 }

@@ -7,28 +7,17 @@ import type { LibraryAppInfoEntry } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
 import { batchLoadGameMedia, resolveSidebarMedia } from "../../services/gameCacheService";
-import type { GameAppInfo, ResolvedSidebarMedia } from "../../services/gameCacheService";
+import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
+import { getBootSnapshot } from "../../services/appBootCoordinator";
 
-const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false; // Toggle for debugging
+const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 
 type Props = {
   onOpenGame?: () => void;
 };
 
-// ---------------------------------------------------------------------------
-// Sidebar image priority (Part 1 - landscape first):
-//   1. local appinfo media.landscapePath if file exists
-//   2. physical app_data/games/steam/{appid}/media/landscape.jpg if file exists
-//   3. local appinfo media.coverPath if file exists
-//   4. physical app_data/games/steam/{appid}/media/cover.jpg if file exists
-//   5. placeholder
-// Never triggers downloads, never calls SteamGridDB.
-// Uses the shared resolveSidebarMedia from gameCacheService (Part 2).
-// ---------------------------------------------------------------------------
-
 function pickSidebarSrc(resolved: ResolvedSidebarMedia | null): string | null {
   if (!resolved) return null;
-  // Priority: landscape > cover > null
   if (resolved.landscape.exists && resolved.landscape.src) {
     return resolved.landscape.src;
   }
@@ -54,6 +43,23 @@ function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry |
   return game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
 }
 
+function getSnapshotMedia(appId: string): GameMediaPaths | null {
+  const snapshot = getBootSnapshot();
+  if (!snapshot) return null;
+  for (const g of snapshot.library.games) {
+    if (g.appId === appId) {
+      return {
+        landscapePath: g.media.landscapePath ?? null,
+        coverPath: g.media.coverPath ?? null,
+        backgroundPath: g.media.backgroundPath ?? null,
+        logoPath: g.media.logoPath ?? null,
+        iconPath: g.media.iconPath ?? null,
+      };
+    }
+  }
+  return null;
+}
+
 export default function SidebarLibraryList({ onOpenGame }: Props) {
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
   const { getState } = useGameSession();
@@ -77,14 +83,13 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
     });
   }, [installed, query, appInfoMap]);
 
-  // Load canonical appinfo for all games in batches (Part 3 - stale cache fix)
+  // Load canonical appinfo lazily — only for filtered (visible) games
   useEffect(() => {
-    const ids = games.map((g) => g.appId).filter(Boolean) as string[];
+    const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
     if (ids.length === 0) return;
     const allIds = [...new Set(ids)];
     const newIds = allIds.filter((id) => !canonicalLoadedAppIds.current.has(id));
     if (newIds.length === 0) return;
-    // Load all new IDs in batches of 20 (not just first 20)
     const loadAllBatches = async () => {
       const batchSize = 20;
       for (let i = 0; i < newIds.length; i += batchSize) {
@@ -95,9 +100,9 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
       }
     };
     loadAllBatches();
-  }, [games]);
+  }, [filtered]);
 
-  // Resolve sidebar media (with disk fallback) for visible games
+  // Resolve sidebar media for visible games — use snapshot paths first
   useEffect(() => {
     const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
     const uniqueIds = [...new Set(ids)];
@@ -106,7 +111,6 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
     );
     if (unloadedIds.length === 0) return;
 
-    // Resolve in batches to avoid too many concurrent Tauri invokes
     const batchSize = 10;
     const loadBatch = async () => {
       for (let i = 0; i < unloadedIds.length; i += batchSize) {
@@ -114,19 +118,17 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
         for (const id of batch) sidebarMediaLoading.current.add(id);
         const results = await Promise.all(
           batch.map(async (id) => {
+            // Try snapshot first (no disk I/O)
+            const snapshotMedia = getSnapshotMedia(id);
             const appInfo = canonicalInfoMap[id] ?? null;
-            const resolved = await resolveSidebarMedia(id, appInfo);
+            const resolved = await resolveSidebarMedia(id, appInfo, snapshotMedia);
 
             if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) {
               const selectedSrc = pickSidebarSrc(resolved);
               console.log(`[SidebarMedia]`, {
                 appId: id,
-                appinfoLandscapePath: appInfo?.media?.landscapePath ?? null,
-                physicalLandscapeExists: resolved.landscape.exists,
-                appinfoCoverPath: appInfo?.media?.coverPath ?? null,
-                physicalCoverExists: resolved.cover.exists,
+                fromSnapshot: !!snapshotMedia,
                 selectedSource: selectedSrc ? (resolved.landscape.exists ? "landscape" : "cover") : "placeholder",
-                selectedSrcPrefix: selectedSrc?.slice(0, 40) ?? null,
               });
             }
             return [id, resolved] as const;

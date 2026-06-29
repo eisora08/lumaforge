@@ -337,12 +337,113 @@ html {
   }
 }
 
+/* =========================
+   ROUTE TRANSITIONS
+========================= */
+
+.lf-route-enter {
+  animation: lfRouteEnter 200ms ease-out both;
+}
+
+.lf-route-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes lfRouteEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.lf-route-exit {
+  animation: lfRouteExit 160ms ease-in both;
+}
+
+@keyframes lfRouteExit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* =========================
+   MODAL TRANSITIONS
+========================= */
+
+.lf-modal-overlay {
+  animation: lfModalOverlayIn 150ms ease-out both;
+}
+
+@keyframes lfModalOverlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.lf-modal-panel {
+  animation: lfModalPanelIn 180ms ease-out both;
+}
+
+@keyframes lfModalPanelIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* =========================
+   SKELETON PULSE REFINEMENT
+========================= */
+
+.lf-skeleton-pulse {
+  animation: lfSkeletonPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes lfSkeletonPulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* =========================
+   PAGE TRANSITION WRAPPER
+========================= */
+
+.lf-page-transition {
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lf-fade-in,
   .lf-popover-enter,
   .lf-scale-in,
   .lf-transition,
-  .lf-card-hover {
+  .lf-card-hover,
+  .lf-route-enter,
+  .lf-route-exit,
+  .lf-modal-overlay,
+  .lf-modal-panel,
+  .lf-page-transition {
     animation: none;
     transition: none;
   }

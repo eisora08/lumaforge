@@ -21,3 +21,4 @@ pub mod library_cache;
 pub mod game_cache;
 pub mod media_cache;
 pub mod splash;
+pub mod startup_snapshot;

@@ -14,6 +14,18 @@ import {
   setAchievementsSupportedFlag,
 } from "../services/gameStatsService";
 import { useSettings } from "./SettingsContext";
+import {
+  waitForBootSnapshot,
+} from "../services/appBootCoordinator";
+import {
+  seedResolvedMediaCacheFromSnapshot,
+} from "../services/gameCacheService";
+import {
+  scheduleSnapshotWrite,
+} from "../services/startupSnapshotService";
+import {
+  scheduleBackgroundValidation,
+} from "../services/backgroundValidator";
 
 const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
 
@@ -129,7 +141,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     storeSelectedId(game?.id ?? null);
   }
 
-  // Keep selectedGame in sync with the latest games array (stats enrichment, refresh)
   useEffect(() => {
     if (games.length === 0 || !selectedId) return;
     const match = games.find((g) => g.id === selectedId);
@@ -168,7 +179,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     for (const game of games) {
       if (!game.appId) continue;
       const entry = appInfoMap[game.appId];
-      if (entry && entry.name && entry.updated_at && (now - entry.updated_at) < 86400) continue;
+      // Only write if entry is missing or actually different
+      if (entry && entry.name === game.title && entry.header_image === (game.imageUrl || null) && entry.updated_at && (now - entry.updated_at) < 86400) continue;
       await updateLibraryAppInfo(game.appId, {
         app_id: game.appId,
         name: game.title || null,
@@ -184,44 +196,42 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }
 
   async function load(settings: AppSettings) {
+    // Seed media session cache from snapshot if available
+    const snapshot = await waitForBootSnapshot();
+    if (snapshot) {
+      seedResolvedMediaCacheFromSnapshot(snapshot.library.games);
+    }
+
     const cached = loadCachedGames();
     if (cached) {
       const loaded = cached.games.map(mapCachedToLibraryGame);
       setGames(loaded);
       setWarnings(cached.warnings || []);
       setInitialLoading(false);
-      // Enrich with stats in background
-      setTimeout(async () => {
-        const enriched = await enrichWithStats(loaded);
-        setGames(enriched);
-        updateAppInfoFromGames(enriched).catch(() => {});
-      }, 50);
-      // Background refresh if cache expired
+
+      // Do NOT run enrichWithStats or updateAppInfoFromGames on initial load.
+      // Stats load lazily per game; appinfo is already in the snapshot/canonical cache.
       if (isCacheExpired(cached)) {
         setLoading(true);
         setTimeout(async () => {
           try {
             const result = await resolveLibraryGames(settings);
-            const enriched = await enrichWithStats(result.games);
-            setGames(enriched);
+            setGames(result.games);
             setWarnings(result.warnings);
-            updateAppInfoFromGames(enriched).catch(() => {});
           } catch (error) {
             console.error("[LibraryGamesContext] scan error:", error);
           } finally {
             setLoading(false);
           }
-        }, 200);
+        }, 500);
       }
     } else {
       setLoading(true);
       setTimeout(async () => {
         try {
           const result = await resolveLibraryGames(settings);
-          const enriched = await enrichWithStats(result.games);
-          setGames(enriched);
+          setGames(result.games);
           setWarnings(result.warnings);
-          updateAppInfoFromGames(enriched).catch(() => {});
         } catch (error) {
           console.error("[LibraryGamesContext] scan error:", error);
         } finally {
@@ -232,7 +242,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }
 
-  // Load appinfo once on mount
   useEffect(() => {
     if (appInfoLoaded.current) return;
     appInfoLoaded.current = true;
@@ -246,6 +255,19 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Debounced snapshot write when games and appinfo are available
+  useEffect(() => {
+    if (games.length === 0) return;
+    if (Object.keys(appInfoMap).length === 0) return;
+    scheduleSnapshotWrite(games, appInfoMap, null);
+  }, [games, appInfoMap]);
+
+  // Background media validation after UI is shown
+  useEffect(() => {
+    if (games.length === 0) return;
+    scheduleBackgroundValidation(games, appInfoMap);
+  }, [games, appInfoMap]);
+
   async function refresh() {
     setLoading(true);
     try {
@@ -253,7 +275,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       const enriched = await enrichWithStats(result.games);
       setGames(enriched);
       setWarnings(result.warnings);
-      updateAppInfoFromGames(enriched).catch(() => {});
+      await updateAppInfoFromGames(enriched).catch(() => {});
+      // Snapshot write picked up by the debounced effect on games/appInfoMap change
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);
     } finally {

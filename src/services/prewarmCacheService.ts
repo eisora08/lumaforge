@@ -1,6 +1,8 @@
 import { enqueueMediaDownload, clearMediaQueueState } from "./mediaDownloadQueue";
 import { loadGameAppInfoWithMediaFallback } from "./gameCacheService";
 import { getLibraryAppInfo } from "./libraryLocalCacheService";
+import { notifyMediaUpdated } from "./startupSnapshotService";
+import { resolveGameMediaPaths } from "./tauri";
 import type { LibraryGame } from "../types/libraryGame";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
@@ -8,9 +10,9 @@ type PrewarmMode = "fast" | "balanced" | "full";
 
 type PrewarmOptions = {
   mode?: PrewarmMode;
-  limit?: number;
-  onlyInstalled?: boolean;
   onlyMissing?: boolean;
+  limit?: number;
+  concurrency?: number;
 };
 
 type PrewarmProgress = {
@@ -27,6 +29,8 @@ type PrewarmListener = (progress: PrewarmProgress) => void;
 const listeners = new Set<PrewarmListener>();
 let currentProgress: PrewarmProgress = { total: 0, completed: 0, skipped: 0, failed: 0, status: "idle" };
 let cancelledFlag = false;
+
+const ENABLE_VERBOSE_PREWARM_LOGS = true;
 
 export function subscribeToPrewarm(listener: PrewarmListener): () => void {
   listeners.add(listener);
@@ -59,23 +63,19 @@ async function resolveStoreUrls(appId: string, game: LibraryGame): Promise<Recor
   const urls: Record<string, string | undefined> = {};
   const meta: Partial<SteamAppMetadata> = game.metadata || {};
 
-  // Store header is the primary landscape source
   if (meta.header_image) urls.landscape = meta.header_image;
   else if (meta.capsule_image_v5) urls.landscape = meta.capsule_image_v5;
   else if (meta.capsule_image) urls.landscape = meta.capsule_image;
   else if (game.imageUrl) urls.landscape = game.imageUrl;
 
-  // Cover from capsule
   if (meta.capsule_image) urls.cover = meta.capsule_image;
   else if (meta.capsule_image_v5) urls.cover = meta.capsule_image_v5;
   else if (meta.header_image) urls.cover = meta.header_image;
 
-  // Background from store metadata
   if (meta.background_image) urls.background = meta.background_image;
   else if (meta.library_hero_image) urls.background = meta.library_hero_image;
   else if (meta.header_image) urls.background = meta.header_image;
 
-  // Also try to get URLs from library appinfo (store metadata saved earlier)
   if (!urls.landscape) {
     try {
       const appInfoEntry = await getLibraryAppInfo(appId);
@@ -86,27 +86,29 @@ async function resolveStoreUrls(appId: string, game: LibraryGame): Promise<Recor
   return urls;
 }
 
-/**
- * prewarmGamesMediaCache — controlled cache prewarm for library games.
- *
- * Does NOT run automatically on app startup.
- * Does NOT trigger SteamGridDB — only uses Steam Store URLs.
- * Queue-limited (max 2 concurrent via enqueueMediaDownload).
- * Can be cancelled via cancelPrewarm().
- * Shows progress via subscribeToPrewarm().
- *
- * Modes:
- *   fast:      cache landscape only
- *   balanced:  cache landscape + cover + background (for current layout)
- *   full:      cache all 5 roles (still queue-limited)
- */
+async function checkMediaExistsOnDisk(appId: string, mediaType: string): Promise<boolean> {
+  try {
+    const diskPaths = await resolveGameMediaPaths(appId);
+    if (!diskPaths) return false;
+    switch (mediaType) {
+      case "landscape": return !!diskPaths.landscapePath;
+      case "cover": return !!diskPaths.coverPath;
+      case "background": return !!diskPaths.backgroundPath;
+      case "logo": return !!diskPaths.logoPath;
+      case "icon": return !!diskPaths.iconPath;
+      default: return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
 export async function prewarmGamesMediaCache(
   games: LibraryGame[],
   options: PrewarmOptions = {},
 ): Promise<void> {
   const mode = options.mode ?? "fast";
   const limit = options.limit ?? 0;
-  const onlyInstalled = options.onlyInstalled ?? false;
   const onlyMissing = options.onlyMissing ?? false;
 
   if (currentProgress.status === "running") {
@@ -117,14 +119,9 @@ export async function prewarmGamesMediaCache(
   cancelledFlag = false;
   const mediaTypes = mediaTypeForMode(mode);
 
-  // Clear dedup state so prewarm downloads are not skipped by prior completed/failed sets
   clearMediaQueueState();
 
   let candidates = games.filter((g) => g.appId);
-
-  if (onlyInstalled) {
-    candidates = candidates.filter((g) => g.isPlayable || g.steamInstalled);
-  }
 
   if (limit > 0) {
     candidates = candidates.slice(0, limit);
@@ -145,64 +142,113 @@ export async function prewarmGamesMediaCache(
     notify();
 
     try {
-      // Load canonical appinfo (creates game folder if missing, populates appinfo.json)
       const appInfo = await loadGameAppInfoWithMediaFallback(appId);
       if (!appInfo) {
+        if (ENABLE_VERBOSE_PREWARM_LOGS) {
+          console.log(`[Prewarm] skipped ${appId}: no appinfo`);
+        }
         currentProgress = { ...currentProgress, skipped: currentProgress.skipped + 1 };
         notify();
         continue;
       }
 
-      // Determine which media roles need caching
-      const needsCache = mediaTypes.filter((mt) => {
-        if (!onlyMissing) return true;
-        switch (mt) {
-          case "landscape": return !appInfo.media?.landscapePath;
-          case "cover": return !appInfo.media?.coverPath;
-          case "background": return !appInfo.media?.backgroundPath;
-          case "logo": return !appInfo.media?.logoPath;
-          case "icon": return !appInfo.media?.iconPath;
-          default: return true;
+      const needsCache: Array<"landscape" | "cover" | "background" | "logo" | "icon"> = [];
+      for (const mt of mediaTypes) {
+        let alreadyExists = false;
+
+        if (onlyMissing) {
+          switch (mt) {
+            case "landscape":
+              alreadyExists = !!(appInfo.media?.landscapePath);
+              break;
+            case "cover":
+              alreadyExists = !!(appInfo.media?.coverPath);
+              break;
+            case "background":
+              alreadyExists = !!(appInfo.media?.backgroundPath);
+              break;
+            case "logo":
+              alreadyExists = !!(appInfo.media?.logoPath);
+              break;
+            case "icon":
+              alreadyExists = !!(appInfo.media?.iconPath);
+              break;
+          }
+
+          if (!alreadyExists) {
+            const existsOnDisk = await checkMediaExistsOnDisk(appId, mt);
+            if (existsOnDisk) {
+              alreadyExists = true;
+            }
+          }
         }
-      });
+
+        if (!alreadyExists) {
+          needsCache.push(mt);
+        }
+      }
 
       if (needsCache.length === 0) {
+        if (ENABLE_VERBOSE_PREWARM_LOGS) {
+          console.log(`[Prewarm] skipped ${appId}: all media already exists`);
+        }
         currentProgress = { ...currentProgress, skipped: currentProgress.skipped + 1 };
         notify();
         continue;
       }
 
-      // Resolve URLs from store metadata
       const urls = await resolveStoreUrls(appId, game);
 
+      const downloadPromises = [];
       for (const mediaType of needsCache) {
         if (cancelledFlag) break;
 
         const url = urls[mediaType];
-        if (!url) continue;
+        if (!url) {
+          if (ENABLE_VERBOSE_PREWARM_LOGS) {
+            console.log(`[Prewarm] ${appId} ${mediaType}: no URL available`);
+          }
+          continue;
+        }
 
-        await enqueueMediaDownload({
-          id: `prewarm-${appId}-${mediaType}`,
-          appId,
-          provider: "steam",
-          mediaType,
-          url,
-          target: "canonical",
-          priority: "low",
-        });
+        downloadPromises.push(
+          enqueueMediaDownload({
+            id: `prewarm-${appId}-${mediaType}`,
+            appId,
+            provider: "steam",
+            mediaType,
+            url,
+            target: "canonical",
+            priority: "low",
+          }).catch(() => ({ success: false, appId, mediaType, error: "enqueue failed" }))
+        );
+      }
+
+      await Promise.all(downloadPromises);
+
+      // Notify snapshot service so startup-snapshot.json picks up new paths
+      await notifyMediaUpdated(appId).catch(() => {});
+
+      if (ENABLE_VERBOSE_PREWARM_LOGS) {
+        console.log(`[Prewarm] completed ${appId}: ${needsCache.length} role(s)`);
       }
 
       currentProgress = { ...currentProgress, completed: currentProgress.completed + 1 };
       notify();
-    } catch {
+    } catch (err) {
+      if (ENABLE_VERBOSE_PREWARM_LOGS) {
+        console.warn(`[Prewarm] failed ${game.appId}:`, err);
+      }
       currentProgress = { ...currentProgress, failed: currentProgress.failed + 1 };
       notify();
     }
   }
 
-  if (!cancelledFlag) {
-    currentProgress = { ...currentProgress, status: "completed" };
+  const finalStatus = cancelledFlag ? "cancelled" : "completed";
+  if (currentProgress.status !== "cancelled") {
+    currentProgress = { ...currentProgress, status: finalStatus };
   }
+  console.log(`[Prewarm] ${finalStatus} — completed: ${currentProgress.completed}, skipped: ${currentProgress.skipped}, failed: ${currentProgress.failed}`);
   notify();
 }
 

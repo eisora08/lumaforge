@@ -12,6 +12,43 @@ use crate::commands::media_cache::{process_and_save_with_dedup, repair_hash_inde
 use crate::utils::image_utils;
 
 // ---------------------------------------------------------------------------
+// read_canonical_appinfos — batch read all appinfo.json files for the given
+// appIds. Returns a map of appId → GameAppInfo for only those that exist and
+// are valid JSON. Missing or corrupt appinfo is silently skipped.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn read_canonical_appinfos(
+    app_handle: AppHandle,
+    app_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, GameAppInfo>, String> {
+    let mut result = std::collections::HashMap::new();
+    for app_id in &app_ids {
+        let path = match get_appinfo_path(&app_handle, app_id) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if !path.exists() {
+            continue;
+        }
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                match serde_json::from_str::<GameAppInfo>(&content) {
+                    Ok(entry) => {
+                        result.insert(app_id.clone(), entry);
+                    }
+                    Err(_) => {
+                        log(&format!("appinfo corrupt for {} — skipping in batch read", app_id));
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
 // Debug flags
 // ---------------------------------------------------------------------------
 
@@ -836,7 +873,25 @@ fn safe_single_download(
     let temp_path = actual_dest_path.with_extension("tmp");
     media_log(&format!("temp write start — {} -> {}", actual_media_type, temp_path.display()));
     match process_and_save_with_dedup(&bytes, &temp_path, &actual_media_type) {
-        Ok(_) => {
+        Ok(_saved_path) => {
+            // Dedup hit: process_and_save_with_dedup returned path of existing file.
+            // If the temp file does NOT exist, this was a dedup reuse — nothing to rename.
+            if !temp_path.exists() {
+                if actual_dest_path.exists() {
+                    media_log(&format!("dedup reuse — using existing {}", actual_dest_path.display()));
+                    return Ok(Some(actual_dest_path.to_string_lossy().to_string()));
+                }
+                // Temp missing and final missing — shouldn't happen, fall through to retry
+                media_log(&format!("dedup temp missing and no final file — re-downloading"));
+                match fs::write(&actual_dest_path, &bytes) {
+                    Ok(_) => return Ok(Some(actual_dest_path.to_string_lossy().to_string())),
+                    Err(e2) => {
+                        log(&format!("safe_download: fallback write error: {}", e2));
+                        return Ok(None);
+                    }
+                }
+            }
+
             media_log(&format!("temp write success — {} ({} bytes)", actual_media_type, bytes.len()));
             let _ = fs::remove_file(&actual_dest_path);
             match fs::rename(&temp_path, &actual_dest_path) {
@@ -851,20 +906,25 @@ fn safe_single_download(
                 }
                 Err(e) => {
                     // Rename failed — try copy as fallback, never return .tmp path
-                    media_log(&format!("rename failed ({}), trying copy", e));
-                    match fs::copy(&temp_path, &actual_dest_path) {
-                        Ok(_) => {
-                            let _ = fs::remove_file(&temp_path);
-                            media_log(&format!("final path returned — {}", actual_dest_path.display()));
-                            log(&format!("safe_download: saved {} via copy ({} bytes)", actual_media_type, bytes.len()));
-                            Ok(Some(actual_dest_path.to_string_lossy().to_string()))
+                    if temp_path.exists() {
+                        media_log(&format!("rename failed ({}), trying copy", e));
+                        match fs::copy(&temp_path, &actual_dest_path) {
+                            Ok(_) => {
+                                let _ = fs::remove_file(&temp_path);
+                                media_log(&format!("final path returned — {}", actual_dest_path.display()));
+                                log(&format!("safe_download: saved {} via copy ({} bytes)", actual_media_type, bytes.len()));
+                                Ok(Some(actual_dest_path.to_string_lossy().to_string()))
+                            }
+                            Err(e2) => {
+                                media_log(&format!("copy also failed: {}", e2));
+                                let _ = fs::remove_file(&temp_path);
+                                log(&format!("safe_download: rename AND copy failed for {}: {}, {}", actual_media_type, e, e2));
+                                Ok(None)
+                            }
                         }
-                        Err(e2) => {
-                            media_log(&format!("copy also failed: {}", e2));
-                            let _ = fs::remove_file(&temp_path);
-                            log(&format!("safe_download: rename AND copy failed for {}: {}, {}", actual_media_type, e, e2));
-                            Ok(None)
-                        }
+                    } else {
+                        media_log(&format!("temp file missing after process — {}", temp_path.display()));
+                        Ok(None)
                     }
                 }
             }

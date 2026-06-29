@@ -28,10 +28,16 @@ export default function StopGameModal({
   const backdropRef = useRef<HTMLDivElement>(null);
   const [findingProcess, setFindingProcess] = useState(false);
 
-  console.debug("[StopModal] render", { open, gameTitle });
+  const ENABLE_VERBOSE_MODAL_LOGS = false;
+
+  if (ENABLE_VERBOSE_MODAL_LOGS) {
+    console.debug("[StopModal] render", { open, gameTitle });
+  }
 
   useEffect(() => {
-    console.debug("[StopModal] props changed", { open, gameTitle, canTerminate, isSoftSession, trackingConfidence });
+    if (ENABLE_VERBOSE_MODAL_LOGS) {
+      console.debug("[StopModal] props changed", { open, gameTitle, canTerminate, isSoftSession, trackingConfidence });
+    }
   }, [open, gameTitle, canTerminate, isSoftSession, trackingConfidence]);
 
   useEffect(() => {
@@ -69,9 +75,9 @@ export default function StopGameModal({
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 lf-modal-overlay"
     >
-      <div className="mx-4 w-full max-w-sm rounded-2xl border border-white/10 bg-[#101014] p-6 shadow-2xl">
+      <div className="lf-modal-panel mx-4 w-full max-w-sm rounded-2xl border border-white/10 bg-[#101014] p-6 shadow-2xl">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
             <AlertTriangle className="h-5 w-5 text-red-400" />

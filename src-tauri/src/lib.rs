@@ -79,6 +79,7 @@ pub fn run() {
             commands::library_cache::write_library_cache_index,
             commands::library_cache::read_image_as_data_url,
             commands::library_cache::cache_library_game_media,
+            commands::game_cache::read_canonical_appinfos,
             commands::game_cache::get_game_app_info,
             commands::game_cache::save_game_app_info,
             commands::game_cache::get_store_details,
@@ -101,6 +102,10 @@ pub fn run() {
             commands::game_cache::read_game_media_data_url,
             commands::media_cache::get_media_cache_stats,
             commands::media_cache::compact_media_cache,
+            commands::startup_snapshot::read_startup_snapshot,
+            commands::startup_snapshot::write_startup_snapshot,
+            commands::startup_snapshot::clear_startup_snapshot,
+            commands::startup_snapshot::validate_snapshot_media_paths,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

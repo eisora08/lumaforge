@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import AppLayout from "./components/layout/AppLayout";
 
@@ -22,6 +22,8 @@ import { AppPage } from "./types/navigation";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
 import { runBootTasks } from "./services/appBootCoordinator";
+import AppRouteTransition from "./components/common/AppRouteTransition";
+import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -40,10 +42,13 @@ function restoreActivePage(): AppPage {
   return "home";
 }
 
+const NAV_PERF_ENABLED = true;
+
 function App() {
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
   const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
   const [bootStarted, setBootStarted] = useState(false);
+  const [, startTransition] = useTransition();
   const initialRender = useRef(true);
 
   // Start boot coordinator once on mount
@@ -64,10 +69,29 @@ function App() {
   }, [activePage]);
 
   function handleNavigate(page: AppPage) {
+    if (page === activePage) return;
+    const startTime = NAV_PERF_ENABLED ? performance.now() : 0;
+
     if (page === "game-details") {
       setGameDetailsPrevPage(activePage);
     }
-    setActivePage(page);
+
+    pauseBackgroundFill();
+
+    startTransition(() => {
+      setActivePage(page);
+    });
+
+    if (NAV_PERF_ENABLED) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const elapsed = Math.round(performance.now() - startTime);
+          console.log(`[NavPerf] ${activePage} -> ${page} shell: ${elapsed}ms`);
+        });
+      });
+    }
+
+    setTimeout(() => resumeBackgroundFill(), 2000);
   }
 
   function renderPage() {
@@ -109,9 +133,9 @@ function App() {
       <GameSessionProvider>
       <GameDetailsProvider>
         <AppLayout activePage={activePage} onNavigate={handleNavigate}>
-          <div key={activePage} className="lf-fade-in">
+          <AppRouteTransition routeKey={activePage}>
             {renderPage()}
-          </div>
+          </AppRouteTransition>
         </AppLayout>
       </GameDetailsProvider>
       </GameSessionProvider>
