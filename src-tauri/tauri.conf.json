@@ -12,9 +12,25 @@
   "app": {
     "windows": [
       {
+        "label": "splashscreen",
+        "url": "/splashscreen.html",
         "title": "lumaforge",
-        "width": 800,
-        "height": 600
+        "width": 720,
+        "height": 420,
+        "visible": true,
+        "decorations": false,
+        "center": true,
+        "resizable": false
+      },
+      {
+        "label": "main",
+        "title": "lumaforge",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

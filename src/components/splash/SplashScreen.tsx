@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { subscribe, getBootStatus, getBootProgress, getBootError } from "../../services/appBootCoordinator";
 
 // Simple deterministic status cycle when we don't have per-task tracking
@@ -15,6 +16,7 @@ export default function SplashScreen() {
   const [progress, setProgress] = useState(0);
   const [statusColor, setStatusColor] = useState<string>("text-blue-400");
   const [fadeOut, setFadeOut] = useState(false);
+  const hasClosedSplashRef = useRef(false);
 
   // Rotate through status messages approximately
   useEffect(() => {
@@ -29,6 +31,23 @@ export default function SplashScreen() {
     return () => clearInterval(interval);
   }, [visible]);
 
+  // Close splash: fade overlay + invoke Tauri command (once)
+  function closeSplash() {
+    if (hasClosedSplashRef.current) return;
+    hasClosedSplashRef.current = true;
+
+    console.log("[Boot] closing splash");
+    setFadeOut(true);
+
+    invoke("close_splashscreen_and_show_main").catch((err: unknown) => {
+      console.warn("[Boot] close splash command failed:", String(err));
+    });
+
+    setTimeout(() => {
+      setVisible(false);
+    }, 400);
+  }
+
   // Observe boot coordinator
   useEffect(() => {
     const unsub = subscribe(() => {
@@ -36,11 +55,7 @@ export default function SplashScreen() {
       setProgress(getBootProgress());
 
       if (status === "ready" || status === "timeout") {
-        // Fade out splash
-        setFadeOut(true);
-        setTimeout(() => {
-          setVisible(false);
-        }, 400);
+        closeSplash();
       } else if (status === "error") {
         setStatusColor("text-amber-400");
         const err = getBootError();

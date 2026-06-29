@@ -8,8 +8,8 @@ use tauri::Manager;
 
 #[tauri::command]
 pub fn close_splashscreen_and_show_main(app_handle: tauri::AppHandle) -> Result<(), String> {
-    // Try to close splash window (if it exists — CSS overlay approach doesn't use it)
-    if let Some(splash) = app_handle.get_webview_window("splash") {
+    // Try to close splash window (native window-based splash)
+    if let Some(splash) = app_handle.get_webview_window("splashscreen") {
         splash.close().map_err(|e| format!("Failed to close splash: {}", e))?;
     }
 

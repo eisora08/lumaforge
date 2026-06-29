@@ -47,15 +47,18 @@ function track(taskId: BootTaskId, fn: () => Promise<void>): Promise<void> {
     _bootLog.push({ taskId, status, error, elapsedMs: Math.round(performance.now() - start) });
   };
 
+  console.log("[Boot] task start:", taskId);
   log("started");
   return fn()
     .then(() => {
+      console.log("[Boot] task done:", taskId);
       log("done");
       _bootProgress = Math.min(100, _bootProgress + 15);
       notify();
     })
     .catch((err) => {
       const msg = String(err);
+      console.warn("[Boot] task error:", taskId, msg);
       log("error", msg);
       _bootError = msg;
       _bootProgress = Math.min(100, _bootProgress + 10);
@@ -92,6 +95,7 @@ export function subscribe(fn: () => void): () => void {
 export async function runBootTasks(): Promise<void> {
   if (_bootPromise) return _bootPromise;
 
+  console.log("[Boot] start");
   _bootStatus = "booting";
   _bootProgress = 0;
   _bootError = null;
@@ -148,13 +152,20 @@ export async function runBootTasks(): Promise<void> {
         return Promise.resolve();
       });
 
+      console.log("[Boot] ready");
       _bootStatus = "ready";
       _bootProgress = 100;
       notify();
     })(),
     timeout,
   ]).catch((err) => {
-    _bootStatus = (err as Error).message === "Boot timeout" ? "timeout" : "error";
+    const isTimeout = (err as Error).message === "Boot timeout";
+    if (isTimeout) {
+      console.warn("[Boot] startup timeout reached, showing main window");
+    } else {
+      console.warn("[Boot] error:", (err as Error).message);
+    }
+    _bootStatus = isTimeout ? "timeout" : "error";
     _bootError = (err as Error).message ?? "Boot failed";
     _bootProgress = 80;
     notify();

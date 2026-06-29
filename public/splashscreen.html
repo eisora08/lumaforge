@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Starting LumaForge...</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #0b0b14;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .splash {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+    .logo-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-icon {
+      width: 52px;
+      height: 52px;
+      flex-shrink: 0;
+    }
+    .logo-icon svg {
+      display: block;
+    }
+    .title {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #f1f5f9;
+    }
+    .bar-track {
+      width: 240px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      animation: fillUp 2.5s ease-in-out infinite;
+    }
+    @keyframes fillUp {
+      0%   { width: 0%; }
+      50%  { width: 70%; }
+      100% { width: 100%; }
+    }
+    .status {
+      font-size: 13px;
+      font-weight: 500;
+      color: #94a3b8;
+      text-align: center;
+      min-height: 1.4em;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.7; }
+      50%      { opacity: 1; }
+    }
+    .status-dot {
+      display: inline-block;
+      animation: dotPulse 1.4s steps(3, end) infinite;
+    }
+    @keyframes dotPulse {
+      0%   { content: ""; }
+      33%  { content: "."; }
+      66%  { content: ".."; }
+      100% { content: "..."; }
+    }
+  </style>
+</head>
+<body>
+  <div class="splash">
+    <div class="logo-row">
+      <div class="logo-icon" aria-hidden="true">
+        <svg width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="52" height="52" rx="14" fill="#3b82f6"/>
+          <path d="M18 16C18 14.8954 18.8954 14 20 14H32C33.1046 14 34 14.8954 34 16V36C34 37.1046 33.1046 38 32 38H20C18.8954 38 18 37.1046 18 36V16Z" fill="white" fill-opacity="0.2"/>
+          <path d="M22 20C22 19.4477 22.4477 19 23 19H29C29.5523 19 30 19.4477 30 20V32C30 32.5523 29.5523 33 29 33H23C22.4477 33 22 32.5523 22 32V20Z" fill="white"/>
+          <rect x="24" y="22" width="4" height="2" rx="1" fill="#3b82f6"/>
+          <rect x="24" y="26" width="4" height="2" rx="1" fill="#3b82f6"/>
+          <rect x="24" y="30" width="4" height="2" rx="1" fill="#3b82f6"/>
+        </svg>
+      </div>
+      <span class="title">LumaForge</span>
+    </div>
+
+    <div class="bar-track">
+      <div class="bar-fill"></div>
+    </div>
+
+    <div class="status" id="statusText">Starting LumaForge<span class="status-dot">...</span></div>
+  </div>
+
+  <script>
+    const messages = [
+      "Loading settings...",
+      "Loading local cache...",
+      "Preparing library...",
+      "Starting interface...",
+    ];
+    let idx = 0;
+    const statusEl = document.getElementById("statusText");
+    setInterval(function() {
+      statusEl.textContent = messages[idx % messages.length];
+      idx++;
+    }, 3000);
+  </script>
+</body>
+</html>
