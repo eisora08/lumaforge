@@ -9,8 +9,7 @@ import {
   X,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
-import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
-import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
+import type { LibraryAppInfoEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
@@ -20,16 +19,13 @@ import {
   localPathToUrl,
   isHttpUrl,
   isLocalPath,
-  getMediaCacheForAppId,
 } from "../../services/libraryLocalCacheService";
 import {
   loadGameAppInfoWithMediaFallback,
 } from "../../services/gameCacheService";
-import { resolveGameMediaImageSrc } from "../../services/localImageSrc";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
-  artwork?: SgdbArtworkData | null;
   appInfoEntry?: LibraryAppInfoEntry | null;
   onSelect: (game: LibraryGame) => void;
   onPlay: (game: LibraryGame) => void;
@@ -38,66 +34,24 @@ type GameLauncherTileProps = {
 };
 
 function getCardImage(
-  game: LibraryGame,
   mode: "landscape" | "poster",
-  artwork: SgdbArtworkData | null | undefined,
-  appInfoEntry: LibraryAppInfoEntry | null | undefined,
-  mediaEntry: GameMediaCacheEntry | null | undefined,
   canonicalAppInfo: GameAppInfo | null,
-  diskFallbackSrc?: string | null,
 ): string | undefined {
-  const meta = game.metadata;
-
   if (mode === "poster") {
     return (
       canonicalAppInfo?.media?.coverPath ||
       canonicalAppInfo?.media?.landscapePath ||
-      mediaEntry?.cover_path ||
-      mediaEntry?.grid_path ||
-      mediaEntry?.quick_cover_path ||
-      appInfoEntry?.cover_path ||
-      appInfoEntry?.grid_path ||
-      appInfoEntry?.header_image ||
-      artwork?.sgdbGridUrl ||
-      artwork?.sgdbGridThumbUrl ||
-      meta?.capsule_image ||
-      meta?.capsule_image_v5 ||
-      meta?.header_image ||
-      game.imageUrl ||
-      diskFallbackSrc ||
+      canonicalAppInfo?.media?.backgroundPath ||
       undefined
     );
   }
 
-  // Landscape mode: landscape.jpg first, cover only as last resort
-  const canonicalLandscape = canonicalAppInfo?.media?.landscapePath;
-  if (canonicalLandscape) return canonicalLandscape;
-
-  const localLandscape = mediaEntry?.grid_path;
-  if (localLandscape) return localLandscape;
-
-  const appInfoLandscape = appInfoEntry?.grid_path;
-  if (appInfoLandscape) return appInfoLandscape;
-
-  if (game.imageUrl) return game.imageUrl;
-
-  const remoteLandscape = meta?.header_image || meta?.library_hero_image || meta?.hero_image || meta?.background_image;
-  if (remoteLandscape) return remoteLandscape;
-
-  // Fallback: local cover
-  const canonicalCover = canonicalAppInfo?.media?.coverPath;
-  if (canonicalCover) return canonicalCover;
-
-  const localCover = mediaEntry?.cover_path || mediaEntry?.quick_cover_path;
-  if (localCover) return localCover;
-
-  const appInfoCover = appInfoEntry?.cover_path || appInfoEntry?.header_image;
-  if (appInfoCover) return appInfoCover;
-
-  // Last resort: direct disk check
-  if (diskFallbackSrc) return diskFallbackSrc;
-
-  return meta?.capsule_image || meta?.capsule_image_v5 || undefined;
+  return (
+    canonicalAppInfo?.media?.landscapePath ||
+    canonicalAppInfo?.media?.backgroundPath ||
+    canonicalAppInfo?.media?.coverPath ||
+    undefined
+  );
 }
 
 function resolveImageSrc(src: string | undefined): string | undefined {
@@ -109,7 +63,6 @@ function resolveImageSrc(src: string | undefined): string | undefined {
 
 export default function GameLauncherTile({
   game,
-  artwork,
   appInfoEntry,
   onSelect,
   onPlay,
@@ -119,13 +72,11 @@ export default function GameLauncherTile({
   const { settings } = useSettings();
   const [menuOpen, setMenuOpen] = useState(false);
   const [favorite, setFavorite] = useState(false);
-  const [mediaEntry, setMediaEntry] = useState<GameMediaCacheEntry | null>(null);
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
-  const [diskFallbackSrc, setDiskFallbackSrc] = useState<string | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Load media cache + canonical appinfo for this game — with crash guard
+  // Load canonical appinfo for this game — session-cached
   useEffect(() => {
     if (!game.appId) {
       setMediaLoading(false);
@@ -133,30 +84,20 @@ export default function GameLauncherTile({
     }
     let cancelled = false;
     setMediaLoading(true);
-    Promise.all([
-      getMediaCacheForAppId(game.appId).catch(() => null),
-      loadGameAppInfoWithMediaFallback(game.appId).catch(() => null),
-    ]).then(([entry, appInfo]) => {
-      if (!cancelled) {
-        setMediaEntry(entry);
-        setCanonicalInfo(appInfo);
-        setMediaLoading(false);
-        // If primary chain returned null, try direct disk check
-        if (!appInfo?.media?.landscapePath && !appInfo?.media?.coverPath) {
-          resolveGameMediaImageSrc(game.appId!).then((src) => {
-            if (!cancelled && src) setDiskFallbackSrc(src);
-          }).catch(() => {});
+    loadGameAppInfoWithMediaFallback(game.appId)
+      .then((appInfo) => {
+        if (!cancelled) {
+          setCanonicalInfo(appInfo);
+          setMediaLoading(false);
         }
-      }
-    }).catch(() => {
-      if (!cancelled) setMediaLoading(false);
-    });
+      })
+      .catch(() => {
+        if (!cancelled) setMediaLoading(false);
+      });
     return () => { cancelled = true; };
   }, [game.appId]);
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
-  const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
-  const expectingSgdbArt = artworkMode === "poster" && sgdbEnabled;
 
   // Title priority: customTitle > appinfo name > game.title > metadata name > fallback
   const displayTitle =
@@ -167,8 +108,8 @@ export default function GameLauncherTile({
     (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
 
   const displayImage = useMemo(
-    () => getCardImage(game, artworkMode, artwork, appInfoEntry, mediaEntry, canonicalInfo, diskFallbackSrc),
-    [game, artworkMode, artwork, appInfoEntry, mediaEntry, canonicalInfo, diskFallbackSrc]
+    () => getCardImage(artworkMode, canonicalInfo),
+    [artworkMode, canonicalInfo]
   );
 
   const resolvedSrc = useMemo(() => resolveImageSrc(displayImage), [displayImage]);
@@ -247,8 +188,6 @@ export default function GameLauncherTile({
               <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
             }
           />
-        ) : expectingSgdbArt ? (
-          <SkeletonBox className="h-full w-full rounded-t-2xl" />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
             <Gamepad2 className="h-10 w-10 text-(--color-muted)" />

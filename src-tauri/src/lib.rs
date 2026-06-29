@@ -7,6 +7,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            commands::splash::close_splashscreen_and_show_main,
             commands::steam::detect_steam_paths,
             commands::steam_news::fetch_steam_news,
             commands::installer::download_and_install_package,

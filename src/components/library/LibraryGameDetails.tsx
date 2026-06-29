@@ -83,7 +83,7 @@ type LibraryGameDetailsProps = {
   onOpenStopModal?: () => void;
 };
 
-const ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS = true;
+const ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS = false;
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
   // Hero priority: background.jpg > landscape.jpg > remote background/header > cover.jpg as last local fallback > placeholder

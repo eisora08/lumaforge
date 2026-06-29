@@ -20,6 +20,8 @@ import { GameSessionProvider } from "./context/GameSessionContext";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
+import SplashScreen from "./components/splash/SplashScreen";
+import { runBootTasks } from "./services/appBootCoordinator";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -41,7 +43,15 @@ function restoreActivePage(): AppPage {
 function App() {
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
   const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
+  const [bootStarted, setBootStarted] = useState(false);
   const initialRender = useRef(true);
+
+  // Start boot coordinator once on mount
+  useEffect(() => {
+    if (bootStarted) return;
+    setBootStarted(true);
+    runBootTasks();
+  }, [bootStarted]);
 
   useEffect(() => {
     if (initialRender.current) {
@@ -107,6 +117,8 @@ function App() {
       </GameSessionProvider>
       <InstallerProgressListener />
       <GameToastViewport />
+      {/* Splash screen overlay — covers half-loaded UI during boot */}
+      <SplashScreen />
     </>
   );
 

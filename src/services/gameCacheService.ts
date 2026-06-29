@@ -57,12 +57,17 @@ export { readGameMediaDataUrl };
 
 const ENABLE_VERBOSE_GAME_CACHE_LOGS = true;
 const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = true;
+const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false; // Toggle for Part 4 debug logs
 
 // ---------------------------------------------------------------------------
 // Session cache for resolved media paths (prevents repeated disk checks)
 // ---------------------------------------------------------------------------
 
 const resolvedMediaSessionCache = new Map<string, GameMediaPaths | null>();
+
+// Cache for converted src URLs (local path → asset:// URL)
+// Prevents repeated convertFileSrc calls on the same path during a session
+const resolvedSrcCache = new Map<string, string>();
 
 function getCachedResolvedMedia(appId: string): GameMediaPaths | null | undefined {
   if (resolvedMediaSessionCache.has(appId)) {
@@ -197,6 +202,7 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
 // Clear the session cache (e.g. after artwork refresh)
 export function clearResolvedMediaSessionCache(): void {
   resolvedMediaSessionCache.clear();
+  resolvedSrcCache.clear();
 }
 
 // Invalidate cache for a specific appId (e.g. after a media download updates appinfo)
@@ -531,6 +537,72 @@ export async function resolveGameMedia(
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Sidebar-specific media resolver with file existence tracking
+// ---------------------------------------------------------------------------
+
+export type MediaItemInfo = {
+  src: string | null;
+  localPath: string | null;
+  exists: boolean;
+};
+
+export type ResolvedSidebarMedia = {
+  landscape: MediaItemInfo;
+  cover: MediaItemInfo;
+  background: MediaItemInfo;
+  logo: MediaItemInfo;
+  icon: MediaItemInfo;
+};
+
+export async function resolveSidebarMedia(
+  appId: string,
+  appInfo?: GameAppInfo | null,
+): Promise<ResolvedSidebarMedia> {
+  const diskPaths = await resolveGameMediaPaths(appId).catch(() => null);
+
+  const resolveRole = (
+    appinfoPath: string | null | undefined,
+    diskPath: string | null | undefined,
+  ): MediaItemInfo => {
+    let src: string | null = null;
+    let localPath: string | null = null;
+    let exists = false;
+
+    // Priority 1: appinfo path (not .tmp)
+    if (appinfoPath && !isTmpPath(appinfoPath)) {
+      src = localPathToUrl(appinfoPath);
+      localPath = appinfoPath;
+      exists = true;
+    }
+    // Priority 2: disk file if appinfo path missing or was .tmp
+    if (!exists && diskPath && !isTmpPath(diskPath)) {
+      src = localPathToUrl(diskPath);
+      localPath = diskPath;
+      exists = true;
+    }
+
+    return { src, localPath, exists };
+  };
+
+  const result: ResolvedSidebarMedia = {
+    landscape: resolveRole(appInfo?.media?.landscapePath, diskPaths?.landscapePath),
+    cover: resolveRole(appInfo?.media?.coverPath, diskPaths?.coverPath),
+    background: resolveRole(appInfo?.media?.backgroundPath, diskPaths?.backgroundPath),
+    logo: resolveRole(appInfo?.media?.logoPath, diskPaths?.logoPath),
+    icon: resolveRole(appInfo?.media?.iconPath, diskPaths?.iconPath),
+  };
+
+  if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) {
+    console.log(`[SidebarMedia] resolved for ${appId}`, {
+      landscape: { exists: result.landscape.exists, prefix: result.landscape.src?.slice(0, 40) },
+      cover: { exists: result.cover.exists, prefix: result.cover.src?.slice(0, 40) },
+    });
+  }
+
+  return result;
+}
+
 export function isLocalPath(path: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/");
 }
@@ -547,14 +619,51 @@ export function localPathToUrl(path: string): string | null {
     }
     return null;
   }
+  const cached = resolvedSrcCache.get(path);
+  if (cached !== undefined) return cached;
   try {
-    return convertFileSrc(path, "asset");
+    const url = convertFileSrc(path, "asset");
+    resolvedSrcCache.set(path, url);
+    return url;
   } catch {
     if (ENABLE_VERBOSE_GAME_CACHE_LOGS) {
       console.warn("[MediaCache] convertFileSrc failed for", path);
     }
     return null;
   }
+}
+
+export function clearResolvedSrcCache(): void {
+  resolvedSrcCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Batch media resolution — loads multiple appIds at once, returns a map
+// Batching avoids repeated individual disk checks per card render.
+// ---------------------------------------------------------------------------
+
+export async function batchLoadGameMedia(
+  appIds: string[],
+): Promise<Record<string, GameAppInfo | null>> {
+  const results: Record<string, GameAppInfo | null> = {};
+  const batchSize = 20;
+  for (let i = 0; i < appIds.length; i += batchSize) {
+    const batch = appIds.slice(i, i + batchSize);
+    const entries = await Promise.all(
+      batch.map(async (appId) => {
+        try {
+          const info = await loadGameAppInfoWithMediaFallback(appId);
+          return [appId, info] as const;
+        } catch {
+          return [appId, null] as const;
+        }
+      })
+    );
+    for (const [appId, info] of entries) {
+      results[appId] = info;
+    }
+  }
+  return results;
 }
 
 // ---------------------------------------------------------------------------

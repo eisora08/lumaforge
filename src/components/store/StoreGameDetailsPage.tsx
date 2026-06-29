@@ -13,6 +13,7 @@ import {
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
+import { enqueueMediaDownload } from "../../services/mediaDownloadQueue";
 
 import { showError } from "../toast/GameToast";
 
@@ -172,6 +173,36 @@ export default function StoreGameDetailsPage({
     if (metadata?.resolved && metadata.app_id !== prevAppIdRef.current) {
       prevAppIdRef.current = metadata.app_id;
       saveStoreMetadataToStoreCache(metadata);
+
+      // Populate canonical game cache for the opened game from store metadata.
+      // Enqueue landscape from header_image and optionally background from background/background_raw.
+      // Do NOT overwrite SGDB artwork — only fill gaps for the currently opened game.
+      const appId = String(metadata.app_id);
+      if (metadata.header_image) {
+        enqueueMediaDownload({
+          id: `store-header-${appId}-landscape`,
+          appId,
+          provider: "steam",
+          mediaType: "landscape",
+          url: metadata.header_image,
+          target: "canonical",
+          priority: "low",
+        }).catch(() => {});
+      }
+      if (metadata.background_image || (metadata as any).background_raw) {
+        const bgUrl = metadata.background_image || (metadata as any).background_raw;
+        if (bgUrl) {
+          enqueueMediaDownload({
+            id: `store-bg-${appId}-background`,
+            appId,
+            provider: "steam",
+            mediaType: "background",
+            url: bgUrl,
+            target: "canonical",
+            priority: "low",
+          }).catch(() => {});
+        }
+      }
     }
   }, [metadata?.resolved, metadata?.app_id]);
 

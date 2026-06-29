@@ -30,7 +30,6 @@ import {
 import { checkInstalledLuaUpdates } from "../services/installedLuaUpdateChecker";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
-import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 
 import type { LibraryGame } from "../types/libraryGame";
@@ -65,7 +64,6 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
-  const [artworkByAppId, setArtworkByAppId] = useState<Record<string, SgdbArtworkData>>({});
   const queuedMediaRef = useRef<Set<string>>(new Set());
 
   // On mount: scan Lua scripts from config/lua
@@ -225,7 +223,6 @@ export default function LibraryPage({ onNavigate }: Props) {
         resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
           .then((result) => {
             if (result[game.appId!]) {
-              setArtworkByAppId((prev) => ({ ...prev, ...result }));
               const artworkData = result[game.appId!];
               const jobs: Array<{ mediaType: string; url?: string }> = [
                 { mediaType: "landscape", url: artworkData.sgdbGridUrl || artworkData.sgdbGridThumbUrl || artworkData.sgdbHeroUrl },
@@ -515,7 +512,6 @@ export default function LibraryPage({ onNavigate }: Props) {
                         <GameLauncherTile
                           key={game.id}
                           game={game}
-                          artwork={game.appId ? artworkByAppId[game.appId] : undefined}
                           appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
                           onSelect={(g) => handleOpenGame(g)}
                           onPlay={handlePlay}

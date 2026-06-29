@@ -17,7 +17,6 @@ import { launchSteamApp, installSteamApp, deleteLuaScript } from "../services/ta
 import type { LibraryGame } from "../types/libraryGame";
 
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
-import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 
 import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
@@ -28,7 +27,6 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
 
   const [filter, setFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
-  const [artworkByAppId, setArtworkByAppId] = useState<Record<string, SgdbArtworkData>>({});
   const queuedMediaRef = useRef<Set<string>>(new Set());
 
   async function handleDeleteScript(game: LibraryGame) {
@@ -85,7 +83,6 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
         resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
           .then((result) => {
             if (result[game.appId!]) {
-              setArtworkByAppId((prev) => ({ ...prev, ...result }));
               const artworkData = result[game.appId!];
               const jobs: Array<{ mediaType: string; url?: string }> = [
                 { mediaType: "landscape", url: artworkData.sgdbGridUrl || artworkData.sgdbGridThumbUrl || artworkData.sgdbHeroUrl },
@@ -240,7 +237,6 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                   <GameLauncherTile
                     key={game.id}
                     game={game}
-                    artwork={game.appId ? artworkByAppId[game.appId] : undefined}
                     appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
                     onSelect={(g) => { setSelectedGame(g); onNavigate?.("library-game-detail"); }}
                     onPlay={handlePlay}
