@@ -33,19 +33,26 @@ export async function resolveGameNames(
   );
 
   if (missingAppIds.length > 0) {
-    const resolvedNames = await resolveSteamAppNames(missingAppIds);
+    try {
+      const resolvedNames = await resolveSteamAppNames(missingAppIds);
 
-    resolvedNames.forEach((item) => {
-      cache[String(item.app_id)] = item.name;
-    });
+      resolvedNames.forEach((item) => {
+        cache[String(item.app_id)] = item.name;
+      });
 
-    saveCache(cache);
+      saveCache(cache);
+    } catch {
+      // ignore
+    }
   }
 
-  return uniqueAppIds.reduce<Record<number, string>>((result, appId) => {
+  const result: Record<number, string> = {};
+
+  for (const appId of uniqueAppIds) {
     result[appId] = cache[String(appId)] || `Steam App ${appId}`;
-    return result;
-  }, {});
+  }
+
+  return result;
 }
 
 export function clearGameNameCache() {

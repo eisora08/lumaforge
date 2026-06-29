@@ -27,9 +27,10 @@ export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
 
     setLoading(true);
     setError(null);
+
     searchSteamStore(query.trim())
-      .then((results) => {
-        setItems(results);
+      .then((steamResults) => {
+        setItems(steamResults);
         setLoading(false);
       })
       .catch((err) => {

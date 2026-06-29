@@ -266,29 +266,25 @@ export default function Store() {
       try {
         setSteamSearchLoading(true);
 
-        const searchItems = await searchSteamStore(query);
+        const steamItems = await searchSteamStore(query);
 
         if (cancelled) {
           return;
         }
 
-        const dropdownItems = searchItems.map<StoreSearchDropdownItem>(
-          (item) => {
-            const appId = String(item.app_id);
-
-            return {
-              appId,
-              title: item.name,
-              subtitle: `AppID ${appId}`,
-              imageUrl: item.image_url || undefined,
-              priceLabel: item.price_label || undefined,
-              discountLabel: item.discount_label || undefined,
-              installed: installedStatusByAppId.has(appId),
-            };
-          }
+        const steamDropdownItems: StoreSearchDropdownItem[] = steamItems.map(
+          (item) => ({
+            appId: String(item.app_id),
+            title: item.name,
+            subtitle: `AppID ${item.app_id}`,
+            imageUrl: item.image_url || undefined,
+            priceLabel: item.price_label || undefined,
+            discountLabel: item.discount_label || undefined,
+            installed: installedStatusByAppId.has(String(item.app_id)),
+          })
         );
 
-        setSteamSearchItems(dropdownItems);
+        setSteamSearchItems(steamDropdownItems);
       } catch (error) {
         console.error(error);
 

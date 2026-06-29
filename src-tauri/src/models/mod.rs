@@ -19,3 +19,4 @@ pub mod local_game;
 pub mod local_executable_game;
 pub mod artwork_cache;
 pub mod steam_appcache_achievements;
+pub mod game_media_cache;

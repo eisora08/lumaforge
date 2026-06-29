@@ -50,8 +50,8 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate }: TopBar
     debounceRef.current = setTimeout(() => {
       setSearchLoading(true);
       searchSteamStore(normalizedQuery)
-        .then((items) => {
-          setSearchItems(items);
+        .then((steamItems) => {
+          setSearchItems(steamItems);
           setSearchLoading(false);
         })
         .catch(() => {

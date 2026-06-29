@@ -15,3 +15,4 @@ pub mod artwork_cache;
 pub mod steam_achievements;
 pub mod sync;
 pub mod process;
+pub mod game_media_cache;
