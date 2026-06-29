@@ -919,7 +919,7 @@ export default function Store() {
   function handleSelectSearchItem(item: StoreSearchDropdownItem) {
     const game = mapSteamDropdownItemToPackageGame(item);
 
-    setStoreSearchQuery(item.title);
+    setStoreSearchQuery("");
     setSubmittedSearchQuery("");
     setQuery("");
     setActiveSectionId(null);
@@ -928,6 +928,15 @@ export default function Store() {
 
     // Open details immediately with partial data - metadata loads inside
     setSelectedDetailGame(game);
+  }
+
+  function handleBackFromDetails() {
+    setSelectedDetailGame(null);
+    setStoreSearchQuery("");
+    setSubmittedSearchQuery("");
+    setQuery("");
+    setSteamSearchItems([]);
+    setSteamSubmittedSearchGames([]);
   }
 
   function handleStoreTabChange(tab: StoreTab) {
@@ -1084,7 +1093,7 @@ export default function Store() {
           }
           selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
           moreLikeThisGames={selectedDetailRelatedGames}
-          onBack={() => setSelectedDetailGame(null)}
+          onBack={handleBackFromDetails}
           onDownloadSource={handleDownloadSource}
           onOpenGame={openDetailsForGame}
           onSelectSourceKey={(sourceKey) =>

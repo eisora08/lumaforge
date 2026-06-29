@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Languages, Puzzle, Star } from "lucide-react";
 
 import type { PackageGame, PackageSource } from "../../types/package";
@@ -12,6 +12,7 @@ import {
 } from "../../utils/steamLinks";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata } from "../../services/gameMetadataResolver";
+import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
 
 import { showError } from "../toast/GameToast";
 
@@ -137,51 +138,74 @@ export default function StoreGameDetailsPage({
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
-  const galleryImages = [
-    metadata?.header_image,
-    metadata?.capsule_image,
-    metadata?.capsule_image_v5,
-    ...(metadata?.screenshots ?? []),
-    game.imageUrl,
-  ].filter((img): img is string => !!img);
+  const galleryImages = useMemo(
+    () =>
+      [
+        metadata?.header_image,
+        metadata?.capsule_image,
+        metadata?.capsule_image_v5,
+        ...(metadata?.screenshots ?? []),
+        game.imageUrl,
+      ].filter((img): img is string => !!img),
+    [
+      metadata?.header_image,
+      metadata?.capsule_image,
+      metadata?.capsule_image_v5,
+      metadata?.screenshots,
+      game.imageUrl,
+    ],
+  );
   const platforms = getPlatforms(game, metadata);
   const languagesLabel = getLanguagesLabel(metadata);
   const dlcLabel = getDlcLabel(metadata);
   const dlcCount = metadata?.dlc_count ?? 0;
-  const dlcAppIds = metadata?.dlc_app_ids ?? [];
+  const dlcAppIds = useMemo(
+    () => metadata?.dlc_app_ids ?? [],
+    [metadata?.dlc_app_ids],
+  );
   const reviewLabel = getReviewLabel(reviewSummary);
   const reviewSubLabel = getReviewSubLabel(reviewSummary);
 
+  // Save main game metadata to store cache when resolved — stable deps only
+  const prevAppIdRef = useRef<number | null>(null);
   useEffect(() => {
-    if (dlcAppIds.length === 0) {
+    if (metadata?.resolved && metadata.app_id !== prevAppIdRef.current) {
+      prevAppIdRef.current = metadata.app_id;
+      saveStoreMetadataToStoreCache(metadata);
+    }
+  }, [metadata?.resolved, metadata?.app_id]);
+
+  const dlcRequestRef = useRef(0);
+  useEffect(() => {
+    if (!dlcAppIds || dlcAppIds.length === 0) {
       setDlcMetadata([]);
       return;
     }
 
-    let cancelled = false;
+    const requestId = ++dlcRequestRef.current;
 
     async function load() {
       try {
         const resolved = await resolveGameMetadata(dlcAppIds);
+        if (requestId !== dlcRequestRef.current) return;
         const items = dlcAppIds
           .map((id) => resolved[id])
           .filter((item): item is SteamAppMetadata => !!item);
 
-        if (!cancelled) {
-          setDlcMetadata(items);
+        setDlcMetadata(items);
+        for (const dlc of items) {
+          if (dlc.resolved) {
+            saveStoreMetadataToStoreCache(dlc);
+          }
         }
       } catch {
-        if (!cancelled) {
+        if (requestId === dlcRequestRef.current) {
           setDlcMetadata([]);
         }
       }
     }
 
     load();
-
-    return () => {
-      cancelled = true;
-    };
   }, [dlcAppIds]);
 
   const availableSources = game.sources.filter((source) => source.available);

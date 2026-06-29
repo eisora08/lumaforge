@@ -5,7 +5,7 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
 import { loadCachedGames, isCacheExpired } from "../services/gameDetectionCache";
 import { loadMetadataCache } from "../services/gameMetadataResolver";
-import { loadLibraryAppInfo } from "../services/libraryLocalCacheService";
+import { loadLibraryAppInfo, updateLibraryAppInfo } from "../services/libraryLocalCacheService";
 import type { LibraryAppInfoMap } from "../services/tauri";
 import {
   loadSteamStats,
@@ -163,6 +163,26 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     return games;
   }
 
+  async function updateAppInfoFromGames(games: LibraryGame[]) {
+    const now = Math.floor(Date.now() / 1000);
+    for (const game of games) {
+      if (!game.appId) continue;
+      const entry = appInfoMap[game.appId];
+      if (entry && entry.name && entry.updated_at && (now - entry.updated_at) < 86400) continue;
+      await updateLibraryAppInfo(game.appId, {
+        app_id: game.appId,
+        name: game.title || null,
+        header_image: game.imageUrl || null,
+        cover_path: null,
+        grid_path: null,
+        hero_path: null,
+        logo_path: null,
+        icon_path: null,
+        updated_at: now,
+      }).catch(() => {});
+    }
+  }
+
   async function load(settings: AppSettings) {
     const cached = loadCachedGames();
     if (cached) {
@@ -174,6 +194,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       setTimeout(async () => {
         const enriched = await enrichWithStats(loaded);
         setGames(enriched);
+        updateAppInfoFromGames(enriched).catch(() => {});
       }, 50);
       // Background refresh if cache expired
       if (isCacheExpired(cached)) {
@@ -184,6 +205,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             const enriched = await enrichWithStats(result.games);
             setGames(enriched);
             setWarnings(result.warnings);
+            updateAppInfoFromGames(enriched).catch(() => {});
           } catch (error) {
             console.error("[LibraryGamesContext] scan error:", error);
           } finally {
@@ -199,6 +221,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           const enriched = await enrichWithStats(result.games);
           setGames(enriched);
           setWarnings(result.warnings);
+          updateAppInfoFromGames(enriched).catch(() => {});
         } catch (error) {
           console.error("[LibraryGamesContext] scan error:", error);
         } finally {
@@ -230,6 +253,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       const enriched = await enrichWithStats(result.games);
       setGames(enriched);
       setWarnings(result.warnings);
+      updateAppInfoFromGames(enriched).catch(() => {});
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);
     } finally {

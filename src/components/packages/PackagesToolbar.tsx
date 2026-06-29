@@ -156,7 +156,7 @@ export default function PackagesToolbar({
       </div>
 
       {shouldShowDropdown && (
-        <div className="lf-popover-enter absolute left-1/2 top-12 z-50 w-[480px] -translate-x-1/2 overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/95 shadow-2xl backdrop-blur-xl">
+        <div className="lf-popover-enter absolute left-1/2 top-12 z-50 w-[480px] -translate-x-1/2 overflow-hidden rounded-2xl border border-(--surface-active-border) bg-(--color-surface)/95 shadow-2xl backdrop-blur-xl">
           {searchLoading ? (
             <div className="p-2">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -178,7 +178,7 @@ export default function PackagesToolbar({
                       <button
                         type="button"
                         onClick={() => handleSelectItem(item)}
-                        className="flex w-full cursor-pointer items-center gap-3 rounded-xl p-2.5 text-left transition hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-(--color-accent)"
+                        className="flex w-full cursor-pointer items-center gap-3 rounded-xl p-2.5 text-left transition-colors hover:bg-(--color-accent)/8 active:bg-(--color-accent)/15 focus-visible:outline-2 focus-visible:outline-(--color-accent) focus-visible:-outline-offset-2"
                       >
                         <div className="h-16 w-28 shrink-0 overflow-hidden rounded-lg bg-white/5">
                           {item.imageUrl ? (
@@ -246,7 +246,7 @@ export default function PackagesToolbar({
                       </button>
 
                       {index < visibleSearchItems.length - 1 && (
-                        <div className="mx-2 border-t border-white/5" />
+                        <div className="mx-2 border-t border-(--surface-active-border)" />
                       )}
                     </div>
                   ))}
@@ -257,7 +257,7 @@ export default function PackagesToolbar({
                 <button
                   type="button"
                   onClick={handleViewAll}
-                  className="flex w-full items-center justify-between border-t border-white/10 px-5 py-3.5 text-sm text-(--color-text) transition hover:bg-white/5"
+                  className="flex w-full cursor-pointer items-center justify-between border-t border-(--surface-active-border) px-5 py-3.5 text-sm text-(--color-text) transition-colors hover:bg-(--color-accent)/8 focus-visible:outline-2 focus-visible:outline-(--color-accent)"
                 >
                   <span className="font-medium">
                     View all results for "{normalizedQuery}"

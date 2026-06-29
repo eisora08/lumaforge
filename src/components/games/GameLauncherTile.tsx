@@ -10,12 +10,21 @@ import {
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
-import type { LibraryAppInfoEntry } from "../../services/tauri";
+import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
+import type { GameAppInfo } from "../../services/gameCacheService";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
-import { localPathToUrl, isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
+import {
+  localPathToUrl,
+  isHttpUrl,
+  isLocalPath,
+  getMediaCacheForAppId,
+} from "../../services/libraryLocalCacheService";
+import {
+  loadGameAppInfo,
+} from "../../services/gameCacheService";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -30,20 +39,23 @@ type GameLauncherTileProps = {
 function getCardImage(
   game: LibraryGame,
   mode: "landscape" | "poster",
-  artwork?: SgdbArtworkData | null,
-  appInfoEntry?: LibraryAppInfoEntry | null,
+  artwork: SgdbArtworkData | null | undefined,
+  appInfoEntry: LibraryAppInfoEntry | null | undefined,
+  mediaEntry: GameMediaCacheEntry | null | undefined,
+  canonicalAppInfo: GameAppInfo | null,
 ): string | undefined {
   const meta = game.metadata;
 
-  // Local cache priority (both modes)
-  const localImages: string[] = [];
-  if (appInfoEntry?.grid_path) localImages.push(appInfoEntry.grid_path);
-  if (appInfoEntry?.cover_path) localImages.push(appInfoEntry.cover_path);
-  if (appInfoEntry?.header_image) localImages.push(appInfoEntry.header_image);
-
   if (mode === "poster") {
     return (
-      localImages.find(Boolean) ||
+      canonicalAppInfo?.media?.cover_path ||
+      canonicalAppInfo?.media?.landscape_path ||
+      mediaEntry?.cover_path ||
+      mediaEntry?.grid_path ||
+      mediaEntry?.quick_cover_path ||
+      appInfoEntry?.cover_path ||
+      appInfoEntry?.grid_path ||
+      appInfoEntry?.header_image ||
       artwork?.sgdbGridUrl ||
       artwork?.sgdbGridThumbUrl ||
       meta?.capsule_image ||
@@ -53,17 +65,33 @@ function getCardImage(
       undefined
     );
   }
-  return (
-    localImages.find(Boolean) ||
-    game.imageUrl ||
-    meta?.header_image ||
-    meta?.library_hero_image ||
-    meta?.hero_image ||
-    meta?.background_image ||
-    meta?.capsule_image ||
-    meta?.capsule_image_v5 ||
-    undefined
-  );
+
+  // Landscape mode: landscape.jpg first, cover only as last resort
+  const canonicalLandscape = canonicalAppInfo?.media?.landscape_path;
+  if (canonicalLandscape) return canonicalLandscape;
+
+  const localLandscape = mediaEntry?.grid_path;
+  if (localLandscape) return localLandscape;
+
+  const appInfoLandscape = appInfoEntry?.grid_path;
+  if (appInfoLandscape) return appInfoLandscape;
+
+  if (game.imageUrl) return game.imageUrl;
+
+  const remoteLandscape = meta?.header_image || meta?.library_hero_image || meta?.hero_image || meta?.background_image;
+  if (remoteLandscape) return remoteLandscape;
+
+  // Fallback: local cover
+  const canonicalCover = canonicalAppInfo?.media?.cover_path;
+  if (canonicalCover) return canonicalCover;
+
+  const localCover = mediaEntry?.cover_path || mediaEntry?.quick_cover_path;
+  if (localCover) return localCover;
+
+  const appInfoCover = appInfoEntry?.cover_path || appInfoEntry?.header_image;
+  if (appInfoCover) return appInfoCover;
+
+  return meta?.capsule_image || meta?.capsule_image_v5 || undefined;
 }
 
 function resolveImageSrc(src: string | undefined): string | undefined {
@@ -85,18 +113,49 @@ export default function GameLauncherTile({
   const { settings } = useSettings();
   const [menuOpen, setMenuOpen] = useState(false);
   const [favorite, setFavorite] = useState(false);
+  const [mediaEntry, setMediaEntry] = useState<GameMediaCacheEntry | null>(null);
+  const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
+  const [mediaLoading, setMediaLoading] = useState(true);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Load media cache + canonical appinfo for this game — with crash guard
+  useEffect(() => {
+    if (!game.appId) {
+      setMediaLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setMediaLoading(true);
+    Promise.all([
+      getMediaCacheForAppId(game.appId).catch(() => null),
+      loadGameAppInfo(game.appId).catch(() => null),
+    ]).then(([entry, appInfo]) => {
+      if (!cancelled) {
+        setMediaEntry(entry);
+        setCanonicalInfo(appInfo);
+        setMediaLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setMediaLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [game.appId]);
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
   const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
   const expectingSgdbArt = artworkMode === "poster" && sgdbEnabled;
 
-  // Title priority: appinfo name > game.title
-  const displayTitle = appInfoEntry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+  // Title priority: customTitle > appinfo name > game.title > metadata name > fallback
+  const displayTitle =
+    game.customTitle ||
+    appInfoEntry?.name ||
+    game.title ||
+    game.metadata?.name ||
+    (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
 
   const displayImage = useMemo(
-    () => getCardImage(game, artworkMode, artwork, appInfoEntry),
-    [game, artworkMode, artwork, appInfoEntry]
+    () => getCardImage(game, artworkMode, artwork, appInfoEntry, mediaEntry, canonicalInfo),
+    [game, artworkMode, artwork, appInfoEntry, mediaEntry, canonicalInfo]
   );
 
   const resolvedSrc = useMemo(() => resolveImageSrc(displayImage), [displayImage]);
@@ -155,7 +214,9 @@ export default function GameLauncherTile({
           artworkMode === "poster" ? "aspect-[3/4]" : "aspect-video"
         }`}
       >
-        {resolvedSrc ? (
+        {mediaLoading ? (
+          <SkeletonBox className="h-full w-full rounded-t-2xl" />
+        ) : resolvedSrc ? (
           <AsyncImage
             src={resolvedSrc}
             alt={displayTitle}

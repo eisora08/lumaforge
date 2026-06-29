@@ -7,6 +7,7 @@ export type LibraryGameSource = "steam" | "local" | "lua";
 export type LibraryGame = {
   id: string;
   appId?: string;
+  customTitle?: string;
   title: string;
   source: LibraryGameSource;
   executablePath?: string;

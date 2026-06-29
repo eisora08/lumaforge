@@ -1,4 +1,4 @@
-import { resolveSteamReviewSummaries, readStoreReviewCache, writeStoreReviewCache } from "./tauri";
+import { resolveSteamReviewSummaries, readStoreReviewSummary, writeStoreReviewSummary } from "./tauri";
 import type { SteamReviewSummary } from "../types/gameReview";
 
 const ENABLE_VERBOSE_STORE_CACHE_LOGS = false;
@@ -13,7 +13,7 @@ function log(...args: unknown[]) {
 
 async function loadFromAppCache(appId: number): Promise<SteamReviewSummary | null> {
   try {
-    const cached = await readStoreReviewCache(appId);
+    const cached = await readStoreReviewSummary(appId);
     if (cached && cached.data) {
       log("app-data cache hit for", appId);
       return cached.data as SteamReviewSummary;
@@ -26,7 +26,7 @@ async function loadFromAppCache(appId: number): Promise<SteamReviewSummary | nul
 
 async function saveToAppCache(appId: number, data: SteamReviewSummary): Promise<void> {
   try {
-    await writeStoreReviewCache(appId, {
+    await writeStoreReviewSummary(appId, {
       app_id: appId,
       data,
       updated_at: Date.now(),

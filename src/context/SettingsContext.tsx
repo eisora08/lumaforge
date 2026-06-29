@@ -43,6 +43,7 @@ export const defaultSettings: AppSettings = {
   steamAchievementsEnabled: false,
   achievementSchemaPath: "",
   libraryCardArtworkMode: "landscape",
+  mediaCacheProfile: "playnite-balanced",
   gameScanFolders: [],
   scanLocalGames: false,
 };

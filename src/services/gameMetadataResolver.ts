@@ -1,4 +1,4 @@
-import { resolveSteamAppMetadata, readStoreMetadataCache, writeStoreMetadataCache } from "./tauri";
+import { resolveSteamAppMetadata, readStoreGameDetails, writeStoreGameDetails } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
 const ENABLE_VERBOSE_STORE_CACHE_LOGS = false;
@@ -21,7 +21,7 @@ export function loadMetadataCache(): Record<string, SteamAppMetadata> {
 
 async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null> {
   try {
-    const cached = await readStoreMetadataCache(appId);
+    const cached = await readStoreGameDetails(appId);
     if (cached && cached.data) {
       log("app-data cache hit for", appId);
       return cached.data as SteamAppMetadata;
@@ -34,7 +34,7 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
 
 async function saveToAppCache(appId: number, data: SteamAppMetadata): Promise<void> {
   try {
-    await writeStoreMetadataCache(appId, {
+    await writeStoreGameDetails(appId, {
       app_id: appId,
       data,
       updated_at: Date.now(),

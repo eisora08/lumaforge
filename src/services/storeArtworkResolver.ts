@@ -1,46 +1,18 @@
 import { resolveSteamGridDbArtwork } from "./tauri";
 import type { SteamGridDbArtwork } from "../types/steamGridDb";
 
-const CACHE_KEY = "lumaforge-sgdb-artwork-v1";
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILURE_TTL_MS = 60 * 60 * 1000;
-const BATCH_SIZE = 6;
-const BATCH_DELAY_MS = 300;
+const MAX_CONCURRENT_SGDB_CALLS = 1;
 
 const inFlightAppIds = new Set<number>();
+let concurrentCalls = 0;
+
+// In-memory cache only — no localStorage for images or SGDB metadata
+const memoryCache = new Map<string, { artwork: SteamGridDbArtwork; timestamp: number; failed: boolean }>();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-type CacheEntry = {
-  artwork: SteamGridDbArtwork;
-  timestamp: number;
-  failed: boolean;
-};
-
-function getCache(): Record<string, CacheEntry> {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-function setCache(cache: Record<string, CacheEntry>) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    /* ignore */
-  }
-}
-
-function tryClearDiskCache() {
-  import("./tauriArtworkCache")
-    .then((m) => m.default.clearAllArtworkCache())
-    .catch(() => {});
 }
 
 export type SgdbArtworkData = {
@@ -48,6 +20,8 @@ export type SgdbArtworkData = {
   sgdbGridThumbUrl?: string;
   sgdbHeroUrl?: string;
   sgdbLogoUrl?: string;
+  sgdbIconUrl?: string;
+  sgdbCoverUrl?: string;
 };
 
 export async function resolveArtworkForAppIds(
@@ -57,23 +31,17 @@ export async function resolveArtworkForAppIds(
   const result: Record<string, SgdbArtworkData> = {};
   if (!sgdbApiKey || appIds.length === 0) return result;
 
-  const cache = getCache();
   const now = Date.now();
   const missing: number[] = [];
 
   for (const appId of appIds) {
     const key = String(appId);
-    const entry = cache[key];
+    const entry = memoryCache.get(key);
     if (entry) {
       const ttl = entry.failed ? FAILURE_TTL_MS : CACHE_TTL_MS;
       if (now - entry.timestamp < ttl) {
         if (!entry.failed) {
-          result[key] = {};
-          if (entry.artwork.gridUrl) result[key].sgdbGridUrl = entry.artwork.gridUrl;
-          if (entry.artwork.gridThumbUrl) result[key].sgdbGridThumbUrl = entry.artwork.gridThumbUrl;
-          if (entry.artwork.heroUrl) result[key].sgdbHeroUrl = entry.artwork.heroUrl;
-          if (entry.artwork.logoUrl) result[key].sgdbLogoUrl = entry.artwork.logoUrl;
-          console.debug("[SGDB] cache hit", appId);
+          result[key] = buildSgdbData(entry.artwork);
         }
         continue;
       }
@@ -83,53 +51,54 @@ export async function resolveArtworkForAppIds(
 
   if (missing.length === 0) return result;
 
-  console.debug("[SGDB] cache miss for", missing.length, "games");
+  // Process one appId at a time to limit concurrent SGDB API calls
+  for (const appId of missing) {
+    if (inFlightAppIds.has(appId)) continue;
 
-  for (let i = 0; i < missing.length; i += BATCH_SIZE) {
-    const batch = missing.slice(i, i + BATCH_SIZE).filter((id) => !inFlightAppIds.has(id));
-    if (batch.length === 0) continue;
+    inFlightAppIds.add(appId);
 
-    batch.forEach((id) => inFlightAppIds.add(id));
-    console.debug("[SGDB] fetch batch size", batch.length);
+    // Throttle concurrent SGDB calls to 1
+    while (concurrentCalls >= MAX_CONCURRENT_SGDB_CALLS) {
+      await delay(200);
+    }
+
+    concurrentCalls++;
     try {
-      await delay(BATCH_DELAY_MS);
-      const batchResult = await resolveSteamGridDbArtwork(batch, sgdbApiKey);
+      await delay(300);
+      const batchResult = await resolveSteamGridDbArtwork([appId], sgdbApiKey);
       for (const a of batchResult) {
         const key = String(a.appId);
-        if (a.gridUrl || a.heroUrl || a.logoUrl) {
-          const data: SgdbArtworkData = {};
-          if (a.gridUrl) data.sgdbGridUrl = a.gridUrl;
-          if (a.gridThumbUrl) data.sgdbGridThumbUrl = a.gridThumbUrl;
-          if (a.heroUrl) data.sgdbHeroUrl = a.heroUrl;
-          if (a.logoUrl) data.sgdbLogoUrl = a.logoUrl;
-          result[key] = data;
+        if (a.gridUrl || a.heroUrl || a.logoUrl || a.iconUrl) {
+          result[key] = buildSgdbData(a);
         }
-        cache[key] = { artwork: a, timestamp: now, failed: !(a.gridUrl || a.heroUrl || a.logoUrl) };
+        memoryCache.set(key, { artwork: a, timestamp: now, failed: !(a.gridUrl || a.heroUrl || a.logoUrl || a.iconUrl) });
       }
     } catch {
-      for (const appId of batch) {
-        const key = String(appId);
-        cache[key] = {
-          artwork: { appId, gridUrl: undefined, gridThumbUrl: undefined, heroUrl: undefined, logoUrl: undefined },
-          timestamp: now,
-          failed: true,
-        };
-      }
+      memoryCache.set(String(appId), {
+        artwork: { appId, gridUrl: undefined, gridThumbUrl: undefined, heroUrl: undefined, logoUrl: undefined, iconUrl: undefined },
+        timestamp: now,
+        failed: true,
+      });
     } finally {
-      batch.forEach((id) => inFlightAppIds.delete(id));
+      concurrentCalls--;
+      inFlightAppIds.delete(appId);
     }
   }
 
-  setCache(cache);
-  console.debug("[SGDB] resolved", Object.keys(result).length, "games");
   return result;
 }
 
-export async function clearArtworkCache() {
-  try {
-    localStorage.removeItem(CACHE_KEY);
-  } catch {
-    /* ignore */
-  }
-  tryClearDiskCache();
+function buildSgdbData(a: SteamGridDbArtwork): SgdbArtworkData {
+  const data: SgdbArtworkData = {};
+  if (a.gridUrl) data.sgdbGridUrl = a.gridUrl;
+  if (a.gridThumbUrl) data.sgdbGridThumbUrl = a.gridThumbUrl;
+  if (a.heroUrl) data.sgdbHeroUrl = a.heroUrl;
+  if (a.logoUrl) data.sgdbLogoUrl = a.logoUrl;
+  if (a.iconUrl) data.sgdbIconUrl = a.iconUrl;
+  if (a.gridUrl) data.sgdbCoverUrl = a.gridUrl;
+  return data;
+}
+
+export function clearArtworkCache() {
+  memoryCache.clear();
 }

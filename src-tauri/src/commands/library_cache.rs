@@ -1,14 +1,24 @@
 use std::fs;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
+use reqwest::blocking::get;
 
 use crate::models::library_cache::{
     GameMediaCacheEntry, LibraryAppInfoEntry, LibraryAppInfoMap,
     LibraryGameDetailsEntry,
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryCacheIndex {
+    pub last_scan_at: Option<u64>,
+    pub game_count: Option<usize>,
+    pub version: u8,
+}
+
 const ENABLE_VERBOSE_LIBRARY_CACHE_LOGS: bool = false;
+const ENABLE_VERBOSE_MEDIA_CACHE_LOGS: bool = false;
 
 #[inline]
 fn log_lib(msg: &str) {
@@ -19,8 +29,8 @@ fn log_lib(msg: &str) {
 
 #[inline]
 fn log_media(msg: &str) {
-    if ENABLE_VERBOSE_LIBRARY_CACHE_LOGS {
-        println!("[MediaCache] {}", msg);
+    if ENABLE_VERBOSE_MEDIA_CACHE_LOGS {
+        println!("[LibraryMedia] {}", msg);
     }
 }
 
@@ -56,7 +66,6 @@ fn get_details_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-#[allow(dead_code)]
 fn get_covers_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let dir = get_library_dir(app_handle)?.join("covers");
     fs::create_dir_all(&dir)
@@ -310,6 +319,63 @@ pub fn library_clear_all_game_media_cache(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Library cache index  —  app_data/library/cache.json
+// ---------------------------------------------------------------------------
+
+fn get_cache_index_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    Ok(get_library_dir(app_handle)?.join("cache.json"))
+}
+
+#[tauri::command]
+pub fn read_library_cache_index(app_handle: AppHandle) -> Result<LibraryCacheIndex, String> {
+    let path = get_cache_index_path(&app_handle)?;
+
+    if !path.exists() {
+        log_lib("cache index loaded (empty)");
+        return Ok(LibraryCacheIndex {
+            last_scan_at: None,
+            game_count: None,
+            version: 1,
+        });
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read library cache index: {}", e))?;
+
+    match serde_json::from_str(&content) {
+        Ok(index) => {
+            log_lib("cache index loaded");
+            Ok(index)
+        }
+        Err(_) => {
+            log_lib("cache index corrupt — resetting");
+            Ok(LibraryCacheIndex {
+                last_scan_at: None,
+                game_count: None,
+                version: 1,
+            })
+        }
+    }
+}
+
+#[tauri::command]
+pub fn write_library_cache_index(
+    app_handle: AppHandle,
+    index: LibraryCacheIndex,
+) -> Result<(), String> {
+    let path = get_cache_index_path(&app_handle)?;
+
+    let content = serde_json::to_string_pretty(&index)
+        .map_err(|e| format!("Failed to serialize library cache index: {}", e))?;
+
+    fs::write(&path, &content)
+        .map_err(|e| format!("Failed to write library cache index: {}", e))?;
+
+    log_lib("cache index saved");
+    Ok(())
+}
+
 #[tauri::command]
 pub fn read_image_as_data_url(app_handle: AppHandle, path: String) -> Result<String, String> {
     let app_data = app_handle
@@ -350,4 +416,131 @@ pub fn read_image_as_data_url(app_handle: AppHandle, path: String) -> Result<Str
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+// ---------------------------------------------------------------------------
+// cache_library_game_media — download images + write metadata.json + quick cover
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn cache_library_game_media(
+    app_handle: AppHandle,
+    game_key: String,
+    app_id: Option<String>,
+    title: Option<String>,
+    cover_url: Option<String>,
+    grid_url: Option<String>,
+    hero_url: Option<String>,
+    logo_url: Option<String>,
+    icon_url: Option<String>,
+) -> Result<GameMediaCacheEntry, String> {
+    let media_dir = get_media_dir(&app_handle)?;
+    let game_media_dir = media_dir.join(safe_filename(&game_key));
+    fs::create_dir_all(&game_media_dir)
+        .map_err(|e| format!("Failed to create game media dir: {}", e))?;
+
+    let mut entry = GameMediaCacheEntry {
+        game_key: game_key.clone(),
+        app_id: app_id.clone(),
+        title: title.clone(),
+        cover_path: None,
+        grid_path: None,
+        hero_path: None,
+        logo_path: None,
+        icon_path: None,
+        quick_cover_path: None,
+        updated_at: None,
+    };
+
+    let downloads: Vec<(&str, &Option<String>, &str)> = vec![
+        ("cover.jpg", &cover_url, "cover"),
+        ("grid.jpg", &grid_url, "grid"),
+        ("hero.jpg", &hero_url, "hero"),
+        ("logo.png", &logo_url, "logo"),
+        ("icon.png", &icon_url, "icon"),
+    ];
+
+    for (filename, url_opt, field) in &downloads {
+        if let Some(url) = url_opt {
+            let dest_path = game_media_dir.join(filename);
+            if dest_path.exists() {
+                let path_str = dest_path.to_string_lossy().to_string();
+                match *field {
+                    "cover" => entry.cover_path = Some(path_str),
+                    "grid" => entry.grid_path = Some(path_str),
+                    "hero" => entry.hero_path = Some(path_str),
+                    "logo" => entry.logo_path = Some(path_str),
+                    "icon" => entry.icon_path = Some(path_str),
+                    _ => {}
+                }
+                log_media(&format!("skipped download — local exists for {} of {}", field, game_key));
+                continue;
+            }
+
+            match get(url) {
+                Ok(response) => {
+                    if let Ok(bytes) = response.bytes() {
+                        if fs::write(&dest_path, &bytes).is_ok() {
+                            let path_str = dest_path.to_string_lossy().to_string();
+                            match *field {
+                                "cover" => entry.cover_path = Some(path_str),
+                                "grid" => entry.grid_path = Some(path_str),
+                                "hero" => entry.hero_path = Some(path_str),
+                                "logo" => entry.logo_path = Some(path_str),
+                                "icon" => entry.icon_path = Some(path_str),
+                                _ => {}
+                            }
+                            log_media(&format!("saved {} for {}", field, game_key));
+                        }
+                    }
+                }
+                Err(_) => {
+                    log_media(&format!("download failed for {} of {}", field, game_key));
+                }
+            }
+        }
+    }
+
+    // Save quick cover to library/covers/{appid}.jpg
+    if let Some(ref aid) = app_id {
+        let covers_dir = get_covers_dir(&app_handle)?;
+        let quick_cover_path = covers_dir.join(format!("{}.jpg", aid));
+        if !quick_cover_path.exists() {
+            let quick_url = grid_url
+                .as_ref()
+                .or(cover_url.as_ref())
+                .or(hero_url.as_ref());
+            if let Some(url) = quick_url {
+                if let Ok(response) = get(url) {
+                    if let Ok(bytes) = response.bytes() {
+                        if fs::write(&quick_cover_path, &bytes).is_ok() {
+                            let path_str = quick_cover_path.to_string_lossy().to_string();
+                            entry.quick_cover_path = Some(path_str);
+                            log_media(&format!("saved quick cover for {}", aid));
+                        }
+                    }
+                }
+            }
+        } else {
+            let path_str = quick_cover_path.to_string_lossy().to_string();
+            entry.quick_cover_path = Some(path_str);
+            log_media(&format!("quick cover already exists for {}", aid));
+        }
+    }
+
+    // Save metadata.json
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    entry.updated_at = Some(now);
+
+    let metadata_path = game_media_dir.join("metadata.json");
+    if let Ok(content) = serde_json::to_string_pretty(&entry) {
+        let _ = fs::write(&metadata_path, &content);
+        log_media(&format!("metadata written for {}", game_key));
+    }
+
+    log_media(&format!("cache complete for {}", game_key));
+    Ok(entry)
 }

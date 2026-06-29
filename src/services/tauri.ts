@@ -434,31 +434,110 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
 }
 
 // --- Store cache ---
+// All Store data lives under app_data/store/ to keep it separate from Library cache.
 
-export async function readStoreMetadataCache(
-  appId: number
-): Promise<{ app_id: number; data: SteamAppMetadata; updated_at: number; version: number } | null> {
-  return await invoke("read_store_metadata_cache", { appId });
+export type StoreAppInfoEntry = {
+  app_id: string;
+  name: string | null;
+  header_image: string | null;
+  capsule_image: string | null;
+  hero_path: string | null;
+  header_path: string | null;
+  capsule_path: string | null;
+  logo_path: string | null;
+  updated_at: number | null;
+};
+
+export type StoreAppInfoMap = Record<string, StoreAppInfoEntry>;
+
+export type StoreGameDetailsEntry = {
+  app_id: number;
+  data: unknown;
+  updated_at: number;
+  version: number;
+};
+
+export type StoreReviewEntry = {
+  app_id: number;
+  data: unknown;
+  updated_at: number;
+  version: number;
+};
+
+export type StoreMediaCacheEntry = {
+  capsule_path: string | null;
+  header_path: string | null;
+  hero_path: string | null;
+  background_path: string | null;
+  logo_path: string | null;
+  updated_at: number | null;
+};
+
+export async function readStoreAppinfo(): Promise<StoreAppInfoMap> {
+  return await invoke<StoreAppInfoMap>("read_store_appinfo");
 }
 
-export async function writeStoreMetadataCache(
-  appId: number,
-  entry: { app_id: number; data: SteamAppMetadata; updated_at: number; version: number }
+export async function writeStoreAppinfo(appinfo: StoreAppInfoMap): Promise<void> {
+  return await invoke<void>("write_store_appinfo", { appinfo });
+}
+
+export async function updateStoreAppinfoEntry(
+  appId: string,
+  entry: StoreAppInfoEntry
 ): Promise<void> {
-  return await invoke("write_store_metadata_cache", { appId, entry });
+  return await invoke<void>("update_store_appinfo_entry", { appId, entry });
 }
 
-export async function readStoreReviewCache(
+export async function readStoreGameDetails(
   appId: number
-): Promise<{ app_id: number; data: SteamReviewSummary; updated_at: number; version: number } | null> {
-  return await invoke("read_store_review_cache", { appId });
+): Promise<StoreGameDetailsEntry | null> {
+  return await invoke<StoreGameDetailsEntry | null>("read_store_game_details", { appId });
 }
 
-export async function writeStoreReviewCache(
+export async function writeStoreGameDetails(
   appId: number,
-  entry: { app_id: number; data: SteamReviewSummary; updated_at: number; version: number }
+  entry: StoreGameDetailsEntry
 ): Promise<void> {
-  return await invoke("write_store_review_cache", { appId, entry });
+  return await invoke<void>("write_store_game_details", { appId, entry });
+}
+
+export async function readStoreReviewSummary(
+  appId: number
+): Promise<StoreReviewEntry | null> {
+  return await invoke<StoreReviewEntry | null>("read_store_review_summary", { appId });
+}
+
+export async function writeStoreReviewSummary(
+  appId: number,
+  entry: StoreReviewEntry
+): Promise<void> {
+  return await invoke<void>("write_store_review_summary", { appId, entry });
+}
+
+export async function getStoreMediaCache(
+  appId: number
+): Promise<StoreMediaCacheEntry | null> {
+  return await invoke<StoreMediaCacheEntry | null>("get_store_media_cache", { appId });
+}
+
+export async function cacheStoreRemoteMedia(
+  appId: number,
+  urls: {
+    capsuleUrl: string | null;
+    headerUrl: string | null;
+    heroUrl: string | null;
+    backgroundUrl: string | null;
+    logoUrl: string | null;
+  }
+): Promise<StoreMediaCacheEntry> {
+  return await invoke<StoreMediaCacheEntry>("cache_store_remote_media", {
+    appId,
+    capsuleUrl: urls.capsuleUrl,
+    headerUrl: urls.headerUrl,
+    heroUrl: urls.heroUrl,
+    backgroundUrl: urls.backgroundUrl,
+    logoUrl: urls.logoUrl,
+  });
 }
 
 export async function clearStoreCache(): Promise<void> {
@@ -615,4 +694,191 @@ export async function readImageAsDataUrl(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export async function cacheLibraryGameMedia(
+  gameKey: string,
+  appId: string | null,
+  title: string | null,
+  urls: {
+    coverUrl?: string | null;
+    gridUrl?: string | null;
+    heroUrl?: string | null;
+    logoUrl?: string | null;
+    iconUrl?: string | null;
+  }
+): Promise<GameMediaCacheEntry> {
+  return await invoke<GameMediaCacheEntry>("cache_library_game_media", {
+    gameKey,
+    appId,
+    title,
+    coverUrl: urls.coverUrl ?? null,
+    gridUrl: urls.gridUrl ?? null,
+    heroUrl: urls.heroUrl ?? null,
+    logoUrl: urls.logoUrl ?? null,
+    iconUrl: urls.iconUrl ?? null,
+  });
+}
+
+// --- Canonical Game Cache (app_data/games/steam/{appid}/) ---
+
+export type GameAppInfo = {
+  app_id: string;
+  provider: string;
+  name: string | null;
+  updated_at: number | null;
+  media: GameMediaPaths | null;
+  remote: GameRemoteRefs | null;
+};
+
+export type GameRemoteRefs = {
+  header_image: string | null;
+  capsule_image: string | null;
+  background_image: string | null;
+};
+
+export type GameMediaPaths = {
+  landscape_path: string | null;
+  cover_path: string | null;
+};
+
+export type GameStoreDetails = {
+  app_id: string;
+  source: string;
+  updated_at: number;
+  data: unknown;
+};
+
+export type GameArtwork = {
+  app_id: string;
+  updated_at: number;
+  sources: { store: string; library: string };
+  steam_grid_db: SteamGridDbRef | null;
+  paths: GameMediaPaths;
+};
+
+export type SteamGridDbRef = {
+  grid_url: string | null;
+  hero_url: string | null;
+  logo_url: string | null;
+  icon_url: string | null;
+  cover_url: string | null;
+};
+
+export type MigrationSummary = {
+  app_info_copied: number;
+  details_copied: number;
+  media_folders_moved: number;
+  errors: string[];
+};
+
+// GameAppInfo CRUD
+export async function getGameAppInfo(appId: string): Promise<GameAppInfo | null> {
+  try {
+    return await invoke<GameAppInfo | null>("get_game_app_info", { appId });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveGameAppInfo(appId: string, entry: GameAppInfo): Promise<void> {
+  return await invoke("save_game_app_info", { appId, entry });
+}
+
+// StoreDetails CRUD
+export async function getStoreDetails(appId: string): Promise<GameStoreDetails | null> {
+  try {
+    return await invoke<GameStoreDetails | null>("get_store_details", { appId });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveStoreDetails(appId: string, entry: GameStoreDetails): Promise<void> {
+  return await invoke("save_store_details", { appId, entry });
+}
+
+// GameArtwork CRUD
+export async function getGameArtwork(appId: string): Promise<GameArtwork | null> {
+  try {
+    return await invoke<GameArtwork | null>("get_game_artwork", { appId });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveGameArtwork(appId: string, entry: GameArtwork): Promise<void> {
+  return await invoke("save_game_artwork", { appId, entry });
+}
+
+// Landscape/cover image caching
+export type LandscapeUrls = {
+  sgdb_grid_url: string | null;
+  sgdb_hero_url: string | null;
+  store_header_url: string | null;
+  store_background_url: string | null;
+};
+
+export type CoverUrls = {
+  sgdb_cover_url: string | null;
+  store_capsule_url: string | null;
+  store_capsule_v5_url: string | null;
+  store_header_url: string | null;
+};
+
+export async function cacheLandscapeImage(appId: string, urls: LandscapeUrls, forceRefresh?: boolean): Promise<string | null> {
+  return await invoke<string | null>("cache_landscape_image", { appId, urls, forceRefresh: forceRefresh ?? false });
+}
+
+export async function cacheCoverImage(appId: string, urls: CoverUrls, forceRefresh?: boolean): Promise<string | null> {
+  return await invoke<string | null>("cache_cover_image", { appId, urls, forceRefresh: forceRefresh ?? false });
+}
+
+// Appinfo/artwork update helpers
+export type GameRemoteRefsInput = {
+  header_image: string | null;
+  capsule_image: string | null;
+  background_image: string | null;
+};
+
+export async function updateGameAppinfoMedia(appId: string, name: string | null, media: GameMediaPaths, remote?: GameRemoteRefsInput | null): Promise<void> {
+  return await invoke("update_game_appinfo_media", { appId, name, media, remote: remote ?? null });
+}
+
+export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | null, paths: GameMediaPaths): Promise<void> {
+  return await invoke("update_game_artwork", { appId, sgdb, paths });
+}
+
+// Migration
+export async function migrateToCanonicalCache(): Promise<MigrationSummary> {
+  return await invoke<MigrationSummary>("migrate_to_canonical_cache");
+}
+
+// ---------------------------------------------------------------------------
+// Media cache stats and compaction
+// ---------------------------------------------------------------------------
+
+export type MediaCacheStats = {
+  total_bytes: number;
+  game_count: number;
+  largest_games: {
+    app_id: string;
+    title: string;
+    bytes: number;
+  }[];
+  by_type: {
+    landscape_bytes: number;
+    cover_bytes: number;
+    old_media_bytes: number;
+  };
+};
+
+export type MediaCacheProfile = "minimal" | "playnite-balanced" | "full";
+
+export async function getMediaCacheStats(): Promise<MediaCacheStats> {
+  return await invoke<MediaCacheStats>("get_media_cache_stats");
+}
+
+export async function compactMediaCache(profile?: MediaCacheProfile): Promise<MediaCacheStats> {
+  return await invoke<MediaCacheStats>("compact_media_cache", { profile });
 }

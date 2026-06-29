@@ -31,6 +31,7 @@ import { checkInstalledLuaUpdates } from "../services/installedLuaUpdateChecker"
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
+import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { InstalledLuaScript } from "../types/installedLua";
@@ -44,6 +45,8 @@ import {
   showSuccess,
   showWarning,
 } from "../components/toast/GameToast";
+
+
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -63,7 +66,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
   const [artworkByAppId, setArtworkByAppId] = useState<Record<string, SgdbArtworkData>>({});
-  const artworkRequest = useRef(0);
+  const queuedMediaRef = useRef<Set<string>>(new Set());
 
   // On mount: scan Lua scripts from config/lua
   useEffect(() => {
@@ -196,31 +199,69 @@ export default function LibraryPage({ onNavigate }: Props) {
     return filteredGames.slice(start, start + pageSize);
   }, [filteredGames, currentPage, pageSize]);
 
-  // Resolve SGDB artwork for visible games (poster mode only)
+  // Resolve artwork/cache for visible games — queued, throttled, cache-first
+  // Intentionally does NOT depend on mediaCacheMap to avoid re-enqueue loops.
+  // queuedMediaRef persists across renders to prevent duplicate queueing.
   useEffect(() => {
-    console.debug("[SGDB] enabled", settings.steamGridDbArtworkEnabled);
-    console.debug("[SGDB] apiKey configured", Boolean(settings.steamGridDbApiKey));
-    if (!settings.steamGridDbArtworkEnabled) return;
-    if ((settings.libraryCardArtworkMode ?? "landscape") !== "poster") return;
-    if (!settings.steamGridDbApiKey) return;
+    const visibleGames = paginatedGames.filter((g) => {
+      if (!g.appId) return false;
+      if (queuedMediaRef.current.has(g.appId)) return false;
+      if (isAppIdInFlight(g.appId)) return false;
+      return true;
+    });
 
-    const visibleAppIds = paginatedGames
-      .map((g) => Number(g.appId))
-      .filter((id): id is number => !isNaN(id) && id > 0);
+    if (visibleGames.length === 0) return;
 
-    if (visibleAppIds.length === 0) return;
+    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey
+      && (settings.libraryCardArtworkMode ?? "landscape") === "poster";
 
-    const requestId = Date.now();
-    artworkRequest.current = requestId;
+    for (const game of visibleGames) {
+      queuedMediaRef.current.add(game.appId!);
 
-    console.debug("[Library] Resolving SGDB artwork for", visibleAppIds.length, "games");
-    resolveArtworkForAppIds(visibleAppIds, settings.steamGridDbApiKey)
-      .then((result) => {
-        if (artworkRequest.current !== requestId) return;
-        setArtworkByAppId((prev) => ({ ...prev, ...result }));
-      })
-      .catch(() => {});
-  }, [paginatedGames, settings.libraryCardArtworkMode, settings.steamGridDbApiKey]);
+      if (sgdbEnabled) {
+        const appIdNum = Number(game.appId);
+        if (isNaN(appIdNum) || appIdNum <= 0) continue;
+
+        resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
+          .then((result) => {
+            if (result[game.appId!]) {
+              setArtworkByAppId((prev) => ({ ...prev, ...result }));
+              const artworkData = result[game.appId!];
+              const jobs: Array<{ mediaType: string; url?: string }> = [
+                { mediaType: "landscape", url: artworkData.sgdbGridUrl || artworkData.sgdbGridThumbUrl || artworkData.sgdbHeroUrl },
+                { mediaType: "cover", url: artworkData.sgdbCoverUrl },
+              ];
+              for (const { mediaType, url } of jobs) {
+                if (!url) continue;
+                enqueueMediaDownload({
+                  id: `sgdb-${game.appId}-${mediaType}`,
+                  appId: game.appId!,
+                  provider: "steamgriddb",
+                  mediaType: mediaType as any,
+                  url,
+                  target: "canonical",
+                  priority: "normal",
+                }).catch(() => {});
+              }
+            }
+          })
+          .catch(() => {});
+      } else {
+        const landscapeUrl = game.metadata?.capsule_image_v5 || game.metadata?.capsule_image || game.metadata?.header_image || game.metadata?.background_image || game.imageUrl || undefined;
+        if (landscapeUrl) {
+          enqueueMediaDownload({
+            id: `store-${game.appId}-landscape`,
+            appId: game.appId!,
+            provider: "steam",
+            mediaType: "landscape",
+            url: landscapeUrl,
+            target: "canonical",
+            priority: "normal",
+          }).catch(() => {});
+        }
+      }
+    }
+  }, [paginatedGames, settings.steamGridDbApiKey, settings.steamGridDbArtworkEnabled]);
 
   // Actions
   async function handlePlay(game: LibraryGame) {

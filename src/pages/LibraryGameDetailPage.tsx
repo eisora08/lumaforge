@@ -8,6 +8,14 @@ import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { loadSteamStats, mergeSteamStatsIntoGames } from "../services/gameStatsService";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
+import {
+  getMediaCacheForAppId,
+  getLibraryGameDetails,
+} from "../services/libraryLocalCacheService";
+import type { GameMediaCacheEntry } from "../services/tauri";
+import type { GameAppInfo } from "../services/gameCacheService";
+import { loadGameAppInfo } from "../services/gameCacheService";
+import { enqueueMediaDownload, cancelMediaJobsForApp } from "../services/mediaDownloadQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
 import { useSettings } from "../context/SettingsContext";
@@ -25,6 +33,7 @@ import {
   showWarning,
 } from "../components/toast/GameToast";
 
+
 type Props = {
   onBack?: () => void;
   onNavigate?: (page: AppPage) => void;
@@ -36,6 +45,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
   const [artwork, setArtwork] = useState<SgdbArtworkData | null>(null);
+  const [mediaEntry, setMediaEntry] = useState<GameMediaCacheEntry | null>(null);
+  const [canonicalAppInfo, setCanonicalAppInfo] = useState<GameAppInfo | null>(null);
+  const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
   const currentRequest = useRef<number | null>(null);
   const artworkRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
@@ -108,6 +120,21 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     }
   }
 
+  // Load local cache (media cache + canonical appinfo + details/{appid}.json) immediately
+  useEffect(() => {
+    if (!selectedGame?.appId) {
+      setMediaEntry(null);
+      setCanonicalAppInfo(null);
+      setLocalDetailsData(null);
+      return;
+    }
+    getMediaCacheForAppId(selectedGame.appId).then(setMediaEntry).catch(() => setMediaEntry(null));
+    loadGameAppInfo(selectedGame.appId).then(setCanonicalAppInfo).catch(() => setCanonicalAppInfo(null));
+    getLibraryGameDetails(selectedGame.appId).then((entry) => {
+      if (entry?.data) setLocalDetailsData(entry.data);
+    }).catch(() => {});
+  }, [selectedGame?.appId]);
+
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
   useEffect(() => {
     if (!selectedGame) {
@@ -158,27 +185,77 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       });
   }, [selectedGame]);
 
-  // Resolve SteamGridDB artwork after metadata is loaded
+  // Resolve artwork for this game via queue — cache-first, non-blocking
+  // Uses ref-based tracking to prevent re-enqueue when canonicalAppInfo/mediaEntry update.
+  const mediaEnqueuedRef = useRef(false);
   useEffect(() => {
-    if (!resolvedGame || !resolvedGame.appId) return;
-    const appIdNum = Number(resolvedGame.appId);
-    if (!appIdNum || !settings.steamGridDbArtworkEnabled || !settings.steamGridDbApiKey) return;
+    if (!resolvedGame?.appId) return;
+    if (mediaEnqueuedRef.current) return;
 
-    const requestId = Date.now();
-    artworkRequest.current = requestId;
+    const appIdStr = resolvedGame.appId;
+    const hasLandscape = !!canonicalAppInfo?.media?.landscape_path;
+    const hasCover = !!canonicalAppInfo?.media?.cover_path;
+    if (hasLandscape && hasCover) {
+      mediaEnqueuedRef.current = true;
+      return;
+    }
 
-    resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
-      .then((result) => {
-        if (artworkRequest.current !== requestId) return;
-        const entry = result[String(appIdNum)];
-        if (entry) {
-          console.debug("[SGDB] selected cover", appIdNum);
-          setArtwork(entry);
+    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
+
+    if (sgdbEnabled) {
+      const appIdNum = Number(appIdStr);
+      if (!appIdNum || isNaN(appIdNum)) return;
+
+      mediaEnqueuedRef.current = true;
+      const requestId = Date.now();
+      artworkRequest.current = requestId;
+
+      resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
+        .then((result) => {
+          if (artworkRequest.current !== requestId) return;
+          const entry = result[appIdStr];
+          if (entry) {
+            setArtwork(entry);
+            const jobs: Array<{ mediaType: string; url?: string }> = [];
+            if (!hasLandscape) {
+              jobs.push({ mediaType: "landscape", url: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl });
+            }
+            if (!hasCover) {
+              jobs.push({ mediaType: "cover", url: entry.sgdbCoverUrl });
+            }
+            for (const { mediaType, url } of jobs) {
+              if (!url) continue;
+              enqueueMediaDownload({
+                id: `detail-sgdb-${appIdStr}-${mediaType}`,
+                appId: appIdStr,
+                provider: "steamgriddb",
+                mediaType: mediaType as any,
+                url,
+                target: "canonical",
+                priority: "high",
+              }).catch(() => {});
+            }
+          }
+        })
+        .catch(() => {});
+    } else {
+      // No SGDB — fallback from store metadata URLs
+      if (!hasLandscape) {
+        const url = resolvedGame.metadata?.header_image || resolvedGame.metadata?.background_image;
+        if (url) {
+          mediaEnqueuedRef.current = true;
+          enqueueMediaDownload({
+            id: `detail-store-${appIdStr}-landscape`,
+            appId: appIdStr,
+            provider: "steam",
+            mediaType: "landscape",
+            url,
+            target: "canonical",
+            priority: "high",
+          }).catch(() => {});
         }
-      })
-      .catch(() => {
-        // silent — artwork is optional
-      });
+      }
+    }
   }, [resolvedGame, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
 
   // Lazy per-game stats refresh
@@ -201,27 +278,58 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       showWarning("No App ID available for this game.", { title: "Artwork" });
       return;
     }
-    if (!settings.steamGridDbArtworkEnabled) {
-      showWarning("Enable SteamGridDB Artwork in Settings.", { title: "Artwork" });
-      return;
-    }
-    if (!settings.steamGridDbApiKey) {
-      showWarning("Add a SteamGridDB API key in Settings to fetch artwork.", { title: "Artwork" });
-      return;
-    }
 
-    const appIdNum = Number(selectedGame.appId);
-    const { clearArtworkCache } = await import("../services/storeArtworkResolver");
-    clearArtworkCache();
+    // Cancel any existing jobs for this app
+    cancelMediaJobsForApp(selectedGame.appId);
 
-    console.debug("[SGDB] refresh artwork for", appIdNum);
-    const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
-    const entry = result[String(appIdNum)];
-    if (entry) {
-      setArtwork(entry);
-      showWarning("Artwork refreshed.", { title: "Artwork" });
+    // Clear in-memory dedup state so downloads proceed
+    const { clearMediaQueueState } = await import("../services/mediaDownloadQueue");
+    clearMediaQueueState();
+
+    const appIdStr = selectedGame.appId;
+    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
+
+    if (sgdbEnabled) {
+      const appIdNum = Number(appIdStr);
+      if (!appIdNum || isNaN(appIdNum)) {
+        showWarning("Invalid App ID.", { title: "Artwork" });
+        return;
+      }
+
+      const { clearArtworkCache } = await import("../services/storeArtworkResolver");
+      clearArtworkCache();
+
+      // Clear local media so force-refresh works
+      const { clearGameMediaCacheForGame } = await import("../services/libraryLocalCacheService");
+      await clearGameMediaCacheForGame({ appId: appIdStr }).catch(() => {});
+
+      const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
+      const entry = result[appIdStr];
+      if (entry) {
+        setArtwork(entry);
+        const jobs: Array<{ mediaType: string; url?: string }> = [
+          { mediaType: "landscape", url: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl },
+          { mediaType: "cover", url: entry.sgdbCoverUrl },
+        ];
+        for (const { mediaType, url } of jobs) {
+          if (!url) continue;
+          enqueueMediaDownload({
+            id: `refresh-${appIdStr}-${mediaType}-${Date.now()}`,
+            appId: appIdStr,
+            provider: "steamgriddb",
+            mediaType: mediaType as any,
+            url,
+            target: "canonical",
+            priority: "high",
+            forceRefresh: true,
+          }).catch(() => {});
+        }
+        showWarning("Artwork refresh queued.", { title: "Artwork" });
+      } else {
+        showWarning("No artwork found for this game.", { title: "Artwork" });
+      }
     } else {
-      showWarning("No artwork found for this game.", { title: "Artwork" });
+      showWarning("Enable SteamGridDB Artwork in Settings first.", { title: "Artwork" });
     }
   }, [selectedGame, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
 
@@ -275,6 +383,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         game={displayGame}
         artwork={artwork}
         appInfoEntry={appInfoEntry}
+        mediaEntry={mediaEntry}
+        canonicalAppInfo={canonicalAppInfo}
+        localDetailsData={localDetailsData}
         loading={metadataLoading}
         onPlay={handlePlay}
         onInstall={handleInstall}

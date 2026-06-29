@@ -29,6 +29,7 @@ export type AppSettings = {
   achievementSchemaPath: string;
 
   libraryCardArtworkMode: "landscape" | "poster";
+  mediaCacheProfile: "minimal" | "playnite-balanced" | "full";
 
   gameScanFolders: string[];
   scanLocalGames: boolean;

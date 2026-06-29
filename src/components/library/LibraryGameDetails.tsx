@@ -28,7 +28,8 @@ import {
   X,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
-import type { LibraryAppInfoEntry } from "../../services/tauri";
+import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
+import type { GameAppInfo } from "../../services/gameCacheService";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -43,6 +44,10 @@ import {
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
 import { useGameActivity } from "../../context/GameActivityContext";
+import {
+  localPathToUrl,
+  isLocalPath,
+} from "../../services/libraryLocalCacheService";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
@@ -57,6 +62,9 @@ type LibraryGameDetailsProps = {
   game: LibraryGame;
   artwork?: SgdbArtworkData | null;
   appInfoEntry?: LibraryAppInfoEntry | null;
+  mediaEntry?: GameMediaCacheEntry | null;
+  canonicalAppInfo?: GameAppInfo | null;
+  localDetailsData?: unknown;
   loading?: boolean;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
@@ -74,14 +82,17 @@ type LibraryGameDetailsProps = {
   onOpenStopModal?: () => void;
 };
 
-function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null): string | undefined {
-  return appInfoEntry?.grid_path
-    || appInfoEntry?.cover_path
-    || appInfoEntry?.hero_path
-    || appInfoEntry?.header_image
-    || artwork?.sgdbHeroUrl
-    || artwork?.sgdbGridUrl
-    || game.metadata?.library_hero_image
+function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null): string | undefined {
+  // landscape_path is the hero/banner — prefer it strongly
+  if (canonicalAppInfo?.media?.landscape_path) return canonicalAppInfo.media.landscape_path;
+  if (mediaEntry?.grid_path) return mediaEntry.grid_path;
+  if (mediaEntry?.hero_path) return mediaEntry.hero_path;
+  if (mediaEntry?.cover_path) return mediaEntry.cover_path;
+  if (canonicalAppInfo?.media?.cover_path) return canonicalAppInfo.media.cover_path;
+  if (appInfoEntry?.header_image) return appInfoEntry.header_image;
+  if (artwork?.sgdbHeroUrl) return artwork.sgdbHeroUrl;
+  if (artwork?.sgdbGridUrl) return artwork.sgdbGridUrl;
+  return game.metadata?.library_hero_image
     || game.metadata?.background_image
     || game.metadata?.hero_image
     || game.metadata?.library_header_image
@@ -153,6 +164,9 @@ export default function LibraryGameDetails({
   game,
   artwork,
   appInfoEntry,
+  mediaEntry,
+  canonicalAppInfo,
+  localDetailsData,
   loading = false,
   onPlay,
   onInstall,
@@ -185,8 +199,17 @@ export default function LibraryGameDetails({
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
 
-  const imageUrl = getHeroImageUrl(game, artwork, appInfoEntry);
-  const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
+  const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo);
+  const imageUrl = rawImageUrl && isLocalPath(rawImageUrl)
+    ? localPathToUrl(rawImageUrl)
+    : rawImageUrl;
+
+  const rawLogoUrl = artwork?.sgdbLogoUrl
+    || game.metadata?.logo_image
+    || game.metadata?.library_logo_image;
+  const logoUrl = rawLogoUrl && isLocalPath(rawLogoUrl)
+    ? localPathToUrl(rawLogoUrl)
+    : rawLogoUrl;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
 
@@ -487,8 +510,10 @@ export default function LibraryGameDetails({
               {detailTitle}
             </h1>
 
-            {game.metadata?.developer && (
-              <p className="mt-1 text-sm text-white/70">{game.metadata.developer}</p>
+            {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
+              <p className="mt-1 text-sm text-white/70">
+                {(localDetailsData as any)?.developer || game.metadata?.developer}
+              </p>
             )}
           </div>
         </div>

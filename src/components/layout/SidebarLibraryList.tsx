@@ -1,13 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Gamepad2, Loader2, Search } from "lucide-react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import type { LibraryGame } from "../../types/libraryGame";
-import type { LibraryAppInfoEntry } from "../../services/tauri";
+import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
-import { localPathToUrl, isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
+import {
+  localPathToUrl,
+  isHttpUrl,
+  isLocalPath,
+  getMediaCacheForAppId,
+} from "../../services/libraryLocalCacheService";
 
 type Props = {
   onOpenGame?: () => void;
@@ -17,19 +22,20 @@ function getSidebarImage(
   game: LibraryGame,
   mode: "landscape" | "poster",
   appInfoEntry?: LibraryAppInfoEntry | null,
+  mediaEntry?: GameMediaCacheEntry | null,
 ): string | undefined {
   const meta = game.metadata;
 
-  // Local cache priority: iconPath > covers/{appid}.jpg > gridPath > coverPath > headerImage
-  const localImages: string[] = [];
-  if (appInfoEntry?.icon_path) localImages.push(appInfoEntry.icon_path);
-  if (appInfoEntry?.cover_path) localImages.push(appInfoEntry.cover_path);
-  if (appInfoEntry?.grid_path) localImages.push(appInfoEntry.grid_path);
-  if (appInfoEntry?.header_image) localImages.push(appInfoEntry.header_image);
-
   if (mode === "poster") {
     return (
-      localImages.find(Boolean) ||
+      mediaEntry?.quick_cover_path ||
+      mediaEntry?.cover_path ||
+      mediaEntry?.grid_path ||
+      mediaEntry?.icon_path ||
+      appInfoEntry?.cover_path ||
+      appInfoEntry?.grid_path ||
+      appInfoEntry?.icon_path ||
+      appInfoEntry?.header_image ||
       game.imageUrl ||
       meta?.capsule_image_v5 ||
       meta?.capsule_image ||
@@ -37,14 +43,21 @@ function getSidebarImage(
       undefined
     );
   }
-  return (
-    localImages.find(Boolean) ||
-    game.imageUrl ||
-    meta?.header_image ||
-    meta?.capsule_image_v5 ||
-    meta?.capsule_image ||
-    undefined
-  );
+
+  // Landscape sidebar: grid/landscape first, cover fallback last
+  const localLandscape = mediaEntry?.grid_path;
+  if (localLandscape) return localLandscape;
+
+  const localCover = mediaEntry?.cover_path || mediaEntry?.quick_cover_path || mediaEntry?.icon_path;
+  if (localCover) return localCover;
+
+  const appInfoLandscape = appInfoEntry?.grid_path;
+  if (appInfoLandscape) return appInfoLandscape;
+
+  const appInfoFallback = appInfoEntry?.cover_path || appInfoEntry?.icon_path || appInfoEntry?.header_image;
+  if (appInfoFallback) return appInfoFallback;
+
+  return game.imageUrl || meta?.header_image || meta?.capsule_image_v5 || meta?.capsule_image || undefined;
 }
 
 function resolveImageSrc(src: string | undefined): string | undefined {
@@ -64,6 +77,38 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
   const { settings } = useSettings();
   const { getState } = useGameSession();
   const [query, setQuery] = useState("");
+  const [mediaCacheMap, setMediaCacheMap] = useState<Record<string, GameMediaCacheEntry | null>>({});
+  const loadedAppIds = useRef<Set<string>>(new Set());
+
+  // Load media cache for all games as they become available — throttled, crash-safe
+  useEffect(() => {
+    const ids = games.map((g) => g.appId).filter(Boolean) as string[];
+    if (ids.length === 0) return;
+    const newIds = [...new Set(ids)].filter((id) => !loadedAppIds.current.has(id));
+    if (newIds.length === 0) return;
+    // Only load first 20 at a time to avoid storms
+    const batch = newIds.slice(0, 20);
+    let cancelled = false;
+    for (const id of batch) loadedAppIds.current.add(id);
+    Promise.all(
+      batch.map(async (appId) => {
+        try {
+          const entry = await getMediaCacheForAppId(appId);
+          return [appId, entry] as const;
+        } catch {
+          return [appId, null] as const;
+        }
+      })
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, GameMediaCacheEntry | null> = {};
+      for (const [appId, entry] of results) {
+        map[appId] = entry;
+      }
+      setMediaCacheMap((prev) => ({ ...prev, ...map }));
+    });
+    return () => { cancelled = true; };
+  }, [games]);
 
   const installed = useMemo(() => {
     return games.filter((g) => g.isPlayable || g.steamInstalled || (g.source === "local" && !!g.executablePath));
@@ -116,7 +161,8 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
           filtered.map((game) => {
             const isSelected = selectedGame?.id === game.id;
             const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
-            const thumb = getSidebarImage(game, settings.libraryCardArtworkMode, appInfoEntry);
+            const mediaEntry = game.appId ? (mediaCacheMap[game.appId] ?? null) : null;
+            const thumb = getSidebarImage(game, settings.libraryCardArtworkMode, appInfoEntry, mediaEntry);
             const resolvedThumb = resolveImageSrc(thumb);
             const displayTitle = getSidebarTitle(game, appInfoEntry);
             const gk = computeGameKey(game);
