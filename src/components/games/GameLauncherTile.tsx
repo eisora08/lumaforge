@@ -10,14 +10,17 @@ import {
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
+import type { LibraryAppInfoEntry } from "../../services/tauri";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
+import { localPathToUrl, isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
   artwork?: SgdbArtworkData | null;
+  appInfoEntry?: LibraryAppInfoEntry | null;
   onSelect: (game: LibraryGame) => void;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
@@ -27,11 +30,20 @@ type GameLauncherTileProps = {
 function getCardImage(
   game: LibraryGame,
   mode: "landscape" | "poster",
-  artwork?: SgdbArtworkData | null
+  artwork?: SgdbArtworkData | null,
+  appInfoEntry?: LibraryAppInfoEntry | null,
 ): string | undefined {
   const meta = game.metadata;
+
+  // Local cache priority (both modes)
+  const localImages: string[] = [];
+  if (appInfoEntry?.grid_path) localImages.push(appInfoEntry.grid_path);
+  if (appInfoEntry?.cover_path) localImages.push(appInfoEntry.cover_path);
+  if (appInfoEntry?.header_image) localImages.push(appInfoEntry.header_image);
+
   if (mode === "poster") {
     return (
+      localImages.find(Boolean) ||
       artwork?.sgdbGridUrl ||
       artwork?.sgdbGridThumbUrl ||
       meta?.capsule_image ||
@@ -42,6 +54,7 @@ function getCardImage(
     );
   }
   return (
+    localImages.find(Boolean) ||
     game.imageUrl ||
     meta?.header_image ||
     meta?.library_hero_image ||
@@ -53,9 +66,17 @@ function getCardImage(
   );
 }
 
+function resolveImageSrc(src: string | undefined): string | undefined {
+  if (!src) return undefined;
+  if (isHttpUrl(src)) return src;
+  if (isLocalPath(src)) return localPathToUrl(src);
+  return src;
+}
+
 export default function GameLauncherTile({
   game,
   artwork,
+  appInfoEntry,
   onSelect,
   onPlay,
   onInstall,
@@ -70,10 +91,15 @@ export default function GameLauncherTile({
   const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
   const expectingSgdbArt = artworkMode === "poster" && sgdbEnabled;
 
+  // Title priority: appinfo name > game.title
+  const displayTitle = appInfoEntry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+
   const displayImage = useMemo(
-    () => getCardImage(game, artworkMode, artwork),
-    [game, artworkMode, artwork]
+    () => getCardImage(game, artworkMode, artwork, appInfoEntry),
+    [game, artworkMode, artwork, appInfoEntry]
   );
+
+  const resolvedSrc = useMemo(() => resolveImageSrc(displayImage), [displayImage]);
 
   const action = getLauncherGamePrimaryAction(game);
   const hasLua = game.luaScripts.length > 0;
@@ -129,10 +155,10 @@ export default function GameLauncherTile({
           artworkMode === "poster" ? "aspect-[3/4]" : "aspect-video"
         }`}
       >
-        {displayImage ? (
+        {resolvedSrc ? (
           <AsyncImage
-            src={displayImage}
-            alt={game.title}
+            src={resolvedSrc}
+            alt={displayTitle}
             className="h-full w-full"
             fallback={
               <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
@@ -162,7 +188,7 @@ export default function GameLauncherTile({
             }}
             className="line-clamp-1 cursor-pointer text-sm font-medium text-(--color-text) transition hover:text-(--color-accent)"
           >
-            {game.title}
+            {displayTitle}
           </h3>
 
           <div className="mt-1.5 flex items-center gap-2">

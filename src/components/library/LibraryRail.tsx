@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import type { LibraryGame, LibraryFilter } from "../../types/libraryGame";
+import type { LibraryAppInfoMap } from "../../services/tauri";
 
 type LibraryRailProps = {
   games: LibraryGame[];
@@ -9,10 +10,23 @@ type LibraryRailProps = {
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: LibraryFilter) => void;
   onSelectGame: (game: LibraryGame) => void;
+  appInfoMap?: LibraryAppInfoMap;
 };
 
-function getImageUrl(game: LibraryGame): string | undefined {
-  return game.imageUrl || game.metadata?.header_image || game.metadata?.capsule_image || undefined;
+function getImageUrl(game: LibraryGame, appInfoMap?: LibraryAppInfoMap): string | undefined {
+  const entry = game.appId ? appInfoMap?.[game.appId] : undefined;
+  return entry?.grid_path
+    || entry?.cover_path
+    || entry?.header_image
+    || game.imageUrl
+    || game.metadata?.header_image
+    || game.metadata?.capsule_image
+    || undefined;
+}
+
+function getTitle(game: LibraryGame, appInfoMap?: LibraryAppInfoMap): string {
+  const entry = game.appId ? appInfoMap?.[game.appId] : undefined;
+  return entry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
 }
 
 type Counts = Record<LibraryFilter, number>;
@@ -50,6 +64,7 @@ export default function LibraryRail({
   onQueryChange,
   onFilterChange,
   onSelectGame,
+  appInfoMap,
 }: LibraryRailProps) {
   const counts = computeCounts(games);
 
@@ -66,7 +81,9 @@ export default function LibraryRail({
     }
     if (query) {
       const q = query.toLowerCase();
-      const titleMatch = g.title.toLowerCase().includes(q);
+      const entry = g.appId ? appInfoMap?.[g.appId] : undefined;
+      const displayName = entry?.name || g.title;
+      const titleMatch = displayName.toLowerCase().includes(q);
       const appIdMatch = g.appId?.toLowerCase().includes(q);
       return titleMatch || appIdMatch;
     }
@@ -140,7 +157,8 @@ export default function LibraryRail({
         ) : (
           filtered.map((game) => {
             const isSelected = game.id === selectedId;
-            const imgUrl = getImageUrl(game);
+            const imgUrl = getImageUrl(game, appInfoMap);
+            const displayName = getTitle(game, appInfoMap);
             return (
               <button
                 key={game.id}
@@ -162,12 +180,12 @@ export default function LibraryRail({
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-[10px] text-(--color-muted)">
-                      --
+                      <span className="text-[10px]">--</span>
                     </div>
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium">{game.title}</div>
+                  <div className="truncate text-xs font-medium">{displayName}</div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] text-(--color-muted)">
                       {game.source === "steam" ? "Steam" : game.source === "local" ? "EXE" : "Lua"}

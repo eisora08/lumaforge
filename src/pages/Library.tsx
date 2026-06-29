@@ -51,7 +51,7 @@ type Props = {
 
 export default function LibraryPage({ onNavigate }: Props) {
   const { settings } = useSettings();
-  const { games, warnings, loading, initialLoading, setSelectedGame, refresh } = useLibraryGames();
+  const { games, warnings, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
   const hasLuaPath = Boolean(settings.luaPath);
 
   const [luaScripts, setLuaScripts] = useState<InstalledLuaScript[]>([]);
@@ -96,13 +96,14 @@ export default function LibraryPage({ onNavigate }: Props) {
     return luaScripts.map((script) => {
       const appId = script.app_id;
       const meta = luaMetadata[appId];
+      const appInfo = appInfoMap[String(appId)];
       const id = `lua-${appId}`;
       return {
         id,
         appId: String(appId),
-        title: meta?.name || `Steam App ${appId}`,
+        title: appInfo?.name || meta?.name || `Steam App ${appId}`,
         source: "lua" as const,
-        imageUrl: meta?.header_image || meta?.capsule_image || meta?.capsule_image_v5 || undefined,
+        imageUrl: appInfo?.header_image || meta?.header_image || meta?.capsule_image || meta?.capsule_image_v5 || undefined,
         metadata: meta,
         isPlayable: false,
         isInstallable: true,
@@ -115,7 +116,7 @@ export default function LibraryPage({ onNavigate }: Props) {
         sources: [],
       };
     });
-  }, [luaScripts, luaMetadata, games]);
+  }, [luaScripts, luaMetadata, games, appInfoMap]);
 
   // Merge with context games for display
   const displayGames = useMemo(() => {
@@ -474,6 +475,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                           key={game.id}
                           game={game}
                           artwork={game.appId ? artworkByAppId[game.appId] : undefined}
+                          appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
                           onSelect={(g) => handleOpenGame(g)}
                           onPlay={handlePlay}
                           onInstall={handleInstall}

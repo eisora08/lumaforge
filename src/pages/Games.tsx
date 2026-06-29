@@ -22,7 +22,7 @@ import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
-  const { games, loading, initialLoading, setSelectedGame, refresh } = useLibraryGames();
+  const { games, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
   const { settings } = useSettings();
 
   const [filter, setFilter] = useState<string>("all");
@@ -203,6 +203,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                     key={game.id}
                     game={game}
                     artwork={game.appId ? artworkByAppId[game.appId] : undefined}
+                    appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
                     onSelect={(g) => { setSelectedGame(g); onNavigate?.("library-game-detail"); }}
                     onPlay={handlePlay}
                     onInstall={handleInstall}

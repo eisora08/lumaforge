@@ -4,17 +4,32 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import type { LibraryGame } from "../../types/libraryGame";
+import type { LibraryAppInfoEntry } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
+import { localPathToUrl, isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
 
 type Props = {
   onOpenGame?: () => void;
 };
 
-function getSidebarImage(game: LibraryGame, mode: "landscape" | "poster"): string | undefined {
+function getSidebarImage(
+  game: LibraryGame,
+  mode: "landscape" | "poster",
+  appInfoEntry?: LibraryAppInfoEntry | null,
+): string | undefined {
   const meta = game.metadata;
+
+  // Local cache priority: iconPath > covers/{appid}.jpg > gridPath > coverPath > headerImage
+  const localImages: string[] = [];
+  if (appInfoEntry?.icon_path) localImages.push(appInfoEntry.icon_path);
+  if (appInfoEntry?.cover_path) localImages.push(appInfoEntry.cover_path);
+  if (appInfoEntry?.grid_path) localImages.push(appInfoEntry.grid_path);
+  if (appInfoEntry?.header_image) localImages.push(appInfoEntry.header_image);
+
   if (mode === "poster") {
     return (
+      localImages.find(Boolean) ||
       game.imageUrl ||
       meta?.capsule_image_v5 ||
       meta?.capsule_image ||
@@ -23,6 +38,7 @@ function getSidebarImage(game: LibraryGame, mode: "landscape" | "poster"): strin
     );
   }
   return (
+    localImages.find(Boolean) ||
     game.imageUrl ||
     meta?.header_image ||
     meta?.capsule_image_v5 ||
@@ -31,8 +47,20 @@ function getSidebarImage(game: LibraryGame, mode: "landscape" | "poster"): strin
   );
 }
 
+function resolveImageSrc(src: string | undefined): string | undefined {
+  if (!src) return undefined;
+  if (isHttpUrl(src)) return src;
+  if (isLocalPath(src)) return localPathToUrl(src);
+  return src;
+}
+
+function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry | null): string {
+  if (appInfoEntry?.name) return appInfoEntry.name;
+  return game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+}
+
 export default function SidebarLibraryList({ onOpenGame }: Props) {
-  const { games, selectedGame, setSelectedGame, loading, initialLoading } = useLibraryGames();
+  const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
   const { settings } = useSettings();
   const { getState } = useGameSession();
   const [query, setQuery] = useState("");
@@ -44,10 +72,12 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
   const filtered = useMemo(() => {
     if (!query) return installed;
     const q = query.toLowerCase();
-    return installed.filter((g) =>
-      g.title.toLowerCase().includes(q) || g.appId?.toLowerCase().includes(q)
-    );
-  }, [installed, query]);
+    return installed.filter((g) => {
+      const entry = g.appId ? appInfoMap[g.appId] : undefined;
+      const displayName = entry?.name || g.title;
+      return displayName.toLowerCase().includes(q) || g.appId?.toLowerCase().includes(q);
+    });
+  }, [installed, query, appInfoMap]);
 
   return (
     <div className="flex flex-col">
@@ -85,7 +115,10 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
         ) : (
           filtered.map((game) => {
             const isSelected = selectedGame?.id === game.id;
-            const thumb = getSidebarImage(game, settings.libraryCardArtworkMode);
+            const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
+            const thumb = getSidebarImage(game, settings.libraryCardArtworkMode, appInfoEntry);
+            const resolvedThumb = resolveImageSrc(thumb);
+            const displayTitle = getSidebarTitle(game, appInfoEntry);
             const gk = computeGameKey(game);
             const gs = getState(gk);
             const isRunning = gs === "running";
@@ -105,11 +138,20 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
                 }`}
               >
                 <div className="relative h-6 w-10 shrink-0 overflow-hidden rounded">
-                  <AsyncImage
-                    src={thumb}
-                    alt=""
-                    className="h-full w-full"
-                  />
+                  {resolvedThumb ? (
+                    <AsyncImage
+                      src={resolvedThumb}
+                      alt=""
+                      className="h-full w-full"
+                      fallback={
+                        <Gamepad2 className="h-3 w-3 text-(--color-muted)" />
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-white/5">
+                      <Gamepad2 className="h-3 w-3 text-(--color-muted)" />
+                    </div>
+                  )}
                   {isRunning && (
                     <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-400 ring-1 ring-black/50" />
                   )}
@@ -122,7 +164,7 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     {isRunning && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
-                    <span className="truncate font-medium leading-tight">{game.title}</span>
+                    <span className="truncate font-medium leading-tight">{displayTitle}</span>
                   </div>
                   <div className="text-[10px] text-(--color-muted)">
                     {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}

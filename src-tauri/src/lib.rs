@@ -69,6 +69,7 @@ pub fn run() {
             commands::library_cache::library_save_game_media_cache,
             commands::library_cache::library_clear_game_media_cache,
             commands::library_cache::library_clear_all_game_media_cache,
+            commands::library_cache::read_image_as_data_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

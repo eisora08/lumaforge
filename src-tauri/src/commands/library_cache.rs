@@ -309,3 +309,45 @@ pub fn library_clear_all_game_media_cache(
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn read_image_as_data_url(app_handle: AppHandle, path: String) -> Result<String, String> {
+    let app_data = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let canonical = std::path::Path::new(&path)
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
+
+    let app_data_canonical = app_data
+        .canonicalize()
+        .map_err(|e| format!("Invalid app data dir: {}", e))?;
+
+    if !canonical.starts_with(&app_data_canonical) {
+        return Err("Access denied: path outside app data directory".to_string());
+    }
+
+    let bytes =
+        std::fs::read(&canonical).map_err(|e| format!("Failed to read image: {}", e))?;
+
+    let ext = canonical
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("jpg")
+        .to_lowercase();
+
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => "image/jpeg",
+    };
+
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, b64))
+}

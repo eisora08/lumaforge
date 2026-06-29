@@ -31,7 +31,7 @@ type Props = {
 };
 
 export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
-  const { selectedGame, setSelectedGame } = useLibraryGames();
+  const { selectedGame, setSelectedGame, appInfoMap } = useLibraryGames();
   const { settings } = useSettings();
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
@@ -266,12 +266,15 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
   const displayGame = resolvedGame || selectedGame;
   const currentSession = session.getSession(gameKey);
+  const appInfoEntry = displayGame.appId ? (appInfoMap[displayGame.appId] ?? null) : null;
+  const detailTitle = appInfoEntry?.name || displayGame.title || (displayGame.appId ? `Steam App ${displayGame.appId}` : "Unknown Game");
 
   return (
     <>
       <LibraryGameDetails
         game={displayGame}
         artwork={artwork}
+        appInfoEntry={appInfoEntry}
         loading={metadataLoading}
         onPlay={handlePlay}
         onInstall={handleInstall}
@@ -286,7 +289,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       />
       <StopGameModal
         open={showStopModal}
-        gameTitle={displayGame.title}
+        gameTitle={detailTitle}
         canTerminate={!!launchInfo.pid}
         isSoftSession={currentSession?.softSession ?? true}
         trackingConfidence={currentSession?.trackingConfidence}

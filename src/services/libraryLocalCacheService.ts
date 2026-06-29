@@ -1,3 +1,4 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   readLibraryAppinfo,
   updateLibraryAppinfoEntry,
@@ -6,6 +7,7 @@ import {
   getGameMediaCache,
   saveGameMediaCache,
   clearGameMediaCache,
+  readImageAsDataUrl,
 } from "./tauri";
 
 import type {
@@ -190,16 +192,22 @@ export function nowTimestamp(): number {
 }
 
 export function pickTitleFromLocalCache(
-  game: { title?: string },
+  _game: { title?: string },
   appinfoEntry: LibraryAppInfoEntry | null
 ): string | null {
-  if (game.title) {
-    return game.title;
-  }
+  // Priority: appinfo name > game.title (where game.title already has manifest > metadata > fallback)
   if (appinfoEntry?.name) {
     return appinfoEntry.name;
   }
   return null;
+}
+
+export function computeDisplayTitle(
+  game: { title: string; appId?: string },
+  appinfoEntry: LibraryAppInfoEntry | null,
+): string {
+  if (appinfoEntry?.name) return appinfoEntry.name;
+  return game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
 }
 
 export function pickImageFromLocalCache(
@@ -207,11 +215,11 @@ export function pickImageFromLocalCache(
   appinfoEntry: LibraryAppInfoEntry | null,
   mediaEntry: GameMediaCacheEntry | null
 ): string | null {
-  if (mediaEntry?.cover_path) {
-    return mediaEntry.cover_path;
-  }
   if (mediaEntry?.grid_path) {
     return mediaEntry.grid_path;
+  }
+  if (mediaEntry?.cover_path) {
+    return mediaEntry.cover_path;
   }
   if (appinfoEntry?.cover_path) {
     return appinfoEntry.cover_path;
@@ -219,8 +227,70 @@ export function pickImageFromLocalCache(
   if (appinfoEntry?.grid_path) {
     return appinfoEntry.grid_path;
   }
+  if (appinfoEntry?.header_image) {
+    return appinfoEntry.header_image;
+  }
   if (appinfoEntry?.hero_path) {
     return appinfoEntry.hero_path;
   }
   return null;
+}
+
+export function pickSidebarImage(
+  _game: { imageUrl?: string },
+  appinfoEntry: LibraryAppInfoEntry | null,
+  mediaEntry: GameMediaCacheEntry | null
+): string | null {
+  if (mediaEntry?.icon_path) {
+    return mediaEntry.icon_path;
+  }
+  if (appinfoEntry?.icon_path) {
+    return appinfoEntry.icon_path;
+  }
+  if (mediaEntry?.grid_path) {
+    return mediaEntry.grid_path;
+  }
+  if (mediaEntry?.cover_path) {
+    return mediaEntry.cover_path;
+  }
+  if (appinfoEntry?.cover_path) {
+    return appinfoEntry.cover_path;
+  }
+  if (appinfoEntry?.grid_path) {
+    return appinfoEntry.grid_path;
+  }
+  if (appinfoEntry?.header_image) {
+    return appinfoEntry.header_image;
+  }
+  return null;
+}
+
+export function isHttpUrl(path: string): boolean {
+  return /^https?:\/\//i.test(path);
+}
+
+export function isLocalPath(path: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/");
+}
+
+/**
+ * Convert a local file path to a URL the webview can load.
+ * HTTP URLs are returned as-is.
+ */
+export function localPathToUrl(path: string): string {
+  if (isHttpUrl(path)) return path;
+  try {
+    return convertFileSrc(path, "asset");
+  } catch {
+    return path;
+  }
+}
+
+export async function resolveLocalImageAsDataUrl(path: string): Promise<string | null> {
+  if (isHttpUrl(path)) return path;
+  try {
+    return await readImageAsDataUrl(path);
+  } catch {
+    return null;
+  }
 }

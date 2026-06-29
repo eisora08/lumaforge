@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
+import type { LibraryAppInfoEntry } from "../../services/tauri";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -55,6 +56,7 @@ import type { AppPage } from "../../types/navigation";
 type LibraryGameDetailsProps = {
   game: LibraryGame;
   artwork?: SgdbArtworkData | null;
+  appInfoEntry?: LibraryAppInfoEntry | null;
   loading?: boolean;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
@@ -72,8 +74,12 @@ type LibraryGameDetailsProps = {
   onOpenStopModal?: () => void;
 };
 
-function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null): string | undefined {
-  return artwork?.sgdbHeroUrl
+function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null): string | undefined {
+  return appInfoEntry?.grid_path
+    || appInfoEntry?.cover_path
+    || appInfoEntry?.hero_path
+    || appInfoEntry?.header_image
+    || artwork?.sgdbHeroUrl
     || artwork?.sgdbGridUrl
     || game.metadata?.library_hero_image
     || game.metadata?.background_image
@@ -146,6 +152,7 @@ function StatInline({ icon, label, value }: { icon: React.ReactNode; label: stri
 export default function LibraryGameDetails({
   game,
   artwork,
+  appInfoEntry,
   loading = false,
   onPlay,
   onInstall,
@@ -164,9 +171,11 @@ export default function LibraryGameDetails({
   const [favorite, setFavorite] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
 
+  const detailTitle = appInfoEntry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+
   console.debug("[LaunchButton] render", {
     gameId: game.id,
-    title: game.title,
+    title: detailTitle,
     appId: game.appId,
     state: launchInfo?.state,
   });
@@ -176,7 +185,7 @@ export default function LibraryGameDetails({
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
 
-  const imageUrl = getHeroImageUrl(game, artwork);
+  const imageUrl = getHeroImageUrl(game, artwork, appInfoEntry);
   const logoUrl = artwork?.sgdbLogoUrl || game.metadata?.logo_image || game.metadata?.library_logo_image;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
@@ -449,7 +458,7 @@ export default function LibraryGameDetails({
       <div className="relative h-72 shrink-0 overflow-hidden bg-white/5 lg:h-96">
         <AsyncImage
           src={imageUrl}
-          alt={game.title}
+          alt={detailTitle}
           className="absolute inset-0 h-full w-full"
           fallback={
             <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-white/10 via-white/5 to-black/50">
@@ -464,7 +473,7 @@ export default function LibraryGameDetails({
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <img
               src={logoUrl}
-              alt={`${game.title} logo`}
+              alt={`${detailTitle} logo`}
               loading="lazy"
               decoding="async"
               className="max-h-28 max-w-[300px] object-contain drop-shadow-2xl lg:max-h-36 lg:max-w-[420px]"
@@ -475,7 +484,7 @@ export default function LibraryGameDetails({
         <div className="absolute bottom-0 left-0 right-0">
           <div className="mx-auto w-full max-w-[1440px] px-5 pb-5 lg:pb-6">
             <h1 className="line-clamp-1 text-2xl font-black text-white drop-shadow-sm lg:text-3xl">
-              {game.title}
+              {detailTitle}
             </h1>
 
             {game.metadata?.developer && (

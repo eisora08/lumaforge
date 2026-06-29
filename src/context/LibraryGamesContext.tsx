@@ -5,6 +5,8 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
 import { loadCachedGames, isCacheExpired } from "../services/gameDetectionCache";
 import { loadMetadataCache } from "../services/gameMetadataResolver";
+import { loadLibraryAppInfo } from "../services/libraryLocalCacheService";
+import type { LibraryAppInfoMap } from "../services/tauri";
 import {
   loadSteamStats,
   mergeSteamStatsIntoGames,
@@ -59,6 +61,7 @@ type LibraryGamesState = {
   selectedGame: LibraryGame | null;
   setSelectedGame: (game: LibraryGame | null) => void;
   refresh: () => Promise<void>;
+  appInfoMap: LibraryAppInfoMap;
 };
 
 const LibraryGamesContext = createContext<LibraryGamesState | null>(null);
@@ -111,6 +114,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [initialLoading, setInitialLoading] = useState(true);
   const [selectedId, setSelectedIdState] = useState<string | null>(loadStoredSelectedId);
   const [selectedGame, setSelectedGameState] = useState<LibraryGame | null>(null);
+  const [appInfoMap, setAppInfoMap] = useState<LibraryAppInfoMap>({});
+  const appInfoLoaded = useRef(false);
   const initDone = useRef(false);
 
   function setSelectedId(id: string | null) {
@@ -204,6 +209,13 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }
 
+  // Load appinfo once on mount
+  useEffect(() => {
+    if (appInfoLoaded.current) return;
+    appInfoLoaded.current = true;
+    loadLibraryAppInfo().then(setAppInfoMap).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (initDone.current) return;
     initDone.current = true;
@@ -226,7 +238,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }
 
   return (
-    <LibraryGamesContext.Provider value={{ games, warnings, loading, initialLoading, selectedId, setSelectedId, selectedGame, setSelectedGame, refresh }}>
+    <LibraryGamesContext.Provider value={{ games, warnings, loading, initialLoading, selectedId, setSelectedId, selectedGame, setSelectedGame, refresh, appInfoMap }}>
       {children}
     </LibraryGamesContext.Provider>
   );

@@ -608,3 +608,11 @@ export async function clearGameMediaCache(
 export async function clearAllGameMediaCache(): Promise<void> {
   return await libraryClearAllGameMediaCache();
 }
+
+export async function readImageAsDataUrl(path: string): Promise<string | null> {
+  try {
+    return await invoke<string>("read_image_as_data_url", { path });
+  } catch {
+    return null;
+  }
+}
