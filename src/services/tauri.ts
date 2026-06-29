@@ -738,8 +738,24 @@ export type GameRemoteRefs = {
 };
 
 export type GameMediaPaths = {
-  landscapePath: string | null;
   coverPath: string | null;
+  backgroundPath: string | null;
+  logoPath: string | null;
+  iconPath: string | null;
+  landscapePath: string | null;
+};
+
+export type GameMediaPathsResult = {
+  coverPath: string | null;
+  coverExists: boolean;
+  landscapePath: string | null;
+  landscapeExists: boolean;
+  backgroundPath: string | null;
+  backgroundExists: boolean;
+  logoPath: string | null;
+  logoExists: boolean;
+  iconPath: string | null;
+  iconExists: boolean;
 };
 
 export type GameStoreDetails = {
@@ -811,7 +827,7 @@ export async function saveGameArtwork(appId: string, entry: GameArtwork): Promis
   return await invoke("save_game_artwork", { appId, entry });
 }
 
-// Landscape/cover image caching
+// Image caching — one function per role
 export type LandscapeUrls = {
   sgdb_grid_url: string | null;
   sgdb_hero_url: string | null;
@@ -826,6 +842,21 @@ export type CoverUrls = {
   store_header_url: string | null;
 };
 
+export type BackgroundUrls = {
+  sgdb_hero_url: string | null;
+  store_background_raw_url: string | null;
+  store_background_url: string | null;
+  store_header_url: string | null;
+};
+
+export type LogoUrls = {
+  sgdb_logo_url: string | null;
+};
+
+export type IconUrls = {
+  sgdb_icon_url: string | null;
+};
+
 export async function cacheLandscapeImage(appId: string, urls: LandscapeUrls, forceRefresh?: boolean): Promise<string | null> {
   return await invoke<string | null>("cache_landscape_image", { appId, urls, forceRefresh: forceRefresh ?? false });
 }
@@ -834,12 +865,42 @@ export async function cacheCoverImage(appId: string, urls: CoverUrls, forceRefre
   return await invoke<string | null>("cache_cover_image", { appId, urls, forceRefresh: forceRefresh ?? false });
 }
 
+export async function cacheBackgroundImage(appId: string, urls: BackgroundUrls, forceRefresh?: boolean): Promise<string | null> {
+  return await invoke<string | null>("cache_background_image", { appId, urls, forceRefresh: forceRefresh ?? false });
+}
+
+export async function cacheLogoImage(appId: string, urls: LogoUrls, forceRefresh?: boolean): Promise<string | null> {
+  return await invoke<string | null>("cache_logo_image", { appId, urls, forceRefresh: forceRefresh ?? false });
+}
+
+export async function cacheIconImage(appId: string, urls: IconUrls, forceRefresh?: boolean): Promise<string | null> {
+  return await invoke<string | null>("cache_icon_image", { appId, urls, forceRefresh: forceRefresh ?? false });
+}
+
 // resolve_game_media_paths — check if landscape.jpg/cover.jpg exist on disk
 export async function resolveGameMediaPaths(appId: string): Promise<GameMediaPaths | null> {
   try {
     return await invoke<GameMediaPaths>("resolve_game_media_paths", { appId });
   } catch {
     return null;
+  }
+}
+
+// get_game_media_paths — returns paths + existence booleans for all 5 media roles
+export async function getGameMediaPaths(appId: string): Promise<GameMediaPathsResult | null> {
+  try {
+    return await invoke<GameMediaPathsResult>("get_game_media_paths", { appId });
+  } catch {
+    return null;
+  }
+}
+
+// repair_appinfo_media_paths — validate and strip stale paths from appinfo.json
+export async function repairAppinfoMediaPaths(appId: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>("repair_appinfo_media_paths", { appId });
+  } catch {
+    return false;
   }
 }
 

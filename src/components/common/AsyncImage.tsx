@@ -98,6 +98,17 @@ export default function AsyncImage({
 
   function triggerDataUrlFallback(originalSrc: string, localPath: string) {
     if (dataUrlAttemptedRef.current) return;
+
+    // Never attempt data URL fallback for missing local paths
+    if (!localPath) {
+      console.warn("[AsyncImage] no fallbackLocalPath provided — showing placeholder", {
+        src: originalSrc.slice(0, 80),
+      });
+      setFailed(true);
+      onErrorRef.current?.();
+      return;
+    }
+
     dataUrlAttemptedRef.current = true;
 
     console.warn("[AsyncImage] asset failed, trying data URL fallback", {
@@ -126,10 +137,16 @@ export default function AsyncImage({
         setDisplaySrc(dataUrl);
       })
       .catch((err) => {
-        console.warn("[AsyncImage] data URL fallback failed", {
-          fallbackLocalPath: localPath,
-          error: String(err),
-        });
+        const errStr = String(err);
+        // If the file was not found on disk, log once and stop retrying
+        if (errStr.includes("os error 2") || errStr.includes("Invalid path") || errStr.includes("file not found") || errStr.includes("No such file")) {
+          console.warn("[AsyncImage] local fallback file missing", { fallbackLocalPath: localPath, error: errStr });
+        } else {
+          console.warn("[AsyncImage] data URL fallback failed", {
+            fallbackLocalPath: localPath,
+            error: errStr,
+          });
+        }
         if (mountedRef.current) {
           setFailed(true);
           onErrorRef.current?.();
@@ -159,7 +176,10 @@ export default function AsyncImage({
       triggerDataUrlFallback(srcRef.current, fallbackLocalPathRef.current);
     } else {
       if (dataUrlAttemptedRef.current) {
-        console.warn("[AsyncImage] data URL fallback failed to render", {
+        const msg = fallbackLocalPathRef.current
+          ? "[AsyncImage] data URL fallback failed to render"
+          : "[AsyncImage] no fallbackLocalPath — showing placeholder";
+        console.warn(msg, {
           fallbackLocalPath: fallbackLocalPathRef.current,
         });
       }

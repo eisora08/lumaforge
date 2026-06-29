@@ -21,17 +21,26 @@ pub struct GameRemoteRefs {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameMediaPaths {
-    #[serde(rename = "landscapePath", alias = "landscape_path")]
-    pub landscape_path: Option<String>,
     #[serde(rename = "coverPath", alias = "cover_path")]
     pub cover_path: Option<String>,
+    #[serde(rename = "backgroundPath", alias = "background_path")]
+    pub background_path: Option<String>,
+    #[serde(rename = "logoPath", alias = "logo_path")]
+    pub logo_path: Option<String>,
+    #[serde(rename = "iconPath", alias = "icon_path")]
+    pub icon_path: Option<String>,
+    #[serde(rename = "landscapePath", alias = "landscape_path")]
+    pub landscape_path: Option<String>,
 }
 
 impl GameMediaPaths {
     pub fn new() -> Self {
         GameMediaPaths {
-            landscape_path: None,
             cover_path: None,
+            background_path: None,
+            logo_path: None,
+            icon_path: None,
+            landscape_path: None,
         }
     }
 }
@@ -40,6 +49,30 @@ impl Default for GameMediaPaths {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameMediaPathsResult {
+    #[serde(rename = "coverPath", alias = "cover_path")]
+    pub cover_path: Option<String>,
+    #[serde(rename = "coverExists")]
+    pub cover_exists: bool,
+    #[serde(rename = "landscapePath", alias = "landscape_path")]
+    pub landscape_path: Option<String>,
+    #[serde(rename = "landscapeExists")]
+    pub landscape_exists: bool,
+    #[serde(rename = "backgroundPath", alias = "background_path")]
+    pub background_path: Option<String>,
+    #[serde(rename = "backgroundExists")]
+    pub background_exists: bool,
+    #[serde(rename = "logoPath", alias = "logo_path")]
+    pub logo_path: Option<String>,
+    #[serde(rename = "logoExists")]
+    pub logo_exists: bool,
+    #[serde(rename = "iconPath", alias = "icon_path")]
+    pub icon_path: Option<String>,
+    #[serde(rename = "iconExists")]
+    pub icon_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

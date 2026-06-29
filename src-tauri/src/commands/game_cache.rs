@@ -300,6 +300,129 @@ pub fn cache_cover_image(
     Ok(None)
 }
 
+// ---------------------------------------------------------------------------
+// Cache background.jpg — hero/background for GameDetails
+// Priority: 1. SGDB hero  2. store background_raw  3. store background
+//           4. store header_image  5. existing landscape.jpg
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn cache_background_image(
+    app_handle: AppHandle,
+    app_id: String,
+    urls: BackgroundUrls,
+    force_refresh: bool,
+) -> Result<Option<String>, String> {
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+    let dest_path = media_dir.join("background.jpg");
+
+    if dest_path.exists() && !force_refresh {
+        log(&format!("background cache hit for {}", app_id));
+        return Ok(Some(dest_path.to_string_lossy().to_string()));
+    }
+
+    let sources: Vec<Option<String>> = vec![
+        urls.sgdb_hero_url,
+        urls.store_background_raw_url,
+        urls.store_background_url,
+        urls.store_header_url,
+    ];
+
+    for url_opt in &sources {
+        if let Some(url) = url_opt {
+            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path) {
+                Ok(Some(path)) => {
+                    media_log(&format!("saved background for {}", app_id));
+                    return Ok(Some(path));
+                }
+                Ok(None) => continue,
+                Err(_) => continue,
+            }
+        }
+    }
+
+    // Fallback: copy existing landscape.jpg as background
+    let landscape_path = media_dir.join("landscape.jpg");
+    if landscape_path.exists() {
+        media_log(&format!("background fallback: copying landscape for {}", app_id));
+        let _ = std::fs::copy(&landscape_path, &dest_path);
+        return Ok(Some(dest_path.to_string_lossy().to_string()));
+    }
+
+    log(&format!("no background source available for {}", app_id));
+    Ok(None)
+}
+
+// ---------------------------------------------------------------------------
+// Cache logo.png — transparent logo for GameDetails overlay
+// Priority: 1. SGDB logo  2. none
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn cache_logo_image(
+    app_handle: AppHandle,
+    app_id: String,
+    urls: LogoUrls,
+    force_refresh: bool,
+) -> Result<Option<String>, String> {
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+    let dest_path = media_dir.join("logo.png");
+
+    if dest_path.exists() && !force_refresh {
+        log(&format!("logo cache hit for {}", app_id));
+        return Ok(Some(dest_path.to_string_lossy().to_string()));
+    }
+
+    if let Some(url) = urls.sgdb_logo_url {
+        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path) {
+            Ok(Some(path)) => {
+                media_log(&format!("saved logo for {}", app_id));
+                return Ok(Some(path));
+            }
+            Ok(None) => {}
+            Err(_) => {}
+        }
+    }
+
+    log(&format!("no logo source available for {}", app_id));
+    Ok(None)
+}
+
+// ---------------------------------------------------------------------------
+// Cache icon.png — small icon for sidebar
+// Priority: 1. SGDB icon  2. none
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn cache_icon_image(
+    app_handle: AppHandle,
+    app_id: String,
+    urls: IconUrls,
+    force_refresh: bool,
+) -> Result<Option<String>, String> {
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+    let dest_path = media_dir.join("icon.png");
+
+    if dest_path.exists() && !force_refresh {
+        log(&format!("icon cache hit for {}", app_id));
+        return Ok(Some(dest_path.to_string_lossy().to_string()));
+    }
+
+    if let Some(url) = urls.sgdb_icon_url {
+        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path) {
+            Ok(Some(path)) => {
+                media_log(&format!("saved icon for {}", app_id));
+                return Ok(Some(path));
+            }
+            Ok(None) => {}
+            Err(_) => {}
+        }
+    }
+
+    log(&format!("no icon source available for {}", app_id));
+    Ok(None)
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LandscapeUrls {
     pub sgdb_grid_url: Option<String>,
@@ -314,6 +437,24 @@ pub struct CoverUrls {
     pub store_capsule_url: Option<String>,
     pub store_capsule_v5_url: Option<String>,
     pub store_header_url: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BackgroundUrls {
+    pub sgdb_hero_url: Option<String>,
+    pub store_background_raw_url: Option<String>,
+    pub store_background_url: Option<String>,
+    pub store_header_url: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogoUrls {
+    pub sgdb_logo_url: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IconUrls {
+    pub sgdb_icon_url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +493,43 @@ pub fn update_game_appinfo_media(
     };
 
     entry.name = entry.name.or(name);
-    entry.media = Some(media);
+
+    // Validate paths: only keep paths that point to existing files
+    // This prevents appinfo.json from referencing deleted/missing media.
+    let validated_media = GameMediaPaths {
+        cover_path: media.cover_path.as_ref().and_then(|p| {
+            if std::path::Path::new(p).exists() { media.cover_path.clone() } else {
+                media_log(&format!("stripped missing cover_path for {}: {}", app_id, p));
+                None
+            }
+        }),
+        landscape_path: media.landscape_path.as_ref().and_then(|p| {
+            if std::path::Path::new(p).exists() { media.landscape_path.clone() } else {
+                media_log(&format!("stripped missing landscape_path for {}: {}", app_id, p));
+                None
+            }
+        }),
+        background_path: media.background_path.as_ref().and_then(|p| {
+            if std::path::Path::new(p).exists() { media.background_path.clone() } else {
+                media_log(&format!("stripped missing background_path for {}: {}", app_id, p));
+                None
+            }
+        }),
+        logo_path: media.logo_path.as_ref().and_then(|p| {
+            if std::path::Path::new(p).exists() { media.logo_path.clone() } else {
+                media_log(&format!("stripped missing logo_path for {}: {}", app_id, p));
+                None
+            }
+        }),
+        icon_path: media.icon_path.as_ref().and_then(|p| {
+            if std::path::Path::new(p).exists() { media.icon_path.clone() } else {
+                media_log(&format!("stripped missing icon_path for {}: {}", app_id, p));
+                None
+            }
+        }),
+    };
+
+    entry.media = Some(validated_media);
     if let Some(r) = remote {
         entry.remote = Some(crate::models::game_cache::GameRemoteRefs {
             header_image: r.header_image,
@@ -679,6 +856,9 @@ pub fn safe_download_image(
     let filename = match media_type.as_str() {
         "landscape" => "landscape.jpg",
         "cover" => "cover.jpg",
+        "background" => "background.jpg",
+        "logo" => "logo.png",
+        "icon" => "icon.png",
         _ => return Err(format!("Unknown media_type: {}", media_type)),
     };
 
@@ -716,7 +896,13 @@ pub fn resolve_game_media_paths(
     }
 
     // If a .tmp file exists but final doesn't, try to rename it now
-    for (tmp_name, final_name) in [("landscape.tmp", "landscape.jpg"), ("cover.tmp", "cover.jpg")] {
+    for (tmp_name, final_name) in [
+        ("landscape.tmp", "landscape.jpg"),
+        ("cover.tmp", "cover.jpg"),
+        ("background.tmp", "background.jpg"),
+        ("logo.tmp", "logo.png"),
+        ("icon.tmp", "icon.png"),
+    ] {
         let tmp_path = media_dir.join(tmp_name);
         let final_path = media_dir.join(final_name);
         if tmp_path.exists() && !final_path.exists() {
@@ -725,18 +911,195 @@ pub fn resolve_game_media_paths(
         }
     }
 
-    let landscape_path = {
-        let p = media_dir.join("landscape.jpg");
-        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
-    };
-
     let cover_path = {
         let p = media_dir.join("cover.jpg");
         if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
     };
 
-    media_log(&format!("resolve: landscape={}, cover={}", landscape_path.is_some(), cover_path.is_some()));
-    Ok(GameMediaPaths { landscape_path, cover_path })
+    let background_path = {
+        let p = media_dir.join("background.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+    };
+
+    let logo_path = {
+        let p = media_dir.join("logo.png");
+        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+    };
+
+    let icon_path = {
+        let p = media_dir.join("icon.png");
+        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+    };
+
+    let landscape_path = {
+        let p = media_dir.join("landscape.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+    };
+
+    media_log(&format!(
+        "resolve: cover={}, background={}, logo={}, icon={}, landscape={}",
+        cover_path.is_some(), background_path.is_some(),
+        logo_path.is_some(), icon_path.is_some(), landscape_path.is_some(),
+    ));
+    Ok(GameMediaPaths {
+        cover_path,
+        background_path,
+        logo_path,
+        icon_path,
+        landscape_path,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// get_game_media_paths — like resolve_game_media_paths but also returns
+// per-role existence booleans so the frontend can know exactly which files
+// exist without guessing. Only returns paths for files that physically exist.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_game_media_paths(
+    app_handle: AppHandle,
+    app_id: String,
+) -> Result<crate::models::game_cache::GameMediaPathsResult, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let media_dir = app_dir.join("games").join("steam")
+        .join(safe_filename(&app_id)).join("media");
+
+    let cover_path = media_dir.join("cover.jpg");
+    let cover_exists = cover_path.exists();
+
+    let landscape_path = media_dir.join("landscape.jpg");
+    let landscape_exists = landscape_path.exists();
+
+    let background_path = media_dir.join("background.jpg");
+    let background_exists = background_path.exists();
+
+    let logo_path = media_dir.join("logo.png");
+    let logo_exists = logo_path.exists();
+
+    let icon_path = media_dir.join("icon.png");
+    let icon_exists = icon_path.exists();
+
+    media_log(&format!(
+        "get_game_media_paths: app={} cover={} landscape={} background={} logo={} icon={}",
+        app_id, cover_exists, landscape_exists, background_exists, logo_exists, icon_exists,
+    ));
+
+    Ok(crate::models::game_cache::GameMediaPathsResult {
+        cover_path: if cover_exists { Some(cover_path.to_string_lossy().to_string()) } else { None },
+        cover_exists,
+        landscape_path: if landscape_exists { Some(landscape_path.to_string_lossy().to_string()) } else { None },
+        landscape_exists,
+        background_path: if background_exists { Some(background_path.to_string_lossy().to_string()) } else { None },
+        background_exists,
+        logo_path: if logo_exists { Some(logo_path.to_string_lossy().to_string()) } else { None },
+        logo_exists,
+        icon_path: if icon_exists { Some(icon_path.to_string_lossy().to_string()) } else { None },
+        icon_exists,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// repair_appinfo_media_paths — validate all paths in appinfo.json and strip
+// any that point to non-existent files. Returns true if any paths were removed.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn repair_appinfo_media_paths(
+    app_handle: AppHandle,
+    app_id: String,
+) -> Result<bool, String> {
+    let path = get_appinfo_path(&app_handle, &app_id)?;
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Ok(false),
+    };
+
+    let mut entry: GameAppInfo = match serde_json::from_str(&content) {
+        Ok(e) => e,
+        Err(_) => return Ok(false),
+    };
+
+    let media = match entry.media {
+        Some(ref m) => m,
+        None => return Ok(false),
+    };
+
+    let mut changed = false;
+
+    let cover_path = media.cover_path.as_ref().and_then(|p| {
+        if std::path::Path::new(p).exists() { media.cover_path.clone() } else {
+            media_log(&format!("repair: stripping missing cover_path for {}: {}", app_id, p));
+            changed = true;
+            None
+        }
+    });
+
+    let landscape_path = media.landscape_path.as_ref().and_then(|p| {
+        if std::path::Path::new(p).exists() { media.landscape_path.clone() } else {
+            media_log(&format!("repair: stripping missing landscape_path for {}: {}", app_id, p));
+            changed = true;
+            None
+        }
+    });
+
+    let background_path = media.background_path.as_ref().and_then(|p| {
+        if std::path::Path::new(p).exists() { media.background_path.clone() } else {
+            media_log(&format!("repair: stripping missing background_path for {}: {}", app_id, p));
+            changed = true;
+            None
+        }
+    });
+
+    let logo_path = media.logo_path.as_ref().and_then(|p| {
+        if std::path::Path::new(p).exists() { media.logo_path.clone() } else {
+            media_log(&format!("repair: stripping missing logo_path for {}: {}", app_id, p));
+            changed = true;
+            None
+        }
+    });
+
+    let icon_path = media.icon_path.as_ref().and_then(|p| {
+        if std::path::Path::new(p).exists() { media.icon_path.clone() } else {
+            media_log(&format!("repair: stripping missing icon_path for {}: {}", app_id, p));
+            changed = true;
+            None
+        }
+    });
+
+    if !changed {
+        return Ok(false);
+    }
+
+    entry.media = Some(GameMediaPaths {
+        cover_path,
+        landscape_path,
+        background_path,
+        logo_path,
+        icon_path,
+    });
+    entry.updated_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    );
+
+    let new_content = serde_json::to_string_pretty(&entry)
+        .map_err(|e| format!("Failed to serialize repaired appinfo: {}", e))?;
+    fs::write(&path, &new_content)
+        .map_err(|e| format!("Failed to write repaired appinfo: {}", e))?;
+
+    log(&format!("appinfo media paths repaired for {} (stale paths stripped)", app_id));
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------

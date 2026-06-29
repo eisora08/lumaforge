@@ -7,21 +7,24 @@ pub struct TargetSize {
     pub max_height: Option<u32>,
 }
 
-/// Target sizes for simplified media cache (landscape + cover only).
+/// Target sizes per media role.
 pub fn target_size_for(media_type: &str) -> TargetSize {
     match media_type {
-        // landscape: max 1280x720 (or 920x430 for grid-like sources)
+        "cover" => TargetSize { max_width: Some(810), max_height: Some(1080) },
+        "background" => TargetSize { max_width: Some(1920), max_height: Some(1080) },
+        "logo" => TargetSize { max_width: Some(900), max_height: None },
+        "icon" => TargetSize { max_width: Some(256), max_height: Some(256) },
         "landscape" => TargetSize { max_width: Some(1280), max_height: Some(720) },
-        // cover: max 600x900
-        "cover" => TargetSize { max_width: Some(600), max_height: Some(900) },
         _ => TargetSize { max_width: None, max_height: None },
     }
 }
 
-/// JPEG quality for compression — both landscape and cover at quality 80.
+/// JPEG quality for compression.
 fn jpeg_quality_for(media_type: &str) -> u8 {
     match media_type {
-        "landscape" | "cover" => 80,
+        "cover" => 85,
+        "background" => 85,
+        "landscape" => 80,
         _ => 80,
     }
 }
@@ -46,6 +49,11 @@ pub fn process_and_save_image(
     }
 }
 
+/// Returns true if the media role must preserve transparency (PNG).
+fn preserves_alpha(media_type: &str) -> bool {
+    matches!(media_type, "logo" | "icon")
+}
+
 fn process_and_write(bytes: &[u8], dest_path: &Path, media_type: &str) -> Result<(), String> {
     let img = image::load_from_memory(bytes)
         .map_err(|e| format!("Decode failed: {}", e))?;
@@ -67,18 +75,28 @@ fn process_and_write(bytes: &[u8], dest_path: &Path, media_type: &str) -> Result
         .to_lowercase();
 
     let has_alpha = processed.color().has_alpha();
-    let is_png_target = ext == "png";
+    let keep_alpha = preserves_alpha(media_type);
+    let is_png_target = ext == "png" || keep_alpha;
 
-    if is_png_target && has_alpha {
+    if is_png_target && (has_alpha || keep_alpha) {
         // PNG with transparency — save as PNG
-        processed
-            .save(dest_path)
-            .map_err(|e| format!("PNG save failed: {}", e))
-    } else if is_png_target && !has_alpha {
+        let png_path = if keep_alpha && ext != "png" {
+            dest_path.with_extension("png")
+        } else {
+            dest_path.to_path_buf()
+        };
+        processed.save(&png_path)
+            .map_err(|e| format!("PNG save failed: {}", e))?;
+        if png_path != dest_path {
+            let _ = std::fs::remove_file(dest_path);
+            std::fs::rename(&png_path, dest_path)
+                .map_err(|e| format!("Rename to final path failed: {}", e))?;
+        }
+        Ok(())
+    } else if is_png_target && !has_alpha && !keep_alpha {
         // PNG target but no alpha — save as JPEG (smaller)
         let jpeg_path = dest_path.with_extension("jpg");
         save_as_jpeg(&processed, &jpeg_path, jpeg_quality_for(media_type))?;
-        // Update extension to reflect actual format
         if jpeg_path != dest_path {
             let _ = std::fs::remove_file(dest_path);
             std::fs::rename(&jpeg_path, dest_path)
@@ -86,7 +104,6 @@ fn process_and_write(bytes: &[u8], dest_path: &Path, media_type: &str) -> Result
         }
         Ok(())
     } else {
-        // JPEG target
         save_as_jpeg(&processed, dest_path, jpeg_quality_for(media_type))
     }
 }

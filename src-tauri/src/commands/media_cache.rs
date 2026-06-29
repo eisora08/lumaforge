@@ -49,8 +49,8 @@ impl MediaCacheProfile {
     pub fn library_roles(&self) -> Vec<&'static str> {
         match self {
             MediaCacheProfile::Minimal => vec!["landscape"],
-            MediaCacheProfile::PlayniteBalanced => vec!["landscape", "cover"],
-            MediaCacheProfile::Full => vec!["landscape", "cover"],
+            MediaCacheProfile::PlayniteBalanced => vec!["landscape", "cover", "background", "logo", "icon"],
+            MediaCacheProfile::Full => vec!["landscape", "cover", "background", "logo", "icon"],
         }
     }
 }
@@ -188,13 +188,16 @@ pub fn get_media_cache_stats(app_handle: AppHandle) -> Result<MediaCacheStats, S
                     total_bytes += len;
                     game_bytes += len;
 
-                    // Categorize by simplified roles
                     if file_name == "landscape.jpg" {
                         by_type.landscape_bytes += len;
                     } else if file_name == "cover.jpg" {
                         by_type.cover_bytes += len;
+                    } else if file_name == "background.jpg"
+                        || file_name == "logo.png"
+                        || file_name == "icon.png"
+                    {
+                        by_type.cover_bytes += len;
                     } else {
-                        // Any other file (old format, store-*, library-*, etc.)
                         by_type.old_media_bytes += len;
                     }
                 }
@@ -343,12 +346,13 @@ fn dedup_media_dir(dir: &Path) {
 }
 
 fn media_role_from_filename(name: &str) -> Option<&'static str> {
-    if name == "landscape.jpg" {
-        Some("landscape")
-    } else if name == "cover.jpg" {
-        Some("cover")
-    } else {
-        None
+    match name {
+        "landscape.jpg" => Some("landscape"),
+        "cover.jpg" => Some("cover"),
+        "background.jpg" => Some("background"),
+        "logo.png" => Some("logo"),
+        "icon.png" => Some("icon"),
+        _ => None,
     }
 }
 

@@ -84,12 +84,11 @@ type LibraryGameDetailsProps = {
 };
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
-  // landscapePath is the hero/banner — prefer it strongly
+  // Hero priority: background.jpg > landscape.jpg > remote background/header > cover.jpg as last local fallback > placeholder
+  if (canonicalAppInfo?.media?.backgroundPath) return canonicalAppInfo.media.backgroundPath;
   if (canonicalAppInfo?.media?.landscapePath) return canonicalAppInfo.media.landscapePath;
-  if (mediaEntry?.grid_path) return mediaEntry.grid_path;
   if (mediaEntry?.hero_path) return mediaEntry.hero_path;
-  if (mediaEntry?.cover_path) return mediaEntry.cover_path;
-  if (canonicalAppInfo?.media?.coverPath) return canonicalAppInfo.media.coverPath;
+  if (mediaEntry?.grid_path) return mediaEntry.grid_path;
   if (appInfoEntry?.header_image) return appInfoEntry.header_image;
   if (artwork?.sgdbHeroUrl) return artwork.sgdbHeroUrl;
   if (artwork?.sgdbGridUrl) return artwork.sgdbGridUrl;
@@ -102,6 +101,8 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.wide_cover_image
     || game.metadata?.capsule_image_v5
     || game.imageUrl
+    || canonicalAppInfo?.media?.coverPath
+    || mediaEntry?.cover_path
     || canonicalDiskFallback
     || undefined;
 }
@@ -209,7 +210,8 @@ export default function LibraryGameDetails({
     : rawImageUrl;
   const heroFallbackPath = rawImageIsLocal ? rawImageUrl : null;
 
-  const rawLogoUrl = artwork?.sgdbLogoUrl
+  const rawLogoUrl = canonicalAppInfo?.media?.logoPath
+    || artwork?.sgdbLogoUrl
     || game.metadata?.logo_image
     || game.metadata?.library_logo_image;
   const logoUrl = rawLogoUrl && isLocalPath(rawLogoUrl)

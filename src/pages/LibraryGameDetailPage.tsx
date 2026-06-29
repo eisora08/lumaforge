@@ -209,7 +209,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const appIdStr = resolvedGame.appId;
     const hasLandscape = !!canonicalAppInfo?.media?.landscapePath;
     const hasCover = !!canonicalAppInfo?.media?.coverPath;
-    if (hasLandscape && hasCover) {
+    const hasBackground = !!canonicalAppInfo?.media?.backgroundPath;
+    const hasLogo = !!canonicalAppInfo?.media?.logoPath;
+    const hasIcon = !!canonicalAppInfo?.media?.iconPath;
+    if (hasLandscape && hasCover && hasBackground && hasLogo && hasIcon) {
       mediaEnqueuedRef.current = true;
       return;
     }
@@ -230,13 +233,35 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           const entry = result[appIdStr];
           if (entry) {
             setArtwork(entry);
+
+            const meta = (resolvedGame.metadata || {}) as Record<string, any>;
             const jobs: Array<{ mediaType: string; url?: string }> = [];
+
+            // Landscape: SGDB grid/hero > store header > store background
             if (!hasLandscape) {
-              jobs.push({ mediaType: "landscape", url: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl });
+              jobs.push({ mediaType: "landscape", url: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl || meta.header_image || meta.background_image });
             }
+
+            // Cover: SGDB cover > store capsule
             if (!hasCover) {
-              jobs.push({ mediaType: "cover", url: entry.sgdbCoverUrl });
+              jobs.push({ mediaType: "cover", url: entry.sgdbCoverUrl || meta.capsule_image || meta.capsule_image_v5 || meta.header_image });
             }
+
+            // Background: SGDB hero > store background_raw > store background > store header > landscape fallback (handled by Rust side)
+            if (!hasBackground) {
+              jobs.push({ mediaType: "background", url: entry.sgdbHeroUrl || meta.background_image || meta.library_hero_image || meta.header_image });
+            }
+
+            // Logo: SGDB logo only
+            if (!hasLogo) {
+              jobs.push({ mediaType: "logo", url: entry.sgdbLogoUrl });
+            }
+
+            // Icon: SGDB icon only
+            if (!hasIcon) {
+              jobs.push({ mediaType: "icon", url: entry.sgdbIconUrl });
+            }
+
             for (const { mediaType, url } of jobs) {
               if (!url) continue;
               enqueueMediaDownload({
@@ -246,7 +271,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
                 mediaType: mediaType as any,
                 url,
                 target: "canonical",
-                priority: "high",
+                priority: mediaType === "background" || mediaType === "logo" ? "normal" : "high",
               }).catch(() => {});
             }
           }
@@ -254,23 +279,37 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         .catch(() => {});
     } else {
       // No SGDB — fallback from store metadata URLs
+      const meta = (resolvedGame.metadata || {}) as Record<string, any>;
+      const jobs: Array<{ mediaType: string; url?: string }> = [];
+
       if (!hasLandscape) {
-        const url = resolvedGame.metadata?.header_image || resolvedGame.metadata?.background_image;
-        if (url) {
-          mediaEnqueuedRef.current = true;
+        jobs.push({ mediaType: "landscape", url: meta.header_image || meta.background_image });
+      }
+      if (!hasCover) {
+        jobs.push({ mediaType: "cover", url: meta.capsule_image || meta.capsule_image_v5 || meta.header_image });
+      }
+      if (!hasBackground) {
+        jobs.push({ mediaType: "background", url: meta.background_image || meta.library_hero_image || meta.header_image });
+      }
+
+      const hasAnyJob = jobs.some(j => j.url);
+      if (hasAnyJob) {
+        mediaEnqueuedRef.current = true;
+        for (const { mediaType, url } of jobs) {
+          if (!url) continue;
           enqueueMediaDownload({
-            id: `detail-store-${appIdStr}-landscape`,
+            id: `detail-store-${appIdStr}-${mediaType}`,
             appId: appIdStr,
             provider: "steam",
-            mediaType: "landscape",
+            mediaType: mediaType as any,
             url,
             target: "canonical",
-            priority: "high",
+            priority: mediaType === "background" ? "normal" : "high",
           }).catch(() => {});
         }
       }
     }
-  }, [resolvedGame, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
+  }, [resolvedGame, canonicalAppInfo?.media?.landscapePath, canonicalAppInfo?.media?.coverPath, canonicalAppInfo?.media?.backgroundPath, canonicalAppInfo?.media?.logoPath, canonicalAppInfo?.media?.iconPath, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
 
   // Lazy per-game stats refresh
   useEffect(() => {
@@ -300,6 +339,11 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const { clearMediaQueueState } = await import("../services/mediaDownloadQueue");
     clearMediaQueueState();
 
+    // Clear session cache so next load picks up fresh files from disk
+    const { clearResolvedMediaSessionCache, resetRepairedAppInfoIds } = await import("../services/gameCacheService");
+    clearResolvedMediaSessionCache();
+    resetRepairedAppInfoIds();
+
     const appIdStr = selectedGame.appId;
     const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
 
@@ -324,6 +368,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const jobs: Array<{ mediaType: string; url?: string }> = [
           { mediaType: "landscape", url: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl },
           { mediaType: "cover", url: entry.sgdbCoverUrl },
+          { mediaType: "background", url: entry.sgdbHeroUrl },
+          { mediaType: "logo", url: entry.sgdbLogoUrl },
+          { mediaType: "icon", url: entry.sgdbIconUrl },
         ];
         for (const { mediaType, url } of jobs) {
           if (!url) continue;
