@@ -932,6 +932,7 @@ export default function Store() {
       log(`cache hit { appId: "${appId}", status: "${cached.status}" }`);
 
       if (cached.status === "ready" && game.sources.length === 0) {
+        log(`browse cache hit { appId: "${appId}", hydrating ${cached.sourceCount} sources }`);
         const hydratedGame: PackageGame = {
           ...game,
           sources: cached.availableSources.map((s) => ({
@@ -951,6 +952,7 @@ export default function Store() {
         return;
       }
     } else {
+      log(`cache miss { appId: "${appId}" }`);
       setSelectedDetailGame(game);
     }
 
@@ -973,6 +975,8 @@ export default function Store() {
 
     resolveProviderOverlaysForStoreGames([game], settings)
       .then((overlays) => {
+        if (requestId !== sourceResolveReqRef.current) return;
+
         const overlayGame = overlays[appId];
         if (overlayGame) {
           setProviderOverlayByAppId((current) => ({
@@ -995,6 +999,8 @@ export default function Store() {
         updateSourceAvailability(appId, entry).catch(() => {});
       })
       .catch((error: unknown) => {
+        if (requestId !== sourceResolveReqRef.current) return;
+
         const message = error instanceof Error ? error.message : String(error);
         const isTimeout = message.toLowerCase().includes("timeout");
 
@@ -1032,8 +1038,8 @@ export default function Store() {
     setSteamSearchItems([]);
     setSteamSubmittedSearchGames([]);
 
-    // Open details immediately with partial data - metadata loads inside
-    setSelectedDetailGame(game);
+    // Open details immediately — source resolution (+ cache hydration) happens inside openDetailsForGame
+    openDetailsForGame(game);
   }
 
   function handleBackFromDetails() {
@@ -1198,6 +1204,10 @@ export default function Store() {
           ? "ready"
           : "none";
 
+  if (selectedAppId) {
+    log(`final status { appId: "${selectedAppId}", status: "${sourceStatus}", sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
+  }
+
   if (selectedDetailGameWithOverlay) {
     return (
       <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
@@ -1228,6 +1238,7 @@ export default function Store() {
           onRefreshSources={() => {
             const game = selectedDetailGameWithOverlay;
             if (!game) return;
+            const requestId = ++sourceResolveReqRef.current;
             const appId = game.appId;
 
             log(`retry { appId: "${appId}" }`);
@@ -1249,6 +1260,7 @@ export default function Store() {
 
             resolveProviderOverlaysForStoreGames([game], settings)
               .then((overlays) => {
+                if (requestId !== sourceResolveReqRef.current) return;
                 const overlayGame = overlays[appId];
                 if (overlayGame) {
                   setProviderOverlayByAppId((current) => ({
@@ -1268,6 +1280,7 @@ export default function Store() {
                 updateSourceAvailability(appId, entry).catch(() => {});
               })
               .catch((error: unknown) => {
+                if (requestId !== sourceResolveReqRef.current) return;
                 const message = error instanceof Error ? error.message : String(error);
                 const isTimeout = message.toLowerCase().includes("timeout");
                 log(`${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
@@ -1283,6 +1296,7 @@ export default function Store() {
                 }).catch(() => {});
               })
               .finally(() => {
+                if (requestId !== sourceResolveReqRef.current) return;
                 setSourcesLoadingByAppId((current) => ({
                   ...current,
                   [appId]: false,
