@@ -14,7 +14,8 @@ import {
 } from "../services/libraryLocalCacheService";
 import type { GameMediaCacheEntry } from "../services/tauri";
 import type { GameAppInfo } from "../services/gameCacheService";
-import { loadGameAppInfo } from "../services/gameCacheService";
+import { loadGameAppInfoWithMediaFallback } from "../services/gameCacheService";
+import { resolveGameMediaImageSrc } from "../services/localImageSrc";
 import { enqueueMediaDownload, cancelMediaJobsForApp } from "../services/mediaDownloadQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
@@ -47,6 +48,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [artwork, setArtwork] = useState<SgdbArtworkData | null>(null);
   const [mediaEntry, setMediaEntry] = useState<GameMediaCacheEntry | null>(null);
   const [canonicalAppInfo, setCanonicalAppInfo] = useState<GameAppInfo | null>(null);
+  const [canonicalDiskFallback, setCanonicalDiskFallback] = useState<string | null>(null);
   const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
   const currentRequest = useRef<number | null>(null);
   const artworkRequest = useRef<number | null>(null);
@@ -125,14 +127,26 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     if (!selectedGame?.appId) {
       setMediaEntry(null);
       setCanonicalAppInfo(null);
+      setCanonicalDiskFallback(null);
       setLocalDetailsData(null);
       return;
     }
+    let cancelled = false;
     getMediaCacheForAppId(selectedGame.appId).then(setMediaEntry).catch(() => setMediaEntry(null));
-    loadGameAppInfo(selectedGame.appId).then(setCanonicalAppInfo).catch(() => setCanonicalAppInfo(null));
+    loadGameAppInfoWithMediaFallback(selectedGame.appId).then((info) => {
+      if (!cancelled) {
+        setCanonicalAppInfo(info);
+        if (!info?.media?.landscapePath && !info?.media?.coverPath) {
+          resolveGameMediaImageSrc(selectedGame.appId!).then((src) => {
+            if (!cancelled && src) setCanonicalDiskFallback(src);
+          }).catch(() => {});
+        }
+      }
+    }).catch(() => { if (!cancelled) setCanonicalAppInfo(null); });
     getLibraryGameDetails(selectedGame.appId).then((entry) => {
       if (entry?.data) setLocalDetailsData(entry.data);
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, [selectedGame?.appId]);
 
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
@@ -193,8 +207,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     if (mediaEnqueuedRef.current) return;
 
     const appIdStr = resolvedGame.appId;
-    const hasLandscape = !!canonicalAppInfo?.media?.landscape_path;
-    const hasCover = !!canonicalAppInfo?.media?.cover_path;
+    const hasLandscape = !!canonicalAppInfo?.media?.landscapePath;
+    const hasCover = !!canonicalAppInfo?.media?.coverPath;
     if (hasLandscape && hasCover) {
       mediaEnqueuedRef.current = true;
       return;
@@ -385,6 +399,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         appInfoEntry={appInfoEntry}
         mediaEntry={mediaEntry}
         canonicalAppInfo={canonicalAppInfo}
+        canonicalDiskFallback={canonicalDiskFallback}
         localDetailsData={localDetailsData}
         loading={metadataLoading}
         onPlay={handlePlay}

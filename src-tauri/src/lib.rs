@@ -90,6 +90,8 @@ pub fn run() {
             commands::game_cache::update_game_artwork,
             commands::game_cache::migrate_to_canonical_cache,
             commands::game_cache::safe_download_image,
+            commands::game_cache::resolve_game_media_paths,
+            commands::game_cache::read_game_media_data_url,
             commands::media_cache::get_media_cache_stats,
             commands::media_cache::compact_media_cache,
         ])

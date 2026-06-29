@@ -9,6 +9,19 @@ use tauri::{AppHandle, Manager};
 use crate::utils::image_utils;
 
 // ---------------------------------------------------------------------------
+// Debug flags
+// ---------------------------------------------------------------------------
+
+const ENABLE_VERBOSE_MEDIA_CACHE_LOGS: bool = false;
+
+#[inline]
+fn log(msg: &str) {
+    if ENABLE_VERBOSE_MEDIA_CACHE_LOGS {
+        println!("[MediaCache] {}", msg);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Media cache profile — simplified to landscape + cover only
 // ---------------------------------------------------------------------------
 
@@ -343,6 +356,77 @@ fn media_role_from_filename(name: &str) -> Option<&'static str> {
 // Process and save with dedup — used by safe_download_image
 // ---------------------------------------------------------------------------
 
+/// Repair a hash index by fixing any entries that point to `.tmp` files.
+/// Final filenames are `landscape.jpg` / `cover.jpg`; `.tmp` files are never final.
+pub fn repair_hash_index(dir: &Path) -> Result<(), String> {
+    let index_path = dir.join(".hash_index.json");
+    if !index_path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&index_path)
+        .map_err(|e| format!("Failed to read hash index: {}", e))?;
+    let mut index: HashMap<String, String> = serde_json::from_str(&content)
+        .unwrap_or_default();
+
+    let mut changed = false;
+
+    for (hash, filename) in index.clone().iter() {
+        if !filename.ends_with(".tmp") {
+            continue;
+        }
+        // This entry points to a .tmp file — needs repair
+        let final_name = filename.trim_end_matches(".tmp");
+        // Determine the correct final extension based on the base name
+        let (final_filename, final_path) = if final_name.contains('.') {
+            // e.g. "library-grid.tmp" -> use "landscape.jpg" as best guess
+            ("landscape.jpg".to_string(), dir.join("landscape.jpg"))
+        } else {
+            let f = format!("{}.jpg", final_name);
+            let p = dir.join(&f);
+            (f, p)
+        };
+
+        let tmp_path = dir.join(filename);
+
+        if final_path.exists() {
+            // Final file already exists — just update the index entry
+            log(&format!("repaired tmp hash entry — {} -> {}", &hash[..12], final_filename));
+            index.insert(hash.clone(), final_filename.clone());
+            changed = true;
+        } else if tmp_path.exists() {
+            // Only .tmp exists — try to rename it to the final filename
+            log(&format!("rename tmp to final — {} -> {}", filename, final_filename));
+            match fs::rename(&tmp_path, &final_path) {
+                Ok(_) => {
+                    log(&format!("repaired tmp hash entry — {} -> {}", &hash[..12], final_filename));
+                    index.insert(hash.clone(), final_filename);
+                    changed = true;
+                }
+                Err(e) => {
+                    log(&format!("failed to rename tmp file {}: {}", filename, e));
+                    // Remove bad entry and delete temp file
+                    index.remove(hash);
+                    let _ = fs::remove_file(&tmp_path);
+                    changed = true;
+                }
+            }
+        } else {
+            // Neither final nor tmp exists — just remove the bad entry
+            log(&format!("removed stale tmp hash entry — {} -> {}", &hash[..12], filename));
+            index.remove(hash);
+            changed = true;
+        }
+    }
+
+    if changed {
+        if let Ok(json) = serde_json::to_string(&index) {
+            let _ = fs::write(&index_path, &json);
+        }
+    }
+
+    Ok(())
+}
+
 /// Download bytes, process (resize/compress), deduplicate, and save.
 /// Uses a `.hash_index.json` file per media directory to track original content hashes
 /// before processing. This ensures that identical source images (even after processing)
@@ -358,8 +442,10 @@ pub fn process_and_save_with_dedup(
     // 1. Compute hash of incoming (original) bytes
     let content_hash = hash_bytes(bytes);
 
-    // 2. Load (or create) hash index for this directory
+    // 2. Load (or create) hash index for this directory — repair on load
     let index_path = parent.join(".hash_index.json");
+    let _ = repair_hash_index(parent); // fix any stale .tmp entries
+
     let mut index: HashMap<String, String> = if index_path.exists() {
         fs::read_to_string(&index_path)
             .ok()
@@ -374,6 +460,7 @@ pub fn process_and_save_with_dedup(
         let existing_path = parent.join(existing_filename);
         if existing_path.exists() {
             // Same original content — reuse existing processed file
+            log(&format!("dedup hit — reusing {}", existing_filename));
             return Ok(existing_path.to_string_lossy().to_string());
         }
     }
@@ -381,12 +468,13 @@ pub fn process_and_save_with_dedup(
     // 4. Process and save
     image_utils::process_and_save_image(bytes, dest_path, media_type)?;
 
-    // 5. Update hash index
-    if let Some(filename) = dest_path.file_name().and_then(|n| n.to_str()) {
-        index.insert(content_hash, filename.to_string());
-        if let Ok(json) = serde_json::to_string(&index) {
-            let _ = fs::write(&index_path, &json);
-        }
+    // 5. Update hash index — always store the FINAL filename, never .tmp
+    //    The caller is responsible for renaming .tmp → final after this returns.
+    let index_filename = format!("{}.jpg", media_type);
+    log(&format!("hash index updated — {} -> {}", &content_hash[..12], index_filename));
+    index.insert(content_hash, index_filename);
+    if let Ok(json) = serde_json::to_string(&index) {
+        let _ = fs::write(&index_path, &json);
     }
 
     Ok(dest_path.to_string_lossy().to_string())

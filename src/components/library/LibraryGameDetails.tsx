@@ -64,6 +64,7 @@ type LibraryGameDetailsProps = {
   appInfoEntry?: LibraryAppInfoEntry | null;
   mediaEntry?: GameMediaCacheEntry | null;
   canonicalAppInfo?: GameAppInfo | null;
+  canonicalDiskFallback?: string | null;
   localDetailsData?: unknown;
   loading?: boolean;
   onPlay: (game: LibraryGame) => void;
@@ -82,13 +83,13 @@ type LibraryGameDetailsProps = {
   onOpenStopModal?: () => void;
 };
 
-function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null): string | undefined {
-  // landscape_path is the hero/banner — prefer it strongly
-  if (canonicalAppInfo?.media?.landscape_path) return canonicalAppInfo.media.landscape_path;
+function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
+  // landscapePath is the hero/banner — prefer it strongly
+  if (canonicalAppInfo?.media?.landscapePath) return canonicalAppInfo.media.landscapePath;
   if (mediaEntry?.grid_path) return mediaEntry.grid_path;
   if (mediaEntry?.hero_path) return mediaEntry.hero_path;
   if (mediaEntry?.cover_path) return mediaEntry.cover_path;
-  if (canonicalAppInfo?.media?.cover_path) return canonicalAppInfo.media.cover_path;
+  if (canonicalAppInfo?.media?.coverPath) return canonicalAppInfo.media.coverPath;
   if (appInfoEntry?.header_image) return appInfoEntry.header_image;
   if (artwork?.sgdbHeroUrl) return artwork.sgdbHeroUrl;
   if (artwork?.sgdbGridUrl) return artwork.sgdbGridUrl;
@@ -101,6 +102,7 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.wide_cover_image
     || game.metadata?.capsule_image_v5
     || game.imageUrl
+    || canonicalDiskFallback
     || undefined;
 }
 
@@ -166,6 +168,7 @@ export default function LibraryGameDetails({
   appInfoEntry,
   mediaEntry,
   canonicalAppInfo,
+  canonicalDiskFallback,
   localDetailsData,
   loading = false,
   onPlay,
@@ -199,16 +202,18 @@ export default function LibraryGameDetails({
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
 
-  const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo);
-  const imageUrl = rawImageUrl && isLocalPath(rawImageUrl)
-    ? localPathToUrl(rawImageUrl)
+  const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
+  const rawImageIsLocal = !!rawImageUrl && isLocalPath(rawImageUrl);
+  const imageUrl = rawImageIsLocal
+    ? (localPathToUrl(rawImageUrl) ?? undefined)
     : rawImageUrl;
+  const heroFallbackPath = rawImageIsLocal ? rawImageUrl : null;
 
   const rawLogoUrl = artwork?.sgdbLogoUrl
     || game.metadata?.logo_image
     || game.metadata?.library_logo_image;
   const logoUrl = rawLogoUrl && isLocalPath(rawLogoUrl)
-    ? localPathToUrl(rawLogoUrl)
+    ? (localPathToUrl(rawLogoUrl) ?? undefined)
     : rawLogoUrl;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
@@ -483,6 +488,7 @@ export default function LibraryGameDetails({
           src={imageUrl}
           alt={detailTitle}
           className="absolute inset-0 h-full w-full"
+          fallbackLocalPath={heroFallbackPath}
           fallback={
             <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-white/10 via-white/5 to-black/50">
               <Gamepad2 className="h-20 w-20 text-(--color-muted)" />

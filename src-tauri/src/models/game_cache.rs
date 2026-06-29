@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameAppInfo {
+    #[serde(rename = "appId", alias = "app_id")]
     pub app_id: String,
     pub provider: String,
     pub name: Option<String>,
+    #[serde(rename = "updatedAt", alias = "updated_at")]
     pub updated_at: Option<u64>,
     pub media: Option<GameMediaPaths>,
     pub remote: Option<GameRemoteRefs>,
@@ -19,7 +21,9 @@ pub struct GameRemoteRefs {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameMediaPaths {
+    #[serde(rename = "landscapePath", alias = "landscape_path")]
     pub landscape_path: Option<String>,
+    #[serde(rename = "coverPath", alias = "cover_path")]
     pub cover_path: Option<String>,
 }
 

@@ -8,18 +8,26 @@ use crate::models::game_cache::{
     MigrationSummary, SteamGridDbRef, StoreDetails,
 };
 use crate::models::library_cache::{LibraryAppInfoEntry, LibraryGameDetailsEntry, GameMediaCacheEntry};
-use crate::commands::media_cache::process_and_save_with_dedup;
+use crate::commands::media_cache::{process_and_save_with_dedup, repair_hash_index};
 
 // ---------------------------------------------------------------------------
 // Debug flags
 // ---------------------------------------------------------------------------
 
 const ENABLE_VERBOSE_GAME_CACHE_LOGS: bool = false;
+const ENABLE_VERBOSE_MEDIA_CACHE_LOGS: bool = false;
 
 #[inline]
 fn log(msg: &str) {
     if ENABLE_VERBOSE_GAME_CACHE_LOGS {
         println!("[GameCache] {}", msg);
+    }
+}
+
+#[inline]
+fn media_log(msg: &str) {
+    if ENABLE_VERBOSE_MEDIA_CACHE_LOGS {
+        println!("[MediaCache] {}", msg);
     }
 }
 
@@ -595,29 +603,51 @@ fn safe_single_download(
         }
     };
 
-    // Write to temp file first, then rename for atomicity
+    // Write to temp file first, then rename for atomicity.
+    // The hash index is updated by process_and_save_with_dedup with the
+    // final filename (landscape.jpg / cover.jpg), never .tmp.
     let temp_path = dest_path.with_extension("tmp");
+    media_log(&format!("temp write start — {} -> {}", media_type, temp_path.display()));
     match process_and_save_with_dedup(&bytes, &temp_path, media_type) {
         Ok(_) => {
+            media_log(&format!("temp write success — {} ({} bytes)", media_type, bytes.len()));
             let _ = fs::remove_file(dest_path);
             match fs::rename(&temp_path, dest_path) {
                 Ok(_) => {
+                    media_log(&format!("rename temp to final — {} -> {}", temp_path.display(), dest_path.display()));
+                    // Defensive: ensure hash index points to final file, not .tmp
+                    if let Some(parent) = dest_path.parent() {
+                        let _ = repair_hash_index(parent);
+                    }
                     log(&format!("safe_download: saved {} ({} bytes)", media_type, bytes.len()));
                     Ok(Some(dest_path.to_string_lossy().to_string()))
                 }
                 Err(e) => {
-                    log(&format!("safe_download: rename error: {}", e));
-                    // Fallback: temp path is the saved file
-                    Ok(Some(temp_path.to_string_lossy().to_string()))
+                    // Rename failed — try copy as fallback, never return .tmp path
+                    media_log(&format!("rename failed ({}), trying copy", e));
+                    match fs::copy(&temp_path, dest_path) {
+                        Ok(_) => {
+                            let _ = fs::remove_file(&temp_path);
+                            media_log(&format!("final path returned — {}", dest_path.display()));
+                            log(&format!("safe_download: saved {} via copy ({} bytes)", media_type, bytes.len()));
+                            Ok(Some(dest_path.to_string_lossy().to_string()))
+                        }
+                        Err(e2) => {
+                            media_log(&format!("copy also failed: {}", e2));
+                            let _ = fs::remove_file(&temp_path);
+                            log(&format!("safe_download: rename AND copy failed for {}: {}, {}", media_type, e, e2));
+                            Ok(None)
+                        }
+                    }
                 }
             }
         }
         Err(e) => {
             log(&format!("safe_download: processing error for {}: {}", media_type, e));
-            // Fallback: raw save
+            // Fallback: raw save (to final path, never .tmp)
+            let _ = fs::remove_file(&temp_path);
             match fs::write(dest_path, &bytes) {
                 Ok(_) => {
-                    let _ = fs::remove_file(&temp_path);
                     log(&format!("safe_download: fallback raw save for {}", media_type));
                     Ok(Some(dest_path.to_string_lossy().to_string()))
                 }
@@ -660,6 +690,108 @@ pub fn safe_download_image(
     }
 
     safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path)
+}
+
+// ---------------------------------------------------------------------------
+// resolve_game_media_paths — check if media files exist on disk, return paths
+// Does NOT create directories or download anything.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn resolve_game_media_paths(
+    app_handle: AppHandle,
+    app_id: String,
+) -> Result<GameMediaPaths, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let media_dir = app_dir.join("games").join("steam")
+        .join(safe_filename(&app_id)).join("media");
+
+    // Repair any stale .tmp entries in the hash index
+    if media_dir.exists() {
+        let _ = repair_hash_index(&media_dir);
+    }
+
+    // If a .tmp file exists but final doesn't, try to rename it now
+    for (tmp_name, final_name) in [("landscape.tmp", "landscape.jpg"), ("cover.tmp", "cover.jpg")] {
+        let tmp_path = media_dir.join(tmp_name);
+        let final_path = media_dir.join(final_name);
+        if tmp_path.exists() && !final_path.exists() {
+            media_log(&format!("resolve: renaming orphan {} -> {}", tmp_name, final_name));
+            let _ = fs::rename(&tmp_path, &final_path);
+        }
+    }
+
+    let landscape_path = {
+        let p = media_dir.join("landscape.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+    };
+
+    let cover_path = {
+        let p = media_dir.join("cover.jpg");
+        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+    };
+
+    media_log(&format!("resolve: landscape={}, cover={}", landscape_path.is_some(), cover_path.is_some()));
+    Ok(GameMediaPaths { landscape_path, cover_path })
+}
+
+// ---------------------------------------------------------------------------
+// read_game_media_data_url — read a local cached image and return a data URL.
+// Security: only allows files inside the app data directory.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn read_game_media_data_url(
+    app_handle: AppHandle,
+    path: String,
+) -> Result<String, String> {
+    let app_data = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let canonical = std::path::Path::new(&path)
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
+
+    let app_data_canonical = app_data
+        .canonicalize()
+        .map_err(|e| format!("Invalid app data dir: {}", e))?;
+
+    if !canonical.starts_with(&app_data_canonical) {
+        return Err("Access denied: path outside app data directory".to_string());
+    }
+
+    let bytes = std::fs::read(&canonical)
+        .map_err(|e| format!("Failed to read image: {}", e))?;
+
+    if bytes.len() > 10 * 1024 * 1024 {
+        return Err("Image too large for data URL (>10MB)".to_string());
+    }
+
+    let ext = canonical
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("jpg")
+        .to_lowercase();
+
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "image/jpeg",
+    };
+
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, b64))
 }
 
 fn try_move_media_file(

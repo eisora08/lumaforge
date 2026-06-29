@@ -13,6 +13,9 @@ import {
   isLocalPath,
   getMediaCacheForAppId,
 } from "../../services/libraryLocalCacheService";
+import { loadGameAppInfoWithMediaFallback } from "../../services/gameCacheService";
+import type { GameAppInfo } from "../../services/gameCacheService";
+import { resolveGameMediaImageSrc } from "../../services/localImageSrc";
 
 type Props = {
   onOpenGame?: () => void;
@@ -23,14 +26,17 @@ function getSidebarImage(
   mode: "landscape" | "poster",
   appInfoEntry?: LibraryAppInfoEntry | null,
   mediaEntry?: GameMediaCacheEntry | null,
+  canonicalAppInfo?: GameAppInfo | null,
 ): string | undefined {
   const meta = game.metadata;
 
   if (mode === "poster") {
     return (
-      mediaEntry?.quick_cover_path ||
+      canonicalAppInfo?.media?.coverPath ||
+      canonicalAppInfo?.media?.landscapePath ||
       mediaEntry?.cover_path ||
       mediaEntry?.grid_path ||
+      mediaEntry?.quick_cover_path ||
       mediaEntry?.icon_path ||
       appInfoEntry?.cover_path ||
       appInfoEntry?.grid_path ||
@@ -44,26 +50,38 @@ function getSidebarImage(
     );
   }
 
-  // Landscape sidebar: grid/landscape first, cover fallback last
+  // Landscape sidebar: canonical landscape first, cover fallback last
+  const canonicalLandscape = canonicalAppInfo?.media?.landscapePath;
+  if (canonicalLandscape) return canonicalLandscape;
+
   const localLandscape = mediaEntry?.grid_path;
   if (localLandscape) return localLandscape;
-
-  const localCover = mediaEntry?.cover_path || mediaEntry?.quick_cover_path || mediaEntry?.icon_path;
-  if (localCover) return localCover;
 
   const appInfoLandscape = appInfoEntry?.grid_path;
   if (appInfoLandscape) return appInfoLandscape;
 
+  if (game.imageUrl) return game.imageUrl;
+
+  const remoteLandscape = meta?.header_image || meta?.library_hero_image || meta?.hero_image || meta?.background_image;
+  if (remoteLandscape) return remoteLandscape;
+
+  // Fallback: local cover
+  const canonicalCover = canonicalAppInfo?.media?.coverPath;
+  if (canonicalCover) return canonicalCover;
+
+  const localCover = mediaEntry?.cover_path || mediaEntry?.quick_cover_path || mediaEntry?.icon_path;
+  if (localCover) return localCover;
+
   const appInfoFallback = appInfoEntry?.cover_path || appInfoEntry?.icon_path || appInfoEntry?.header_image;
   if (appInfoFallback) return appInfoFallback;
 
-  return game.imageUrl || meta?.header_image || meta?.capsule_image_v5 || meta?.capsule_image || undefined;
+  return meta?.capsule_image_v5 || meta?.capsule_image || undefined;
 }
 
 function resolveImageSrc(src: string | undefined): string | undefined {
   if (!src) return undefined;
   if (isHttpUrl(src)) return src;
-  if (isLocalPath(src)) return localPathToUrl(src);
+  if (isLocalPath(src)) return localPathToUrl(src) ?? undefined;
   return src;
 }
 
@@ -78,36 +96,86 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
   const { getState } = useGameSession();
   const [query, setQuery] = useState("");
   const [mediaCacheMap, setMediaCacheMap] = useState<Record<string, GameMediaCacheEntry | null>>({});
+  const [canonicalInfoMap, setCanonicalInfoMap] = useState<Record<string, GameAppInfo | null>>({});
+  const [diskFallbackMap, setDiskFallbackMap] = useState<Record<string, string | null>>({});
   const loadedAppIds = useRef<Set<string>>(new Set());
+  const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
 
-  // Load media cache for all games as they become available — throttled, crash-safe
+  // Load media cache + canonical appinfo for all games as they become available
   useEffect(() => {
     const ids = games.map((g) => g.appId).filter(Boolean) as string[];
     if (ids.length === 0) return;
-    const newIds = [...new Set(ids)].filter((id) => !loadedAppIds.current.has(id));
-    if (newIds.length === 0) return;
-    // Only load first 20 at a time to avoid storms
-    const batch = newIds.slice(0, 20);
-    let cancelled = false;
-    for (const id of batch) loadedAppIds.current.add(id);
-    Promise.all(
-      batch.map(async (appId) => {
-        try {
-          const entry = await getMediaCacheForAppId(appId);
-          return [appId, entry] as const;
-        } catch {
-          return [appId, null] as const;
+    const allIds = [...new Set(ids)];
+
+    // Media cache
+    const newMediaIds = allIds.filter((id) => !loadedAppIds.current.has(id));
+    if (newMediaIds.length > 0) {
+      const batch = newMediaIds.slice(0, 20);
+      let cancelled = false;
+      for (const id of batch) loadedAppIds.current.add(id);
+      Promise.all(
+        batch.map(async (appId) => {
+          try {
+            const entry = await getMediaCacheForAppId(appId);
+            return [appId, entry] as const;
+          } catch {
+            return [appId, null] as const;
+          }
+        })
+      ).then((results) => {
+        if (cancelled) return;
+        const map: Record<string, GameMediaCacheEntry | null> = {};
+        for (const [appId, entry] of results) {
+          map[appId] = entry;
         }
-      })
-    ).then((results) => {
-      if (cancelled) return;
-      const map: Record<string, GameMediaCacheEntry | null> = {};
-      for (const [appId, entry] of results) {
-        map[appId] = entry;
-      }
-      setMediaCacheMap((prev) => ({ ...prev, ...map }));
-    });
-    return () => { cancelled = true; };
+        setMediaCacheMap((prev) => ({ ...prev, ...map }));
+      });
+    }
+
+    // Canonical appinfo (with disk fallback)
+    const newCanonicalIds = allIds.filter((id) => !canonicalLoadedAppIds.current.has(id));
+    if (newCanonicalIds.length > 0) {
+      const batch = newCanonicalIds.slice(0, 20);
+      let cancelled2 = false;
+      for (const id of batch) canonicalLoadedAppIds.current.add(id);
+      Promise.all(
+        batch.map(async (appId) => {
+          try {
+            const info = await loadGameAppInfoWithMediaFallback(appId);
+            return [appId, info] as const;
+          } catch {
+            return [appId, null] as const;
+          }
+        })
+      ).then((results) => {
+        if (cancelled2) return;
+        const map: Record<string, GameAppInfo | null> = {};
+        const diskFallbackIds: string[] = [];
+        for (const [appId, info] of results) {
+          map[appId] = info;
+          if (!info?.media?.landscapePath && !info?.media?.coverPath) {
+            diskFallbackIds.push(appId);
+          }
+        }
+        setCanonicalInfoMap((prev) => ({ ...prev, ...map }));
+        // Direct disk check for entries with no media
+        if (diskFallbackIds.length > 0) {
+          Promise.all(
+            diskFallbackIds.map(async (appId) => {
+              const src = await resolveGameMediaImageSrc(appId);
+              return [appId, src] as const;
+            })
+          ).then((fbResults) => {
+            if (cancelled2) return;
+            const fbMap: Record<string, string | null> = {};
+            for (const [appId, src] of fbResults) {
+              if (src) fbMap[appId] = src;
+            }
+            setDiskFallbackMap((prev) => ({ ...prev, ...fbMap }));
+          }).catch(() => {});
+        }
+      });
+    }
   }, [games]);
 
   const installed = useMemo(() => {
@@ -162,8 +230,11 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
             const isSelected = selectedGame?.id === game.id;
             const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
             const mediaEntry = game.appId ? (mediaCacheMap[game.appId] ?? null) : null;
-            const thumb = getSidebarImage(game, settings.libraryCardArtworkMode, appInfoEntry, mediaEntry);
+            const canonicalInfo = game.appId ? (canonicalInfoMap[game.appId] ?? null) : null;
+            const diskFallbackSrc = game.appId ? (diskFallbackMap[game.appId] ?? null) : null;
+            const thumb = getSidebarImage(game, settings.libraryCardArtworkMode, appInfoEntry, mediaEntry, canonicalInfo) || diskFallbackSrc || undefined;
             const resolvedThumb = resolveImageSrc(thumb);
+            const sidebarFallbackPath = thumb && isLocalPath(thumb) ? thumb : null;
             const displayTitle = getSidebarTitle(game, appInfoEntry);
             const gk = computeGameKey(game);
             const gs = getState(gk);
@@ -183,12 +254,13 @@ export default function SidebarLibraryList({ onOpenGame }: Props) {
                     : "text-(--color-text) hover:bg-white/5"
                 }`}
               >
-                <div className="relative h-6 w-10 shrink-0 overflow-hidden rounded">
+                <div className="relative h-6 w-10 shrink-0 overflow-hidden rounded object-cover">
                   {resolvedThumb ? (
                     <AsyncImage
                       src={resolvedThumb}
                       alt=""
-                      className="h-full w-full"
+                      className="h-full w-full object-cover"
+                      fallbackLocalPath={sidebarFallbackPath}
                       fallback={
                         <Gamepad2 className="h-3 w-3 text-(--color-muted)" />
                       }

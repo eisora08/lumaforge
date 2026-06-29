@@ -723,10 +723,10 @@ export async function cacheLibraryGameMedia(
 // --- Canonical Game Cache (app_data/games/steam/{appid}/) ---
 
 export type GameAppInfo = {
-  app_id: string;
+  appId: string;
   provider: string;
   name: string | null;
-  updated_at: number | null;
+  updatedAt: number | null;
   media: GameMediaPaths | null;
   remote: GameRemoteRefs | null;
 };
@@ -738,8 +738,8 @@ export type GameRemoteRefs = {
 };
 
 export type GameMediaPaths = {
-  landscape_path: string | null;
-  cover_path: string | null;
+  landscapePath: string | null;
+  coverPath: string | null;
 };
 
 export type GameStoreDetails = {
@@ -834,6 +834,15 @@ export async function cacheCoverImage(appId: string, urls: CoverUrls, forceRefre
   return await invoke<string | null>("cache_cover_image", { appId, urls, forceRefresh: forceRefresh ?? false });
 }
 
+// resolve_game_media_paths — check if landscape.jpg/cover.jpg exist on disk
+export async function resolveGameMediaPaths(appId: string): Promise<GameMediaPaths | null> {
+  try {
+    return await invoke<GameMediaPaths>("resolve_game_media_paths", { appId });
+  } catch {
+    return null;
+  }
+}
+
 // Appinfo/artwork update helpers
 export type GameRemoteRefsInput = {
   header_image: string | null;
@@ -881,4 +890,8 @@ export async function getMediaCacheStats(): Promise<MediaCacheStats> {
 
 export async function compactMediaCache(profile?: MediaCacheProfile): Promise<MediaCacheStats> {
   return await invoke<MediaCacheStats>("compact_media_cache", { profile });
+}
+
+export async function readGameMediaDataUrl(path: string): Promise<string> {
+  return await invoke<string>("read_game_media_data_url", { path });
 }

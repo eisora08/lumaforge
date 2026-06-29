@@ -259,8 +259,8 @@ export async function ensureCanonicalLibraryMediaCached(
         app_id: game.appId,
         name: game.title || null,
         header_image: game.imageUrl || null,
-        cover_path: paths.cover_path,
-        grid_path: paths.landscape_path,
+        cover_path: paths.coverPath,
+        grid_path: paths.landscapePath,
         hero_path: null,
         logo_path: null,
         icon_path: null,
@@ -307,8 +307,8 @@ export async function ensureLibraryMediaCached(
         game_key: `steam-${game.appId}`,
         app_id: game.appId,
         title: game.title || null,
-        cover_path: paths.cover_path,
-        grid_path: paths.landscape_path,
+        cover_path: paths.coverPath,
+        grid_path: paths.landscapePath,
         hero_path: null,
         logo_path: null,
         icon_path: null,
@@ -368,13 +368,13 @@ export function pickImageFromLocalCache(
   canonicalAppInfo?: GameAppInfo | null,
 ): string | null {
   // Canonical landscape takes priority
-  if (canonicalAppInfo?.media?.landscape_path) {
-    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log("[MediaCache] using canonical landscape_path");
-    return canonicalAppInfo.media.landscape_path;
+  if (canonicalAppInfo?.media?.landscapePath) {
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log("[MediaCache] using canonical landscapePath");
+    return canonicalAppInfo.media.landscapePath;
   }
-  if (canonicalAppInfo?.media?.cover_path) {
-    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log("[MediaCache] using canonical cover_path");
-    return canonicalAppInfo.media.cover_path;
+  if (canonicalAppInfo?.media?.coverPath) {
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log("[MediaCache] using canonical coverPath");
+    return canonicalAppInfo.media.coverPath;
   }
   // Fallback to old media entry paths
   if (mediaEntry?.grid_path) {
@@ -415,13 +415,13 @@ export function pickSidebarImage(
   mediaEntry: GameMediaCacheEntry | null,
   canonicalAppInfo?: GameAppInfo | null,
 ): string | null {
-  if (canonicalAppInfo?.media?.landscape_path) {
+  if (canonicalAppInfo?.media?.landscapePath) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log("[MediaCache] sidebar using canonical landscape");
-    return canonicalAppInfo.media.landscape_path;
+    return canonicalAppInfo.media.landscapePath;
   }
-  if (canonicalAppInfo?.media?.cover_path) {
+  if (canonicalAppInfo?.media?.coverPath) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log("[MediaCache] sidebar using canonical cover");
-    return canonicalAppInfo.media.cover_path;
+    return canonicalAppInfo.media.coverPath;
   }
   if (mediaEntry?.icon_path) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log("[MediaCache] sidebar using media icon_path");
