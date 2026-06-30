@@ -32,7 +32,7 @@ function buildFromSteam(
     appId: String(steam.appId),
     title: steam.name || metaName || `Steam App ${steam.appId}`,
     source: "steam",
-    installDir: steam.installDir || undefined,
+    installDir: steam.installPath || steam.installDir || undefined,
     libraryPath: steam.libraryPath,
     imageUrl: getImageUrl(meta),
     metadata: meta,

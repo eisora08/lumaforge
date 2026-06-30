@@ -1062,6 +1062,9 @@ export type SqliteMetadataCacheEntry = {
   lastPlayed: number;
   playtime: number;
   updatedAt: number;
+  exePath?: string;
+  exeName?: string;
+  installDir?: string;
 };
 
 export async function getMediaCacheSqlite(gameId: string): Promise<SqliteMediaCacheEntry | null> {
@@ -1104,4 +1107,14 @@ export async function insertMetadataCacheSqlite(entry: SqliteMetadataCacheEntry)
   } catch {
     // silent — best-effort only
   }
+}
+
+// --- Installed Games Registry (file-based) ---
+
+export async function readInstalledGamesRegistry(): Promise<string> {
+  return await invoke<string>("read_installed_games_registry");
+}
+
+export async function writeInstalledGamesRegistry(data: string): Promise<void> {
+  await invoke("write_installed_games_registry", { data });
 }

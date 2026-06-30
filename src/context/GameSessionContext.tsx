@@ -5,7 +5,7 @@ import { startPlaySession, endPlaySession } from "../services/playtimeService";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
-import { setInstalledGameEntry, getInstalledGameEntry } from "../services/installedGamesRegistry";
+import { setInstalledGameEntry, discoverAndRegister } from "../services/installedGamesRegistry";
 
 const ENABLE_VERBOSE_LAUNCH_LOGS = false;
 const STOP_RETRY_MAX = 5;
@@ -411,10 +411,19 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       markStopping(gameKey);
 
       // Build kill names upfront (from multiple sources + registry)
-      const registryEntry = getInstalledGameEntry(gameKey);
+      let registryExeName: string | undefined;
+      let registryExePath: string | undefined;
+      try {
+        const { getInstalledGameEntry } = await import("../services/installedGamesRegistry");
+        const registryEntry = await getInstalledGameEntry(gameKey);
+        if (registryEntry) {
+          registryExeName = registryEntry.exeName;
+          registryExePath = registryEntry.exePath;
+        }
+      } catch {}
       const killNames = getExeNamesFromSession({
-        processName: session.processName || registryEntry?.exeName,
-        executablePath: session.executablePath || registryEntry?.exePath,
+        processName: session.processName || registryExeName,
+        executablePath: session.executablePath || registryExePath,
         title: session.title,
       });
 
@@ -867,7 +876,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   exeName: resolved.exeName,
                   provider: "local",
                   lastValidated: Date.now(),
-                });
+                }).catch(() => {});
               }
 
               // Update session with discovered executable info
@@ -1042,6 +1051,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       if (curSession.state === "running" && (!prevSession || prevSession.state !== "running")) {
         if (!everRanRef.current.has(key)) {
           everRanRef.current.add(key);
+
+          // Discover and register executable for Steam games without exe info
+          if (curSession.source === "steam" && !curSession.executablePath && curSession.installDir) {
+            discoverAndRegister(key, curSession.installDir, curSession.title, "steam").catch(() => {});
+          }
+
           const mediaInfo = sessionMediaRef.current[key];
           const provider = curSession.source === "steam" ? "Steam" : curSession.source === "local" ? "Local" : "Unknown";
           setOverlayEvent({

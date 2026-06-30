@@ -144,6 +144,8 @@ pub fn run() {
             commands::sqlite_cache::get_metadata_cache,
             commands::sqlite_cache::insert_media_cache,
             commands::sqlite_cache::insert_metadata_cache,
+            commands::installed_games_registry::read_installed_games_registry,
+            commands::installed_games_registry::write_installed_games_registry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

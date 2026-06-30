@@ -48,7 +48,18 @@ fn init_tables(conn: &Connection) -> Result<(), String> {
         );
         ",
     )
-    .map_err(|e| format!("Failed to create tables: {}", e))
+    .map_err(|e| format!("Failed to create tables: {}", e))?;
+
+    // Migration: add executable columns to metadata_cache (safe to re-run)
+    for sql in &[
+        "ALTER TABLE metadata_cache ADD COLUMN exe_path TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE metadata_cache ADD COLUMN exe_name TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE metadata_cache ADD COLUMN install_dir TEXT NOT NULL DEFAULT ''",
+    ] {
+        let _ = conn.execute(sql, []);
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +116,12 @@ pub struct MetadataCacheEntry {
     pub last_played: i64,
     pub playtime: i64,
     pub updated_at: i64,
+    #[serde(default)]
+    pub exe_path: String,
+    #[serde(default)]
+    pub exe_name: String,
+    #[serde(default)]
+    pub install_dir: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +179,7 @@ pub fn get_metadata_cache(
 
     let mut stmt = guard
         .prepare(
-            "SELECT game_id, title, provider, installed, last_played, playtime, updated_at FROM metadata_cache WHERE game_id = ?1",
+            "SELECT game_id, title, provider, installed, last_played, playtime, updated_at, exe_path, exe_name, install_dir FROM metadata_cache WHERE game_id = ?1",
         )
         .map_err(|e| format!("Query prepare error: {}", e))?;
 
@@ -176,6 +193,9 @@ pub fn get_metadata_cache(
                 last_played: row.get(4)?,
                 playtime: row.get(5)?,
                 updated_at: row.get(6)?,
+                exe_path: row.get(7)?,
+                exe_name: row.get(8)?,
+                install_dir: row.get(9)?,
             })
         })
         .ok();
@@ -228,7 +248,7 @@ pub fn insert_metadata_cache(
 
     guard
         .execute(
-            "INSERT OR REPLACE INTO metadata_cache (game_id, title, provider, installed, last_played, playtime, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO metadata_cache (game_id, title, provider, installed, last_played, playtime, updated_at, exe_path, exe_name, install_dir) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 entry.game_id,
                 entry.title,
@@ -237,6 +257,9 @@ pub fn insert_metadata_cache(
                 entry.last_played,
                 entry.playtime,
                 entry.updated_at,
+                entry.exe_path,
+                entry.exe_name,
+                entry.install_dir,
             ],
         )
         .map_err(|e| format!("Insert error: {}", e))?;

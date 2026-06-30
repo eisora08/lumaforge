@@ -1,6 +1,5 @@
 import type { ProcessInfo } from "../services/tauri";
 import { listProcesses, discoverExecutables } from "../services/tauri";
-import { getExePathFromEntry, getExeNameFromEntry } from "../services/installedGamesRegistry";
 
 export type ProcessCandidate = {
   pid: number;
@@ -335,10 +334,17 @@ export async function resolveExecutablePath(
 ): Promise<{ exePath: string; exeName: string } | null> {
   // Check registry first
   if (gameId) {
-    const registeredPath = getExePathFromEntry(gameId);
-    const registeredName = getExeNameFromEntry(gameId);
-    if (registeredPath && registeredName) {
-      return { exePath: registeredPath, exeName: registeredName };
+    try {
+      const { getExePathFromEntry, getExeNameFromEntry } = await import("../services/installedGamesRegistry");
+      const [registeredPath, registeredName] = await Promise.all([
+        getExePathFromEntry(gameId),
+        getExeNameFromEntry(gameId),
+      ]);
+      if (registeredPath && registeredName) {
+        return { exePath: registeredPath, exeName: registeredName };
+      }
+    } catch {
+      // fall through to discovery
     }
   }
 
