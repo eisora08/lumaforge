@@ -390,33 +390,29 @@ export default function Store() {
       return;
     }
 
-    let cancelled = false;
+    const hydrated: Record<string, PackageGame> = {};
 
-    async function loadProviderOverlays() {
-      try {
-        const overlays = await resolveProviderOverlaysForStoreGames(
-          steamGames,
-          settings
-        );
-
-        if (!cancelled) {
-          setProviderOverlayByAppId(overlays);
-        }
-      } catch (error) {
-        console.error(error);
-
-        if (!cancelled) {
-          setProviderOverlayByAppId({});
-        }
+    for (const game of steamGames) {
+      const cached = getSourceAvailability(game.appId);
+      if (cached && cached.status === "ready" && cached.availableSources.length > 0) {
+        hydrated[game.appId] = {
+          ...game,
+          sources: cached.availableSources.map((s) => ({
+            providerId: s.id as any,
+            providerName: s.name,
+            fileType: s.type as any,
+            available: s.status === "ready",
+            downloadUrl: s.packageUrl,
+          })),
+        };
       }
     }
 
-    loadProviderOverlays();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [steamStoreSections, settings]);
+    setProviderOverlayByAppId((current) => ({
+      ...current,
+      ...hydrated,
+    }));
+  }, [steamStoreSections]);
 
   const isSearchResultsView = submittedSearchQuery.trim().length > 0;
 
@@ -895,14 +891,23 @@ export default function Store() {
     setSelectedDetailGame(null);
 
     if (games.length > 0) {
-      resolveProviderOverlaysForStoreGames(games, settings)
-        .then((overlays) => {
-          setProviderOverlayByAppId((current) => ({
-            ...current,
-            ...overlays,
-          }));
-        })
-        .catch(() => {});
+      const hydrated: Record<string, PackageGame> = {};
+      for (const game of games) {
+        const cached = getSourceAvailability(game.appId);
+        if (cached && cached.status === "ready" && cached.availableSources.length > 0) {
+          hydrated[game.appId] = {
+            ...game,
+            sources: cached.availableSources.map((s) => ({
+              providerId: s.id as any,
+              providerName: s.name,
+              fileType: s.type as any,
+              available: s.status === "ready",
+              downloadUrl: s.packageUrl,
+            })),
+          };
+        }
+      }
+      setProviderOverlayByAppId((current) => ({ ...current, ...hydrated }));
     }
   }
 

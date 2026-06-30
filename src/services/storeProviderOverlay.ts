@@ -13,6 +13,14 @@ const MAX_OVERLAY_CHECKS = 24;
 const OVERLAY_CONCURRENCY = 3;
 const OVERLAY_TIMEOUT_MS = 12000;
 
+type OverlayWorkerResult = {
+  appId: string;
+  game: PackageGame;
+  cacheable: boolean;
+};
+
+const inflightProviderChecks = new Map<string, Promise<OverlayWorkerResult>>();
+
 type OverlayCacheItem = {
   savedAt: number;
   game: PackageGame;
@@ -173,48 +181,57 @@ export async function resolveProviderOverlaysForStoreGames(
     gamesToCheck,
     OVERLAY_CONCURRENCY,
     async (game) => {
-      try {
-        const response = await withTimeout(
-          searchPackagesByProviders(
-            {
-              query: game.appId,
-              provider: "all",
-              enabledProviderIds,
-            },
-            settings
-          ),
-          OVERLAY_TIMEOUT_MS,
-          `Timeout revisando providers para AppID ${game.appId}.`
-        );
+      const existing = inflightProviderChecks.get(game.appId);
+      if (existing) return existing;
 
-        const providerGame = response.results.find(
-          (item) => item.appId === game.appId
-        );
+      const promise = (async (): Promise<OverlayWorkerResult> => {
+        try {
+          const response = await withTimeout(
+            searchPackagesByProviders(
+              {
+                query: game.appId,
+                provider: "all",
+                enabledProviderIds,
+              },
+              settings
+            ),
+            OVERLAY_TIMEOUT_MS,
+            `Timeout revisando providers para AppID ${game.appId}.`
+          );
 
-        if (!providerGame) {
-          const noSourceGame = createNoSourceGame(game);
+          const providerGame = response.results.find(
+            (item) => item.appId === game.appId
+          );
+
+          if (!providerGame) {
+            const noSourceGame = createNoSourceGame(game);
+
+            return {
+              appId: game.appId,
+              game: noSourceGame,
+              cacheable: true,
+            };
+          }
 
           return {
             appId: game.appId,
-            game: noSourceGame,
+            game: mergeSteamGameWithProviderGame(game, providerGame),
             cacheable: true,
           };
+        } catch (error) {
+          console.error(error);
+
+          return {
+            appId: game.appId,
+            game: createNoSourceGame(game),
+            cacheable: false,
+          };
         }
+      })();
 
-        return {
-          appId: game.appId,
-          game: mergeSteamGameWithProviderGame(game, providerGame),
-          cacheable: true,
-        };
-      } catch (error) {
-        console.error(error);
-
-        return {
-          appId: game.appId,
-          game: createNoSourceGame(game),
-          cacheable: false,
-        };
-      }
+      inflightProviderChecks.set(game.appId, promise);
+      promise.finally(() => inflightProviderChecks.delete(game.appId));
+      return promise;
     }
   );
 
