@@ -36,7 +36,7 @@ export default function SplashScreen() {
     if (hasClosedSplashRef.current) return;
     hasClosedSplashRef.current = true;
 
-    console.log("[Boot] closing splash");
+    console.log("[Boot] closing splash overlay");
     setFadeOut(true);
 
     invoke("close_splashscreen_and_show_main").catch((err: unknown) => {

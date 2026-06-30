@@ -17,6 +17,7 @@ import { importExternalPlaytime } from "../services/playtimeService";
 import { useSettings } from "./SettingsContext";
 import {
   waitForBootSnapshot,
+  scheduleAfterMain,
 } from "../services/appBootCoordinator";
 import {
   seedResolvedMediaCacheFromSnapshot,
@@ -228,26 +229,17 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       setGames(loaded);
       setWarnings(cached.warnings || []);
       setInitialLoading(false);
-
-      // Do NOT run enrichWithStats or updateAppInfoFromGames on initial load.
-      // Stats load lazily per game; appinfo is already in the snapshot/canonical cache.
-      if (isCacheExpired(cached)) {
-        setLoading(true);
-        setTimeout(async () => {
-          try {
-            const result = await resolveLibraryGames(settings);
-            setGames(result.games);
-            setWarnings(result.warnings);
-          } catch (error) {
-            console.error("[LibraryGamesContext] scan error:", error);
-          } finally {
-            setLoading(false);
-          }
-        }, 500);
-      }
     } else {
-      setLoading(true);
-      setTimeout(async () => {
+      setInitialLoading(false);
+    }
+
+    // Schedule background Steam scan after main window is visible.
+    // This is non-blocking — snapshot/cached games show immediately.
+    // Manual Refresh Library still does a full scan.
+    const needsScan = !cached || isCacheExpired(cached);
+    if (needsScan) {
+      scheduleAfterMain(async () => {
+        setLoading(true);
         try {
           const result = await resolveLibraryGames(settings);
           setGames(result.games);
@@ -256,9 +248,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           console.error("[LibraryGamesContext] scan error:", error);
         } finally {
           setLoading(false);
-          setInitialLoading(false);
         }
-      }, 50);
+      }, 3000);
     }
   }
 

@@ -2,10 +2,30 @@ mod commands;
 mod models;
 mod utils;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                if let Some(main) = handle.get_webview_window("main") {
+                    if !main.is_visible().unwrap_or(false) {
+                        eprintln!("[Boot] Rust failsafe: showing main window after timeout");
+                        let _ = main.show();
+                        let _ = main.set_focus();
+                    }
+                }
+                if let Some(splash) = handle.get_webview_window("splashscreen") {
+                    eprintln!("[Boot] Rust failsafe: closing splashscreen");
+                    let _ = splash.close();
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::splash::close_splashscreen_and_show_main,
             commands::steam::detect_steam_paths,

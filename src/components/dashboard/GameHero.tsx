@@ -14,149 +14,269 @@ type GameHeroProps = {
   onNavigate?: (page: AppPage) => void;
 };
 
+type GameSession = {
+  appId?: string;
+  state: string;
+  launchedAt?: number;
+  gameKey?: string;
+  title?: string;
+  pid?: number;
+  softSession?: boolean;
+  trackingConfidence?: string;
+};
+
+type HeroGameResult = {
+  game: SnapshotGame | null;
+  isRunning: boolean;
+  session?: GameSession;
+};
+
 function formatElapsed(startedAt: number): string {
   const diff = Date.now() - startedAt;
   const hours = Math.floor(diff / 3600000);
   const mins = Math.floor((diff % 3600000) / 60000);
+
   if (hours > 0) return `${hours}h ${mins}m`;
   return `${mins}m`;
 }
 
+function formatLastPlayed(timestamp?: number | null): string | null {
+  if (timestamp == null) return null;
+  return new Date(timestamp * 1000).toLocaleDateString();
+}
+
 function findHeroGame(
   snapshotGames: SnapshotGame[],
-  sessions: Record<string, { appId?: string; state: string; gameKey?: string }>,
-): { game: SnapshotGame | null; isRunning: boolean; session?: { appId?: string; state: string; launchedAt: number; gameKey?: string } } {
-  const runningEntry = Object.entries(sessions).find(([, s]) => s.state === "running");
+  sessions: Record<string, GameSession>,
+): HeroGameResult {
+  const runningEntry = Object.entries(sessions).find(
+    ([, session]) => session.state === "running",
+  );
+
   if (runningEntry) {
-    const [runningKey, running] = runningEntry;
-    if (running?.appId) {
-      const match = snapshotGames.find((g) => g.appId === running.appId);
-      if (match) return { game: match, isRunning: true, session: { ...running, gameKey: runningKey } as { appId?: string; state: string; launchedAt: number; gameKey?: string } };
+    const [runningKey, runningSession] = runningEntry;
+
+    if (runningSession?.appId) {
+      const runningGame = snapshotGames.find(
+        (game) => game.appId === runningSession.appId,
+      );
+
+      if (runningGame) {
+        return {
+          game: runningGame,
+          isRunning: true,
+          session: {
+            ...runningSession,
+            gameKey: runningKey,
+          },
+        };
+      }
     }
   }
 
-  const withLastPlayed = snapshotGames
-    .filter((g) => g.lastPlayed)
-    .sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0));
-  if (withLastPlayed.length > 0) return { game: withLastPlayed[0], isRunning: false };
+  const lastPlayedGame = [...snapshotGames]
+    .filter((game) => game.lastPlayed)
+    .sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0))[0];
 
-  const installed = snapshotGames.find((g) => g.installed);
-  if (installed) return { game: installed, isRunning: false };
+  if (lastPlayedGame) {
+    return {
+      game: lastPlayedGame,
+      isRunning: false,
+    };
+  }
 
-  return { game: snapshotGames[0] || null, isRunning: false };
+  const installedGame = snapshotGames.find((game) => game.installed);
+
+  if (installedGame) {
+    return {
+      game: installedGame,
+      isRunning: false,
+    };
+  }
+
+  return {
+    game: snapshotGames[0] || null,
+    isRunning: false,
+  };
+}
+
+function EmptyHero({ onNavigate }: GameHeroProps) {
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-(--surface-active-border) bg-gradient-to-br from-(--color-accent)/10 via-purple-900/20 to-black">
+      <div className="relative z-10 flex flex-col items-center justify-center px-8 py-20 text-center">
+        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-4 py-1.5 text-xs text-(--color-accent)">
+          <Sparkles className="h-3.5 w-3.5" />
+          LumaForge
+        </div>
+
+        <h1 className="text-4xl font-bold tracking-tight text-(--color-text)">
+          Your Game Launcher
+        </h1>
+
+        <p className="mt-2 max-w-lg text-sm text-(--color-muted)">
+          Discover, manage, and play your games with Lua modding support.
+        </p>
+
+        <div className="mt-6 flex gap-3">
+          <button
+            onClick={() => onNavigate?.("store")}
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-black transition hover:opacity-90"
+          >
+            <Store className="h-4 w-4" />
+            Browse Store
+          </button>
+
+          <button
+            onClick={() => onNavigate?.("library")}
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/6 px-5 py-3 text-sm text-(--color-text) backdrop-blur-xl transition hover:bg-white/10"
+          >
+            <Gamepad2 className="h-4 w-4" />
+            Open Library
+          </button>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export default function GameHero({ onNavigate }: GameHeroProps) {
   const snapshot = getCachedSnapshot();
+
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
-  const { sessions, stopSession, clearSession, findGameProcessForSession } = useGameSession();
+
+  const {
+    sessions,
+    stopSession,
+    clearSession,
+    findGameProcessForSession,
+  } = useGameSession();
+
   const [elapsed, setElapsed] = useState("");
   const [showStopModal, setShowStopModal] = useState(false);
-  const [stopGameKey, setStopGameKey] = useState<string>("");
+  const [stopGameKey, setStopGameKey] = useState("");
 
-  const snapshotGames = snapshot?.library?.games || [];
-  const { game: heroGame, isRunning, session: runningSession } = useMemo(
-    () => findHeroGame(snapshotGames, sessions),
-    [snapshotGames, sessions],
-  );
+  const snapshotGames = useMemo(() => {
+    return snapshot?.library?.games ?? [];
+  }, [snapshot]);
+
+  const {
+    game: heroGame,
+    isRunning,
+    session: runningSession,
+  } = useMemo(() => {
+    return findHeroGame(snapshotGames, sessions);
+  }, [snapshotGames, sessions]);
+
+  const heroAppId = heroGame?.appId;
+
+  const libGame = useMemo(() => {
+    if (!heroAppId) return undefined;
+    return libraryGames.find((game) => game.appId === heroAppId);
+  }, [libraryGames, heroAppId]);
+
+  const bgUrl = useMemo(() => {
+    const bgPath =
+      heroGame?.media?.backgroundPath || heroGame?.media?.landscapePath;
+
+    return bgPath ? localPathToUrl(bgPath) : null;
+  }, [heroGame]);
+
+  const lastPlayedStr = useMemo(() => {
+    return formatLastPlayed(heroGame?.lastPlayed);
+  }, [heroGame?.lastPlayed]);
+
+  const isRunningSession = Boolean(isRunning && runningSession);
+
+  const currentSession = stopGameKey ? sessions[stopGameKey] : undefined;
+
+  const stopModalTitle =
+    currentSession?.title || heroGame?.title || "Unknown Game";
 
   useEffect(() => {
-    if (!isRunning || !runningSession?.launchedAt) return;
+    if (!isRunning || !runningSession?.launchedAt) {
+      setElapsed("");
+      return;
+    }
+
     setElapsed(formatElapsed(runningSession.launchedAt));
-    const interval = setInterval(() => {
-      setElapsed(formatElapsed(runningSession.launchedAt));
+
+    const interval = window.setInterval(() => {
+      setElapsed(formatElapsed(runningSession.launchedAt!));
     }, 10000);
-    return () => clearInterval(interval);
+
+    return () => {
+      window.clearInterval(interval);
+    };
   }, [isRunning, runningSession?.launchedAt]);
 
-  if (!heroGame || !heroGame.appId) {
-    return (
-      <section className="relative overflow-hidden rounded-2xl border border-(--surface-active-border) bg-gradient-to-br from-(--color-accent)/10 via-purple-900/20 to-black">
-        <div className="relative z-10 flex flex-col items-center justify-center px-8 py-20 text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-4 py-1.5 text-xs text-(--color-accent)">
-            <Sparkles className="h-3.5 w-3.5" />
-            LumaForge
-          </div>
-          <h1 className="text-4xl font-bold tracking-tight text-(--color-text)">
-            Your Game Launcher
-          </h1>
-          <p className="mt-2 max-w-lg text-sm text-(--color-muted)">
-            Discover, manage, and play your games with Lua modding support.
-          </p>
-          <div className="mt-6 flex gap-3">
-            <button
-              onClick={() => onNavigate?.("store")}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-black transition hover:opacity-90"
-            >
-              <Store className="h-4 w-4" />
-              Browse Store
-            </button>
-            <button
-              onClick={() => onNavigate?.("library")}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/6 px-5 py-3 text-sm text-(--color-text) backdrop-blur-xl transition hover:bg-white/10"
-            >
-              <Gamepad2 className="h-4 w-4" />
-              Open Library
-            </button>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  const bgPath = heroGame.media?.backgroundPath || heroGame.media?.landscapePath;
-  const bgUrl = bgPath ? localPathToUrl(bgPath) : null;
-  const libGame = libraryGames.find((g) => g.appId === heroGame.appId);
-  const lastPlayedStr =
-    heroGame.lastPlayed != null
-      ? new Date(heroGame.lastPlayed * 1000).toLocaleDateString()
-      : null;
-
-  function handlePrimaryAction() {
+  const handlePrimaryAction = useCallback(() => {
     if (!heroGame) return;
+
     if (isRunning && libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
       return;
     }
+
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
-    } else if (heroGame.appId) {
+      return;
+    }
+
+    if (heroGame.appId) {
       onNavigate?.("store");
     }
-  }
+  }, [heroGame, isRunning, libGame, setSelectedGame, onNavigate]);
 
-  function handleOpenStopModal() {
+  const handleOpenStopModal = useCallback(() => {
     if (!runningSession?.gameKey) return;
+
     setStopGameKey(runningSession.gameKey);
     setShowStopModal(true);
-  }
+  }, [runningSession?.gameKey]);
+
+  const handleCloseStopModal = useCallback(() => {
+    setShowStopModal(false);
+  }, []);
 
   const handleConfirmStop = useCallback(async () => {
     setShowStopModal(false);
-    if (stopGameKey) await stopSession(stopGameKey);
+
+    if (stopGameKey) {
+      await stopSession(stopGameKey);
+    }
   }, [stopGameKey, stopSession]);
 
   const handleMarkAsStopped = useCallback(() => {
     setShowStopModal(false);
-    if (stopGameKey) clearSession(stopGameKey);
+
+    if (stopGameKey) {
+      clearSession(stopGameKey);
+    }
   }, [stopGameKey, clearSession]);
 
   const handleFindProcess = useCallback(async () => {
     if (!stopGameKey) return;
+
     const candidate = await findGameProcessForSession(stopGameKey);
+
     if (candidate) {
-      showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, { title: "Process Found" });
-    } else {
-      showWarning("Could not find the game process automatically.", { title: "Not Found" });
+      showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, {
+        title: "Process Found",
+      });
+      return;
     }
+
+    showWarning("Could not find the game process automatically.", {
+      title: "Not Found",
+    });
   }, [stopGameKey, findGameProcessForSession]);
 
-  const isRunningSession = isRunning && runningSession;
-
-  const currentSession = stopGameKey ? sessions[stopGameKey] : undefined;
-  const stopModalTitle = currentSession?.title || heroGame?.title || "Unknown Game";
+  // ✅ Return condicional DESPUÉS de todos los hooks
+  if (!heroGame || !heroGame.appId) {
+    return <EmptyHero onNavigate={onNavigate} />;
+  }
 
   return (
     <section className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[340px]">
@@ -176,6 +296,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       )}
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
+
       {!isRunningSession && (
         <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
       )}
@@ -192,6 +313,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   </span>
                   Running
                 </span>
+
                 {elapsed && (
                   <span className="text-xs text-white/60">
                     {elapsed} elapsed
@@ -205,11 +327,13 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                     Installed
                   </span>
                 )}
+
                 {lastPlayedStr && (
                   <span className="text-xs text-white/60">
                     Last played: {lastPlayedStr}
                   </span>
                 )}
+
                 {heroGame.playtime != null && (
                   <span className="text-xs text-white/60">
                     {heroGame.playtime} min
@@ -248,6 +372,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                 Open Details
               </button>
             )}
+
             {isRunningSession ? (
               <button
                 onClick={handleOpenStopModal}
@@ -275,7 +400,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         canTerminate={!!currentSession?.pid}
         isSoftSession={currentSession?.softSession ?? true}
         trackingConfidence={currentSession?.trackingConfidence}
-        onClose={() => setShowStopModal(false)}
+        onClose={handleCloseStopModal}
         onConfirmStop={handleConfirmStop}
         onMarkStopped={handleMarkAsStopped}
         onFindProcess={handleFindProcess}
