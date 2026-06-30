@@ -1,8 +1,9 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ChevronLeft, ChevronRight, Gamepad2 } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { localPathToUrl } from "../../services/gameCacheService";
+import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 
@@ -25,6 +26,14 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
     const remaining = snapshotGames.filter((g) => g.appId && !exclude.has(g.appId));
     return remaining.slice(0, 10);
   }, [snapshotGames, excludeAppIds]);
+
+  useEffect(() => {
+    for (const game of displayGames) {
+      if (game.appId) {
+        requestGameData(game.appId, LoadPriority.VIEWPORT);
+      }
+    }
+  }, [displayGames]);
 
   if (displayGames.length === 0) return null;
 

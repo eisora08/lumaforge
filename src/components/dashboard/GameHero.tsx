@@ -5,6 +5,7 @@ import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
 import { localPathToUrl } from "../../services/gameCacheService";
+import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showWarning } from "../toast/GameToast";
 import AsyncImage from "../common/AsyncImage";
 import StopGameModal from "../library/StopGameModal";
@@ -208,6 +209,13 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       window.clearInterval(interval);
     };
   }, [isRunning, runningSession?.launchedAt]);
+
+  // HERO priority: load game data at highest priority immediately
+  useEffect(() => {
+    if (heroAppId) {
+      void requestGameData(heroAppId, LoadPriority.HERO);
+    }
+  }, [heroAppId]);
 
   const handlePrimaryAction = useCallback(() => {
     if (!heroGame) return;

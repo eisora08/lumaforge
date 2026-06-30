@@ -1,10 +1,11 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ChevronLeft, ChevronRight, FileCode2, Package, Download } from "lucide-react";
 import { getCachedSourceAvailabilityIndex } from "../../services/sourceAvailabilityCacheService";
 import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabilityCacheService";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { localPathToUrl } from "../../services/gameCacheService";
+import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import type { AppPage } from "../../types/navigation";
@@ -40,6 +41,14 @@ export default function LuaReadySection({ onNavigate }: Props) {
     entries.sort((a, b) => (b.srcEntry.updatedAt || 0) - (a.srcEntry.updatedAt || 0));
     return entries.slice(0, 10);
   }, [sourceIndex, snapshot]);
+
+  useEffect(() => {
+    for (const { game } of luaEntries) {
+      if (game.appId) {
+        requestGameData(game.appId, LoadPriority.VIEWPORT);
+      }
+    }
+  }, [luaEntries]);
 
   if (luaEntries.length === 0) return null;
 

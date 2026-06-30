@@ -44,6 +44,7 @@ import {
   showSuccess,
   showWarning,
 } from "../components/toast/GameToast";
+import { requestGameData, LoadPriority } from "../services/gameDataService";
 
 
 
@@ -255,6 +256,24 @@ export default function LibraryPage({ onNavigate }: Props) {
       }
     }
   }, [paginatedGames, settings.steamGridDbApiKey, settings.steamGridDbArtworkEnabled]);
+
+  // Priority-based data loading: visible items at VIEWPORT, rest at BACKGROUND
+  useEffect(() => {
+    if (filteredGames.length === 0) return;
+
+    const visibleIds = new Set(paginatedGames.map((g) => g.appId).filter(Boolean) as string[]);
+    const allIds = filteredGames.map((g) => g.appId).filter(Boolean) as string[];
+
+    for (const id of visibleIds) {
+      requestGameData(id, LoadPriority.VIEWPORT);
+    }
+
+    for (const id of allIds) {
+      if (!visibleIds.has(id)) {
+        requestGameData(id, LoadPriority.BACKGROUND);
+      }
+    }
+  }, [paginatedGames, filteredGames]);
 
   // Actions
   async function handlePlay(game: LibraryGame) {

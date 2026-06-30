@@ -124,11 +124,95 @@ function rawMediaFromGameMediaPaths(media: GameMediaPaths | null | undefined): N
 }
 
 // ---------------------------------------------------------------------------
+// Priority-based loading system (Phase 4)
+// ---------------------------------------------------------------------------
+
+export enum LoadPriority {
+  HERO = 3,
+  VIEWPORT = 2,
+  BACKGROUND = 1,
+}
+
+// ---------------------------------------------------------------------------
 // Write guard & refresh tracker
 // ---------------------------------------------------------------------------
 const _writtenMediaIds = new Set<string>();
 const _writtenMetadataIds = new Set<string>();
 const _refreshingIds = new Set<string>();
+const _requestedIds = new Set<string>();
+
+// ---------------------------------------------------------------------------
+// Background queue (staggered batch processing)
+// ---------------------------------------------------------------------------
+const _backgroundQueue: string[] = [];
+const _backgroundProcessing = new Set<string>();
+let _backgroundTimer: ReturnType<typeof setTimeout> | null = null;
+const BACKGROUND_BATCH_SIZE = 5;
+const BACKGROUND_BATCH_DELAY_MS = 100;
+
+function processBackgroundQueue(): void {
+  _backgroundTimer = null;
+  const batch = _backgroundQueue.splice(0, BACKGROUND_BATCH_SIZE);
+
+  for (const id of batch) {
+    _backgroundProcessing.add(id);
+  }
+
+  void Promise.allSettled(
+    batch.map(async (id) => {
+      try {
+        await getMetadata(id);
+        await getMediaPaths(id).catch(() => {});
+      } finally {
+        _backgroundProcessing.delete(id);
+      }
+    })
+  ).then(() => {
+    if (_backgroundQueue.length > 0) {
+      _backgroundTimer = setTimeout(processBackgroundQueue, BACKGROUND_BATCH_DELAY_MS);
+    }
+  });
+}
+
+/**
+ * Request game data at a given priority level.
+ *
+ * HERO:     resolves immediately (await), highest priority
+ * VIEWPORT: resolves immediately (fire-and-forget), medium priority
+ * BACKGROUND: queued and processed in staggered batches
+ *
+ * Duplicate requests are silently ignored via _requestedIds.
+ * Priority only affects WHEN resolution happens, not what is resolved.
+ */
+export async function requestGameData(gameId: string, priority: LoadPriority): Promise<void> {
+  if (_requestedIds.has(gameId)) return;
+
+  _requestedIds.add(gameId);
+
+  if (priority === LoadPriority.HERO) {
+    await getMetadata(gameId);
+    void getMediaPaths(gameId).catch(() => {});
+  } else if (priority === LoadPriority.VIEWPORT) {
+    void getMetadata(gameId).catch(() => {});
+    void getMediaPaths(gameId).catch(() => {});
+  } else {
+    _backgroundQueue.push(gameId);
+    if (!_backgroundTimer) {
+      _backgroundTimer = setTimeout(processBackgroundQueue, BACKGROUND_BATCH_DELAY_MS);
+    }
+  }
+}
+
+/** Reset priority state (e.g. on navigation or session clear) */
+export function clearPriorityState(): void {
+  _requestedIds.clear();
+  _backgroundQueue.length = 0;
+  _backgroundProcessing.clear();
+  if (_backgroundTimer) {
+    clearTimeout(_backgroundTimer);
+    _backgroundTimer = null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // TTL helper
@@ -589,4 +673,5 @@ export function clearGameDataCaches(): void {
   clearGameMetadataCache();
   _writtenMediaIds.clear();
   _writtenMetadataIds.clear();
+  _requestedIds.clear();
 }

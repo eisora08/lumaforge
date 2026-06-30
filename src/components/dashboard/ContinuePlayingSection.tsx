@@ -1,10 +1,11 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ChevronLeft, ChevronRight, Play, Clock } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { localPathToUrl } from "../../services/gameCacheService";
 import { getCachedPlaytimeStore } from "../../services/playtimeService";
+import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 
@@ -87,6 +88,14 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
     () => getContinueGames(snapshot?.library?.games || [], sessions, excludeAppId),
     [snapshot, sessions, excludeAppId],
   );
+
+  useEffect(() => {
+    for (const game of games) {
+      if (game.appId) {
+        requestGameData(game.appId, LoadPriority.VIEWPORT);
+      }
+    }
+  }, [games]);
 
   if (games.length === 0) return null;
 
