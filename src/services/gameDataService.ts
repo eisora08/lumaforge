@@ -49,6 +49,12 @@ async function ensureSqliteAvailable(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// TTL constants
+// ---------------------------------------------------------------------------
+const METADATA_TTL_MS = 24 * 60 * 60 * 1000;  // 24 hours
+const MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// ---------------------------------------------------------------------------
 // Normalized types (internal use only — do not replace existing types)
 // ---------------------------------------------------------------------------
 
@@ -118,10 +124,18 @@ function rawMediaFromGameMediaPaths(media: GameMediaPaths | null | undefined): N
 }
 
 // ---------------------------------------------------------------------------
-// Write guard — prevents duplicate SQLite writes per session
+// Write guard & refresh tracker
 // ---------------------------------------------------------------------------
 const _writtenMediaIds = new Set<string>();
 const _writtenMetadataIds = new Set<string>();
+const _refreshingIds = new Set<string>();
+
+// ---------------------------------------------------------------------------
+// TTL helper
+// ---------------------------------------------------------------------------
+function isExpired(updatedAt: number, ttl: number): boolean {
+  return (Date.now() - updatedAt) > ttl;
+}
 
 // ---------------------------------------------------------------------------
 // SQLite write helpers (fire-and-forget, silent failure)
@@ -131,15 +145,14 @@ function extractMediaBasePath(media: GameMediaPaths | null): string {
   if (!media) return "";
   const sample = media.landscapePath || media.coverPath || media.backgroundPath || media.logoPath;
   if (!sample) return "";
-  // Strip filename to get base directory
   const lastSep = Math.max(sample.lastIndexOf("\\"), sample.lastIndexOf("/"));
   if (lastSep < 0) return "";
   return sample.substring(0, lastSep);
 }
 
-function writeMediaToSqlite(appId: string, media: GameMediaPaths | null, provider: string): void {
+function writeMediaToSqlite(appId: string, media: GameMediaPaths | null, provider: string, force = false): void {
   if (!_sqliteAvailable) return;
-  if (_writtenMediaIds.has(appId)) return;
+  if (!force && _writtenMediaIds.has(appId)) return;
   if (!media?.coverPath && !media?.landscapePath && !media?.backgroundPath && !media?.logoPath) return;
 
   _writtenMediaIds.add(appId);
@@ -159,9 +172,9 @@ function writeMediaToSqlite(appId: string, media: GameMediaPaths | null, provide
   void insertMediaCacheSqlite(entry);
 }
 
-function writeMetadataToSqlite(appId: string, metadata: NormalizedGameMetadata): void {
+function writeMetadataToSqlite(appId: string, metadata: NormalizedGameMetadata, force = false): void {
   if (!_sqliteAvailable) return;
-  if (_writtenMetadataIds.has(appId)) return;
+  if (!force && _writtenMetadataIds.has(appId)) return;
   if (!metadata.title && !metadata.name) return;
 
   _writtenMetadataIds.add(appId);
@@ -184,7 +197,7 @@ function writeMetadataToSqlite(appId: string, metadata: NormalizedGameMetadata):
 // SQLite helpers (fast path, silent fallback)
 // ---------------------------------------------------------------------------
 
-async function trySqliteMetadata(appId: string): Promise<NormalizedGameMetadata | null> {
+async function trySqliteMetadata(appId: string): Promise<{ data: NormalizedGameMetadata; updatedAt: number } | null> {
   if (!(await ensureSqliteAvailable())) return null;
 
   try {
@@ -192,18 +205,21 @@ async function trySqliteMetadata(appId: string): Promise<NormalizedGameMetadata 
     if (!entry) return null;
 
     if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
-      console.log(`[GameDataService] metadata resolved from SQLite for ${appId}`);
+      console.log(`[GameDataService] metadata hit SQLite for ${appId}`);
     }
 
     return {
-      id: entry.gameId,
-      title: entry.title,
-      provider: entry.provider,
-      installed: entry.installed,
-      lastPlayed: entry.lastPlayed > 0 ? entry.lastPlayed : null,
-      name: entry.title,
-      media: { cover: null, background: null, landscape: null, logo: null, icon: null },
-      rawMetadata: null,
+      data: {
+        id: entry.gameId,
+        title: entry.title,
+        provider: entry.provider,
+        installed: entry.installed,
+        lastPlayed: entry.lastPlayed > 0 ? entry.lastPlayed : null,
+        name: entry.title,
+        media: { cover: null, background: null, landscape: null, logo: null, icon: null },
+        rawMetadata: null,
+      },
+      updatedAt: entry.updatedAt ?? 0,
     };
   } catch {
     _sqliteAvailable = false;
@@ -211,7 +227,7 @@ async function trySqliteMetadata(appId: string): Promise<NormalizedGameMetadata 
   }
 }
 
-async function trySqliteMediaPaths(appId: string): Promise<MediaPathsResult | null> {
+async function trySqliteMediaPaths(appId: string): Promise<{ data: MediaPathsResult; updatedAt: number } | null> {
   if (!(await ensureSqliteAvailable())) return null;
 
   try {
@@ -219,7 +235,7 @@ async function trySqliteMediaPaths(appId: string): Promise<MediaPathsResult | nu
     if (!entry) return null;
 
     if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
-      console.log(`[GameDataService] media resolved from SQLite for ${appId}`);
+      console.log(`[GameDataService] media hit SQLite for ${appId}`);
     }
 
     const base = entry.basePath;
@@ -227,7 +243,7 @@ async function trySqliteMediaPaths(appId: string): Promise<MediaPathsResult | nu
     const background = entry.hasBackground && base ? convertMediaPath(`${base}/background.jpg`) : null;
     const landscape = entry.hasLandscape && base ? convertMediaPath(`${base}/landscape.jpg`) : null;
     const logo = entry.hasLogo && base ? convertMediaPath(`${base}/logo.png`) : null;
-    const icon = null; // icon not in SQLite cache yet
+    const icon = null;
 
     const rawPaths: GameMediaPaths = {
       coverPath: entry.hasCover && base ? `${base}/cover.jpg` : null,
@@ -237,7 +253,10 @@ async function trySqliteMediaPaths(appId: string): Promise<MediaPathsResult | nu
       iconPath: null,
     };
 
-    return { cover, background, landscape, logo, icon, rawPaths };
+    return {
+      data: { cover, background, landscape, logo, icon, rawPaths },
+      updatedAt: entry.updatedAt ?? 0,
+    };
   } catch {
     _sqliteAvailable = false;
     return null;
@@ -245,28 +264,10 @@ async function trySqliteMediaPaths(appId: string): Promise<MediaPathsResult | nu
 }
 
 // ---------------------------------------------------------------------------
-// Public methods
+// Fallback resolution (no SQLite — pure data resolution)
 // ---------------------------------------------------------------------------
 
-/**
- * Get game metadata from the central data layer.
- *
- * Resolution order:
- * 1. SQLite cache (fast path, if available)
- * 2. Canonical appinfo (games/steam/{appId}/appinfo.json)
- * 3. Store metadata (store/details/{appId}.json)
- * 4. Library cache (legacy)
- *
- * Returns normalized metadata that is safe for UI consumption.
- * Does NOT introduce new API calls or disk scans beyond what
- * existing services already perform.
- */
-export async function getMetadata(appId: string): Promise<NormalizedGameMetadata | null> {
-  // 1. Try SQLite (fast path, silent fallback)
-  const sqliteResult = await trySqliteMetadata(appId);
-  if (sqliteResult) return sqliteResult;
-
-  // 2. Try canonical appinfo (lightweight, fast)
+async function resolveMetadataFromFallbacks(appId: string): Promise<NormalizedGameMetadata | null> {
   try {
     const appInfo = await loadGameAppInfoWithMediaFallback(appId);
     if (appInfo) {
@@ -276,7 +277,7 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         console.log(`[GameDataService] metadata resolved from canonical appinfo for ${appId}`);
       }
 
-      const result: NormalizedGameMetadata = {
+      return {
         id: appId,
         title: appInfo.name,
         provider: appInfo.provider,
@@ -286,14 +287,11 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         media,
         rawMetadata: null,
       };
-      writeMetadataToSqlite(appId, result);
-      return result;
     }
   } catch {
     // Fall through
   }
 
-  // 3. Try store metadata (richer metadata)
   try {
     const [metadataResult] = Object.values(await resolveGameMetadata([Number(appId)]));
     if (metadataResult) {
@@ -309,7 +307,7 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         console.log(`[GameDataService] metadata resolved from store for ${appId}`);
       }
 
-      const result: NormalizedGameMetadata = {
+      return {
         id: appId,
         title: metadataResult.name || null,
         provider: "steam",
@@ -319,14 +317,11 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         media,
         rawMetadata: metadataResult,
       };
-      writeMetadataToSqlite(appId, result);
-      return result;
     }
   } catch {
     // Fall through
   }
 
-  // 4. Try library cache (legacy)
   try {
     const libEntry = await getLibraryAppInfo(appId);
     if (libEntry) {
@@ -342,7 +337,7 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         console.log(`[GameDataService] metadata resolved from library cache for ${appId}`);
       }
 
-      const result: NormalizedGameMetadata = {
+      return {
         id: appId,
         title: libEntry.name,
         provider: "steam",
@@ -352,11 +347,132 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         media,
         rawMetadata: null,
       };
-      writeMetadataToSqlite(appId, result);
-      return result;
     }
   } catch {
     // Fall through
+  }
+
+  return null;
+}
+
+async function resolveMediaFromFallbacks(appId: string): Promise<MediaPathsResult | null> {
+  try {
+    const appInfo = await loadGameAppInfoWithMediaFallback(appId);
+    if (appInfo?.media) {
+      const hasMedia = !!(appInfo.media.landscapePath || appInfo.media.coverPath || appInfo.media.backgroundPath || appInfo.media.logoPath || appInfo.media.iconPath);
+      if (hasMedia) {
+        if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
+          console.log(`[GameDataService] media resolved from canonical appinfo for ${appId}`);
+        }
+
+        return {
+          ...normalizeMediaFromGameMediaPaths(appInfo.media),
+          rawPaths: appInfo.media,
+        };
+      }
+    }
+  } catch {
+    // Fall through
+  }
+
+  try {
+    const src = await resolveGameMediaImageSrc(appId);
+    if (src) {
+      const diskPaths = await resolveGameMediaPaths(appId).catch(() => null);
+      if (diskPaths) {
+        if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
+          console.log(`[GameDataService] media resolved from disk scan for ${appId}`);
+        }
+        return {
+          ...normalizeMediaFromGameMediaPaths(diskPaths),
+          rawPaths: diskPaths,
+        };
+      }
+      const empty: NormalizedGameMediaPaths = { cover: null, background: null, landscape: null, logo: null, icon: null };
+      return { ...empty, cover: src, rawPaths: null };
+    }
+  } catch {
+    // Fall through
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Background refresh (fire-and-forget, silent, non-blocking)
+// ---------------------------------------------------------------------------
+
+async function refreshMetadata(appId: string): Promise<void> {
+  const key = `meta:${appId}`;
+  if (_refreshingIds.has(key)) return;
+  _refreshingIds.add(key);
+  try {
+    const result = await resolveMetadataFromFallbacks(appId);
+    if (result) {
+      writeMetadataToSqlite(appId, result, true);
+      if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
+        console.log(`[GameDataService] metadata expired → refresh completed for ${appId}`);
+      }
+    }
+  } catch {
+    // silent
+  } finally {
+    _refreshingIds.delete(key);
+  }
+}
+
+async function refreshMedia(appId: string): Promise<void> {
+  const key = `media:${appId}`;
+  if (_refreshingIds.has(key)) return;
+  _refreshingIds.add(key);
+  try {
+    const result = await resolveMediaFromFallbacks(appId);
+    if (result?.rawPaths) {
+      writeMediaToSqlite(appId, result.rawPaths, "steam", true);
+      if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
+        console.log(`[GameDataService] media expired → refresh completed for ${appId}`);
+      }
+    }
+  } catch {
+    // silent
+  } finally {
+    _refreshingIds.delete(key);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public methods
+// ---------------------------------------------------------------------------
+
+/**
+ * Get game metadata from the central data layer.
+ *
+ * Resolution order:
+ * 1. SQLite cache (fast path, TTL-aware)
+ * 2. Canonical appinfo (games/steam/{appId}/appinfo.json)
+ * 3. Store metadata (store/details/{appId}.json)
+ * 4. Library cache (legacy)
+ *
+ * If SQLite data is expired, returns cached data immediately
+ * and triggers a silent background refresh. Never blocks UI.
+ */
+export async function getMetadata(appId: string): Promise<NormalizedGameMetadata | null> {
+  const sqliteResult = await trySqliteMetadata(appId);
+  if (sqliteResult) {
+    if (!isExpired(sqliteResult.updatedAt, METADATA_TTL_MS)) {
+      return sqliteResult.data;
+    }
+    if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
+      console.log(`[GameDataService] metadata expired → refreshing ${appId}`);
+    }
+    void refreshMetadata(appId);
+    return sqliteResult.data;
+  }
+
+  const fallbackResult = await resolveMetadataFromFallbacks(appId);
+  if (fallbackResult) {
+    writeMetadataToSqlite(appId, fallbackResult);
+    return fallbackResult;
   }
 
   if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
@@ -370,62 +486,32 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
  * Get game media paths (cover, background, landscape, logo, icon).
  *
  * Resolution order:
- * 1. SQLite cache (fast path, if available)
+ * 1. SQLite cache (fast path, TTL-aware)
  * 2. Canonical appinfo media paths
  * 3. Direct disk scan (last resort)
  *
- * Returns both raw file paths and asset:// converted URLs.
- * Uses existing helpers for path conversion — no duplicate logic.
+ * If SQLite data is expired, returns cached data immediately
+ * and triggers a silent background refresh. Never blocks UI.
  */
 export async function getMediaPaths(appId: string): Promise<MediaPathsResult | null> {
-  // 1. Try SQLite (fast path, silent fallback)
   const sqliteResult = await trySqliteMediaPaths(appId);
-  if (sqliteResult) return sqliteResult;
-
-  // 2. Try canonical appinfo (fast, session-cached)
-  try {
-    const appInfo = await loadGameAppInfoWithMediaFallback(appId);
-    if (appInfo?.media) {
-      const hasMedia = !!(appInfo.media.landscapePath || appInfo.media.coverPath || appInfo.media.backgroundPath || appInfo.media.logoPath || appInfo.media.iconPath);
-      if (hasMedia) {
-        if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
-          console.log(`[GameDataService] media resolved from canonical appinfo for ${appId}`);
-        }
-
-        writeMediaToSqlite(appId, appInfo.media, appInfo.provider);
-
-        return {
-          ...normalizeMediaFromGameMediaPaths(appInfo.media),
-          rawPaths: appInfo.media,
-        };
-      }
+  if (sqliteResult) {
+    if (!isExpired(sqliteResult.updatedAt, MEDIA_TTL_MS)) {
+      return sqliteResult.data;
     }
-  } catch {
-    // Fall through
+    if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
+      console.log(`[GameDataService] media expired → refreshing ${appId}`);
+    }
+    void refreshMedia(appId);
+    return sqliteResult.data;
   }
 
-  // 3. Direct disk scan (last resort)
-  try {
-    const src = await resolveGameMediaImageSrc(appId);
-    if (src) {
-      // We found at least one image — also check for all paths
-      const diskPaths = await resolveGameMediaPaths(appId).catch(() => null);
-      if (diskPaths) {
-        if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
-          console.log(`[GameDataService] media resolved from disk scan for ${appId}`);
-        }
-        writeMediaToSqlite(appId, diskPaths, "steam");
-        return {
-          ...normalizeMediaFromGameMediaPaths(diskPaths),
-          rawPaths: diskPaths,
-        };
-      }
-      // Partial: only the best image found
-      const empty: NormalizedGameMediaPaths = { cover: null, background: null, landscape: null, logo: null, icon: null };
-      return { ...empty, cover: src, rawPaths: null };
+  const fallbackResult = await resolveMediaFromFallbacks(appId);
+  if (fallbackResult) {
+    if (fallbackResult.rawPaths) {
+      writeMediaToSqlite(appId, fallbackResult.rawPaths, "steam");
     }
-  } catch {
-    // Fall through
+    return fallbackResult;
   }
 
   if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
