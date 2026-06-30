@@ -97,7 +97,7 @@ function App() {
   function renderPage() {
     switch (activePage) {
       case "home":
-        return <Home />;
+        return <Home onNavigate={handleNavigate} />;
       case "library":
         return <Library onNavigate={handleNavigate} />;
       case "games":

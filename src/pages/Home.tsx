@@ -1,55 +1,88 @@
-import ActivityFeed from "../components/dashboard/ActivityFeed";
-import HeroPanel from "../components/dashboard/HeroPanel";
-import LibraryPreview from "../components/dashboard/LibraryPreview";
-import QuickActions from "../components/dashboard/QuickActions";
-import RecentPackages from "../components/dashboard/RecentPackages";
-import StatCard from "../components/dashboard/StatCard";
-import SystemHealth from "../components/dashboard/SystemHealth";
+import { useMemo } from "react";
+import { Activity } from "lucide-react";
+import GameHero from "../components/dashboard/GameHero";
+import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
+import LuaReadySection from "../components/dashboard/LuaReadySection";
+import LibrarySection from "../components/dashboard/LibrarySection";
+import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
+import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
+import { getCachedSnapshot } from "../services/startupSnapshotService";
+import { useGameActivity } from "../context/GameActivityContext";
+import type { AppPage } from "../types/navigation";
 
-export default function Home() {
+type Props = {
+  onNavigate?: (page: AppPage) => void;
+};
+
+function formatTimestamp(ts: number) {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+export default function Home({ onNavigate }: Props) {
+  const snapshot = useMemo(() => getCachedSnapshot(), []);
+  const { activities } = useGameActivity();
+  const recentActivity = activities.slice(0, 3);
+
+  const installedCount = snapshot?.library?.games?.filter((g) => g.installed).length ?? 0;
+  const lastSync = snapshot?.updatedAt
+    ? new Date(snapshot.updatedAt * 1000).toLocaleString()
+    : null;
+
   return (
-    <div className="space-y-6 p-5 lg:p-7">
-      <HeroPanel />
+    <div className="mx-auto w-full max-w-[1760px] px-6 py-6 lg:px-8 xl:px-10">
+      <div className="space-y-8">
+        <GameHero onNavigate={onNavigate} />
+        <ContinuePlayingSection snapshot={snapshot} onNavigate={onNavigate} />
+        <LuaReadySection onNavigate={onNavigate} />
+        <LibrarySection snapshot={snapshot} onNavigate={onNavigate} />
+        <StoreHighlightsSection onNavigate={onNavigate} />
+        <QuickActionsCompact onNavigate={onNavigate} />
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Juegos instalados"
-          value={0}
-          description="Detectados localmente"
-        />
+        {/* Compact system strip */}
+        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-5 py-3">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            </span>
+            <span className="text-xs text-(--color-muted)">System Ready</span>
+          </div>
 
-        <StatCard
-          label="Luas instalados"
-          value={0}
-          description="Archivos en config/lua"
-        />
+          {lastSync && (
+            <span className="text-xs text-(--color-muted)/60">
+              Last sync: {lastSync}
+            </span>
+          )}
 
-        <StatCard
-          label="Manifests"
-          value={0}
-          description="Archivos en depotcache"
-        />
+          <span className="text-xs text-(--color-muted)/60">
+            {installedCount} game{installedCount !== 1 ? "s" : ""} installed
+          </span>
 
-        <StatCard
-          label="Descargas"
-          value={0}
-          description="En cola actualmente"
-        />
-      </section>
-
-      <QuickActions />
-
-      <section className="grid grid-cols-1 gap-5 2xl:grid-cols-[1.3fr_0.7fr]">
-        <div className="space-y-5">
-          <LibraryPreview />
-          <RecentPackages />
+          {recentActivity.length > 0 && (
+            <div className="flex items-center gap-3 border-l border-(--surface-active-border) pl-4">
+              <Activity className="h-3.5 w-3.5 text-(--color-muted)/60" />
+              {recentActivity.slice(0, 2).map((a) => (
+                <div key={a.id} className="flex items-center gap-1.5">
+                  <span className="line-clamp-1 max-w-[160px] text-xs text-(--color-muted)/80">
+                    {a.title}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-(--color-muted)/40">
+                    {formatTimestamp(a.createdAt)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-
-        <div className="space-y-5">
-          <SystemHealth />
-          <ActivityFeed />
-        </div>
-      </section>
+      </div>
     </div>
   );
 }

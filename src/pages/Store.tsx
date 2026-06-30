@@ -46,9 +46,9 @@ import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 
-function log(...args: unknown[]) {
+function log(origin: string, ...args: unknown[]) {
   if (ENABLE_VERBOSE_SOURCE_LOGS) {
-    console.log("[SourceResolve]", ...args);
+    console.log(`[SourceResolve][${origin}]`, ...args);
   }
 }
 
@@ -926,13 +926,13 @@ export default function Store() {
     const cached = getSourceAvailability(game.appId);
     const appId = game.appId;
 
-    log(`start { appId: "${appId}", title: "${game.title}" }`);
+    log("store-search", `start { appId: "${appId}", title: "${game.title}" }`);
 
     if (cached) {
-      log(`cache hit { appId: "${appId}", status: "${cached.status}" }`);
+      log("store-search", `cache hit { appId: "${appId}", status: "${cached.status}" }`);
 
       if (cached.status === "ready" && game.sources.length === 0) {
-        log(`browse cache hit { appId: "${appId}", hydrating ${cached.sourceCount} sources }`);
+        log("store-search", `browse cache hit { appId: "${appId}", hydrating ${cached.sourceCount} sources }`);
         const hydratedGame: PackageGame = {
           ...game,
           sources: cached.availableSources.map((s) => ({
@@ -952,7 +952,7 @@ export default function Store() {
         return;
       }
     } else {
-      log(`cache miss { appId: "${appId}" }`);
+      log("store-search", `cache miss { appId: "${appId}" }`);
       setSelectedDetailGame(game);
     }
 
@@ -994,7 +994,7 @@ export default function Store() {
           resolvedGame.sources,
           totalProviders
         );
-        log(`saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
+        log("store-search", `saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
 
         updateSourceAvailability(appId, entry).catch(() => {});
       })
@@ -1004,7 +1004,7 @@ export default function Store() {
         const message = error instanceof Error ? error.message : String(error);
         const isTimeout = message.toLowerCase().includes("timeout");
 
-        log(`${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
+        log("store-search", `${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
 
         updateSourceAvailability(appId, {
           appId,
@@ -1205,7 +1205,7 @@ export default function Store() {
           : "none";
 
   if (selectedAppId) {
-    log(`final status { appId: "${selectedAppId}", status: "${sourceStatus}", sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
+    log("store-search", `final status { appId: "${selectedAppId}", status: "${sourceStatus}", sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
   }
 
   if (selectedDetailGameWithOverlay) {
@@ -1241,7 +1241,7 @@ export default function Store() {
             const requestId = ++sourceResolveReqRef.current;
             const appId = game.appId;
 
-            log(`retry { appId: "${appId}" }`);
+            log("store-search", `retry { appId: "${appId}" }`);
 
             setSourcesLoadingByAppId((current) => ({
               ...current,
@@ -1276,14 +1276,14 @@ export default function Store() {
                   resolvedGame.sources,
                   totalProviders
                 );
-                log(`saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
+        log("store-search", `saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
                 updateSourceAvailability(appId, entry).catch(() => {});
               })
               .catch((error: unknown) => {
                 if (requestId !== sourceResolveReqRef.current) return;
                 const message = error instanceof Error ? error.message : String(error);
                 const isTimeout = message.toLowerCase().includes("timeout");
-                log(`${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
+        log("store-search", `${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
                 updateSourceAvailability(appId, {
                   appId,
                   title: game.title,

@@ -15,6 +15,14 @@ import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
 import { enqueueMediaDownload } from "../../services/mediaDownloadQueue";
+import { resolveProviderOverlaysForStoreGames } from "../../services/storeProviderOverlay";
+import {
+  getSourceAvailability,
+  updateSourceAvailability,
+  buildSourceAvailabilityFromProviders,
+  loadSourceAvailabilityIndex,
+} from "../../services/sourceAvailabilityCacheService";
+import { useSettings } from "../../context/SettingsContext";
 
 import { showError } from "../toast/GameToast";
 
@@ -122,22 +130,201 @@ function getReviewSubLabel(summary?: SteamReviewSummary) {
   return `${summary.total_reviews.toLocaleString()} reviews · ${summary.total_positive.toLocaleString()} positive`;
 }
 
+const ENABLE_VERBOSE_SOURCE_LOGS = false;
+
+function sourceLog(...args: unknown[]) {
+  if (ENABLE_VERBOSE_SOURCE_LOGS) {
+    console.log("[StoreDetailsSource]", ...args);
+  }
+}
+
 export default function StoreGameDetailsPage({
   game,
   metadata,
   reviewSummary,
   installStatus = "not-installed",
   moreLikeThisGames = [],
-  selectedSource,
-  sourceStatus = "idle",
+  selectedSource: selectedSourceProp,
+  sourceStatus: sourceStatusProp,
   onBack,
   onDownloadSource,
   onOpenGame,
   onSelectSourceKey,
-  onRefreshSources,
+  onRefreshSources: onRefreshSourcesProp,
 }: StoreGameDetailsPageProps) {
+  const { settings } = useSettings();
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
+
+  // Internal source checking — used when parent does not provide sourceStatus/onRefreshSources
+  const [internalSourceStatus, setInternalSourceStatus] = useState<SourceCheckStatus | undefined>();
+  const [internalSources, setInternalSources] = useState<PackageSource[]>(game.sources);
+  const sourceResolveReqRef = useRef(0);
+
+  const hasParentSourceControl =
+    sourceStatusProp !== undefined || onRefreshSourcesProp !== undefined;
+
+  const effectiveSourceStatus: SourceCheckStatus =
+    sourceStatusProp ?? internalSourceStatus ?? "idle";
+
+  const effectiveSources =
+    hasParentSourceControl ? game.sources : internalSources;
+
+  const effectiveSelectedSource: PackageSource | null | undefined =
+    selectedSourceProp ?? getBestAvailableSource({ ...game, sources: effectiveSources });
+
+  const effectiveRefreshSources = onRefreshSourcesProp ?? (() => {
+    const requestId = ++sourceResolveReqRef.current;
+    const appId = game.appId;
+
+    sourceLog("retry (internal)", { appId });
+
+    setInternalSourceStatus("checking");
+    updateSourceAvailability(appId, {
+      appId,
+      title: game.title,
+      status: "checking",
+      luaReady: false,
+      availableSources: [],
+      sourceCount: 0,
+      totalProviderCount: 0,
+      updatedAt: Math.floor(Date.now() / 1000),
+    }).catch(() => {});
+
+    resolveProviderOverlaysForStoreGames([game], settings)
+      .then((overlays) => {
+        if (requestId !== sourceResolveReqRef.current) return;
+        const overlayGame = overlays[appId];
+        if (overlayGame) {
+          setInternalSources(overlayGame.sources);
+        }
+        const resolvedGame = overlayGame ?? game;
+        const totalProviders = resolvedGame.sources.length;
+        const entry = buildSourceAvailabilityFromProviders(
+          appId,
+          game.title,
+          resolvedGame.sources,
+          totalProviders
+        );
+        sourceLog("saved (internal)", { appId, sourceCount: entry.sourceCount });
+        setInternalSourceStatus(entry.status);
+        updateSourceAvailability(appId, entry).catch(() => {});
+      })
+      .catch((error: unknown) => {
+        if (requestId !== sourceResolveReqRef.current) return;
+        const message = error instanceof Error ? error.message : String(error);
+        const isTimeout = message.toLowerCase().includes("timeout");
+        sourceLog(isTimeout ? "timeout" : "error", { appId, message });
+        const status: SourceCheckStatus = isTimeout ? "timeout" : "error";
+        setInternalSourceStatus(status);
+        updateSourceAvailability(appId, {
+          appId,
+          title: game.title,
+          status,
+          luaReady: false,
+          availableSources: [],
+          sourceCount: 0,
+          totalProviderCount: 0,
+          updatedAt: Math.floor(Date.now() / 1000),
+        }).catch(() => {});
+      })
+      .finally(() => {
+        if (requestId !== sourceResolveReqRef.current) return;
+      });
+  });
+
+  // Origin-independent source check on mount/appId change
+  useEffect(() => {
+    if (hasParentSourceControl) return; // parent handles it
+
+    const appId = game.appId;
+    let cancelled = false;
+    sourceLog("origin-independent check", { appId, title: game.title });
+
+    async function checkSources() {
+      await loadSourceAvailabilityIndex();
+      if (cancelled) return;
+
+      const cached = getSourceAvailability(appId);
+      if (cached) {
+        sourceLog("cache hit", { appId, status: cached.status });
+        if (cached.status === "ready" && cached.availableSources.length > 0) {
+          if (!cancelled) {
+            const mapped = cached.availableSources.map((s) => ({
+              providerId: s.id as any,
+              providerName: s.name,
+              fileType: s.type as any,
+              available: s.status === "ready",
+              downloadUrl: s.packageUrl,
+            }));
+            setInternalSources(mapped);
+            setInternalSourceStatus("ready");
+          }
+          return;
+        }
+        if (cached.status === "none" || cached.status === "error" || cached.status === "timeout") {
+          if (!cancelled) {
+            setInternalSources([]);
+            setInternalSourceStatus(cached.status);
+          }
+          return;
+        }
+      } else {
+        sourceLog("cache miss", { appId });
+      }
+
+      // Not cached or still checking — run resolver
+      setInternalSourceStatus("checking");
+      setInternalSources([]);
+
+      try {
+        const overlays = await resolveProviderOverlaysForStoreGames([game], settings);
+        if (cancelled) return;
+
+        const overlayGame = overlays[appId];
+        const resolvedGame = overlayGame ?? game;
+        const totalProviders = resolvedGame.sources.length;
+        const entry = buildSourceAvailabilityFromProviders(
+          appId,
+          game.title,
+          resolvedGame.sources,
+          totalProviders
+        );
+        sourceLog("resolved (internal)", { appId, sourceCount: entry.sourceCount, status: entry.status });
+        if (!cancelled) {
+          setInternalSources(resolvedGame.sources);
+          setInternalSourceStatus(entry.status);
+        }
+        await updateSourceAvailability(appId, entry);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        const isTimeout = message.toLowerCase().includes("timeout");
+        sourceLog(isTimeout ? "timeout" : "error", { appId, message });
+        const status: SourceCheckStatus = isTimeout ? "timeout" : "error";
+        if (!cancelled) {
+          setInternalSources([]);
+          setInternalSourceStatus(status);
+        }
+        await updateSourceAvailability(appId, {
+          appId,
+          title: game.title,
+          status,
+          luaReady: false,
+          availableSources: [],
+          sourceCount: 0,
+          totalProviderCount: 0,
+          updatedAt: Math.floor(Date.now() / 1000),
+        });
+      }
+    }
+
+    checkSources();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.appId]);
 
   const metadataLoading = !metadata?.resolved;
 
@@ -244,8 +431,8 @@ export default function StoreGameDetailsPage({
     load();
   }, [dlcAppIds]);
 
-  const availableSources = game.sources.filter((source) => source.available);
-  const bestSource = selectedSource ?? getBestAvailableSource(game);
+  const availableSources = effectiveSources.filter((source) => source.available);
+  const bestSource = effectiveSelectedSource ?? getBestAvailableSource({ ...game, sources: effectiveSources });
 
   async function handleOpenSteam() {
     try {
@@ -272,7 +459,7 @@ export default function StoreGameDetailsPage({
   }
 
   function handleDownload() {
-    const source = selectedSource?.available ? selectedSource : bestSource;
+    const source = effectiveSelectedSource?.available ? effectiveSelectedSource : bestSource;
     if (source) {
       onDownloadSource?.(source);
     }
@@ -364,19 +551,19 @@ export default function StoreGameDetailsPage({
 
           <aside className="space-y-4">
             <StoreGameSummaryPanel
-              game={game}
+              game={{ ...game, sources: effectiveSources }}
               installStatus={installStatus}
               developer={developer}
               platforms={platforms}
               availableSources={availableSources.length}
-              totalSources={game.sources.length}
-              selectedSource={selectedSource ?? bestSource}
-              sourceStatus={sourceStatus}
+              totalSources={effectiveSources.length}
+              selectedSource={effectiveSelectedSource ?? bestSource}
+              sourceStatus={effectiveSourceStatus}
               onDownload={handleDownload}
               onChangeSource={() => setSourceSelectorOpen(true)}
               onOpenSteam={handleOpenSteam}
               onOpenSteamDb={handleOpenSteamDb}
-              onRefreshSources={onRefreshSources}
+              onRefreshSources={effectiveRefreshSources}
             />
           </aside>
         </div>
@@ -395,8 +582,8 @@ export default function StoreGameDetailsPage({
 
       <StoreSourceSelectorModal
         open={sourceSelectorOpen}
-        game={game}
-        selectedSource={selectedSource ?? bestSource}
+        game={{ ...game, sources: effectiveSources }}
+        selectedSource={effectiveSelectedSource ?? bestSource}
         onClose={() => setSourceSelectorOpen(false)}
         onSelectSource={onSelectSourceKey}
         onDownloadSource={handleDownloadFromSource}

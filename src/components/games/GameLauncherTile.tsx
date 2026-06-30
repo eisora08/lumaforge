@@ -14,6 +14,8 @@ import type { GameAppInfo } from "../../services/gameCacheService";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
 import AsyncImage from "../common/AsyncImage";
+import Tooltip from "../common/Tooltip";
+import CardActionMenu, { MenuItem } from "./CardActionMenu";
 import { SkeletonBox } from "../common/Skeleton";
 import {
   localPathToUrl,
@@ -74,7 +76,7 @@ export default function GameLauncherTile({
   const [favorite, setFavorite] = useState(false);
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const menuAnchorRef = useRef<HTMLButtonElement>(null);
 
   // Load canonical appinfo for this game — session-cached
   useEffect(() => {
@@ -125,24 +127,6 @@ export default function GameLauncherTile({
   const action = getLauncherGamePrimaryAction(game);
   const hasLua = game.luaScripts.length > 0;
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [menuOpen]);
-
   function handleCardClick() {
     setMenuOpen(false);
     onSelect(game);
@@ -173,7 +157,7 @@ export default function GameLauncherTile({
           }
         }}
         className={`relative cursor-pointer overflow-hidden rounded-t-2xl ${
-          artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[16/9]"
+          artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[5/3]"
         }`}
       >
         {mediaLoading ? (
@@ -198,20 +182,22 @@ export default function GameLauncherTile({
       {/* Title + actions row */}
       <div className="flex items-start gap-1 px-2.5 py-2">
         <div className="min-w-0 flex-1">
-          <h3
-            role="button"
-            tabIndex={0}
-            onClick={handleCardClick}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                handleCardClick();
-              }
-            }}
-            className="line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
-          >
-            {displayTitle}
-          </h3>
+          <Tooltip label={displayTitle} delay={400}>
+            <h3
+              role="button"
+              tabIndex={0}
+              onClick={handleCardClick}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleCardClick();
+                }
+              }}
+              className="line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
+            >
+              {displayTitle}
+            </h3>
+          </Tooltip>
 
           <div className="mt-1.5 flex items-center gap-2">
             {action === "play" && (
@@ -241,85 +227,58 @@ export default function GameLauncherTile({
         </div>
 
         {/* Three-dots menu */}
-        <div className="relative shrink-0" ref={menuRef}>
-          <button
-            type="button"
-            onClick={handleMenuToggle}
-            className="inline-flex cursor-pointer items-center justify-center rounded-lg p-1 text-(--color-muted)/50 transition hover:bg-white/[0.04] hover:text-(--color-text)"
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
+        <div className="relative shrink-0">
+          <Tooltip label="More actions" delay={600} disabled={menuOpen}>
+            <button
+              ref={menuAnchorRef}
+              type="button"
+              aria-label="More actions"
+              onClick={handleMenuToggle}
+              className="inline-flex cursor-pointer items-center justify-center rounded-lg p-1 text-(--color-muted)/50 transition hover:bg-white/[0.04] hover:text-(--color-text)"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
 
-          {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-(--surface-active-border)/60 bg-(--color-bg) p-1 shadow-lg">
-                <MenuButton
-                  label={favorite ? "Remove from favorites" : "Add to favorites"}
-                  icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
-                  onClick={() => setFavorite(!favorite)}
-                />
-                <MenuButton
-                  label="Uninstall"
-                  icon={<Trash2 className="h-3.5 w-3.5" />}
-                  disabled={!game.steamInstalled}
-                  subtitle={!game.steamInstalled ? "Not installed" : "Coming soon"}
-                />
-                {hasLua && onDeleteScript && (
-                  <MenuButton
-                    label="Delete Lua"
-                    icon={<X className="h-3.5 w-3.5" />}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDeleteScript(game);
-                    }}
-                  />
-                )}
-                {hasLua && !onDeleteScript && (
-                  <MenuButton
-                    label="Delete Lua"
-                    icon={<X className="h-3.5 w-3.5" />}
-                    disabled
-                  />
-                )}
-              </div>
-            </>
-          )}
+          <CardActionMenu
+            open={menuOpen}
+            anchorRef={menuAnchorRef}
+            onClose={() => setMenuOpen(false)}
+          >
+            <MenuItem
+              label={favorite ? "Remove from favorites" : "Add to favorites"}
+              icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
+              onClick={() => { setFavorite(!favorite); setMenuOpen(false); }}
+            />
+            <MenuItem
+              label="Uninstall"
+              icon={<Trash2 className="h-3.5 w-3.5" />}
+              disabled={!game.steamInstalled}
+              subtitle={!game.steamInstalled ? "Not installed" : "Coming soon"}
+            />
+            {hasLua && onDeleteScript && (
+              <MenuItem
+                label="Delete Lua"
+                icon={<X className="h-3.5 w-3.5" />}
+                destructive
+                onClick={() => {
+                  setMenuOpen(false);
+                  onDeleteScript(game);
+                }}
+              />
+            )}
+            {hasLua && !onDeleteScript && (
+              <MenuItem
+                label="Delete Lua"
+                icon={<X className="h-3.5 w-3.5" />}
+                disabled
+              />
+            )}
+          </CardActionMenu>
         </div>
       </div>
     </div>
   );
 }
 
-function MenuButton({
-  label,
-  icon,
-  disabled,
-  subtitle,
-  onClick,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  disabled?: boolean;
-  subtitle?: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${
-        disabled
-          ? "cursor-not-allowed text-(--color-muted)/40"
-          : "cursor-pointer text-(--color-text) hover:bg-white/5"
-      }`}
-    >
-      <span className="shrink-0">{icon}</span>
-      <span className="flex-1">{label}</span>
-      {subtitle && (
-        <span className="text-[10px] text-(--color-muted)">{subtitle}</span>
-      )}
-    </button>
-  );
-}
+

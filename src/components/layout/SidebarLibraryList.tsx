@@ -196,8 +196,8 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
       )}
 
       {/* Game list */}
-      <div className={`overflow-y-auto lf-scroll-area ${
-        isCollapsedMode ? "space-y-2" : "max-h-[40vh] space-y-0.5"
+      <div className={`${
+        isCollapsedMode ? "space-y-2" : "space-y-0.5"
       }`}>
         {(initialLoading || (loading && games.length === 0)) ? (
           isCollapsedMode ? (
@@ -248,10 +248,10 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                     setSelectedGame(game);
                     onOpenGame?.();
                   }}
-                  className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition ${
+                  className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors ${
                     isSelected
                       ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
-                      : "hover:bg-white/5"
+                      : "hover:bg-white/[0.06]"
                   }`}
                 >
                   <div className="relative h-10 w-10 overflow-hidden rounded-xl object-cover">
@@ -286,10 +286,10 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                   setSelectedGame(game);
                   onOpenGame?.();
                 }}
-                className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
                   isSelected
                     ? "bg-(--color-accent)/10 text-(--color-accent)"
-                    : "text-(--color-text) hover:bg-white/5"
+                    : "text-(--color-text) hover:bg-white/[0.06]"
                 }`}
               >
                 <div className={`relative shrink-0 overflow-hidden rounded object-cover ${

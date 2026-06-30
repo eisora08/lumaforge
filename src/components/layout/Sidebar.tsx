@@ -96,9 +96,9 @@ export default function Sidebar({
         isCollapsed ? "w-[72px]" : mode === "compact" ? "w-[340px]" : "w-[360px]"
       }`}
     >
-      {/* Header */}
+      {/* Header — shrink-0 */}
       <div
-        className={`flex h-16 items-center ${
+        className={`flex shrink-0 h-16 items-center ${
           showLabels ? "justify-between px-5" : "justify-center px-2"
         }`}
       >
@@ -140,9 +140,9 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* Scrollable nav + games area */}
-      <div className={`flex-1 overflow-y-auto lf-scroll-area ${
-        showLabels ? "px-4 py-5" : "px-3 py-4"
+      {/* Nav sections — shrink-0, always visible */}
+      <div className={`shrink-0 ${
+        showLabels ? "px-4 pb-1" : "px-3 pb-1"
       }`}>
         <SidebarSection
           title="Principal"
@@ -161,7 +161,12 @@ export default function Sidebar({
           isCollapsed={isCollapsed}
           onNavigate={handleNavigate}
         />
+      </div>
 
+      {/* Game list — flex-1, fills remaining space, scrolls internally */}
+      <div className={`flex-1 min-h-0 overflow-y-auto lf-scroll-area ${
+        showLabels ? "px-4" : "px-3"
+      }`}>
         {showLabels && (
           <SidebarLibraryList
             onOpenGame={handleOpenGame}
@@ -176,11 +181,16 @@ export default function Sidebar({
             collapsed={true}
           />
         )}
+      </div>
 
+      {/* Bottom block — shrink-0, pinned at bottom */}
+      <div className={`shrink-0 ${
+        showLabels ? "px-4 pt-2 pb-4" : "px-3 pt-2 pb-3"
+      }`}>
         {/* Restart Steam */}
         <button
           title={isCollapsed ? "Reiniciar Steam" : undefined}
-          className={`mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 hover:bg-white/[0.04] hover:text-(--color-muted) ${
+          className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 transition-colors hover:bg-white/[0.04] hover:text-(--color-muted) ${
             isCollapsed ? "justify-center" : ""
           }`}
         >
@@ -195,12 +205,8 @@ export default function Sidebar({
             Reiniciar Steam
           </span>
         </button>
-      </div>
 
-      {/* Bottom: system status */}
-      <div className={`${
-        showLabels ? "p-4" : "p-3"
-      }`}>
+        {/* System status */}
         <div
           className={`lf-surface rounded-2xl ${
             isCollapsed ? "p-2" : "p-3"
@@ -240,7 +246,7 @@ export default function Sidebar({
         <button
           onClick={onToggleCollapse}
           title={isCollapsed ? "Expandir sidebar" : "Colapsar sidebar"}
-          className="absolute -right-3 top-24 z-50 flex h-7 w-7 items-center justify-center rounded-full bg-(--color-sidebar) text-(--color-muted) shadow-md transition hover:text-(--color-text) hover:shadow-lg"
+          className="absolute -right-3 top-24 z-50 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-(--color-surface) text-(--color-muted) shadow-md transition-colors hover:bg-(--color-panel) hover:text-(--color-text) hover:shadow-lg focus-visible:ring-2 focus-visible:ring-(--color-accent)"
         >
           {isCollapsed ? (
             <ChevronRight className="h-3.5 w-3.5" />
@@ -323,10 +329,10 @@ function SidebarSection({
               key={item.label}
               onClick={() => onNavigate(item.page)}
               title={isCollapsed ? item.label : undefined}
-              className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+              className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
                 isActive
                   ? "bg-(--color-accent)/8 text-(--color-text)"
-                  : "text-(--color-muted) hover:bg-white/[0.04] hover:text-(--color-text)"
+                  : "text-(--color-muted) hover:bg-white/[0.06] hover:text-(--color-text)"
               } ${isCollapsed ? "justify-center" : ""}`}
             >
               <Icon
