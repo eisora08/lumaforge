@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Gamepad2, Play, Square, Sparkles, Store } from "lucide-react";
+import { Gamepad2, Loader2, Play, Square, Sparkles, Store } from "lucide-react";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -10,26 +10,15 @@ import { showWarning } from "../toast/GameToast";
 import AsyncImage from "../common/AsyncImage";
 import StopGameModal from "../library/StopGameModal";
 import type { AppPage } from "../../types/navigation";
+import type { GameSessionState } from "../../context/GameSessionContext";
 
 type GameHeroProps = {
   onNavigate?: (page: AppPage) => void;
 };
 
-type GameSession = {
-  appId?: string;
-  state: string;
-  launchedAt?: number;
-  gameKey?: string;
-  title?: string;
-  pid?: number;
-  softSession?: boolean;
-  trackingConfidence?: string;
-};
-
 type HeroGameResult = {
   game: SnapshotGame | null;
-  isRunning: boolean;
-  session?: GameSession;
+  sessionKey: string | null;
 };
 
 function formatElapsed(startedAt: number): string {
@@ -48,56 +37,35 @@ function formatLastPlayed(timestamp?: number | null): string | null {
 
 function findHeroGame(
   snapshotGames: SnapshotGame[],
-  sessions: Record<string, GameSession>,
+  sessionKeysByAppId: Record<string, string>,
 ): HeroGameResult {
-  const runningEntry = Object.entries(sessions).find(
-    ([, session]) => session.state === "running",
-  );
-
-  if (runningEntry) {
-    const [runningKey, runningSession] = runningEntry;
-
-    if (runningSession?.appId) {
-      const runningGame = snapshotGames.find(
-        (game) => game.appId === runningSession.appId,
-      );
-
-      if (runningGame) {
-        return {
-          game: runningGame,
-          isRunning: true,
-          session: {
-            ...runningSession,
-            gameKey: runningKey,
-          },
-        };
-      }
+  // Priority 1: Find a game that has a running session
+  for (const [appId, key] of Object.entries(sessionKeysByAppId)) {
+    const matchingGame = snapshotGames.find((g) => g.appId === appId);
+    if (matchingGame) {
+      return { game: matchingGame, sessionKey: key };
     }
   }
 
+  // Priority 2: Last played game
   const lastPlayedGame = [...snapshotGames]
     .filter((game) => game.lastPlayed)
     .sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0))[0];
 
   if (lastPlayedGame) {
-    return {
-      game: lastPlayedGame,
-      isRunning: false,
-    };
+    return { game: lastPlayedGame, sessionKey: null };
   }
 
+  // Priority 3: First installed game
   const installedGame = snapshotGames.find((game) => game.installed);
-
   if (installedGame) {
-    return {
-      game: installedGame,
-      isRunning: false,
-    };
+    return { game: installedGame, sessionKey: null };
   }
 
+  // Priority 4: First available game
   return {
     game: snapshotGames[0] || null,
-    isRunning: false,
+    sessionKey: null,
   };
 }
 
@@ -147,27 +115,43 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   const {
     sessions,
+    getState,
+    getSession,
     stopSession,
-    stopGameByAppId,
     clearSession,
     findGameProcessForSession,
   } = useGameSession();
 
   const [elapsed, setElapsed] = useState("");
   const [showStopModal, setShowStopModal] = useState(false);
-  const [stopGameKey, setStopGameKey] = useState("");
 
   const snapshotGames = useMemo(() => {
     return snapshot?.library?.games ?? [];
   }, [snapshot]);
 
-  const {
-    game: heroGame,
-    isRunning,
-    session: runningSession,
-  } = useMemo(() => {
-    return findHeroGame(snapshotGames, sessions);
-  }, [snapshotGames, sessions]);
+  // Build a map of appId → sessionKey for all active sessions
+  const sessionKeysByAppId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const [key, s] of Object.entries(sessions)) {
+      if (s.appId && (s.state === "running" || s.state === "stopping" || s.state === "launching")) {
+        map[s.appId] = key;
+      }
+    }
+    return map;
+  }, [sessions]);
+
+  const { game: heroGame, sessionKey } = useMemo(() => {
+    return findHeroGame(snapshotGames, sessionKeysByAppId);
+  }, [snapshotGames, sessionKeysByAppId]);
+
+  // Read session state from the single source of truth
+  const heroGameState: GameSessionState = sessionKey ? getState(sessionKey) : "idle";
+  const heroSession = sessionKey ? getSession(sessionKey) : undefined;
+
+  const isRunning = heroGameState === "running";
+  const isStopping = heroGameState === "stopping";
+  const isLaunching = heroGameState === "launching";
+  const hasActiveSession = isRunning || isStopping || isLaunching;
 
   const heroAppId = heroGame?.appId;
 
@@ -179,7 +163,6 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const bgUrl = useMemo(() => {
     const bgPath =
       heroGame?.media?.backgroundPath || heroGame?.media?.landscapePath;
-
     return bgPath ? localPathToUrl(bgPath) : null;
   }, [heroGame]);
 
@@ -187,29 +170,25 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     return formatLastPlayed(heroGame?.lastPlayed);
   }, [heroGame?.lastPlayed]);
 
-  const isRunningSession = Boolean(isRunning && runningSession);
+  const stopModalTitle = heroSession?.title || heroGame?.title || "Unknown Game";
 
-  const currentSession = stopGameKey ? sessions[stopGameKey] : undefined;
-
-  const stopModalTitle =
-    currentSession?.title || heroGame?.title || "Unknown Game";
-
+  // Elapsed timer (only when session is running)
   useEffect(() => {
-    if (!isRunning || !runningSession?.launchedAt) {
+    if (!isRunning || !heroSession?.launchedAt) {
       setElapsed("");
       return;
     }
 
-    setElapsed(formatElapsed(runningSession.launchedAt));
+    setElapsed(formatElapsed(heroSession.launchedAt));
 
     const interval = window.setInterval(() => {
-      setElapsed(formatElapsed(runningSession.launchedAt!));
+      setElapsed(formatElapsed(heroSession.launchedAt!));
     }, 10000);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [isRunning, runningSession?.launchedAt]);
+  }, [isRunning, heroSession?.launchedAt]);
 
   // HERO priority: load game data at highest priority immediately
   useEffect(() => {
@@ -239,11 +218,9 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   }, [heroGame, isRunning, libGame, setSelectedGame, onNavigate]);
 
   const handleOpenStopModal = useCallback(() => {
-    if (!runningSession?.gameKey) return;
-
-    setStopGameKey(runningSession.gameKey);
+    if (!sessionKey) return;
     setShowStopModal(true);
-  }, [runningSession?.gameKey]);
+  }, [sessionKey]);
 
   const handleCloseStopModal = useCallback(() => {
     setShowStopModal(false);
@@ -251,41 +228,32 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   const handleConfirmStop = useCallback(async () => {
     setShowStopModal(false);
-
-    const key = stopGameKey || runningSession?.gameKey;
-    if (key) {
-      await stopSession(key);
-    } else if (heroAppId) {
-      await stopGameByAppId(heroAppId);
+    if (sessionKey) {
+      await stopSession(sessionKey);
     }
-  }, [stopGameKey, runningSession?.gameKey, heroAppId, stopSession, stopGameByAppId]);
+  }, [sessionKey, stopSession]);
 
   const handleMarkAsStopped = useCallback(() => {
     setShowStopModal(false);
-
-    if (stopGameKey) {
-      clearSession(stopGameKey);
+    if (sessionKey) {
+      clearSession(sessionKey);
     }
-  }, [stopGameKey, clearSession]);
+  }, [sessionKey, clearSession]);
 
   const handleFindProcess = useCallback(async () => {
-    if (!stopGameKey) return;
-
-    const candidate = await findGameProcessForSession(stopGameKey);
-
+    if (!sessionKey) return;
+    const candidate = await findGameProcessForSession(sessionKey);
     if (candidate) {
       showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, {
         title: "Process Found",
       });
       return;
     }
-
     showWarning("Could not find the game process automatically.", {
       title: "Not Found",
     });
-  }, [stopGameKey, findGameProcessForSession]);
+  }, [sessionKey, findGameProcessForSession]);
 
-  // ✅ Return condicional DESPUÉS de todos los hooks
   if (!heroGame || !heroGame.appId) {
     return <EmptyHero onNavigate={onNavigate} />;
   }
@@ -309,14 +277,14 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
 
-      {!isRunningSession && (
+      {!hasActiveSession && (
         <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
       )}
 
       <div className="relative z-10 flex min-h-[300px] items-end px-6 pb-8 pt-16 sm:min-h-[340px] sm:px-8">
         <div className="flex-1">
           <div className="mb-3 flex items-center gap-3">
-            {isRunningSession ? (
+            {isRunning ? (
               <>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-medium text-emerald-300 backdrop-blur-sm">
                   <span className="relative flex h-2 w-2">
@@ -325,12 +293,25 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   </span>
                   Running
                 </span>
-
                 {elapsed && (
                   <span className="text-xs text-white/60">
                     {elapsed} elapsed
                   </span>
                 )}
+              </>
+            ) : isStopping ? (
+              <>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-3 py-1 text-xs font-medium text-amber-300 backdrop-blur-sm">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Stopping...
+                </span>
+              </>
+            ) : isLaunching ? (
+              <>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-300 backdrop-blur-sm">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Launching...
+                </span>
               </>
             ) : (
               <>
@@ -339,13 +320,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                     Installed
                   </span>
                 )}
-
                 {lastPlayedStr && (
                   <span className="text-xs text-white/60">
                     Last played: {lastPlayedStr}
                   </span>
                 )}
-
                 {heroGame.playtime != null && (
                   <span className="text-xs text-white/60">
                     {heroGame.playtime} min
@@ -360,47 +339,80 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           </h1>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            {isRunningSession ? (
-              <button
-                onClick={handlePrimaryAction}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
-              >
-                <Play className="h-4 w-4" />
-                Focus Game
-              </button>
+            {isStopping ? (
+              <>
+                <button
+                  disabled
+                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black opacity-60 transition"
+                >
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Stopping...
+                </button>
+                <span className="inline-flex items-center gap-1 text-xs text-(--color-muted)">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Stopping...
+                </span>
+              </>
+            ) : isLaunching ? (
+              <>
+                <button
+                  disabled
+                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black opacity-60 transition"
+                >
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Launching...
+                </button>
+              </>
+            ) : isRunning ? (
+              <>
+                <button
+                  onClick={handlePrimaryAction}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+                >
+                  <Play className="h-4 w-4" />
+                  Focus Game
+                </button>
+                <button
+                  onClick={handleOpenStopModal}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-red-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-500/80 active:scale-[0.97]"
+                >
+                  <Square className="h-4 w-4" />
+                  Stop
+                </button>
+              </>
             ) : heroGame.playable ? (
-              <button
-                onClick={handlePrimaryAction}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
-              >
-                <Play className="h-4 w-4" />
-                Play
-              </button>
+              <>
+                <button
+                  onClick={handlePrimaryAction}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+                >
+                  <Play className="h-4 w-4" />
+                  Play
+                </button>
+                <button
+                  onClick={() => onNavigate?.("store")}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/6 px-5 py-3 text-sm text-white/80 backdrop-blur-sm transition hover:bg-white/10"
+                >
+                  <Store className="h-4 w-4" />
+                  Browse Store
+                </button>
+              </>
             ) : (
-              <button
-                onClick={handlePrimaryAction}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-white/10 px-6 py-3 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-white/20"
-              >
-                Open Details
-              </button>
-            )}
-
-            {isRunningSession ? (
-              <button
-                onClick={handleOpenStopModal}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-red-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-500/80 active:scale-[0.97]"
-              >
-                <Square className="h-4 w-4" />
-                Stop
-              </button>
-            ) : (
-              <button
-                onClick={() => onNavigate?.("store")}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/6 px-5 py-3 text-sm text-white/80 backdrop-blur-sm transition hover:bg-white/10"
-              >
-                <Store className="h-4 w-4" />
-                Browse Store
-              </button>
+              <>
+                <button
+                  onClick={handlePrimaryAction}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-white/10 px-6 py-3 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-white/20"
+                >
+                  Open Details
+                </button>
+                <button
+                  onClick={() => onNavigate?.("store")}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/6 px-5 py-3 text-sm text-white/80 backdrop-blur-sm transition hover:bg-white/10"
+                >
+                  <Store className="h-4 w-4" />
+                  Browse Store
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -409,9 +421,9 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       <StopGameModal
         open={showStopModal}
         gameTitle={stopModalTitle}
-        canTerminate={!!currentSession?.pid}
-        isSoftSession={currentSession?.softSession ?? true}
-        trackingConfidence={currentSession?.trackingConfidence}
+        canTerminate={!!heroSession?.pid}
+        isSoftSession={heroSession?.softSession ?? true}
+        trackingConfidence={heroSession?.trackingConfidence}
         onClose={handleCloseStopModal}
         onConfirmStop={handleConfirmStop}
         onMarkStopped={handleMarkAsStopped}

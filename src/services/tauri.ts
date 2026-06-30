@@ -437,6 +437,20 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
   return await invoke<ProcessInfo[]>("list_processes");
 }
 
+export type DiscoveredExecutable = {
+  exe_path: string;
+  file_name: string;
+  size_bytes: number;
+};
+
+export async function discoverExecutables(dir: string): Promise<DiscoveredExecutable[]> {
+  try {
+    return await invoke<DiscoveredExecutable[]>("discover_executables", { dir });
+  } catch {
+    return [];
+  }
+}
+
 // --- Store cache ---
 // All Store data lives under app_data/store/ to keep it separate from Library cache.
 

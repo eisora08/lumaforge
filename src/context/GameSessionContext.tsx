@@ -1,14 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isProcessRunning, terminateProcess, terminateProcessTree, terminateProcessByName, launchSteamApp, launchExecutable, listProcesses } from "../services/tauri";
-import { findGameProcess, findCandidates, pickBestCandidate } from "../utils/gameProcessDetection";
+import { findGameProcess, findGameProcesses, findCandidates, pickBestCandidate, resolveExecutablePath, getExeNamesFromSession, extractExeName } from "../utils/gameProcessDetection";
 import { startPlaySession, endPlaySession } from "../services/playtimeService";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
+import { setInstalledGameEntry, getInstalledGameEntry } from "../services/installedGamesRegistry";
 
 const ENABLE_VERBOSE_LAUNCH_LOGS = false;
-const STOP_RETRY_MAX = 3;
-const STOP_RETRY_DELAY_MS = 300;
+const STOP_RETRY_MAX = 5;
+const STOP_RETRY_DELAY_MS = 400;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -327,8 +328,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
   );
 
   const killPidWithRetry = useCallback(
-    async (gameKey: string, pid: number): Promise<boolean> => {
+    async (gameKey: string, pid: number, killNames?: string[]): Promise<boolean> => {
       for (let attempt = 1; attempt <= STOP_RETRY_MAX; attempt++) {
+        // Check if process already dead
         try {
           const stillRunning = await isProcessRunning(pid);
           if (!stillRunning) {
@@ -336,32 +338,55 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             return true;
           }
         } catch {
-          // If check fails, attempt kill anyway
+          // If check fails, proceed with kill
         }
 
+        // Attempt A: Kill by PID tree
         try {
-          // Always use /T flag to kill entire process tree
           await terminateProcessTree(pid);
-          console.debug("[GameSession] kill attempt succeeded", { gameKey, pid, attempt });
+          console.debug("[GameSession] kill by PID attempt", { gameKey, pid, attempt });
         } catch (err) {
-          console.warn("[GameSession] kill attempt failed", { gameKey, pid, attempt, err });
+          console.warn("[GameSession] kill by PID failed", { gameKey, pid, attempt, err });
         }
 
         await delay(STOP_RETRY_DELAY_MS);
 
+        // Check if PID is dead
         try {
           const alive = await isProcessRunning(pid);
           if (!alive) {
-            console.debug("[GameSession] process confirmed dead", { gameKey, pid, attempt });
+            console.debug("[GameSession] process confirmed dead via PID", { gameKey, pid, attempt });
             return true;
           }
-          console.warn("[GameSession] process still alive after attempt", { gameKey, pid, attempt });
         } catch {
-          // If check fails on last attempt, trust the kill
-          if (attempt === STOP_RETRY_MAX) {
-            return true;
+          // continue with name fallback
+        }
+
+        // Attempt B: Kill by name (fallback within same retry)
+        if (killNames && killNames.length > 0) {
+          for (const name of killNames) {
+            try {
+              console.debug("[GameSession] kill by name fallback", { gameKey, name, attempt });
+              await terminateProcessByName(name);
+            } catch {
+              // ignore
+            }
+            await delay(STOP_RETRY_DELAY_MS);
+          }
+
+          // Verify with original PID
+          try {
+            const aliveAfterNameKill = await isProcessRunning(pid);
+            if (!aliveAfterNameKill) {
+              console.debug("[GameSession] process confirmed dead via name fallback", { gameKey, pid, attempt });
+              return true;
+            }
+          } catch {
+            if (attempt === STOP_RETRY_MAX) return true;
           }
         }
+
+        console.warn("[GameSession] process still alive after attempt", { gameKey, pid, attempt });
       }
       return false;
     },
@@ -373,34 +398,51 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       const session = sessionsRef.current[gameKey];
       if (!session) return { terminated: false };
 
-      let targetPid = (session.pid != null && session.pid > 0) ? session.pid : null;
+      console.debug("[GameSession] stopSession", {
+        gameKey,
+        pid: session.pid,
+        exePath: session.executablePath,
+        processName: session.processName,
+        title: session.title,
+        confidence: session.trackingConfidence,
+      });
 
-      console.debug("[GameSession] stopSession", { gameKey, pid: targetPid, confidence: session.trackingConfidence });
-
-      // Set stopping state immediately (use markStopping for consistency)
+      // Set stopping state immediately
       markStopping(gameKey);
+
+      // Build kill names upfront (from multiple sources + registry)
+      const registryEntry = getInstalledGameEntry(gameKey);
+      const killNames = getExeNamesFromSession({
+        processName: session.processName || registryEntry?.exeName,
+        executablePath: session.executablePath || registryEntry?.exePath,
+        title: session.title,
+      });
 
       let terminated = false;
 
-      // ATTEMPT A: Kill by PID with retry
-      if (targetPid != null) {
-        // Validate stored PID before trusting it
+      // ---- LAYER 1: Kill by stored PID ----
+      const storedPid =
+        session.pid != null && session.pid > 0 ? session.pid : null;
+
+      if (storedPid != null) {
+        // Validate PID before using it
         try {
-          const pidValid = await isProcessRunning(targetPid);
-          if (!pidValid) {
-            console.debug("[GameSession] stored PID not running, skipping attempt A", { gameKey, pid: targetPid });
-            targetPid = null;
+          const pidValid = await isProcessRunning(storedPid);
+          if (pidValid) {
+            terminated = await killPidWithRetry(gameKey, storedPid, killNames);
+          } else {
+            console.debug("[GameSession] stored PID not running, skipping layer 1", {
+              gameKey,
+              pid: storedPid,
+            });
           }
         } catch {
-          // If check fails, proceed with kill attempt anyway
+          // If check fails, attempt kill anyway
+          terminated = await killPidWithRetry(gameKey, storedPid, killNames);
         }
       }
 
-      if (targetPid != null) {
-        terminated = await killPidWithRetry(gameKey, targetPid);
-      }
-
-      // ATTEMPT B: Scan for process, then kill with retry
+      // ---- LAYER 2: Scan ALL processes for any matching candidate ----
       if (!terminated) {
         try {
           const input: FindProcessInput = {
@@ -410,19 +452,34 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             title: session.title,
             appId: session.appId,
           };
-          const candidate = await findGameProcess(input, []);
-          if (candidate) {
-            console.debug("[GameSession] found process via scan", { gameKey, pid: candidate.pid, name: candidate.name, confidence: candidate.confidence });
-            terminated = await killPidWithRetry(gameKey, candidate.pid);
-            if (terminated) {
+          const allCandidates = await findGameProcesses(input, []);
+          console.debug("[GameSession] process scan found candidates", {
+            gameKey,
+            count: allCandidates.length,
+            candidates: allCandidates.map((c) => ({ pid: c.pid, name: c.name, confidence: c.confidence })),
+          });
+
+          for (const candidate of allCandidates) {
+            if (candidate.pid === storedPid) continue; // already tried
+            const killed = await killPidWithRetry(gameKey, candidate.pid, killNames);
+            if (killed) {
+              terminated = true;
+              // Update session with found process info
               setSessions((prev) => {
                 const existing = prev[gameKey];
                 if (!existing) return prev;
                 return {
                   ...prev,
-                  [gameKey]: { ...existing, pid: candidate.pid, processName: candidate.name, trackingConfidence: candidate.confidence, updatedAt: Date.now() },
+                  [gameKey]: {
+                    ...existing,
+                    pid: candidate.pid,
+                    processName: candidate.name,
+                    trackingConfidence: candidate.confidence,
+                    updatedAt: Date.now(),
+                  },
                 };
               });
+              break;
             }
           }
         } catch (err) {
@@ -430,38 +487,73 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         }
       }
 
-      // ATTEMPT C: Kill by executable name (fallback with retry + verification)
-      if (!terminated) {
-        const killNames: string[] = [];
-        if (session.processName) killNames.push(session.processName);
-        if (session.executablePath) {
-          const exeName = session.executablePath.split(/[/\\]/).pop();
-          if (exeName) killNames.push(exeName);
-        }
-        if (session.title) killNames.push(`${session.title}.exe`);
+      // ---- LAYER 3: Kill by executable name (aggressive) ----
+      if (!terminated && killNames.length > 0) {
+        console.debug("[GameSession] layer 3: killing by name", { gameKey, names: killNames });
 
         for (const name of [...new Set(killNames)]) {
-          for (let attempt = 1; attempt <= 2; attempt++) {
+          if (terminated) break;
+          for (let attempt = 1; attempt <= STOP_RETRY_MAX; attempt++) {
             try {
-              console.debug("[GameSession] trying kill by name", { gameKey, name, attempt });
               await terminateProcessByName(name);
               await delay(STOP_RETRY_DELAY_MS);
 
-              // Verify process is actually gone
+              // Verify by listing all processes
               const alive = await listProcesses();
-              const nameLower = name.toLowerCase();
+              const nameLower = name.toLowerCase().replace(".exe", "");
               const stillExists = alive.some(
-                (p) => p.name.toLowerCase() === nameLower || p.name.toLowerCase() === nameLower.replace(".exe", "") || p.exe?.toLowerCase().endsWith(`/${nameLower}`) || p.exe?.toLowerCase().endsWith(`\\${nameLower}`)
+                (p) =>
+                  p.name.toLowerCase() === nameLower ||
+                  p.name.toLowerCase() === `${nameLower}.exe` ||
+                  p.name.toLowerCase() === name.toLowerCase() ||
+                  p.exe?.toLowerCase().endsWith(`/${name.toLowerCase()}`) ||
+                  p.exe?.toLowerCase().endsWith(`\\${name.toLowerCase()}`)
               );
               if (!stillExists) {
                 terminated = true;
                 break;
               }
             } catch (err) {
-              console.warn("[GameSession] kill by name failed", { gameKey, name, attempt, err });
+              console.warn("[GameSession] kill by name failed", {
+                gameKey,
+                name,
+                attempt,
+                err,
+              });
             }
           }
-          if (terminated) break;
+        }
+      }
+
+      // ---- LAYER 4: Brute force — scan process list and kill any exe matching game title ----
+      if (!terminated && session.title) {
+        try {
+          const titleWords = session.title
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter((w) => w.length > 3);
+          const allProcs = await listProcesses();
+          for (const proc of allProcs) {
+            const procName = proc.name.toLowerCase().replace(".exe", "");
+            const match = titleWords.some(
+              (word) => procName.includes(word) || word.includes(procName)
+            );
+            if (match && !procName.includes("steam") && !procName.includes("epic")) {
+              try {
+                await terminateProcessTree(proc.pid);
+                await delay(200);
+                const stillRunning = await isProcessRunning(proc.pid);
+                if (!stillRunning) {
+                  terminated = true;
+                  break;
+                }
+              } catch {
+                // continue
+              }
+            }
+          }
+        } catch {
+          // best effort
         }
       }
 
@@ -476,13 +568,21 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         });
       } else {
         // Do NOT clear session — prevent desync. Mark as soft session so UI shows correct state.
-        console.warn("[GameSession] all stop attempts exhausted, marking as soft session", { gameKey });
+        console.warn("[GameSession] all stop attempts exhausted, marking as soft session", {
+          gameKey,
+        });
         setSessions((prev) => {
           const existing = prev[gameKey];
           if (!existing) return prev;
           return {
             ...prev,
-            [gameKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+            [gameKey]: {
+              ...existing,
+              state: "running" as ActiveGameState,
+              softSession: true,
+              trackingConfidence: "none",
+              updatedAt: Date.now(),
+            },
           };
         });
       }
@@ -749,8 +849,55 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
               });
             }
           }, 2000);
-        } else if (game.source === "local" && game.executablePath) {
-          const result = await launchExecutable(game.executablePath);
+        } else if (game.source === "local") {
+          // Resolve executable path — registry first, then discovery
+          let effectiveExePath = game.executablePath;
+          if (!effectiveExePath) {
+            const resolved = await resolveExecutablePath(game.id, game.installDir, game.title);
+            if (resolved) {
+              effectiveExePath = resolved.exePath;
+              console.debug("[Launch] resolved executable", { gameKey: computedKey, exePath: effectiveExePath });
+
+              // Persist to registry so future launches skip scanning
+              if (game.id) {
+                setInstalledGameEntry({
+                  gameId: game.id,
+                  installDir: game.installDir || "",
+                  exePath: resolved.exePath,
+                  exeName: resolved.exeName,
+                  provider: "local",
+                  lastValidated: Date.now(),
+                });
+              }
+
+              // Update session with discovered executable info
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing) return prev;
+                return {
+                  ...prev,
+                  [computedKey]: {
+                    ...existing,
+                    executablePath: resolved.exePath,
+                    processName: resolved.exeName,
+                    updatedAt: Date.now(),
+                  },
+                };
+              });
+            }
+          }
+
+          if (!effectiveExePath) {
+            console.warn("[Launch] no executable path for local game", { gameKey: computedKey });
+            setSessions((prev) => {
+              const next = { ...prev };
+              delete next[computedKey];
+              return next;
+            });
+            return;
+          }
+
+          const result = await launchExecutable(effectiveExePath);
           if (ls.cancelled || ls.token !== token) {
             if (result.pid) {
               try { await terminateProcess(result.pid); } catch { /* ignore */ }
@@ -773,7 +920,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   pid: result.pid,
                   softSession: false,
                   trackingConfidence: "high",
-                  processName: game.executablePath!.split(/[/\\]/).pop(),
+                  processName: extractExeName(effectiveExePath),
                   updatedAt: Date.now(),
                 },
               };

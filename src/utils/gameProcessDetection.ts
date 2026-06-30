@@ -1,5 +1,6 @@
 import type { ProcessInfo } from "../services/tauri";
-import { listProcesses } from "../services/tauri";
+import { listProcesses, discoverExecutables } from "../services/tauri";
+import { getExePathFromEntry, getExeNameFromEntry } from "../services/installedGamesRegistry";
 
 export type ProcessCandidate = {
   pid: number;
@@ -202,4 +203,182 @@ export async function findGameProcess(
   console.debug("[ProcessTracking] snapshot after count", processes.length);
   const candidates = findCandidates(processes, game, snapshotBefore);
   return pickBestCandidate(candidates);
+}
+
+export async function findGameProcesses(
+  game: FindProcessInput,
+  snapshotBefore: ProcessInfo[]
+): Promise<ProcessCandidate[]> {
+  const processes = await listProcesses();
+  console.debug("[ProcessTracking] snapshot after count", processes.length);
+  return findCandidates(processes, game, snapshotBefore);
+}
+
+const COMMON_LAUNCHER_EXES = new Set([
+  "setup.exe",
+  "install.exe",
+  "installer.exe",
+  "uninstall.exe",
+  "unins000.exe",
+  "unins001.exe",
+  "dxsetup.exe",
+  "vcredist_x86.exe",
+  "vcredist_x64.exe",
+  "vc_redist.x86.exe",
+  "vc_redist.x64.exe",
+  "dotnetfx.exe",
+  "directx.exe",
+  "dxwebsetup.exe",
+  "oalinst.exe",
+  "gfwlivesetup.exe",
+  "steam.exe",
+  "steamwebhelper.exe",
+  "epicgameslauncher.exe",
+  "eosoverlay.exe",
+  "eosoverlayrenderer.exe",
+  "crashreporter.exe",
+  "unitycrashhandler.exe",
+  "ngscrt64.exe",
+  "scp_service.exe",
+  "gamerserviceservice.exe",
+  "gamerservicesnet.exe",
+  "gamerservicerenderer.exe",
+  "updater.exe",
+  "update.exe",
+  "redist.exe",
+  "launcher.exe",
+  "launch.exe",
+]);
+
+function isLauncherExe(name: string): boolean {
+  return COMMON_LAUNCHER_EXES.has(name.toLowerCase());
+}
+
+export async function discoverGameExecutable(
+  installDir: string,
+  title?: string
+): Promise<{ exePath: string; exeName: string } | null> {
+  try {
+    const executables = await discoverExecutables(installDir);
+    if (executables.length === 0) return null;
+
+    // Filter out known launcher/setup files
+    const candidates = executables.filter(
+      (exe) => !isLauncherExe(exe.file_name)
+    );
+
+    if (candidates.length === 0) return null;
+
+    // Priority 1: Find exe in Win64/ directory
+    const win64Candidates = candidates.filter((exe) => {
+      const path = exe.exe_path.replace(/\\/g, "/").toLowerCase();
+      const parts = path.split("/");
+      return parts.some((p) => p === "win64");
+    });
+    if (win64Candidates.length > 0) {
+      const best = win64Candidates[0];
+      return { exePath: best.exe_path, exeName: best.file_name };
+    }
+
+    // Priority 2: Find exe in bin/ directory
+    const binCandidates = candidates.filter((exe) => {
+      const path = exe.exe_path.replace(/\\/g, "/").toLowerCase();
+      const parts = path.split("/");
+      return parts.some((p) => p === "bin");
+    });
+    if (binCandidates.length > 0) {
+      const best = binCandidates[0];
+      return { exePath: best.exe_path, exeName: best.file_name };
+    }
+
+    // Priority 3: Match by title keywords
+    if (title) {
+      const titleWords = title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+      const titleMatch = candidates.find((exe) => {
+        const base = exe.file_name.toLowerCase().replace(".exe", "");
+        return titleWords.some(
+          (word) =>
+            word.length > 3 &&
+            (base.includes(word) || word.includes(base))
+        );
+      });
+      if (titleMatch) {
+        return { exePath: titleMatch.exe_path, exeName: titleMatch.file_name };
+      }
+    }
+
+    // Priority 4: Root directory (closest to install root)
+    const installNorm = installDir.replace(/\\/g, "/").replace(/\/+$/, "");
+    const rootCandidates = candidates.filter((exe) => {
+      const exeDir = exe.exe_path.replace(/\\/g, "/");
+      const lastSlash = exeDir.lastIndexOf("/");
+      const dir = lastSlash >= 0 ? exeDir.substring(0, lastSlash) : exeDir;
+      return dir === installNorm;
+    });
+    if (rootCandidates.length > 0) {
+      const best = rootCandidates[0];
+      return { exePath: best.exe_path, exeName: best.file_name };
+    }
+
+    // Priority 5: Largest file (already sorted by size from backend)
+    const best = candidates[0];
+    return { exePath: best.exe_path, exeName: best.file_name };
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveExecutablePath(
+  gameId: string,
+  installDir: string | undefined,
+  title: string | undefined
+): Promise<{ exePath: string; exeName: string } | null> {
+  // Check registry first
+  if (gameId) {
+    const registeredPath = getExePathFromEntry(gameId);
+    const registeredName = getExeNameFromEntry(gameId);
+    if (registeredPath && registeredName) {
+      return { exePath: registeredPath, exeName: registeredName };
+    }
+  }
+
+  // Fallback to discovery
+  if (!installDir) return null;
+  return discoverGameExecutable(installDir, title);
+}
+
+export function extractExeName(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || "";
+}
+
+export function getDirPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  return lastSlash >= 0 ? normalized.substring(0, lastSlash) : normalized;
+}
+
+export function getExeNamesFromSession(session: {
+  processName?: string;
+  executablePath?: string;
+  title?: string;
+}): string[] {
+  const names: string[] = [];
+  if (session.processName) {
+    const clean = session.processName.toLowerCase().replace(".exe", "");
+    names.push(clean);
+    names.push(`${clean}.exe`);
+  }
+  if (session.executablePath) {
+    const exeName = extractExeName(session.executablePath);
+    const clean = exeName.toLowerCase().replace(".exe", "");
+    names.push(clean);
+    names.push(exeName);
+  }
+  if (session.title) {
+    const clean = session.title.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    names.push(clean);
+    names.push(`${clean}.exe`);
+  }
+  return [...new Set(names)];
 }

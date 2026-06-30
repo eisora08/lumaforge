@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use sysinfo::{PidExt, ProcessExt, System, SystemExt};
 
@@ -14,6 +15,85 @@ pub struct ProcessInfo {
   pub parent_pid: Option<u32>,
   pub name: String,
   pub exe: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredExecutable {
+  pub exe_path: String,
+  pub file_name: String,
+  pub size_bytes: u64,
+}
+
+#[tauri::command]
+pub fn discover_executables(dir: String) -> Result<Vec<DiscoveredExecutable>, String> {
+  let dir_path = Path::new(&dir);
+  if !dir_path.exists() || !dir_path.is_dir() {
+    return Err(format!("Directory not found: {}", dir));
+  }
+
+  let mut results = Vec::new();
+  let walker = walkdir::WalkDir::new(dir_path)
+    .max_depth(3)
+    .follow_links(false)
+    .into_iter()
+    .filter_entry(|e| {
+      let name = e.file_name().to_string_lossy().to_lowercase();
+      name != "steamapps" && name != "common" && !name.starts_with('.')
+    });
+
+  for entry in walker {
+    let entry = entry.map_err(|e| format!("Walk error: {}", e))?;
+    if !entry.file_type().is_file() {
+      continue;
+    }
+
+    let path = entry.path();
+    let ext = path
+      .extension()
+      .and_then(|e| e.to_str())
+      .map(|e| e.to_lowercase());
+
+    if ext.as_deref() != Some("exe") {
+      continue;
+    }
+
+    let file_name = path
+      .file_name()
+      .and_then(|n| n.to_str())
+      .unwrap_or("")
+      .to_string();
+
+    let lower_name = file_name.to_lowercase();
+    if lower_name.starts_with("setup")
+      || lower_name.starts_with("unins")
+      || lower_name.starts_with("dxsetup")
+      || lower_name.starts_with("vcredist")
+      || lower_name.starts_with("dotnet")
+      || lower_name.starts_with("directx")
+      || lower_name == "steam.exe"
+      || lower_name == "steamwebhelper.exe"
+      || lower_name == "epicgameslauncher.exe"
+      || lower_name == "eosoverlay.exe"
+      || lower_name == "eosoverlayrenderer.exe"
+      || lower_name == "crashreporter.exe"
+      || lower_name == "unitycrashhandler.exe"
+    {
+      continue;
+    }
+
+    let metadata = std::fs::metadata(path)
+      .map_err(|e| format!("Metadata error: {}", e))?;
+
+    results.push(DiscoveredExecutable {
+      exe_path: path.to_string_lossy().to_string(),
+      file_name,
+      size_bytes: metadata.len(),
+    });
+  }
+
+  results.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+
+  Ok(results)
 }
 
 #[tauri::command]
