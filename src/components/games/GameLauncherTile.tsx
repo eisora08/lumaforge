@@ -160,7 +160,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
+    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleMenuToggle(e); }} className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
       {/* Image */}
       <div
         role="button"
@@ -193,6 +193,7 @@ export default function GameLauncherTile({
             <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />
           </div>
         )}
+        <div className="absolute inset-0 rounded-t-2xl bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none" />
       </div>
 
       {/* Title + actions row */}

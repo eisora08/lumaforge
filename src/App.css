@@ -357,7 +357,7 @@ html {
 }
 
 .lf-card-hover:hover {
-  transform: translateY(-2px);
+  transform: translateY(-2px) scale(1.02);
 }
 
 .lf-hover-surface {
@@ -607,6 +607,29 @@ html {
 }
 
 /* =========================
+   SELECT / DROPDOWN STYLING
+========================= */
+
+.lf-select {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--surface-active);
+  border-color: var(--surface-active-border);
+  color: var(--color-text);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%239ca3af'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+
+.lf-select option {
+  background-color: var(--surface-active);
+  color: var(--color-text);
+}
+
+/* =========================
    CARD GRID STAGGER
    Smooth staggered entry for grid items
 ========================= */
@@ -699,4 +722,19 @@ html[data-compact="true"] .lf-press-effect {
   button, [role="button"] {
     @apply cursor-pointer;
   }
+}
+
+
+
+.lf-card-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  transition: background 180ms ease;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.lf-card-hover-overlay:hover .lf-card-overlay {
+  background: rgba(0, 0, 0, 0.35);
 }

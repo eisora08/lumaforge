@@ -535,7 +535,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                             setPageSize(Number(e.target.value));
                             setCurrentPage(1);
                           }}
-                          className="rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-xs text-(--color-text) outline-none focus:border-(--color-accent)/40"
+                          className="lf-select lf-popover-enter rounded-lg border px-2 py-1 text-xs outline-none focus:border-(--color-accent)/40"
                         >
                           {PAGE_SIZES.map((s) => (
                             <option key={s} value={s}>{s}</option>
