@@ -112,7 +112,7 @@ export default function Settings() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer className="lf-fade-in">
       <div className="space-y-6 py-6">
         <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>

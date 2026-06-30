@@ -1215,7 +1215,7 @@ export default function Store() {
 
   if (selectedDetailGameWithOverlay) {
     return (
-      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
+      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7 lf-fade-in">
         <StoreGameDetailsPage
           game={selectedDetailGameWithOverlay}
           metadata={
@@ -1314,7 +1314,7 @@ export default function Store() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-5 pb-5 lg:px-7 lg:pb-7">
+    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-5 pb-5 lg:px-7 lg:pb-7 lf-fade-in">
       <div className="sticky top-0 z-30 -mx-5 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-5 py-2.5 backdrop-blur-md lg:-mx-7 lg:px-7">
         <div className="flex items-center gap-4">
           <div className="flex gap-1">
@@ -1377,7 +1377,7 @@ export default function Store() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
             {activeSection.games.map(renderStoreCard)}
           </div>
         </section>
@@ -1407,7 +1407,7 @@ export default function Store() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
                 {mergedResults.map(renderStoreCard)}
               </div>
             </section>
@@ -1458,7 +1458,7 @@ export default function Store() {
               {filteredBrowseGames.length === 0 ? (
                 <StoreEmptyState />
               ) : (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
                   {filteredBrowseGames.map(renderStoreCard)}
                 </div>
               )}
@@ -1471,7 +1471,7 @@ export default function Store() {
         ) : (
           <section className="space-y-5">
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
               {luaReadyGames.map(renderStoreCard)}
             </div>
           </section>

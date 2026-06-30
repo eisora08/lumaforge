@@ -153,33 +153,39 @@ export default function Sidebar({
           onNavigate={handleNavigate}
         />
 
-        <SidebarSection
-          title="Sistema"
-          items={toolItems}
-          activePage={activePage}
-          showLabels={showLabels}
-          isCollapsed={isCollapsed}
-          onNavigate={handleNavigate}
-        />
+        <div className={showLabels ? "mt-3" : "mt-2"}>
+          <SidebarSection
+            title="Sistema"
+            items={toolItems}
+            activePage={activePage}
+            showLabels={showLabels}
+            isCollapsed={isCollapsed}
+            onNavigate={handleNavigate}
+          />
+        </div>
       </div>
 
       {/* Game list — flex-1, fills remaining space, scrolls internally */}
-      <div className={`flex-1 min-h-0 overflow-y-auto lf-scroll-area ${
+      <div className={`flex-1 min-h-0 overflow-y-auto lf-scroll-area will-change-transform ${
         showLabels ? "px-4" : "px-3"
-      }`}>
+      }`}>        
         {showLabels && (
-          <SidebarLibraryList
-            onOpenGame={handleOpenGame}
-            compact={mode === "compact"}
-          />
+          <div className="pt-1">
+            <SidebarLibraryList
+              onOpenGame={handleOpenGame}
+              compact={mode === "compact"}
+            />
+          </div>
         )}
 
         {isCollapsed && (
-          <SidebarLibraryList
-            onOpenGame={handleOpenGame}
-            compact={false}
-            collapsed={true}
-          />
+          <div className="pt-1">
+            <SidebarLibraryList
+              onOpenGame={handleOpenGame}
+              compact={false}
+              collapsed={true}
+            />
+          </div>
         )}
       </div>
 
@@ -190,7 +196,7 @@ export default function Sidebar({
         {/* Restart Steam */}
         <button
           title={isCollapsed ? "Reiniciar Steam" : undefined}
-          className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 transition-colors hover:bg-white/[0.04] hover:text-(--color-muted) ${
+          className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 transition-colors hover:bg-white/[0.04] hover:text-(--color-muted) lf-press-effect ${
             isCollapsed ? "justify-center" : ""
           }`}
         >
@@ -246,7 +252,7 @@ export default function Sidebar({
         <button
           onClick={onToggleCollapse}
           title={isCollapsed ? "Expandir sidebar" : "Colapsar sidebar"}
-          className="absolute -right-3 top-24 z-50 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-(--color-surface) text-(--color-muted) shadow-md transition-colors hover:bg-(--color-panel) hover:text-(--color-text) hover:shadow-lg focus-visible:ring-2 focus-visible:ring-(--color-accent)"
+          className="absolute -right-3 top-24 z-50 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-(--color-surface) text-(--color-muted) shadow-md transition-colors hover:bg-(--color-panel) hover:text-(--color-text) hover:shadow-lg focus-visible:ring-2 focus-visible:ring-(--color-accent) lf-press-effect"
         >
           {isCollapsed ? (
             <ChevronRight className="h-3.5 w-3.5" />
@@ -329,7 +335,7 @@ function SidebarSection({
               key={item.label}
               onClick={() => onNavigate(item.page)}
               title={isCollapsed ? item.label : undefined}
-              className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+              className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors lf-press-effect ${
                 isActive
                   ? "bg-(--color-accent)/8 text-(--color-text)"
                   : "text-(--color-muted) hover:bg-white/[0.06] hover:text-(--color-text)"

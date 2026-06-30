@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -108,6 +109,11 @@ export function SettingsProvider({
     setSettings(defaultSettings);
     persistSettings(defaultSettings);
   }
+
+  // Sync compactMode to <html> data attribute for CSS control
+  useEffect(() => {
+    document.documentElement.dataset.compact = settings.compactMode ? "true" : "false";
+  }, [settings.compactMode]);
 
   const value = useMemo(
     () => ({

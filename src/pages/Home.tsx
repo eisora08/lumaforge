@@ -76,7 +76,7 @@ export default function Home({ onNavigate }: Props) {
     : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1760px] px-6 py-6 lg:px-8 xl:px-10">
+    <div className="mx-auto w-full max-w-[1760px] px-6 py-6 lg:px-8 xl:px-10 lf-fade-in">
       <div className="space-y-8">
         <GameHero onNavigate={onNavigate} />
         <ContinuePlayingSection

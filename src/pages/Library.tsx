@@ -420,7 +420,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full lf-fade-in">
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
         {showLuaSetup ? (
           <div className="flex flex-1 items-center justify-center p-5 lg:p-7">
@@ -478,7 +478,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                       type="button"
                       onClick={handleCheckUpdates}
                       disabled={checkingUpdates || luaScripts.length === 0}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50 lf-press-effect"
                       title="Check Updates"
                     >
                       <RefreshCcw className={`h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`} />
@@ -489,7 +489,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                       type="button"
                       onClick={refresh}
                       disabled={loading}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 lf-press-effect"
                       title="Scan"
                     >
                       <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -526,8 +526,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                   <>
                     <div className={
                       (settings.libraryCardArtworkMode ?? "landscape") === "poster"
-                        ? "grid grid-cols-[repeat(auto-fill,minmax(165px,1fr))] gap-[22px]"
-                        : "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-[22px]"
+                        ? "grid grid-cols-[repeat(auto-fill,minmax(165px,1fr))] gap-[22px] lf-card-stagger"
+                        : "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-[22px] lf-card-stagger"
                     }>
                       {paginatedGames.map((game) => (
                         <GameLauncherTile

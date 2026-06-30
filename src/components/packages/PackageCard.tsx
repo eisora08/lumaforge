@@ -275,7 +275,7 @@ export default function PackageCard({
               handleOpenDetails();
             }
           }}
-          className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
+          className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40 lf-press-effect"
         >
           <div className="relative w-full shrink-0 overflow-hidden">
             {displayImageUrl && !imageFailed ? (
@@ -332,7 +332,7 @@ export default function PackageCard({
             handleOpenDetails();
           }
         }}
-        className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
+        className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40 lf-press-effect"
       >
         {displayImageUrl && !imageFailed ? (
           <CardImage

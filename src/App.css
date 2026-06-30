@@ -593,6 +593,82 @@ html {
   }
 }
 
+/* =========================
+   PRESS EFFECT
+   Subtle scale on active for interactive elements
+========================= */
+
+.lf-press-effect {
+  transition: transform 100ms ease;
+}
+
+.lf-press-effect:active {
+  transform: scale(0.98);
+}
+
+/* =========================
+   CARD GRID STAGGER
+   Smooth staggered entry for grid items
+========================= */
+
+.lf-card-stagger > * {
+  animation: lfCardFadeIn 300ms ease-out both;
+}
+
+.lf-card-stagger > *:nth-child(1) { animation-delay: 20ms; }
+.lf-card-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.lf-card-stagger > *:nth-child(3) { animation-delay: 60ms; }
+.lf-card-stagger > *:nth-child(4) { animation-delay: 80ms; }
+.lf-card-stagger > *:nth-child(5) { animation-delay: 100ms; }
+.lf-card-stagger > *:nth-child(6) { animation-delay: 120ms; }
+.lf-card-stagger > *:nth-child(7) { animation-delay: 140ms; }
+.lf-card-stagger > *:nth-child(8) { animation-delay: 160ms; }
+.lf-card-stagger > *:nth-child(9) { animation-delay: 180ms; }
+.lf-card-stagger > *:nth-child(10) { animation-delay: 200ms; }
+.lf-card-stagger > *:nth-child(11) { animation-delay: 220ms; }
+.lf-card-stagger > *:nth-child(12) { animation-delay: 240ms; }
+
+@keyframes lfCardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =========================
+   COMPACT MODE (Settings toggle)
+========================= */
+
+html[data-compact="true"] .lf-fade-in,
+html[data-compact="true"] .lf-popover-enter,
+html[data-compact="true"] .lf-scale-in,
+html[data-compact="true"] .lf-transition,
+html[data-compact="true"] .lf-card-hover,
+html[data-compact="true"] .lf-tooltip-enter,
+html[data-compact="true"] .lf-route-enter,
+html[data-compact="true"] .lf-route-exit,
+html[data-compact="true"] .lf-modal-overlay,
+html[data-compact="true"] .lf-modal-panel,
+html[data-compact="true"] .lf-page-transition,
+html[data-compact="true"] .lf-sidebar-panel,
+html[data-compact="true"] .lf-sidebar-fade,
+html[data-compact="true"] .lf-sidebar-label,
+html[data-compact="true"] .lf-sidebar-search,
+html[data-compact="true"] .lf-sidebar-content,
+html[data-compact="true"] .lf-sidebar-overlay,
+html[data-compact="true"] .lf-sidebar-drawer,
+html[data-compact="true"] .lf-sidebar-drawer-exit,
+html[data-compact="true"] .lf-card-stagger > *,
+html[data-compact="true"] .lf-press-effect {
+  animation: none !important;
+  transition: none !important;
+  animation-delay: 0ms !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lf-fade-in,
   .lf-popover-enter,
@@ -612,7 +688,9 @@ html {
   .lf-sidebar-content,
   .lf-sidebar-overlay,
   .lf-sidebar-drawer,
-  .lf-sidebar-drawer-exit {
+  .lf-sidebar-drawer-exit,
+  .lf-card-stagger > *,
+  .lf-press-effect {
     animation: none;
     transition: none;
   }
