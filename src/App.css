@@ -18,8 +18,8 @@
 :root[data-surface="solid"] {
   --page-bg: var(--color-bg);
 
-  --shell-bg: var(--color-sidebar);
-  --shell-border: var(--color-border);
+  --shell-bg: var(--color-bg);
+  --shell-border: transparent;
   --shell-blur: none;
 
   --surface-active: var(--color-surface);
@@ -41,20 +41,16 @@
 :root[data-surface="tinted"] {
   --page-bg: color-mix(
     in srgb,
-    var(--color-bg) 86%,
-    var(--color-accent) 7%
+    var(--color-bg) 90%,
+    var(--color-accent) 5%
   );
 
   --shell-bg: color-mix(
     in srgb,
-    var(--color-sidebar) 82%,
-    var(--color-accent) 12%
+    var(--color-bg) 90%,
+    var(--color-accent) 5%
   );
-  --shell-border: color-mix(
-    in srgb,
-    var(--color-border) 55%,
-    var(--color-accent) 45%
-  );
+  --shell-border: transparent;
   --shell-blur: none;
 
   --surface-active: color-mix(
@@ -272,6 +268,68 @@ html {
 }
 
 /* =========================
+   THEME-SPECIFIC OVERRIDES
+========================= */
+
+/* OLED Black: pure black background, no gradients */
+:root[data-theme="oled-black"] body {
+  background: var(--color-bg);
+}
+
+:root[data-theme="oled-black"] .lf-backdrop {
+  background: var(--color-bg);
+}
+
+/* OLED Black + Solid: pure black minimal surfaces */
+:root[data-theme="oled-black"][data-surface="solid"] {
+  --color-bg: #000000;
+  --color-sidebar: #000000;
+  --color-border: transparent;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] body {
+  background: #000 !important;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] html,
+:root[data-theme="oled-black"][data-surface="solid"] #root {
+  background: #000;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] .lf-backdrop {
+  display: none;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] .lf-shell {
+  background: #000;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] .lf-page {
+  background: #000;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] .lf-surface {
+  background: #080808;
+  border-color: transparent;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] aside,
+:root[data-theme="oled-black"][data-surface="solid"] header {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-theme="oled-black"][data-surface="solid"] .app-shell::before,
+:root[data-theme="oled-black"][data-surface="solid"] .app-shell::after,
+:root[data-theme="oled-black"][data-surface="solid"] body::before,
+:root[data-theme="oled-black"][data-surface="solid"] body::after {
+  display: none !important;
+  background: none !important;
+}
+
+/* =========================
    LIGHTWEIGHT TRANSITIONS
 ========================= */
 
@@ -300,7 +358,6 @@ html {
 
 .lf-card-hover:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
 
 .lf-hover-surface {
@@ -433,6 +490,90 @@ html {
   transition: opacity 200ms ease, transform 200ms ease;
 }
 
+/* =========================
+   SIDEBAR VARIABLES
+   Set via JS inline style for dynamic width
+   These are the defaults used when JS hasn't set them yet.
+========================= */
+
+:root {
+  --sidebar-width: 360px;
+}
+
+/* =========================
+   SIDEBAR TRANSITIONS
+========================= */
+
+.lf-sidebar-panel {
+  transition: width 200ms ease-out;
+}
+
+.lf-sidebar-fade {
+  transition: opacity 200ms ease-out, width 200ms ease-out;
+}
+
+.lf-sidebar-label {
+  transition: opacity 180ms ease-out, transform 150ms ease-out;
+}
+
+.lf-sidebar-label-hidden {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+}
+
+.lf-sidebar-label-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.lf-sidebar-search {
+  transition: opacity 180ms ease-out, width 180ms ease-out, padding 180ms ease-out;
+}
+
+.lf-sidebar-content {
+  transition: padding 200ms ease-out;
+}
+
+.lf-sidebar-overlay {
+  animation: lfSidebarOverlayIn 200ms ease-out both;
+}
+
+@keyframes lfSidebarOverlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.lf-sidebar-drawer {
+  animation: lfSidebarDrawerIn 220ms ease-out both;
+}
+
+@keyframes lfSidebarDrawerIn {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.lf-sidebar-drawer-exit {
+  animation: lfSidebarDrawerOut 180ms ease-in both;
+}
+
+@keyframes lfSidebarDrawerOut {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lf-fade-in,
   .lf-popover-enter,
@@ -443,7 +584,15 @@ html {
   .lf-route-exit,
   .lf-modal-overlay,
   .lf-modal-panel,
-  .lf-page-transition {
+  .lf-page-transition,
+  .lf-sidebar-panel,
+  .lf-sidebar-fade,
+  .lf-sidebar-label,
+  .lf-sidebar-search,
+  .lf-sidebar-content,
+  .lf-sidebar-overlay,
+  .lf-sidebar-drawer,
+  .lf-sidebar-drawer-exit {
     animation: none;
     transition: none;
   }

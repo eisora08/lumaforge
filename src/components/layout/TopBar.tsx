@@ -18,11 +18,12 @@ type TopBarProps = {
   onOpenSidebar: () => void;
   activePage: AppPage;
   onNavigate?: (page: AppPage) => void;
+  sidebarDrawerMode?: boolean;
 };
 
 const MAX_VISIBLE_ITEMS = 6;
 
-export default function TopBar({ onOpenSidebar, activePage, onNavigate }: TopBarProps) {
+export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarDrawerMode }: TopBarProps) {
   const { query, setQuery } = useSearch();
   const { selectGame } = useGameDetails();
   const showSearch = activePage !== "store";
@@ -116,14 +117,16 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate }: TopBar
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b lf-shell px-4 lg:px-6">
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between px-4 lg:px-6">
       <div className="flex items-center gap-3">
-        <button
-          onClick={onOpenSidebar}
-          className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-(--color-text) hover:bg-white/8 lg:hidden"
-        >
-          <Menu className="h-4 w-4" />
-        </button>
+        {(sidebarDrawerMode) && (
+          <button
+            onClick={onOpenSidebar}
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-(--color-text) hover:bg-white/8"
+          >
+            <Menu className="h-4 w-4" />
+          </button>
+        )}
 
         {showSearch && (
           <div ref={dropdownRef} className="relative">

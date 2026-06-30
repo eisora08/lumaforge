@@ -432,12 +432,12 @@ export default function LibraryPage({ onNavigate }: Props) {
             </div>
           </div>
         ) : (
-          <PageContainer className="py-5 lg:py-7">
-            <div className="lg:grid lg:grid-cols-[1fr_280px] lg:gap-6">
+          <PageContainer className="py-6 lg:py-8">
+            <div className="lg:grid lg:grid-cols-[1fr_300px] lg:gap-6">
               <div className="min-w-0">
-                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
+                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/15 bg-(--color-accent)/8 px-3 py-1 text-xs text-(--color-accent)">
                       <Library className="h-3.5 w-3.5" />
                       Library
                     </div>
@@ -475,7 +475,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                 </div>
 
                 {warnings.length > 0 && (
-                  <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
+                  <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
                     <p className="mb-1 font-medium">Warnings:</p>
                     <ul className="space-y-0.5">
                       {warnings.map((w, i) => <li key={i}>• {w}</li>)}
@@ -484,7 +484,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                 )}
 
                 {paginatedGames.length === 0 ? (
-                  <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
+                  <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
                     <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
                     <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
                     <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
@@ -502,8 +502,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                   <>
                     <div className={
                       (settings.libraryCardArtworkMode ?? "landscape") === "poster"
-                        ? "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
-                        : "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+                        ? "grid grid-cols-[repeat(auto-fill,minmax(145px,1fr))] gap-[22px]"
+                        : "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-[22px]"
                     }>
                       {paginatedGames.map((game) => (
                         <GameLauncherTile
@@ -518,7 +518,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                       ))}
                     </div>
                     {/* Pagination */}
-                    <div className="mt-6 flex items-center justify-between">
+                    <div className="mt-7 flex items-center justify-between">
                       <div className="flex items-center gap-2 text-xs text-(--color-muted)">
                         <span>Grid:</span>
                         <select

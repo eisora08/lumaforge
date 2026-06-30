@@ -1,13 +1,14 @@
-import type { ElementType } from "react";
+import { useCallback, useEffect, useRef, type ElementType } from "react";
 
 import {
   Activity,
   Award,
+  ChevronLeft,
+  ChevronRight,
   Store,
   Download,
   Library,
   Home,
-  Menu,
   RotateCcw,
   Settings,
   Wrench,
@@ -15,12 +16,14 @@ import {
   Flame,
 } from "lucide-react";
 
-import { AppPage } from "../../types/navigation";
+import type { AppPage } from "../../types/navigation";
 import SidebarLibraryList from "./SidebarLibraryList";
 
+export type SidebarMode = "expanded" | "compact" | "collapsed" | "drawer";
+
 type SidebarProps = {
-  isOpen: boolean;
-  isCollapsed: boolean;
+  mode: SidebarMode;
+  isDrawerOpen: boolean;
   activePage: AppPage;
   onClose: () => void;
   onToggleCollapse: () => void;
@@ -47,138 +50,241 @@ const toolItems: SidebarItem[] = [
   { label: "Configuración", page: "settings", icon: Settings },
 ];
 
+const isNavExpanded = (mode: SidebarMode) =>
+  mode === "expanded" || mode === "compact";
+
 export default function Sidebar({
-  isOpen,
-  isCollapsed,
+  mode,
+  isDrawerOpen,
   activePage,
   onClose,
   onToggleCollapse,
   onNavigate,
 }: SidebarProps) {
+  const isDrawer = mode === "drawer";
+  const showLabels = isNavExpanded(mode);
+  const isCollapsed = mode === "collapsed";
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+
   function handleNavigate(page: AppPage) {
     onNavigate(page);
-    onClose();
+    if (isDrawer) onClose();
   }
 
   function handleOpenGame() {
     onNavigate("library-game-detail");
-    onClose();
+    if (isDrawer) onClose();
   }
 
-  return (
-    <>
-      {isOpen && (
-        <div
-          onClick={onClose}
-          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden"
-        />
-      )}
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isDrawer && isDrawerOpen) {
+        onClose();
+      }
+    },
+    [isDrawer, isDrawerOpen, onClose]
+  );
 
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r lf-shell transition-all duration-300 lg:static ${
-          isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-        } ${isCollapsed ? "lg:w-20" : "lg:w-72"}`}
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
+  const sidebarContent = (
+    <div
+      className={`flex h-full flex-col lf-sidebar-panel ${
+        isCollapsed ? "w-[72px]" : mode === "compact" ? "w-[340px]" : "w-[360px]"
+      }`}
+    >
+      {/* Header */}
+      <div
+        className={`flex h-16 items-center ${
+          showLabels ? "justify-between px-5" : "justify-center px-2"
+        }`}
       >
-        <div className="flex h-16 items-center justify-between border-b border-(--shell-border) px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-(--color-accent)/20 bg-(--color-accent)/10">
-              <Flame className="h-5 w-5 text-(--color-accent)" />
-            </div>
-
-            {!isCollapsed && (
-              <div className="min-w-0">
-                <h1 className="font-bold leading-none text-(--color-text)">
-                  LumaForge
-                </h1>
-
-                <p className="mt-1 text-[11px] text-(--color-muted)">
-                  Premium Game Toolkit
-                </p>
-              </div>
-            )}
+        <div
+          className={`flex min-w-0 items-center gap-3 ${
+            isCollapsed ? "justify-center" : ""
+          }`}
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-(--color-accent)/10 bg-(--color-accent)/8">
+            <Flame className="h-4.5 w-4.5 text-(--color-accent)" />
           </div>
 
+          <div
+            className={`min-w-0 lf-sidebar-label ${
+              showLabels
+                ? "lf-sidebar-label-visible"
+                : "lf-sidebar-label-hidden"
+            }`}
+          >
+            <h1 className="font-bold leading-none text-(--color-text)">
+              LumaForge
+            </h1>
+            {mode === "expanded" && (
+              <p className="mt-1.5 text-[10px] text-(--color-muted)/50">
+                Premium Game Toolkit
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Close button (drawer) */}
+        {isDrawer && (
           <button
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10 lg:hidden"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10"
           >
             <X className="h-5 w-5" />
           </button>
+        )}
+      </div>
 
-          <button
-            onClick={onToggleCollapse}
-            className="hidden h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10 lg:flex"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        </div>
+      {/* Scrollable nav + games area */}
+      <div className={`flex-1 overflow-y-auto lf-scroll-area ${
+        showLabels ? "px-4 py-5" : "px-3 py-4"
+      }`}>
+        <SidebarSection
+          title="Principal"
+          items={mainItems}
+          activePage={activePage}
+          showLabels={showLabels}
+          isCollapsed={isCollapsed}
+          onNavigate={handleNavigate}
+        />
 
-        <div className="flex-1 overflow-y-auto px-3 py-4">
-          <SidebarSection
-            title="Principal"
-            items={mainItems}
-            activePage={activePage}
-            isCollapsed={isCollapsed}
-            onNavigate={handleNavigate}
+        <SidebarSection
+          title="Sistema"
+          items={toolItems}
+          activePage={activePage}
+          showLabels={showLabels}
+          isCollapsed={isCollapsed}
+          onNavigate={handleNavigate}
+        />
+
+        {showLabels && (
+          <SidebarLibraryList
+            onOpenGame={handleOpenGame}
+            compact={mode === "compact"}
           />
+        )}
 
-          <div className="my-4 h-px bg-(--shell-border)" />
-
-          <SidebarSection
-            title="Sistema"
-            items={toolItems}
-            activePage={activePage}
-            isCollapsed={isCollapsed}
-            onNavigate={handleNavigate}
+        {isCollapsed && (
+          <SidebarLibraryList
+            onOpenGame={handleOpenGame}
+            compact={false}
+            collapsed={true}
           />
+        )}
 
-          <div className="my-4 h-px bg-(--shell-border)" />
-
-          {!isCollapsed && <SidebarLibraryList onOpenGame={handleOpenGame} />}
-
-          <button
-            className={`mt-3 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-(--color-muted) hover:bg-white/6 hover:text-(--color-text) ${
-              isCollapsed ? "lg:justify-center" : ""
+        {/* Restart Steam */}
+        <button
+          title={isCollapsed ? "Reiniciar Steam" : undefined}
+          className={`mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 hover:bg-white/[0.04] hover:text-(--color-muted) ${
+            isCollapsed ? "justify-center" : ""
+          }`}
+        >
+          <RotateCcw className="h-5 w-5 shrink-0 text-(--color-muted)" />
+          <span
+            className={`lf-sidebar-label ${
+              showLabels
+                ? "lf-sidebar-label-visible"
+                : "lf-sidebar-label-hidden"
             }`}
           >
-            <RotateCcw className="h-5 w-5 shrink-0 text-(--color-muted)" />
+            Reiniciar Steam
+          </span>
+        </button>
+      </div>
 
-            {!isCollapsed && <span>Reiniciar Steam</span>}
-          </button>
-        </div>
-
-        <div className="border-t border-(--shell-border) p-3">
-          <div
-            className={`lf-surface rounded-2xl border p-3 ${
-              isCollapsed ? "hidden lg:block" : ""
-            }`}
-          >
-            {isCollapsed ? (
-              <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10">
-                <Store className="h-4 w-4 text-emerald-400" />
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center gap-2 text-sm font-medium text-(--color-text)">
-                  <Store className="h-4 w-4 text-emerald-400" />
-                  Sistema listo
+      {/* Bottom: system status */}
+      <div className={`${
+        showLabels ? "p-4" : "p-3"
+      }`}>
+        <div
+          className={`lf-surface rounded-2xl ${
+            isCollapsed ? "p-2" : "p-3"
+          }`}
+          title={isCollapsed ? "Sistema listo" : undefined}
+        >
+          {isCollapsed ? (
+            <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10">
+              <Store className="h-4 w-4 text-emerald-400" />
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-sm font-medium text-(--color-text)">
+                <div className="flex h-2 w-2 items-center justify-center">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
                 </div>
-
-                <p className="mt-1 text-xs text-(--color-muted)">
+                Sistema listo
+              </div>
+              {mode === "expanded" && (
+                <p className="mt-1.5 text-[11px] text-(--color-muted)">
                   Esperando detección de Steam.
                 </p>
-              </>
-            )}
-          </div>
-
-          {!isCollapsed && (
-            <p className="mt-3 px-1 text-[11px] text-(--color-muted)">
-              v0.1.0 Preview
-            </p>
+              )}
+            </>
           )}
         </div>
-      </aside>
-    </>
+
+        {showLabels && (
+          <p className="mt-3 px-1 text-[10px] text-(--color-muted)/50">
+            v0.1.0 Preview
+          </p>
+        )}
+      </div>
+
+      {/* Collapse/expand toggle (desktop only, not in drawer mode) */}
+      {!isDrawer && (
+        <button
+          onClick={onToggleCollapse}
+          title={isCollapsed ? "Expandir sidebar" : "Colapsar sidebar"}
+          className="absolute -right-3 top-24 z-50 flex h-7 w-7 items-center justify-center rounded-full bg-(--color-sidebar) text-(--color-muted) shadow-md transition hover:text-(--color-text) hover:shadow-lg"
+        >
+          {isCollapsed ? (
+            <ChevronRight className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronLeft className="h-3.5 w-3.5" />
+          )}
+        </button>
+      )}
+    </div>
+  );
+
+  if (isDrawer) {
+    return (
+      <>
+        {isDrawerOpen && (
+          <div
+            onClick={onClose}
+            className="lf-sidebar-overlay fixed inset-0 z-30 bg-black/60 backdrop-blur-sm"
+          />
+        )}
+
+        <aside
+          ref={drawerRef}
+          className={`fixed inset-y-0 left-0 z-40 ${
+            isDrawerOpen
+              ? "lf-sidebar-drawer"
+              : "lf-sidebar-drawer-exit"
+          } ${isDrawerOpen ? "" : "pointer-events-none"}`}
+          style={{ width: "360px" }}
+        >
+          {sidebarContent}
+        </aside>
+      </>
+    );
+  }
+
+  return (
+    <aside
+      className={`relative z-10 lf-sidebar-panel ${
+        isCollapsed ? "w-[72px]" : mode === "compact" ? "w-[340px]" : "w-[360px]"
+      }`}
+    >
+      {sidebarContent}
+    </aside>
   );
 }
 
@@ -186,6 +292,7 @@ type SidebarSectionProps = {
   title: string;
   items: SidebarItem[];
   activePage: AppPage;
+  showLabels: boolean;
   isCollapsed: boolean;
   onNavigate: (page: AppPage) => void;
 };
@@ -194,13 +301,14 @@ function SidebarSection({
   title,
   items,
   activePage,
+  showLabels,
   isCollapsed,
   onNavigate,
 }: SidebarSectionProps) {
   return (
     <div>
-      {!isCollapsed && (
-        <p className="mb-2 px-3 text-[11px] uppercase tracking-[0.18em] text-(--color-muted)">
+      {showLabels && (
+        <p className="mb-2.5 px-3 text-[10px] uppercase tracking-[0.2em] text-(--color-muted)/50">
           {title}
         </p>
       )}
@@ -215,11 +323,11 @@ function SidebarSection({
               key={item.label}
               onClick={() => onNavigate(item.page)}
               title={isCollapsed ? item.label : undefined}
-              className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm transition ${
+              className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
                 isActive
-                  ? "border border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-text)"
-                  : "text-(--color-muted) hover:bg-white/6 hover:text-(--color-text)"
-              } ${isCollapsed ? "lg:justify-center" : ""}`}
+                  ? "bg-(--color-accent)/8 text-(--color-text)"
+                  : "text-(--color-muted) hover:bg-white/[0.04] hover:text-(--color-text)"
+              } ${isCollapsed ? "justify-center" : ""}`}
             >
               <Icon
                 className={`h-5 w-5 shrink-0 ${
@@ -229,7 +337,11 @@ function SidebarSection({
                 }`}
               />
 
-              {!isCollapsed && <span>{item.label}</span>}
+              {showLabels && (
+                <span className="lf-sidebar-label lf-sidebar-label-visible">
+                  {item.label}
+                </span>
+              )}
             </button>
           );
         })}

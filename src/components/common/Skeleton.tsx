@@ -18,8 +18,8 @@ export function SidebarThumbSkeleton() {
 
 export function PosterCardSkeleton() {
   return (
-    <div className="flex flex-col rounded-2xl border border-(--surface-active-border) bg-white/[0.03]">
-      <div className="aspect-[3/4] animate-pulse rounded-t-2xl bg-white/5" />
+    <div className="flex flex-col rounded-2xl bg-transparent">
+      <div className="aspect-[3/4] animate-pulse rounded-2xl bg-white/5" />
       <div className="space-y-2 px-3 py-2.5">
         <SkeletonBox className="h-3 w-3/4" />
         <SkeletonBox className="h-3 w-1/3" />
@@ -30,8 +30,8 @@ export function PosterCardSkeleton() {
 
 export function LandscapeCardSkeleton() {
   return (
-    <div className="flex flex-col rounded-2xl border border-(--surface-active-border) bg-white/[0.03]">
-      <div className="aspect-video animate-pulse rounded-t-2xl bg-white/5" />
+    <div className="flex flex-col rounded-2xl bg-transparent">
+      <div className="aspect-video animate-pulse rounded-2xl bg-white/5" />
       <div className="space-y-2 px-3 py-2.5">
         <SkeletonBox className="h-3 w-3/4" />
         <SkeletonBox className="h-3 w-1/3" />

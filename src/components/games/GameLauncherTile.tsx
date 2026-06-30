@@ -160,7 +160,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div className="group flex flex-col rounded-2xl border border-(--surface-active-border) bg-white/[0.03] lf-card-hover hover:border-(--color-accent)/30 hover:bg-white/[0.06]">
+    <div className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02]">
       {/* Image */}
       <div
         role="button"
@@ -173,7 +173,7 @@ export default function GameLauncherTile({
           }
         }}
         className={`relative cursor-pointer overflow-hidden rounded-t-2xl ${
-          artworkMode === "poster" ? "aspect-[3/4]" : "aspect-[16/9]"
+          artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[16/9]"
         }`}
       >
         {mediaLoading ? (
@@ -182,21 +182,21 @@ export default function GameLauncherTile({
           <AsyncImage
             src={resolvedSrc}
             alt={displayTitle}
-            className="h-full w-full"
+            className="h-full w-full object-cover"
             fallbackLocalPath={fallbackLocalPath}
             fallback={
-              <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+              <Gamepad2 className="h-8 w-8 text-(--color-muted)/40" />
             }
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center">
-            <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+          <div className="flex h-full w-full items-center justify-center bg-white/[0.02]">
+            <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />
           </div>
         )}
       </div>
 
       {/* Title + actions row */}
-      <div className="flex items-start gap-1 px-3 py-2.5">
+      <div className="flex items-start gap-1 px-2.5 py-2">
         <div className="min-w-0 flex-1">
           <h3
             role="button"
@@ -208,7 +208,7 @@ export default function GameLauncherTile({
                 handleCardClick();
               }
             }}
-            className="line-clamp-1 cursor-pointer text-sm font-medium text-(--color-text) transition hover:text-(--color-accent)"
+            className="line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
           >
             {displayTitle}
           </h3>
@@ -218,7 +218,7 @@ export default function GameLauncherTile({
               <button
                 type="button"
                 onClick={(e) => handleActionClick(e, () => onPlay(game))}
-                className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-(--color-accent) transition hover:opacity-80"
+                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
               >
                 <Play className="h-3 w-3" />
                 Play
@@ -228,14 +228,14 @@ export default function GameLauncherTile({
               <button
                 type="button"
                 onClick={(e) => handleActionClick(e, () => onInstall(game))}
-                className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-(--color-accent) transition hover:opacity-80"
+                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
               >
                 <Download className="h-3 w-3" />
                 Install
               </button>
             )}
             {action === "missing-path" && (
-              <span className="text-[10px] text-(--color-muted)">Missing Path</span>
+              <span className="text-[10px] text-(--color-muted)/50">Missing Path</span>
             )}
           </div>
         </div>
@@ -245,15 +245,15 @@ export default function GameLauncherTile({
           <button
             type="button"
             onClick={handleMenuToggle}
-            className="inline-flex cursor-pointer items-center justify-center rounded-lg p-1 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            className="inline-flex cursor-pointer items-center justify-center rounded-lg p-1 text-(--color-muted)/50 transition hover:bg-white/[0.04] hover:text-(--color-text)"
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <MoreHorizontal className="h-3.5 w-3.5" />
           </button>
 
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-(--surface-active-border) bg-(--color-bg) p-1 shadow-lg">
+              <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-(--surface-active-border)/60 bg-(--color-bg) p-1 shadow-lg">
                 <MenuButton
                   label={favorite ? "Remove from favorites" : "Add to favorites"}
                   icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
