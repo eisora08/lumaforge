@@ -205,3 +205,9 @@ pub fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 
   Ok(processes)
 }
+
+
+#[tauri::command]
+pub fn file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}

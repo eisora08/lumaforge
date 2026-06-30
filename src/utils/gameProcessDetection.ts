@@ -1,6 +1,6 @@
 import type { ProcessInfo } from "../services/tauri";
 import { listProcesses, discoverExecutables } from "../services/tauri";
-
+import { invoke } from "@tauri-apps/api/core";
 export type ProcessCandidate = {
   pid: number;
   name: string;
@@ -341,8 +341,51 @@ export async function resolveExecutablePath(
         getExeNameFromEntry(gameId),
       ]);
       if (registeredPath && registeredName) {
-        return { exePath: registeredPath, exeName: registeredName };
+        try {
+          // const { exists } = await import("@tauri-apps/plugin-fs");
+          
+
+          const existsOnDisk = await invoke<boolean>("file_exists", {
+            path: registeredPath,
+          });
+
+
+          if (!existsOnDisk) {
+            console.warn("[Executable] Missing exe, rediscovering:", registeredPath);
+
+            if (!installDir) return null;
+
+            const rediscovered = await discoverGameExecutable(installDir, title);
+
+            if (rediscovered) {
+              // 🔥 guardar de nuevo en registry
+              try {
+                const { setInstalledGameEntry } = await import("../services/installedGamesRegistry");
+
+
+                await setInstalledGameEntry({
+                  gameId,
+                  exePath: rediscovered.exePath,
+                  exeName: rediscovered.exeName,
+                  installDir,
+                  provider: "unknown",
+                  lastValidated: Date.now(),
+                });
+
+              } catch { }
+
+              return rediscovered;
+            }
+
+            return null;
+          }
+
+          return { exePath: registeredPath, exeName: registeredName };
+        } catch {
+          return { exePath: registeredPath, exeName: registeredName };
+        }
       }
+
     } catch {
       // fall through to discovery
     }
