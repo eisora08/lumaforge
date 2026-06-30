@@ -196,7 +196,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
             {isRunningSession ? (
               <button
                 onClick={handlePrimaryAction}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-emerald-500 px-6 py-3 text-sm font-medium text-black transition hover:opacity-90"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
               >
                 <Play className="h-4 w-4" />
                 Focus Game
@@ -204,7 +204,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
             ) : heroGame.playable ? (
               <button
                 onClick={handlePrimaryAction}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-medium text-black transition hover:opacity-90"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
               >
                 <Play className="h-4 w-4" />
                 Play
@@ -220,7 +220,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
             {isRunningSession ? (
               <button
                 onClick={handleStop}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm font-medium text-red-300 backdrop-blur-sm transition hover:bg-red-500/20"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-red-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-500/80 active:scale-[0.97]"
               >
                 <Square className="h-4 w-4" />
                 Stop

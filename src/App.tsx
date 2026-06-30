@@ -16,7 +16,8 @@ import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
 import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
 import { GameDetailsProvider } from "./context/GameDetailsContext";
-import { GameSessionProvider } from "./context/GameSessionContext";
+import { GameSessionProvider, useGameSession } from "./context/GameSessionContext";
+import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
@@ -43,6 +44,11 @@ function restoreActivePage(): AppPage {
 }
 
 const NAV_PERF_ENABLED = true;
+
+function SessionOverlayWrapper() {
+  const { overlayEvent, clearOverlay } = useGameSession();
+  return <GameSessionOverlay event={overlayEvent} onDismiss={clearOverlay} />;
+}
 
 function App() {
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
@@ -131,6 +137,7 @@ function App() {
   return (
     <>
       <GameSessionProvider>
+      <SessionOverlayWrapper />
       <GameDetailsProvider>
         <AppLayout activePage={activePage} onNavigate={handleNavigate}>
           <AppRouteTransition routeKey={activePage}>

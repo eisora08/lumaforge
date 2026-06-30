@@ -7,6 +7,15 @@ import type { ProcessInfo } from "../services/tauri";
 
 const ENABLE_VERBOSE_LAUNCH_LOGS = false;
 
+export type OverlayEvent = {
+  id: string;
+  type: "launch" | "end";
+  gameTitle: string;
+  provider: string;
+  imageUrl?: string;
+  durationSeconds?: number;
+};
+
 export type GameSessionState = "idle" | "launching" | "running" | "stopping" | "error";
 
 export type ActiveGameState = Exclude<GameSessionState, "idle" | "error">;
@@ -69,6 +78,10 @@ type GameSessionContextValue = {
   findRunningSessionKey: () => string | null;
   /** Stop a running game by its appId — resolves correct session key internally. */
   stopGameByAppId: (appId: string) => Promise<{ terminated: boolean }>;
+  /** Current overlay toast event, or null. */
+  overlayEvent: OverlayEvent | null;
+  /** Dismiss the current overlay toast. */
+  clearOverlay: () => void;
 };
 
 const STORAGE_KEY = "lumaforge-running-games-v1";
@@ -731,6 +744,61 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     return { terminated: false };
   }, [stopSession]);
 
+  // ---------------------------------------------------------------------------
+  // Overlay event state — fires toast on launch / stop transitions
+  // ---------------------------------------------------------------------------
+
+  const [overlayEvent, setOverlayEvent] = useState<OverlayEvent | null>(null);
+  const prevSessionsRef = useRef<Record<string, RunningGameSession>>(sessions);
+  const everRanRef = useRef<Set<string>>(new Set());
+
+  const clearOverlay = useCallback(() => {
+    setOverlayEvent(null);
+  }, []);
+
+  // Detect transitions: launching→running (show launch), running→deleted (show end)
+  useEffect(() => {
+    const prev = prevSessionsRef.current;
+    const current = sessions;
+
+    // Check for first-time "running" transitions
+    for (const [key, curSession] of Object.entries(current)) {
+      const prevSession = prev[key];
+      if (curSession.state === "running" && (!prevSession || prevSession.state !== "running")) {
+        if (!everRanRef.current.has(key)) {
+          everRanRef.current.add(key);
+          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "local" ? "Local" : "Unknown";
+          setOverlayEvent({
+            id: `launch-${key}-${curSession.updatedAt}`,
+            type: "launch",
+            gameTitle: curSession.title || "Unknown Game",
+            provider,
+          });
+        }
+      }
+    }
+
+    // Check for running-session deletions
+    for (const [key, prevSession] of Object.entries(prev)) {
+      if (!current[key] && everRanRef.current.has(key)) {
+        everRanRef.current.delete(key);
+        const durationSeconds = prevSession.launchedAt
+          ? Math.floor((Date.now() - prevSession.launchedAt) / 1000)
+          : 0;
+        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "local" ? "Local" : "Unknown";
+        setOverlayEvent({
+          id: `end-${key}-${Date.now()}`,
+          type: "end",
+          gameTitle: prevSession.title || "Unknown Game",
+          provider,
+          durationSeconds: Math.max(1, durationSeconds),
+        });
+      }
+    }
+
+    prevSessionsRef.current = sessions;
+  }, [sessions]);
+
   const value = useMemo(
     () => ({
       sessions,
@@ -748,8 +816,10 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       cancelLaunch,
       findRunningSessionKey,
       stopGameByAppId,
+      overlayEvent,
+      clearOverlay,
     }),
-    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime, launchGame, cancelLaunch, findRunningSessionKey, stopGameByAppId]
+    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime, launchGame, cancelLaunch, findRunningSessionKey, stopGameByAppId, overlayEvent, clearOverlay]
   );
 
   return (
