@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
+  FileText,
+  FolderOpen,
   Gamepad2,
   Heart,
   MoreHorizontal,
   Play,
+  Settings,
   Trash2,
   X,
 } from "lucide-react";
@@ -28,6 +31,7 @@ import {
 import {
   loadGameAppInfoWithMediaFallback,
 } from "../../services/gameCacheService";
+import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -141,6 +145,10 @@ export default function GameLauncherTile({
     return displayImage;
   }, [displayImage]);
 
+  const { getState, stopSession } = useGameSession();
+  const gk = computeGameKey(game);
+  const sessionState = getState(gk);
+  const isRunning = sessionState === "running";
   const action = getLauncherGamePrimaryAction(game);
   const hasLua = game.luaScripts.length > 0;
 
@@ -266,35 +274,68 @@ export default function GameLauncherTile({
             cursorPos={contextMenuPos}
             gameId={game.appId}
           >
+            {isRunning ? (
+              <MenuItem
+                label="Stop"
+                icon={<X className="h-3.5 w-3.5" />}
+                onClick={() => { setMenuOpen(false); stopSession(gk); }}
+              />
+            ) : action === "play" ? (
+              <MenuItem
+                label="Play"
+                icon={<Play className="h-3.5 w-3.5" />}
+                onClick={() => { setMenuOpen(false); onPlay(game); }}
+              />
+            ) : (
+              <MenuItem
+                label="Install"
+                icon={<Download className="h-3.5 w-3.5" />}
+                onClick={() => { setMenuOpen(false); onInstall(game); }}
+              />
+            )}
             <MenuItem
               label={favorite ? "Remove from favorites" : "Add to favorites"}
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
               onClick={() => { setFavorite(!favorite); setMenuOpen(false); }}
             />
             <MenuItem
-              label="Uninstall"
-              icon={<Trash2 className="h-3.5 w-3.5" />}
-              disabled={!game.steamInstalled}
-              subtitle={!game.steamInstalled ? "Not installed" : "Coming soon"}
+              label="Browse Local Files"
+              icon={<FolderOpen className="h-3.5 w-3.5" />}
+              onClick={() => {
+                setMenuOpen(false);
+                if (game.installDir) {
+                  console.log("Browse:", game.installDir);
+                }
+              }}
             />
-            {hasLua && onDeleteScript && (
-              <MenuItem
-                label="Delete Lua"
-                icon={<X className="h-3.5 w-3.5" />}
-                destructive
-                onClick={() => {
-                  setMenuOpen(false);
-                  onDeleteScript(game);
-                }}
-              />
-            )}
-            {hasLua && !onDeleteScript && (
-              <MenuItem
-                label="Delete Lua"
-                icon={<X className="h-3.5 w-3.5" />}
-                disabled
-              />
-            )}
+            <MenuItem
+              label="Create Shortcut"
+              icon={<FileText className="h-3.5 w-3.5" />}
+              onClick={() => { setMenuOpen(false); console.log("Create shortcut for", game.title); }}
+            />
+            <MenuItem
+              label="Manage"
+              icon={<Settings className="h-3.5 w-3.5" />}
+              children={[
+                {
+                  label: "Uninstall",
+                  icon: <Trash2 className="h-3.5 w-3.5" />,
+                  disabled: !game.steamInstalled,
+                  subtitle: !game.steamInstalled ? "Not installed" : undefined,
+                },
+                ...(hasLua
+                  ? [{
+                      label: "Delete Lua",
+                      icon: <X className="h-3.5 w-3.5" />,
+                      destructive: true as const,
+                      onClick: onDeleteScript
+                        ? () => { setMenuOpen(false); onDeleteScript(game); }
+                        : undefined,
+                      disabled: !onDeleteScript,
+                    }]
+                  : []),
+              ]}
+            />
           </CardActionMenu>
         </div>
       </div>

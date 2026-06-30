@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Gamepad2, Loader2, Search } from "lucide-react";
+import {
+  Download,
+  FileText,
+  FolderOpen,
+  Gamepad2,
+  Heart,
+  Loader2,
+  Play,
+  Search,
+  Settings,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -9,6 +21,7 @@ import { SkeletonBox } from "../common/Skeleton";
 import { batchLoadGameMedia, resolveSidebarMedia } from "../../services/gameCacheService";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
+import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 
@@ -64,10 +77,15 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
 
 export default function SidebarLibraryList({ onOpenGame, compact = false, collapsed = false }: Props) {
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
-  const { getState } = useGameSession();
+  const { getState, launchGame, stopSession } = useGameSession();
   const [query, setQuery] = useState("");
   const [canonicalInfoMap, setCanonicalInfoMap] = useState<Record<string, GameAppInfo | null>>({});
   const [sidebarMediaMap, setSidebarMediaMap] = useState<Record<string, ResolvedSidebarMedia | null>>({});
+  const [menuGame, setMenuGame] = useState<LibraryGame | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [favorites, setFavorites] = useState<Record<string, boolean>>({});
+  const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
 
@@ -151,6 +169,21 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
     };
     loadBatch();
   }, [filtered, canonicalInfoMap]);
+
+  function handleContextMenu(e: React.MouseEvent<HTMLButtonElement>, game: LibraryGame) {
+    e.preventDefault();
+    e.stopPropagation();
+    sidebarMenuAnchorRef.current = e.currentTarget;
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+    setMenuGame(game);
+    setMenuOpen(true);
+  }
+
+  function handleMenuClose() {
+    setMenuOpen(false);
+    setContextMenuPos(null);
+    setMenuGame(null);
+  }
 
   return (
     <div className="flex flex-col">
@@ -248,6 +281,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                     setSelectedGame(game);
                     onOpenGame?.();
                   }}
+                  onContextMenu={(e) => handleContextMenu(e, game)}
                   className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors ${
                     isSelected
                       ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
@@ -286,6 +320,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                   setSelectedGame(game);
                   onOpenGame?.();
                 }}
+                onContextMenu={(e) => handleContextMenu(e, game)}
                 className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
                   isSelected
                     ? "bg-(--color-accent)/10 text-(--color-accent)"
@@ -348,6 +383,92 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
           })
         )}
       </div>
+
+      {menuGame && (
+        <CardActionMenu
+          open={menuOpen}
+          anchorRef={sidebarMenuAnchorRef as React.RefObject<HTMLElement | null>}
+          onClose={handleMenuClose}
+          cursorPos={contextMenuPos}
+          gameId={menuGame.appId}
+        >
+          {(() => {
+            const mgk = computeGameKey(menuGame);
+            const mState = getState(mgk);
+            const isRunning = mState === "running";
+            const mAction = menuGame.isPlayable || menuGame.steamInstalled ? "play" : "install";
+            const mHasLua = menuGame.luaScripts.length > 0;
+            const isFavorite = !!favorites[menuGame.id];
+
+            return (
+              <>
+                {isRunning ? (
+                  <MenuItem
+                    label="Stop"
+                    icon={<X className="h-3.5 w-3.5" />}
+                    onClick={() => { handleMenuClose(); stopSession(mgk); }}
+                  />
+                ) : mAction === "play" ? (
+                  <MenuItem
+                    label="Play"
+                    icon={<Play className="h-3.5 w-3.5" />}
+                    onClick={() => { handleMenuClose(); launchGame(menuGame); }}
+                  />
+                ) : (
+                  <MenuItem
+                    label="Install"
+                    icon={<Download className="h-3.5 w-3.5" />}
+                    onClick={() => { handleMenuClose(); }}
+                  />
+                )}
+                <MenuItem
+                  label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                  icon={<Heart className={`h-3.5 w-3.5 ${isFavorite ? "fill-current" : ""}`} />}
+                  onClick={() => {
+                    setFavorites((prev) => ({ ...prev, [menuGame.id]: !prev[menuGame.id] }));
+                    handleMenuClose();
+                  }}
+                />
+                <MenuItem
+                  label="Browse Local Files"
+                  icon={<FolderOpen className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    handleMenuClose();
+                    if (menuGame.installDir) {
+                      console.log("Browse:", menuGame.installDir);
+                    }
+                  }}
+                />
+                <MenuItem
+                  label="Create Shortcut"
+                  icon={<FileText className="h-3.5 w-3.5" />}
+                  onClick={() => { handleMenuClose(); console.log("Create shortcut for", menuGame.title); }}
+                />
+                <MenuItem
+                  label="Manage"
+                  icon={<Settings className="h-3.5 w-3.5" />}
+                  children={[
+                    {
+                      label: "Uninstall",
+                      icon: <Trash2 className="h-3.5 w-3.5" />,
+                      disabled: !menuGame.steamInstalled,
+                      subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
+                    },
+                    ...(mHasLua
+                      ? [{
+                          label: "Delete Lua",
+                          icon: <X className="h-3.5 w-3.5" />,
+                          destructive: true as const,
+                          disabled: true,
+                        }]
+                      : []),
+                  ]}
+                />
+              </>
+            );
+          })()}
+        </CardActionMenu>
+      )}
     </div>
   );
 }
