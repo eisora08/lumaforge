@@ -73,7 +73,7 @@ pub fn terminate_process_tree(pid: u32) -> Result<(), String> {
 #[tauri::command]
 pub fn terminate_process_by_name(name: String) -> Result<(), String> {
   let output = Command::new("taskkill")
-    .args(["/IM", &name, "/F"])
+    .args(["/IM", &name, "/F", "/T"])
     .output()
     .map_err(|e| format!("Failed to execute taskkill by name: {}", e))?;
 
@@ -96,7 +96,7 @@ pub fn is_process_running(pid: u32) -> Result<bool, String> {
     .map_err(|e| format!("Failed to query process: {}", e))?;
 
   let stdout = String::from_utf8_lossy(&output.stdout);
-  Ok(stdout.contains(&pid.to_string()))
+  Ok(!stdout.contains("No tasks are running") && !stdout.trim().is_empty())
 }
 
 #[tauri::command]
