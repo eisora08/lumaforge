@@ -21,11 +21,13 @@ import {
 import {
   resolveGameMediaImageSrc,
 } from "./localImageSrc";
-import { resolveGameMediaPaths, getMediaCacheSqlite, getMetadataCacheSqlite, checkSqliteHealth } from "./tauri";
+import { resolveGameMediaPaths, getMediaCacheSqlite, getMetadataCacheSqlite, checkSqliteHealth, insertMediaCacheSqlite, insertMetadataCacheSqlite } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type {
   StoreAppInfoEntry,
   StoreGameDetailsEntry,
+  SqliteMediaCacheEntry,
+  SqliteMetadataCacheEntry,
 } from "./tauri";
 
 // ---------------------------------------------------------------------------
@@ -113,6 +115,69 @@ function rawMediaFromGameMediaPaths(media: GameMediaPaths | null | undefined): N
     logo: media.logoPath,
     icon: media.iconPath,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Write guard — prevents duplicate SQLite writes per session
+// ---------------------------------------------------------------------------
+const _writtenMediaIds = new Set<string>();
+const _writtenMetadataIds = new Set<string>();
+
+// ---------------------------------------------------------------------------
+// SQLite write helpers (fire-and-forget, silent failure)
+// ---------------------------------------------------------------------------
+
+function extractMediaBasePath(media: GameMediaPaths | null): string {
+  if (!media) return "";
+  const sample = media.landscapePath || media.coverPath || media.backgroundPath || media.logoPath;
+  if (!sample) return "";
+  // Strip filename to get base directory
+  const lastSep = Math.max(sample.lastIndexOf("\\"), sample.lastIndexOf("/"));
+  if (lastSep < 0) return "";
+  return sample.substring(0, lastSep);
+}
+
+function writeMediaToSqlite(appId: string, media: GameMediaPaths | null, provider: string): void {
+  if (!_sqliteAvailable) return;
+  if (_writtenMediaIds.has(appId)) return;
+  if (!media?.coverPath && !media?.landscapePath && !media?.backgroundPath && !media?.logoPath) return;
+
+  _writtenMediaIds.add(appId);
+
+  const now = Date.now();
+  const entry: SqliteMediaCacheEntry = {
+    gameId: appId,
+    provider: provider || "steam",
+    basePath: extractMediaBasePath(media),
+    hasCover: !!media?.coverPath,
+    hasBackground: !!media?.backgroundPath,
+    hasLogo: !!media?.logoPath,
+    hasLandscape: !!media?.landscapePath,
+    updatedAt: now,
+  };
+
+  void insertMediaCacheSqlite(entry);
+}
+
+function writeMetadataToSqlite(appId: string, metadata: NormalizedGameMetadata): void {
+  if (!_sqliteAvailable) return;
+  if (_writtenMetadataIds.has(appId)) return;
+  if (!metadata.title && !metadata.name) return;
+
+  _writtenMetadataIds.add(appId);
+
+  const now = Date.now();
+  const entry: SqliteMetadataCacheEntry = {
+    gameId: appId,
+    title: metadata.title || metadata.name,
+    provider: metadata.provider,
+    installed: metadata.installed ?? false,
+    lastPlayed: metadata.lastPlayed ?? 0,
+    playtime: 0,
+    updatedAt: now,
+  };
+
+  void insertMetadataCacheSqlite(entry);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +276,7 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         console.log(`[GameDataService] metadata resolved from canonical appinfo for ${appId}`);
       }
 
-      return {
+      const result: NormalizedGameMetadata = {
         id: appId,
         title: appInfo.name,
         provider: appInfo.provider,
@@ -221,6 +286,8 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         media,
         rawMetadata: null,
       };
+      writeMetadataToSqlite(appId, result);
+      return result;
     }
   } catch {
     // Fall through
@@ -242,7 +309,7 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         console.log(`[GameDataService] metadata resolved from store for ${appId}`);
       }
 
-      return {
+      const result: NormalizedGameMetadata = {
         id: appId,
         title: metadataResult.name || null,
         provider: "steam",
@@ -252,6 +319,8 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         media,
         rawMetadata: metadataResult,
       };
+      writeMetadataToSqlite(appId, result);
+      return result;
     }
   } catch {
     // Fall through
@@ -273,7 +342,7 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         console.log(`[GameDataService] metadata resolved from library cache for ${appId}`);
       }
 
-      return {
+      const result: NormalizedGameMetadata = {
         id: appId,
         title: libEntry.name,
         provider: "steam",
@@ -283,6 +352,8 @@ export async function getMetadata(appId: string): Promise<NormalizedGameMetadata
         media,
         rawMetadata: null,
       };
+      writeMetadataToSqlite(appId, result);
+      return result;
     }
   } catch {
     // Fall through
@@ -320,6 +391,9 @@ export async function getMediaPaths(appId: string): Promise<MediaPathsResult | n
         if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
           console.log(`[GameDataService] media resolved from canonical appinfo for ${appId}`);
         }
+
+        writeMediaToSqlite(appId, appInfo.media, appInfo.provider);
+
         return {
           ...normalizeMediaFromGameMediaPaths(appInfo.media),
           rawPaths: appInfo.media,
@@ -340,6 +414,7 @@ export async function getMediaPaths(appId: string): Promise<MediaPathsResult | n
         if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
           console.log(`[GameDataService] media resolved from disk scan for ${appId}`);
         }
+        writeMediaToSqlite(appId, diskPaths, "steam");
         return {
           ...normalizeMediaFromGameMediaPaths(diskPaths),
           rawPaths: diskPaths,
@@ -426,4 +501,6 @@ export function clearGameDataCaches(): void {
   clearAppInfoMemoryCache();
   clearStoreAppInfoMemoryCache();
   clearGameMetadataCache();
+  _writtenMediaIds.clear();
+  _writtenMetadataIds.clear();
 }

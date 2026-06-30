@@ -1070,3 +1070,20 @@ export async function checkSqliteHealth(): Promise<boolean> {
     return false;
   }
 }
+
+// Write commands (write-through caching, Phase 2)
+export async function insertMediaCacheSqlite(entry: SqliteMediaCacheEntry): Promise<void> {
+  try {
+    await invoke("insert_media_cache", { entry });
+  } catch {
+    // silent — best-effort only
+  }
+}
+
+export async function insertMetadataCacheSqlite(entry: SqliteMetadataCacheEntry): Promise<void> {
+  try {
+    await invoke("insert_metadata_cache", { entry });
+  } catch {
+    // silent — best-effort only
+  }
+}

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -82,7 +82,7 @@ pub fn initialize_sqlite(app_handle: &AppHandle) -> SqliteDb {
 // Models
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaCacheEntry {
     pub game_id: String,
@@ -95,7 +95,7 @@ pub struct MediaCacheEntry {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataCacheEntry {
     pub game_id: String,
@@ -181,4 +181,65 @@ pub fn get_metadata_cache(
         .ok();
 
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// Write commands (write-through caching)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn insert_media_cache(
+    entry: MediaCacheEntry,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO media_cache (game_id, provider, base_path, has_cover, has_background, has_logo, has_landscape, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                entry.game_id,
+                entry.provider,
+                entry.base_path,
+                entry.has_cover as i32,
+                entry.has_background as i32,
+                entry.has_logo as i32,
+                entry.has_landscape as i32,
+                entry.updated_at,
+            ],
+        )
+        .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn insert_metadata_cache(
+    entry: MetadataCacheEntry,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO metadata_cache (game_id, title, provider, installed, last_played, playtime, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                entry.game_id,
+                entry.title,
+                entry.provider,
+                entry.installed as i32,
+                entry.last_played,
+                entry.playtime,
+                entry.updated_at,
+            ],
+        )
+        .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
 }
