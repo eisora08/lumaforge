@@ -9,6 +9,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Initialize SQLite cache database
+            let sqlite_db = commands::sqlite_cache::initialize_sqlite(app.handle());
+            app.manage(sqlite_db);
+
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(10));
@@ -133,6 +137,9 @@ pub fn run() {
             commands::playtime::record_play_session_start,
             commands::playtime::record_play_session_end,
             commands::playtime::import_external_playtime,
+            commands::sqlite_cache::check_sqlite_health,
+            commands::sqlite_cache::get_media_cache,
+            commands::sqlite_cache::get_metadata_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

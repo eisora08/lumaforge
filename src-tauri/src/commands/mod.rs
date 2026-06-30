@@ -21,6 +21,7 @@ pub mod library_cache;
 pub mod game_cache;
 pub mod media_cache;
 pub mod splash;
+pub mod sqlite_cache;
 pub mod startup_snapshot;
 pub mod source_cache;
 pub mod playtime;

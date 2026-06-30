@@ -1020,3 +1020,53 @@ export async function compactMediaCache(profile?: MediaCacheProfile): Promise<Me
 export async function readGameMediaDataUrl(path: string): Promise<string> {
   return await invoke<string>("read_game_media_data_url", { path });
 }
+
+// ---------------------------------------------------------------------------
+// SQLite cache (Phase 1+ — read-only for now)
+// ---------------------------------------------------------------------------
+
+export type SqliteMediaCacheEntry = {
+  gameId: string;
+  provider: string;
+  basePath: string;
+  hasCover: boolean;
+  hasBackground: boolean;
+  hasLogo: boolean;
+  hasLandscape: boolean;
+  updatedAt: number;
+};
+
+export type SqliteMetadataCacheEntry = {
+  gameId: string;
+  title: string | null;
+  provider: string;
+  installed: boolean;
+  lastPlayed: number;
+  playtime: number;
+  updatedAt: number;
+};
+
+export async function getMediaCacheSqlite(gameId: string): Promise<SqliteMediaCacheEntry | null> {
+  try {
+    return await invoke<SqliteMediaCacheEntry | null>("get_media_cache", { gameId });
+  } catch {
+    return null;
+  }
+}
+
+export async function getMetadataCacheSqlite(gameId: string): Promise<SqliteMetadataCacheEntry | null> {
+  try {
+    return await invoke<SqliteMetadataCacheEntry | null>("get_metadata_cache", { gameId });
+  } catch {
+    return null;
+  }
+}
+
+export async function checkSqliteHealth(): Promise<boolean> {
+  try {
+    const result = await invoke<boolean>("check_sqlite_health");
+    return result;
+  } catch {
+    return false;
+  }
+}
