@@ -14,6 +14,7 @@ import type { GameAppInfo } from "../../services/gameCacheService";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
 import { useInViewport } from "../../hooks/useInViewport";
+import { useHoverPrefetch } from "../../hooks/useHoverPrefetch";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import Tooltip from "../common/Tooltip";
@@ -75,6 +76,7 @@ export default function GameLauncherTile({
 }: GameLauncherTileProps) {
   const { settings } = useSettings();
   const { ref, isVisible } = useInViewport();
+  const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
   const [menuOpen, setMenuOpen] = useState(false);
   const [favorite, setFavorite] = useState(false);
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
@@ -158,7 +160,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div ref={ref} className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
+    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
       {/* Image */}
       <div
         role="button"

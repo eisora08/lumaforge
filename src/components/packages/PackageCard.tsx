@@ -12,6 +12,7 @@ import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 import { downloadAndInstallPackage } from "../../services/tauri";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
+import { useHoverPrefetch } from "../../hooks/useHoverPrefetch";
 
 import {
   showError,
@@ -104,6 +105,7 @@ export default function PackageCard({
 
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
 
   const availableSources = game.sources.filter((source) => source.available);
   const bestSource = useMemo(() => getBestAvailableSource(game), [game]);
@@ -270,6 +272,8 @@ export default function PackageCard({
           role="button"
           tabIndex={0}
           onClick={handleOpenDetails}
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               handleOpenDetails();
@@ -327,6 +331,8 @@ export default function PackageCard({
         role="button"
         tabIndex={0}
         onClick={handleOpenDetails}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             handleOpenDetails();
