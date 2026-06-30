@@ -147,7 +147,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   const {
     sessions,
-    stopSession,
+    stopGameByAppId,
     clearSession,
     findGameProcessForSession,
   } = useGameSession();
@@ -251,10 +251,10 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const handleConfirmStop = useCallback(async () => {
     setShowStopModal(false);
 
-    if (stopGameKey) {
-      await stopSession(stopGameKey);
+    if (heroAppId) {
+      await stopGameByAppId(heroAppId);
     }
-  }, [stopGameKey, stopSession]);
+  }, [heroAppId, stopGameByAppId]);
 
   const handleMarkAsStopped = useCallback(() => {
     setShowStopModal(false);
