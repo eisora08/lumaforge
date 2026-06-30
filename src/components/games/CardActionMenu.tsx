@@ -13,21 +13,56 @@ type CardActionMenuProps = {
   anchorRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
   children: React.ReactNode;
+  cursorPos?: { x: number; y: number } | null;
+  gameId?: string;
 };
 
 const VIEWPORT_MARGIN = 8;
 const MENU_WIDTH = 184;
+const MENU_HEIGHT = 180;
 
 export default function CardActionMenu({
   open,
   anchorRef,
   onClose,
   children,
+  cursorPos,
+  gameId: _gameId,
 }: CardActionMenuProps) {
   const [pos, setPos] = useState<MenuPosition | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const recalcPosition = useCallback(() => {
+    if (cursorPos) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let top = cursorPos.y;
+      let left = cursorPos.x;
+
+      const openUpward = vh - top < MENU_HEIGHT;
+      if (openUpward) {
+        top -= MENU_HEIGHT;
+      }
+
+      if (left + MENU_WIDTH > vw - VIEWPORT_MARGIN) {
+        left = vw - MENU_WIDTH - VIEWPORT_MARGIN;
+      }
+
+      if (top < VIEWPORT_MARGIN) {
+        top = VIEWPORT_MARGIN;
+      }
+      if (top + MENU_HEIGHT > vh - VIEWPORT_MARGIN) {
+        top = vh - MENU_HEIGHT - VIEWPORT_MARGIN;
+      }
+
+      if (left < VIEWPORT_MARGIN) {
+        left = VIEWPORT_MARGIN;
+      }
+
+      setPos({ top, left, anchorRight: left !== cursorPos.x, openUpward });
+      return;
+    }
+
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
     const vw = window.innerWidth;
@@ -62,7 +97,7 @@ export default function CardActionMenu({
     }
 
     setPos({ top, left, anchorRight, openUpward });
-  }, [anchorRef]);
+  }, [anchorRef, cursorPos]);
 
   useEffect(() => {
     if (!open) {

@@ -72,6 +72,7 @@ pub fn run() {
             commands::process::launch_executable,
             commands::process::terminate_process,
             commands::process::terminate_process_tree,
+            commands::process::terminate_process_by_name,
             commands::process::is_process_running,
             commands::process::list_processes,
             commands::game_media_cache::get_game_media_cache,

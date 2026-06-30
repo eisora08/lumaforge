@@ -155,7 +155,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                 key={game.appId}
                 className="w-[min(80vw,340px)] shrink-0 snap-start"
               >
-                <div className="group/card relative overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">
+                <div className="group/card relative cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">
                   <div className="aspect-video overflow-hidden">
                     {imgUrl ? (
                       <AsyncImage

@@ -425,6 +425,10 @@ export async function terminateProcessTree(pid: number): Promise<void> {
   return await invoke<void>("terminate_process_tree", { pid });
 }
 
+export async function terminateProcessByName(name: string): Promise<void> {
+  return await invoke<void>("terminate_process_by_name", { name });
+}
+
 export async function isProcessRunning(pid: number): Promise<boolean> {
   return await invoke<boolean>("is_process_running", { pid });
 }

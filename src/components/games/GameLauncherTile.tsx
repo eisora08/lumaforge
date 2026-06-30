@@ -78,6 +78,7 @@ export default function GameLauncherTile({
   const { ref, isVisible } = useInViewport();
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [favorite, setFavorite] = useState(false);
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
@@ -156,11 +157,12 @@ export default function GameLauncherTile({
 
   function handleMenuToggle(e: React.MouseEvent) {
     e.stopPropagation();
+    setContextMenuPos(null);
     setMenuOpen((prev) => !prev);
   }
 
   return (
-    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleMenuToggle(e); }} className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
+    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
       {/* Image */}
       <div
         role="button"
@@ -260,7 +262,9 @@ export default function GameLauncherTile({
           <CardActionMenu
             open={menuOpen}
             anchorRef={menuAnchorRef}
-            onClose={() => setMenuOpen(false)}
+            onClose={() => { setMenuOpen(false); setContextMenuPos(null); }}
+            cursorPos={contextMenuPos}
+            gameId={game.appId}
           >
             <MenuItem
               label={favorite ? "Remove from favorites" : "Add to favorites"}

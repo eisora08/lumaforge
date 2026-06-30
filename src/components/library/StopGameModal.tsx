@@ -65,9 +65,10 @@ export default function StopGameModal({
 
   if (!open) return null;
 
-  const showTerminate = canTerminate && trackingConfidence && trackingConfidence !== "none" && trackingConfidence !== "low";
-  const showMarkStopped = isSoftSession || !canTerminate;
-  const showFindProcess = isSoftSession && !canTerminate && onFindProcess && !showTerminate;
+  const canKillByPid = canTerminate && trackingConfidence && trackingConfidence !== "none" && trackingConfidence !== "low";
+  const showTerminate = !!(onConfirmStop);
+  const showMarkStopped = !!(onMarkStopped);
+  const showFindProcess = !canKillByPid && onFindProcess;
 
   return createPortal(
     <div
@@ -90,10 +91,10 @@ export default function StopGameModal({
           Unsaved progress may be lost.
         </p>
 
-        {!showTerminate && (
+        {!canKillByPid && (
           <p className="mt-2 text-xs leading-relaxed text-amber-400/80">
-            LumaForge is tracking this game as running, but no safe process ID is available.
-            {showFindProcess && " Try \"Find Running Process\" to locate the game process."}
+            LumaForge will attempt to stop the game by scanning for its process or by executable name.
+            {showFindProcess && " If that fails, click \"Find Running Process\" to locate it manually."}
           </p>
         )}
 
@@ -139,7 +140,7 @@ export default function StopGameModal({
             </button>
           )}
 
-          {showMarkStopped && onMarkStopped && !showTerminate && (
+          {showMarkStopped && onMarkStopped && (
             <button
               type="button"
               onClick={() => {
