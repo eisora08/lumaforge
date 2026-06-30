@@ -13,6 +13,7 @@ import {
   mergeLocalStatsIntoGames,
   setAchievementsSupportedFlag,
 } from "../services/gameStatsService";
+import { importExternalPlaytime } from "../services/playtimeService";
 import { useSettings } from "./SettingsContext";
 import {
   waitForBootSnapshot,
@@ -165,6 +166,25 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           appIds,
         );
         mergeSteamStatsIntoGames(games, steamStats);
+
+        // Import Steam playtime for any games where it's now available
+        for (const game of games) {
+          if (!game.appId) continue;
+          const appIdNum = Number(game.appId);
+          if (!Number.isFinite(appIdNum)) continue;
+          const stat = steamStats.get(appIdNum);
+          if (stat?.playtimeMinutes && stat.playtimeMinutes > 0) {
+            const gameKey = game.id || `app-${game.appId}`;
+            importExternalPlaytime({
+              gameKey,
+              appId: game.appId,
+              provider: "steam",
+              title: game.title,
+              externalPlaytimeSeconds: stat.playtimeMinutes * 60,
+              externalSource: "steam",
+            }).catch(() => { /* non-critical */ });
+          }
+        }
       }
     } catch {
       // stats are non-critical

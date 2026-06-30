@@ -108,6 +108,11 @@ pub fn run() {
             commands::startup_snapshot::validate_snapshot_media_paths,
             commands::source_cache::read_source_availability_index,
             commands::source_cache::write_source_availability_index,
+            commands::playtime::read_playtime_store,
+            commands::playtime::write_playtime_store,
+            commands::playtime::record_play_session_start,
+            commands::playtime::record_play_session_end,
+            commands::playtime::import_external_playtime,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

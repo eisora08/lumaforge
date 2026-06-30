@@ -31,4 +31,5 @@ open = "5"
 base64 = "0.22"
 sysinfo = "0.29"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+uuid = { version = "1", features = ["v4"] }
 

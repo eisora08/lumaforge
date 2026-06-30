@@ -4,6 +4,7 @@ import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapsh
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { localPathToUrl } from "../../services/gameCacheService";
+import { getCachedPlaytimeStore } from "../../services/playtimeService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 
@@ -25,9 +26,29 @@ function getContinueGames(
   );
 
   const running = snapshotGames.filter((g) => g.appId && runningAppIds.has(g.appId));
+
+  // Build a map of appId -> lastPlayedAt from playtime store
+  const playtimeStore = getCachedPlaytimeStore();
+  const playtimeLastPlayed: Record<string, number> = {};
+  if (playtimeStore) {
+    for (const [, entry] of Object.entries(playtimeStore.games)) {
+      if (entry.appId && entry.lastPlayedAt) {
+        playtimeLastPlayed[entry.appId] = entry.lastPlayedAt * 1000;
+      }
+    }
+  }
+
   const recent = snapshotGames
-    .filter((g) => g.lastPlayed)
-    .sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0));
+    .filter((g) => {
+      if (g.lastPlayed) return true;
+      if (g.appId && playtimeLastPlayed[g.appId]) return true;
+      return false;
+    })
+    .sort((a, b) => {
+      const aPlay = (a.appId ? playtimeLastPlayed[a.appId] : null) ?? (a.lastPlayed ? a.lastPlayed * 1000 : 0);
+      const bPlay = (b.appId ? playtimeLastPlayed[b.appId] : null) ?? (b.lastPlayed ? b.lastPlayed * 1000 : 0);
+      return bPlay - aPlay;
+    });
   const installedFallback = snapshotGames
     .filter((g) => g.installed)
     .sort((a, b) => (b.playtime ?? 0) - (a.playtime ?? 0));

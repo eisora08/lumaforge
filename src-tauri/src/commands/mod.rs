@@ -23,3 +23,4 @@ pub mod media_cache;
 pub mod splash;
 pub mod startup_snapshot;
 pub mod source_cache;
+pub mod playtime;

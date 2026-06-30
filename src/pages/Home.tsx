@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Activity } from "lucide-react";
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
@@ -7,6 +7,7 @@ import LibrarySection from "../components/dashboard/LibrarySection";
 import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
 import { getCachedSnapshot } from "../services/startupSnapshotService";
+import { importSnapshotPlaytime } from "../services/playtimeService";
 import { useGameActivity } from "../context/GameActivityContext";
 import { useGameSession } from "../context/GameSessionContext";
 import type { AppPage } from "../types/navigation";
@@ -54,6 +55,13 @@ export default function Home({ onNavigate }: Props) {
   const snapshot = useMemo(() => getCachedSnapshot(), []);
   const { activities } = useGameActivity();
   const { sessions } = useGameSession();
+
+  // One-time import of snapshot playtime data into playtime store (after boot)
+  useEffect(() => {
+    if (snapshot?.library?.games) {
+      importSnapshotPlaytime(snapshot.library.games).catch(() => {});
+    }
+  }, [snapshot]);
 
   const runningAppId = useMemo(() => {
     const running = Object.values(sessions).find((s) => s.state === "running");

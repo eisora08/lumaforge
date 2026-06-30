@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isProcessRunning, terminateProcess, terminateProcessTree, launchSteamApp, launchExecutable, listProcesses } from "../services/tauri";
 import { findGameProcess, findCandidates, pickBestCandidate } from "../utils/gameProcessDetection";
+import { startPlaySession, endPlaySession } from "../services/playtimeService";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
@@ -436,6 +437,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     dispatched: false,
   });
 
+  // Stores image URL and display info per session key for overlay events
+  const sessionMediaRef = useRef<Record<string, { imageUrl?: string; title: string; provider: string }>>({});
+
+  // Tracks active play session IDs for playtime recording
+  const activePlaySessionsRef = useRef<Record<string, string>>({});
+
   // Clean up all timers for the current launch
   const clearLaunchTimers = useCallback(() => {
     const ls = launchStateRef.current;
@@ -553,6 +560,11 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         updatedAt: now,
       },
     }));
+
+    // Store media info for overlay events
+    const bestImageUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
+    const providerLabel = game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Unknown";
+    sessionMediaRef.current[computedKey] = { imageUrl: bestImageUrl, title: game.title, provider: providerLabel };
 
     // 30-second timeout guard — prevents infinite launching
     ls.guardTimer = setTimeout(() => {
@@ -767,12 +779,28 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       if (curSession.state === "running" && (!prevSession || prevSession.state !== "running")) {
         if (!everRanRef.current.has(key)) {
           everRanRef.current.add(key);
+          const mediaInfo = sessionMediaRef.current[key];
           const provider = curSession.source === "steam" ? "Steam" : curSession.source === "local" ? "Local" : "Unknown";
           setOverlayEvent({
             id: `launch-${key}-${curSession.updatedAt}`,
             type: "launch",
             gameTitle: curSession.title || "Unknown Game",
             provider,
+            imageUrl: mediaInfo?.imageUrl,
+          });
+
+          // Start playtime session
+          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "local" ? "local" : "unknown";
+          startPlaySession({
+            gameKey: key,
+            appId: curSession.appId,
+            provider: ptProvider,
+            title: curSession.title || "Unknown Game",
+            startedAt: Math.floor(Date.now() / 1000),
+          }).then((activeSession) => {
+            activePlaySessionsRef.current[key] = activeSession.sessionId;
+          }).catch((err: unknown) => {
+            console.warn("[Playtime] start failed", err);
           });
         }
       }
@@ -785,14 +813,34 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         const durationSeconds = prevSession.launchedAt
           ? Math.floor((Date.now() - prevSession.launchedAt) / 1000)
           : 0;
+        const mediaInfo = sessionMediaRef.current[key];
         const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "local" ? "Local" : "Unknown";
         setOverlayEvent({
           id: `end-${key}-${Date.now()}`,
           type: "end",
           gameTitle: prevSession.title || "Unknown Game",
           provider,
+          imageUrl: mediaInfo?.imageUrl,
           durationSeconds: Math.max(1, durationSeconds),
         });
+
+        // End playtime session
+        const sessionId = activePlaySessionsRef.current[key];
+        if (sessionId) {
+          delete activePlaySessionsRef.current[key];
+          const exitReason = prevSession.state === "stopping" ? "stopped" : "process-exited";
+          endPlaySession({
+            sessionId,
+            gameKey: key,
+            endedAt: Math.floor(Date.now() / 1000),
+            exitReason: exitReason as "stopped" | "process-exited",
+          }).catch((err: unknown) => {
+            console.warn("[Playtime] end failed", err);
+          });
+        }
+
+        // Clean up media ref
+        delete sessionMediaRef.current[key];
       }
     }
 

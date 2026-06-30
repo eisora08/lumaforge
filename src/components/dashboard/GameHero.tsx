@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Gamepad2, Play, Square, Sparkles, Store } from "lucide-react";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
 import { localPathToUrl } from "../../services/gameCacheService";
+import { showWarning } from "../toast/GameToast";
 import AsyncImage from "../common/AsyncImage";
+import StopGameModal from "../library/StopGameModal";
 import type { AppPage } from "../../types/navigation";
 
 type GameHeroProps = {
@@ -22,12 +24,15 @@ function formatElapsed(startedAt: number): string {
 
 function findHeroGame(
   snapshotGames: SnapshotGame[],
-  sessions: Record<string, { appId?: string; state: string }>,
-): { game: SnapshotGame | null; isRunning: boolean; session?: { appId?: string; state: string; launchedAt: number } } {
-  const running = Object.values(sessions).find((s) => s.state === "running");
-  if (running?.appId) {
-    const match = snapshotGames.find((g) => g.appId === running.appId);
-    if (match) return { game: match, isRunning: true, session: running as { appId?: string; state: string; launchedAt: number } };
+  sessions: Record<string, { appId?: string; state: string; gameKey?: string }>,
+): { game: SnapshotGame | null; isRunning: boolean; session?: { appId?: string; state: string; launchedAt: number; gameKey?: string } } {
+  const runningEntry = Object.entries(sessions).find(([, s]) => s.state === "running");
+  if (runningEntry) {
+    const [runningKey, running] = runningEntry;
+    if (running?.appId) {
+      const match = snapshotGames.find((g) => g.appId === running.appId);
+      if (match) return { game: match, isRunning: true, session: { ...running, gameKey: runningKey } as { appId?: string; state: string; launchedAt: number; gameKey?: string } };
+    }
   }
 
   const withLastPlayed = snapshotGames
@@ -44,8 +49,10 @@ function findHeroGame(
 export default function GameHero({ onNavigate }: GameHeroProps) {
   const snapshot = getCachedSnapshot();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
-  const { sessions, stopGameByAppId } = useGameSession();
+  const { sessions, stopSession, clearSession, findGameProcessForSession } = useGameSession();
   const [elapsed, setElapsed] = useState("");
+  const [showStopModal, setShowStopModal] = useState(false);
+  const [stopGameKey, setStopGameKey] = useState<string>("");
 
   const snapshotGames = snapshot?.library?.games || [];
   const { game: heroGame, isRunning, session: runningSession } = useMemo(
@@ -120,12 +127,36 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     }
   }
 
-  async function handleStop() {
-    if (!runningSession?.appId) return;
-    await stopGameByAppId(runningSession.appId);
+  function handleOpenStopModal() {
+    if (!runningSession?.gameKey) return;
+    setStopGameKey(runningSession.gameKey);
+    setShowStopModal(true);
   }
 
+  const handleConfirmStop = useCallback(async () => {
+    setShowStopModal(false);
+    if (stopGameKey) await stopSession(stopGameKey);
+  }, [stopGameKey, stopSession]);
+
+  const handleMarkAsStopped = useCallback(() => {
+    setShowStopModal(false);
+    if (stopGameKey) clearSession(stopGameKey);
+  }, [stopGameKey, clearSession]);
+
+  const handleFindProcess = useCallback(async () => {
+    if (!stopGameKey) return;
+    const candidate = await findGameProcessForSession(stopGameKey);
+    if (candidate) {
+      showWarning(`Found process: ${candidate.name} (PID ${candidate.pid})`, { title: "Process Found" });
+    } else {
+      showWarning("Could not find the game process automatically.", { title: "Not Found" });
+    }
+  }, [stopGameKey, findGameProcessForSession]);
+
   const isRunningSession = isRunning && runningSession;
+
+  const currentSession = stopGameKey ? sessions[stopGameKey] : undefined;
+  const stopModalTitle = currentSession?.title || heroGame?.title || "Unknown Game";
 
   return (
     <section className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[340px]">
@@ -219,7 +250,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
             )}
             {isRunningSession ? (
               <button
-                onClick={handleStop}
+                onClick={handleOpenStopModal}
                 className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-red-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-500/80 active:scale-[0.97]"
               >
                 <Square className="h-4 w-4" />
@@ -237,6 +268,18 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           </div>
         </div>
       </div>
+
+      <StopGameModal
+        open={showStopModal}
+        gameTitle={stopModalTitle}
+        canTerminate={!!currentSession?.pid}
+        isSoftSession={currentSession?.softSession ?? true}
+        trackingConfidence={currentSession?.trackingConfidence}
+        onClose={() => setShowStopModal(false)}
+        onConfirmStop={handleConfirmStop}
+        onMarkStopped={handleMarkAsStopped}
+        onFindProcess={handleFindProcess}
+      />
     </section>
   );
 }

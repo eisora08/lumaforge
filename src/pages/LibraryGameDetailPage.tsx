@@ -24,6 +24,7 @@ import { useGameSession, computeGameKey } from "../context/GameSessionContext";
 import { useGameLaunchState } from "../hooks/useGameLaunchState";
 import { useGameActivity } from "../context/GameActivityContext";
 import { useGamePlayStats } from "../services/gamePlayStats";
+import { importExternalPlaytime } from "../services/playtimeService";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
@@ -317,6 +318,20 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const games = [resolvedGame];
         mergeSteamStatsIntoGames(games, statsMap);
         setResolvedGame({ ...games[0] });
+
+        // Import Steam playtime when available
+        const stat = statsMap.get(appIdNum);
+        if (stat?.playtimeMinutes && stat.playtimeMinutes > 0) {
+          const gameKey = resolvedGame.id || `app-${resolvedGame.appId}`;
+          importExternalPlaytime({
+            gameKey,
+            appId: resolvedGame.appId,
+            provider: "steam",
+            title: resolvedGame.title,
+            externalPlaytimeSeconds: stat.playtimeMinutes * 60,
+            externalSource: "steam",
+          }).catch(() => { /* non-critical */ });
+        }
       })
       .catch(() => { /* non-critical */ });
   }, [resolvedGame?.appId, settings.steamRoot]);
