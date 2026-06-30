@@ -9,19 +9,22 @@ import type { AppPage } from "../../types/navigation";
 type Props = {
   snapshot: StartupSnapshot | null;
   onNavigate?: (page: AppPage) => void;
+  excludeAppIds?: string[];
 };
 
-export default function LibrarySection({ snapshot, onNavigate }: Props) {
+export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
 
   const snapshotGames = snapshot?.library?.games || [];
 
   const displayGames = useMemo(() => {
-    const installed = snapshotGames.filter((g) => g.installed);
+    const exclude = new Set(excludeAppIds ?? []);
+    const installed = snapshotGames.filter((g) => g.installed && g.appId && !exclude.has(g.appId));
     if (installed.length > 0) return installed.slice(0, 10);
-    return snapshotGames.slice(0, 10);
-  }, [snapshotGames]);
+    const remaining = snapshotGames.filter((g) => g.appId && !exclude.has(g.appId));
+    return remaining.slice(0, 10);
+  }, [snapshotGames, excludeAppIds]);
 
   if (displayGames.length === 0) return null;
 

@@ -1,4 +1,5 @@
 import { Gamepad2, Sparkles, Store } from "lucide-react";
+import { useTheme } from "../../context/ThemeContext";
 import type { AppPage } from "../../types/navigation";
 
 type Props = {
@@ -6,10 +7,23 @@ type Props = {
 };
 
 export default function StoreHighlightsSection({ onNavigate }: Props) {
+  const { surfaceMode } = useTheme();
+  const isSolid = surfaceMode === "solid";
+
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-(--surface-active-border) bg-gradient-to-br from-(--color-accent)/8 via-purple-900/15 to-black">
-      <div className="absolute right-0 top-0 h-40 w-40 rounded-full bg-(--color-accent)/10 blur-3xl" />
-      <div className="absolute bottom-0 left-1/4 h-32 w-32 rounded-full bg-purple-500/8 blur-3xl" />
+    <section
+      className={`relative overflow-hidden rounded-2xl border border-(--surface-active-border) ${
+        isSolid
+          ? "bg-(--color-surface)"
+          : "bg-gradient-to-br from-(--color-accent)/8 via-purple-900/15 to-black"
+      }`}
+    >
+      {!isSolid && (
+        <>
+          <div className="absolute right-0 top-0 h-40 w-40 rounded-full bg-(--color-accent)/10 blur-3xl" />
+          <div className="absolute bottom-0 left-1/4 h-32 w-32 rounded-full bg-purple-500/8 blur-3xl" />
+        </>
+      )}
 
       <div className="relative z-10 flex flex-col items-center justify-between gap-4 px-6 py-8 sm:flex-row sm:px-8">
         <div className="flex items-center gap-4">

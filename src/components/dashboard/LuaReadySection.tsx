@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
-import { ChevronLeft, ChevronRight, FileCode2, Package } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileCode2, Package, Download } from "lucide-react";
 import { getCachedSourceAvailabilityIndex } from "../../services/sourceAvailabilityCacheService";
+import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabilityCacheService";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { localPathToUrl } from "../../services/gameCacheService";
@@ -12,24 +13,35 @@ type Props = {
   onNavigate?: (page: AppPage) => void;
 };
 
+type LuaReadyEntry = {
+  game: SnapshotGame;
+  srcEntry: SourceAvailabilityGameEntry;
+};
+
 export default function LuaReadySection({ onNavigate }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sourceIndex = getCachedSourceAvailabilityIndex();
   const snapshot = getCachedSnapshot();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
 
-  const luaGames = useMemo(() => {
+  const luaEntries = useMemo(() => {
     if (!sourceIndex || !snapshot) return [];
     const snapshotGames = snapshot.library.games;
-    const luaReadyAppIds = new Set(
-      Object.values(sourceIndex.games)
-        .filter((g) => g.luaReady && g.sourceCount > 0)
-        .map((g) => g.appId),
-    );
-    return snapshotGames.filter((g) => g.appId && luaReadyAppIds.has(g.appId)).slice(0, 8);
+    const snapshotMap = new Map(snapshotGames.map((g) => [g.appId, g]));
+
+    const entries: LuaReadyEntry[] = [];
+    for (const srcEntry of Object.values(sourceIndex.games)) {
+      if (!srcEntry.luaReady || srcEntry.sourceCount <= 0) continue;
+      const game = snapshotMap.get(srcEntry.appId);
+      if (!game) continue;
+      entries.push({ game, srcEntry });
+    }
+
+    entries.sort((a, b) => (b.srcEntry.updatedAt || 0) - (a.srcEntry.updatedAt || 0));
+    return entries.slice(0, 10);
   }, [sourceIndex, snapshot]);
 
-  if (luaGames.length === 0) return null;
+  if (luaEntries.length === 0) return null;
 
   function scroll(direction: "left" | "right") {
     const el = scrollRef.current;
@@ -82,18 +94,18 @@ export default function LuaReadySection({ onNavigate }: Props) {
           ref={scrollRef}
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
-          {luaGames.map((game) => {
-            const imgPath = game.media?.coverPath || game.media?.landscapePath;
+          {luaEntries.map(({ game, srcEntry }) => {
+            const imgPath = game.media?.landscapePath || game.media?.coverPath;
             const imgUrl = imgPath ? localPathToUrl(imgPath) : null;
-            const srcEntry = sourceIndex?.games[game.appId!];
-            const srcCount = srcEntry?.sourceCount || 0;
+            const srcCount = srcEntry.sourceCount;
             const providerName =
-              srcEntry?.availableSources?.[0]?.name || "HubcapDB";
+              srcEntry.availableSources?.[0]?.name || "HubcapDB";
+            const pkgType = srcEntry.availableSources?.[0]?.type || "zip";
 
             return (
               <div
                 key={game.appId}
-                className="w-44 shrink-0 snap-start sm:w-48"
+                className="w-52 shrink-0 snap-start sm:w-56"
               >
                 <div
                   role="button"
@@ -107,7 +119,7 @@ export default function LuaReadySection({ onNavigate }: Props) {
                   }}
                   className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
                 >
-                  <div className="aspect-[3/4] overflow-hidden">
+                  <div className="aspect-video overflow-hidden">
                     {imgUrl ? (
                       <AsyncImage
                         src={imgUrl}
@@ -115,34 +127,40 @@ export default function LuaReadySection({ onNavigate }: Props) {
                         className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
-                            <FileCode2 className="h-6 w-6 text-(--color-accent)/40" />
+                            <FileCode2 className="h-6 w-6 text-(--color-muted)/40" />
                           </div>
                         }
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-white/5">
-                        <FileCode2 className="h-6 w-6 text-(--color-accent)/40" />
+                        <FileCode2 className="h-6 w-6 text-(--color-muted)/40" />
                       </div>
                     )}
                   </div>
 
-                  <div className="p-2.5">
+                  <div className="p-3">
                     <h3 className="line-clamp-1 text-xs font-medium text-(--color-text)">
                       {game.title}
                     </h3>
-                    <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-(--color-muted)">
-                      <Package className="h-3 w-3" />
-                      {srcCount} source{srcCount !== 1 ? "s" : ""} &middot;{" "}
-                      {providerName}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-(--color-muted)">
+                      <span className="inline-flex items-center gap-1">
+                        <Package className="h-3 w-3" />
+                        {srcCount} src
+                      </span>
+                      <span>&middot;</span>
+                      <span>{providerName}</span>
+                      <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] uppercase">
+                        .{pkgType}
+                      </span>
                     </div>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleOpen(game);
                       }}
-                      className="mt-2 inline-flex cursor-pointer items-center gap-1 rounded-lg bg-purple-500/10 px-2.5 py-1 text-[11px] font-medium text-purple-300 transition hover:bg-purple-500/20"
+                      className="mt-2 inline-flex cursor-pointer items-center gap-1 rounded-lg bg-(--color-accent)/10 px-2.5 py-1 text-[11px] font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
                     >
-                      <Package className="h-3 w-3" />
+                      <Download className="h-3 w-3" />
                       Get Package
                     </button>
                   </div>

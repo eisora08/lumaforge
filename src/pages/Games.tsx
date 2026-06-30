@@ -12,7 +12,8 @@ import { GridSkeleton } from "../components/common/Skeleton";
 
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
-import { launchSteamApp, installSteamApp, deleteLuaScript } from "../services/tauri";
+import { useGameSession } from "../context/GameSessionContext";
+import { installSteamApp, deleteLuaScript } from "../services/tauri";
 
 import type { LibraryGame } from "../types/libraryGame";
 
@@ -24,6 +25,7 @@ import { showError, showSuccess, showWarning } from "../components/toast/GameToa
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
   const { games, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
   const { settings } = useSettings();
+  const session = useGameSession();
 
   const [filter, setFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
@@ -123,12 +125,16 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
       try {
-        await launchSteamApp(Number(game.appId));
+        await session.launchGame(game);
       } catch (err) {
         showError(String(err), { title: "Error" });
       }
     } else if (game.source === "local" && game.executablePath) {
-      showWarning("Local executable launching is not available yet.", { title: "Not available" });
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: "Error" });
+      }
     } else {
       showWarning("This game cannot be launched yet.", { title: "Not available" });
     }

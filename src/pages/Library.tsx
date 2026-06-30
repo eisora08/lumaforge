@@ -18,8 +18,8 @@ import { GridSkeleton, LibrarySectionSkeleton } from "../components/common/Skele
 
 import { useSettings } from "../context/SettingsContext";
 import { useLibraryGames } from "../context/LibraryGamesContext";
+import { useGameSession } from "../context/GameSessionContext";
 import {
-  launchSteamApp,
   installSteamApp,
   deleteLuaScript,
   scanInstalledLuaScripts,
@@ -54,6 +54,7 @@ type Props = {
 export default function LibraryPage({ onNavigate }: Props) {
   const { settings } = useSettings();
   const { games, warnings, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
+  const session = useGameSession();
   const hasLuaPath = Boolean(settings.luaPath);
   const [, startTransition] = useTransition();
 
@@ -259,12 +260,16 @@ export default function LibraryPage({ onNavigate }: Props) {
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
       try {
-        await launchSteamApp(Number(game.appId));
+        await session.launchGame(game);
       } catch (err) {
         showError(String(err), { title: "Error" });
       }
     } else if (game.source === "local" && game.executablePath) {
-      showWarning("Local executable launching is not available yet.", { title: "Not available" });
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: "Error" });
+      }
     } else {
       showWarning("This game cannot be launched yet.", { title: "Not available" });
     }

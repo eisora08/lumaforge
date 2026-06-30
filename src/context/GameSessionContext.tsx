@@ -1,7 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { isProcessRunning, terminateProcess, terminateProcessTree } from "../services/tauri";
-import { findGameProcess } from "../utils/gameProcessDetection";
+import { isProcessRunning, terminateProcess, terminateProcessTree, launchSteamApp, launchExecutable, listProcesses } from "../services/tauri";
+import { findGameProcess, findCandidates, pickBestCandidate } from "../utils/gameProcessDetection";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
+import type { LibraryGame } from "../types/libraryGame";
+import type { ProcessInfo } from "../services/tauri";
+
+const ENABLE_VERBOSE_LAUNCH_LOGS = false;
 
 export type GameSessionState = "idle" | "launching" | "running" | "stopping" | "error";
 
@@ -57,6 +61,14 @@ type GameSessionContextValue = {
   stopSession: (gameKey: string) => Promise<{ terminated: boolean }>;
   findGameProcessForSession: (gameKey: string) => Promise<ProcessCandidate | null>;
   recordPlaytime: (gameKey: string) => { durationMs: number } | null;
+  /** Global launch orchestration — survives page navigation. */
+  launchGame: (game: LibraryGame) => Promise<void>;
+  /** Cancel a pending launch (only while in "launching" state before dispatch). */
+  cancelLaunch: (gameKey: string) => Promise<void>;
+  /** Find the actual session key for the currently running game, or null. */
+  findRunningSessionKey: () => string | null;
+  /** Stop a running game by its appId — resolves correct session key internally. */
+  stopGameByAppId: (appId: string) => Promise<{ terminated: boolean }>;
 };
 
 const STORAGE_KEY = "lumaforge-running-games-v1";
@@ -387,6 +399,338 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     []
   );
 
+  // ---------------------------------------------------------------------------
+  // Global launch orchestration — lives in context, survives page navigation.
+  // ---------------------------------------------------------------------------
+
+  const launchStateRef = useRef<{
+    token: symbol | null;
+    cancelled: boolean;
+    guardTimer: ReturnType<typeof setTimeout> | null;
+    dispatchTimer: ReturnType<typeof setTimeout> | null;
+    scanTimeouts: ReturnType<typeof setTimeout>[];
+    launchTimeout: ReturnType<typeof setTimeout> | null;
+    snapshotBefore: ProcessInfo[];
+    dispatched: boolean;
+  }>({
+    token: null,
+    cancelled: false,
+    guardTimer: null,
+    dispatchTimer: null,
+    scanTimeouts: [],
+    launchTimeout: null,
+    snapshotBefore: [],
+    dispatched: false,
+  });
+
+  // Clean up all timers for the current launch
+  const clearLaunchTimers = useCallback(() => {
+    const ls = launchStateRef.current;
+    if (ls.guardTimer !== null) { clearTimeout(ls.guardTimer); ls.guardTimer = null; }
+    if (ls.dispatchTimer !== null) { clearTimeout(ls.dispatchTimer); ls.dispatchTimer = null; }
+    if (ls.launchTimeout !== null) { clearTimeout(ls.launchTimeout); ls.launchTimeout = null; }
+    for (const t of ls.scanTimeouts) clearTimeout(t);
+    ls.scanTimeouts = [];
+  }, []);
+
+  // Scan for process after launch
+  const scanForProcessAfterLaunch = useCallback(async (
+    computedKey: string,
+    game: { executablePath?: string; installDir?: string; title?: string; appId?: string },
+    token: symbol,
+    delayMs: number,
+  ): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      const timeout = setTimeout(async () => {
+        if (launchStateRef.current.cancelled || launchStateRef.current.token !== token) {
+          resolve();
+          return;
+        }
+        try {
+          const processes = await listProcesses();
+          if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+            console.debug("[Launch] scan after launch", { gameKey: computedKey, count: processes.length, delayMs });
+          }
+          const candidates = findCandidates(processes, {
+            executablePath: game.executablePath,
+            installDir: game.installDir,
+            title: game.title,
+            appId: game.appId,
+          }, launchStateRef.current.snapshotBefore);
+          const best = pickBestCandidate(candidates);
+          if (best) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] candidate found, marking running", { gameKey: computedKey, pid: best.pid, confidence: best.confidence });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "running",
+                  pid: best.pid,
+                  softSession: false,
+                  trackingConfidence: best.confidence,
+                  processName: best.name,
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+            resolve();
+            return;
+          }
+          if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+            console.debug("[Launch] no candidate found", { gameKey: computedKey, delayMs });
+          }
+        } catch (err) {
+          console.warn("[Launch] scan error", err);
+        }
+        resolve();
+      }, delayMs);
+      launchStateRef.current.scanTimeouts.push(timeout);
+    });
+  }, []);
+
+  const launchGame = useCallback(async (game: LibraryGame) => {
+    const ls = launchStateRef.current;
+    clearLaunchTimers();
+    ls.cancelled = false;
+    ls.dispatched = false;
+    const token = Symbol("launch");
+    ls.token = token;
+
+    const computedKey = computeGameKey(game);
+
+    if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+      console.debug("[Launch] start", { gameKey: computedKey, title: game.title, appId: game.appId, source: game.source });
+    }
+
+    // Check existing state — ignore if already launching/running/stopping
+    const currentState = sessionsRef.current[computedKey]?.state;
+    if (currentState === "launching" || currentState === "running" || currentState === "stopping") {
+      if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+        console.debug("[Launch] ignored — already in state", { gameKey: computedKey, state: currentState });
+      }
+      return;
+    }
+
+    // Snapshot current processes for diff
+    try {
+      ls.snapshotBefore = await listProcesses();
+    } catch {
+      ls.snapshotBefore = [];
+    }
+
+    // Set launching state
+    const now = Date.now();
+    setSessions((prev) => ({
+      ...prev,
+      [computedKey]: {
+        gameKey: computedKey,
+        gameId: game.id,
+        appId: game.appId,
+        title: game.title,
+        source: game.source === "steam" ? "steam" : game.source === "local" ? "local" : "unknown",
+        state: "launching",
+        executablePath: game.executablePath,
+        installDir: game.installDir,
+        launchedAt: now,
+        updatedAt: now,
+      },
+    }));
+
+    // 30-second timeout guard — prevents infinite launching
+    ls.guardTimer = setTimeout(() => {
+      ls.guardTimer = null;
+      if (ls.token === token && !ls.cancelled) {
+        const s = sessionsRef.current[computedKey];
+        if (s?.state === "launching") {
+          if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+            console.debug("[Launch] timeout — 30s guard, forcing error", { gameKey: computedKey });
+          }
+          setSessions((prev) => {
+            const existing = prev[computedKey];
+            if (!existing || existing.state !== "launching") return prev;
+            return {
+              ...prev,
+              [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+            };
+          });
+        }
+      }
+    }, 30000);
+
+    // Delayed dispatch so Cancel can abort
+    const dispatchDelayMs = game.source === "steam" ? 1500 : 800;
+    ls.dispatchTimer = setTimeout(async () => {
+      ls.dispatchTimer = null;
+      if (ls.cancelled || ls.token !== token) return;
+
+      ls.dispatched = true;
+      if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+        console.debug("[Launch] backend response", { gameKey: computedKey });
+      }
+
+      try {
+        if (game.source === "steam" && game.appId) {
+          await launchSteamApp(Number(game.appId));
+          if (ls.cancelled || ls.token !== token) return;
+
+          if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+            console.debug("[Launch] running", { gameKey: computedKey });
+          }
+
+          ls.launchTimeout = setTimeout(async () => {
+            ls.launchTimeout = null;
+            if (ls.token !== token || ls.cancelled) return;
+
+            await scanForProcessAfterLaunch(computedKey, game, token, 0);
+            if (sessionsRef.current[computedKey]?.state !== "running") {
+              await scanForProcessAfterLaunch(computedKey, game, token, 3000);
+            }
+            if (sessionsRef.current[computedKey]?.state !== "running") {
+              await scanForProcessAfterLaunch(computedKey, game, token, 5000);
+            }
+
+            if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+              if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+                console.debug("[Launch] no process detected, marking soft session", { gameKey: computedKey });
+              }
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing || existing.state !== "launching") return prev;
+                return {
+                  ...prev,
+                  [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                };
+              });
+            }
+          }, 2000);
+        } else if (game.source === "local" && game.executablePath) {
+          const result = await launchExecutable(game.executablePath);
+          if (ls.cancelled || ls.token !== token) {
+            if (result.pid) {
+              try { await terminateProcess(result.pid); } catch { /* ignore */ }
+            }
+            return;
+          }
+
+          if (result.pid) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] local process spawned", { gameKey: computedKey, pid: result.pid });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "running",
+                  pid: result.pid,
+                  softSession: false,
+                  trackingConfidence: "high",
+                  processName: game.executablePath!.split(/[/\\]/).pop(),
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+          } else {
+            await scanForProcessAfterLaunch(computedKey, game, token, 0);
+            if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing || existing.state !== "launching") return prev;
+                return {
+                  ...prev,
+                  [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                };
+              });
+            }
+          }
+        } else {
+          console.warn("[Launch] cannot determine launch method", { gameKey: computedKey });
+          setSessions((prev) => {
+            const next = { ...prev };
+            delete next[computedKey];
+            return next;
+          });
+        }
+      } catch (err) {
+        console.warn("[Launch] failed", err);
+        if (ls.token === token && !ls.cancelled) {
+          setSessions((prev) => {
+            const next = { ...prev };
+            delete next[computedKey];
+            return next;
+          });
+        }
+      }
+    }, dispatchDelayMs);
+  }, [clearLaunchTimers, scanForProcessAfterLaunch]);
+
+  const cancelLaunch = useCallback(async (gameKey: string) => {
+    const ls = launchStateRef.current;
+    const currentState = sessionsRef.current[gameKey]?.state;
+    if (currentState !== "launching") return;
+
+    if (ls.dispatched) {
+      if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+        console.debug("[Launch] cancel requested but already dispatched — marking soft running", { gameKey });
+      }
+      setSessions((prev) => {
+        const existing = prev[gameKey];
+        if (!existing) return prev;
+        return {
+          ...prev,
+          [gameKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+        };
+      });
+      return;
+    }
+
+    if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+      console.debug("[Launch] stop requested", { gameKey, processId: sessionsRef.current[gameKey]?.pid });
+    }
+
+    ls.cancelled = true;
+    ls.token = null;
+    clearLaunchTimers();
+
+    const currentSession = sessionsRef.current[gameKey];
+    if (currentSession?.pid != null) {
+      try { await terminateProcess(currentSession.pid); } catch { /* ignore */ }
+    }
+
+    setSessions((prev) => {
+      const next = { ...prev };
+      delete next[gameKey];
+      return next;
+    });
+
+    if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+      console.debug("[Launch] stopped", { gameKey });
+    }
+  }, [clearLaunchTimers]);
+
+  const findRunningSessionKey = useCallback((): string | null => {
+    for (const [key, s] of Object.entries(sessionsRef.current)) {
+      if (s.state === "running") return key;
+    }
+    return null;
+  }, []);
+
+  const stopGameByAppId = useCallback(async (appId: string): Promise<{ terminated: boolean }> => {
+    for (const [key, s] of Object.entries(sessionsRef.current)) {
+      if (s.appId === appId) {
+        return stopSession(key);
+      }
+    }
+    return { terminated: false };
+  }, [stopSession]);
+
   const value = useMemo(
     () => ({
       sessions,
@@ -400,8 +744,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       stopSession,
       findGameProcessForSession,
       recordPlaytime,
+      launchGame,
+      cancelLaunch,
+      findRunningSessionKey,
+      stopGameByAppId,
     }),
-    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime]
+    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime, launchGame, cancelLaunch, findRunningSessionKey, stopGameByAppId]
   );
 
   return (

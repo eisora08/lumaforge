@@ -10,11 +10,13 @@ import type { AppPage } from "../../types/navigation";
 type Props = {
   snapshot: StartupSnapshot | null;
   onNavigate?: (page: AppPage) => void;
+  excludeAppId?: string;
 };
 
 function getContinueGames(
   snapshotGames: SnapshotGame[],
   sessions: Record<string, { appId?: string; state: string }>,
+  excludeAppId?: string,
 ): SnapshotGame[] {
   const runningAppIds = new Set(
     Object.values(sessions)
@@ -26,28 +28,43 @@ function getContinueGames(
   const recent = snapshotGames
     .filter((g) => g.lastPlayed)
     .sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0));
+  const installedFallback = snapshotGames
+    .filter((g) => g.installed)
+    .sort((a, b) => (b.playtime ?? 0) - (a.playtime ?? 0));
 
   const seen = new Set<string>();
+  if (excludeAppId) seen.add(excludeAppId);
   const result: SnapshotGame[] = [];
 
-  for (const g of [...running, ...recent]) {
+  for (const g of [...running, ...recent, ...installedFallback]) {
     if (!g.appId || seen.has(g.appId)) continue;
     seen.add(g.appId);
     result.push(g);
-    if (result.length >= 6) break;
+    if (result.length >= 10) break;
   }
 
   return result;
 }
 
-export default function ContinuePlayingSection({ snapshot, onNavigate }: Props) {
+function formatLastPlayed(ts: number | null): string | null {
+  if (ts == null) return null;
+  const diff = Date.now() - ts * 1000;
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (hours < 1) return "Just now";
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts * 1000).toLocaleDateString();
+}
+
+export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAppId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { sessions } = useGameSession();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
 
   const games = useMemo(
-    () => getContinueGames(snapshot?.library?.games || [], sessions),
-    [snapshot, sessions],
+    () => getContinueGames(snapshot?.library?.games || [], sessions, excludeAppId),
+    [snapshot, sessions, excludeAppId],
   );
 
   if (games.length === 0) return null;
@@ -98,10 +115,10 @@ export default function ContinuePlayingSection({ snapshot, onNavigate }: Props) 
           {games.map((game) => {
             const imgPath = game.media?.landscapePath || game.media?.backgroundPath;
             const imgUrl = imgPath ? localPathToUrl(imgPath) : null;
-            const lastPlayedStr =
-              game.lastPlayed != null
-                ? new Date(game.lastPlayed * 1000).toLocaleDateString()
-                : null;
+            const lastPlayedStr = formatLastPlayed(game.lastPlayed);
+            const isRunning = Object.values(sessions).some(
+              (s) => s.state === "running" && s.appId === game.appId,
+            );
 
             return (
               <div
@@ -124,6 +141,11 @@ export default function ContinuePlayingSection({ snapshot, onNavigate }: Props) 
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-white/5">
                         <Clock className="h-6 w-6 text-(--color-muted)/40" />
+                      </div>
+                    )}
+                    {isRunning && (
+                      <div className="absolute left-2 top-2 rounded-full bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
+                        Playing
                       </div>
                     )}
                   </div>
