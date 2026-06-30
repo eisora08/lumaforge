@@ -21,7 +21,7 @@ import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 
 import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
-import { requestGameData, LoadPriority } from "../services/gameDataService";
+
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
   const { games, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
@@ -123,20 +123,8 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     }
   }, [filteredGames, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
 
-  // Priority-based data loading: first items at VIEWPORT, rest at BACKGROUND
-  useEffect(() => {
-    if (filteredGames.length === 0) return;
-
-    const allIds = filteredGames.map((g) => g.appId).filter(Boolean) as string[];
-    const viewportCount = Math.min(12, allIds.length);
-
-    for (let i = 0; i < viewportCount; i++) {
-      requestGameData(allIds[i], LoadPriority.VIEWPORT);
-    }
-    for (let i = viewportCount; i < allIds.length; i++) {
-      requestGameData(allIds[i], LoadPriority.BACKGROUND);
-    }
-  }, [filteredGames]);
+  // Viewport-based data loading is handled per-card in GameLauncherTile
+  // using useInViewport hook — items request data when they enter the viewport.
 
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {

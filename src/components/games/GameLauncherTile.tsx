@@ -13,6 +13,8 @@ import type { LibraryAppInfoEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { useSettings } from "../../context/SettingsContext";
+import { useInViewport } from "../../hooks/useInViewport";
+import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import Tooltip from "../common/Tooltip";
 import CardActionMenu, { MenuItem } from "./CardActionMenu";
@@ -72,18 +74,30 @@ export default function GameLauncherTile({
   onDeleteScript,
 }: GameLauncherTileProps) {
   const { settings } = useSettings();
+  const { ref, isVisible } = useInViewport();
   const [menuOpen, setMenuOpen] = useState(false);
   const [favorite, setFavorite] = useState(false);
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
+  const hasRequestedData = useRef(false);
+  const hasMountedData = useRef(false);
 
-  // Load canonical appinfo for this game — session-cached
+  // Request game data via priority system when card enters viewport
   useEffect(() => {
-    if (!game.appId) {
-      setMediaLoading(false);
+    if (!game.appId || !isVisible || hasRequestedData.current) return;
+    hasRequestedData.current = true;
+    requestGameData(game.appId, LoadPriority.VIEWPORT);
+  }, [game.appId, isVisible]);
+
+  // Load canonical appinfo for this game — deferred until visible
+  useEffect(() => {
+    if (!game.appId || !isVisible) {
+      if (!game.appId) setMediaLoading(false);
       return;
     }
+    if (hasMountedData.current) return;
+    hasMountedData.current = true;
     let cancelled = false;
     setMediaLoading(true);
     loadGameAppInfoWithMediaFallback(game.appId)
@@ -97,7 +111,7 @@ export default function GameLauncherTile({
         if (!cancelled) setMediaLoading(false);
       });
     return () => { cancelled = true; };
-  }, [game.appId]);
+  }, [game.appId, isVisible]);
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
 
@@ -144,7 +158,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
+    <div ref={ref} className="group flex flex-col rounded-2xl bg-transparent lf-card-hover hover:bg-white/[0.02] lf-press-effect">
       {/* Image */}
       <div
         role="button"
