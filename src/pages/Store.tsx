@@ -92,7 +92,6 @@ const METADATA_CONCURRENCY = 5;
 const REVIEW_CONCURRENCY = 3;
 const INITIAL_CATALOG_SIZE = 500;
 const PAGE_SIZE = 30;
-const PAGE_SIZES = [12, 24, 36, 48] as const;
 
 const RANKING_WEIGHTS = {
   popularity: 0.35,
@@ -254,7 +253,6 @@ export default function Store() {
   >(null);
 
   const [browsePage, setBrowsePage] = useState(1);
-  const [browsePageSize, setBrowsePageSize] = useState(PAGE_SIZE);
 
   const [sourcesLoadingByAppId, setSourcesLoadingByAppId] = useState<
     Record<string, boolean>
@@ -1819,10 +1817,10 @@ export default function Store() {
 
             <div className="min-w-0 flex-1">
               {(() => {
-                const totalPages = Math.ceil(filteredBrowseGames.length / browsePageSize) || 1;
+                const totalPages = Math.ceil(filteredBrowseGames.length / PAGE_SIZE) || 1;
                 const safePage = Math.min(browsePage, totalPages);
-                const startIdx = (safePage - 1) * browsePageSize;
-                const endIdx = startIdx + browsePageSize;
+                const startIdx = (safePage - 1) * PAGE_SIZE;
+                const endIdx = startIdx + PAGE_SIZE;
                 const pageGames = filteredBrowseGames.slice(startIdx, endIdx);
 
                 return (
@@ -1857,57 +1855,58 @@ export default function Store() {
                       </div>
                     )}
 
-                    <div className="mt-5 flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-xs text-(--color-muted)">
-                        <span>Grid:</span>
-                        <select
-                          value={browsePageSize}
-                          onChange={(e) => {
-                            setBrowsePageSize(Number(e.target.value));
-                            setBrowsePage(1);
-                          }}
-                          className="lf-select lf-popover-enter rounded-lg border px-2 py-1 text-xs outline-none focus:border-(--color-accent)/40"
-                        >
-                          {PAGE_SIZES.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                      </div>
+                    <div className="mt-5 flex items-center justify-center">
+                      {totalPages > 1 && (() => {
+                        const pages: (number | "...")[] = [];
+                        const delta = 1;
+                        const left = Math.max(2, safePage - delta);
+                        const right = Math.min(totalPages - 1, safePage + delta);
 
-                      {totalPages > 1 && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            disabled={safePage <= 1}
-                            onClick={() => setBrowsePage(safePage - 1)}
-                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
-                          >
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          </button>
-                          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                        pages.push(1);
+                        if (left > 2) pages.push("...");
+                        for (let i = left; i <= right; i++) pages.push(i);
+                        if (right < totalPages - 1) pages.push("...");
+                        if (totalPages > 1) pages.push(totalPages);
+
+                        return (
+                          <div className="flex items-center gap-1">
                             <button
-                              key={page}
                               type="button"
-                              onClick={() => setBrowsePage(page)}
-                              className={`inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-xs font-medium transition ${
-                                safePage === page
-                                  ? "bg-(--color-accent)/20 text-(--color-accent)"
-                                  : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
-                              }`}
+                              disabled={safePage <= 1}
+                              onClick={() => { setBrowsePage(safePage - 1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                              className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
                             >
-                              {page}
+                              <ChevronLeft className="h-3.5 w-3.5" />
                             </button>
-                          ))}
-                          <button
-                            type="button"
-                            disabled={safePage >= totalPages}
-                            onClick={() => setBrowsePage(safePage + 1)}
-                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
-                          >
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )}
+                            {pages.map((p, i) =>
+                              p === "..." ? (
+                                <span key={`e${i}`} className="inline-flex h-7 w-5 items-center justify-center text-xs text-(--color-muted)">...</span>
+                              ) : (
+                                <button
+                                  key={p}
+                                  type="button"
+                                  onClick={() => { setBrowsePage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                                  className={`inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-xs font-medium transition ${
+                                    safePage === p
+                                      ? "bg-(--color-accent)/20 text-(--color-accent)"
+                                      : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                                  }`}
+                                >
+                                  {p}
+                                </button>
+                              )
+                            )}
+                            <button
+                              type="button"
+                              disabled={safePage >= totalPages}
+                              onClick={() => { setBrowsePage(safePage + 1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                              className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );
