@@ -76,6 +76,7 @@ pub fn run() {
             commands::process::is_process_running,
             commands::process::list_processes,
             commands::process::discover_executables,
+            commands::process::focus_game_window,
             commands::game_media_cache::get_game_media_cache,
             commands::game_media_cache::get_all_game_media_cache,
             commands::game_media_cache::save_game_media_cache,

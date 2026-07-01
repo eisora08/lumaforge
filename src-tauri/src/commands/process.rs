@@ -211,3 +211,62 @@ pub fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 pub fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
+
+#[tauri::command]
+pub fn focus_game_window(pid: u32) -> Result<(), String> {
+    unsafe {
+        let mut found: windows::Win32::Foundation::HWND =
+            windows::Win32::Foundation::HWND(0);
+        let mut ctx = (&mut found, pid);
+
+        let enum_result = windows::Win32::UI::WindowsAndMessaging::EnumWindows(
+            Some(enum_window_callback),
+            windows::Win32::Foundation::LPARAM(
+                &mut ctx as *mut _ as isize,
+            ),
+        );
+
+        if enum_result.is_err() {
+            return Err("Failed to enumerate windows".to_string());
+        }
+
+        if found.0 != 0 {
+            if windows::Win32::UI::WindowsAndMessaging::IsIconic(found)
+                .as_bool()
+            {
+                let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+                    found,
+                    windows::Win32::UI::WindowsAndMessaging::SW_RESTORE,
+                );
+            }
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
+                found,
+            );
+            Ok(())
+        } else {
+            Err(format!("No visible window found for PID {}", pid))
+        }
+    }
+}
+
+unsafe extern "system" fn enum_window_callback(
+    hwnd: windows::Win32::Foundation::HWND,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::BOOL {
+    let ctx = &mut *(lparam.0 as *mut (&mut windows::Win32::Foundation::HWND, u32));
+    let mut window_pid = 0u32;
+    let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+        hwnd,
+        Some(&mut window_pid),
+    );
+    if window_pid == ctx.1 {
+        if windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd).as_bool() {
+            *ctx.0 = hwnd;
+            return windows::Win32::Foundation::FALSE;
+        }
+        if ctx.0 .0 == 0 {
+            *ctx.0 = hwnd;
+        }
+    }
+    windows::Win32::Foundation::TRUE
+}

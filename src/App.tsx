@@ -18,6 +18,7 @@ import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
 import { GameDetailsProvider } from "./context/GameDetailsContext";
 import { GameSessionProvider, useGameSession } from "./context/GameSessionContext";
 import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
+import GameSessionHUD from "./components/system/GameSessionHUD";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
@@ -139,6 +140,7 @@ function App() {
       <GameSessionProvider>
       <SessionOverlayWrapper />
       <GameDetailsProvider>
+        <GameSessionHUD onNavigate={handleNavigate} />
         <AppLayout activePage={activePage} onNavigate={handleNavigate}>
           <AppRouteTransition routeKey={activePage}>
             {renderPage()}

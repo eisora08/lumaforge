@@ -443,6 +443,10 @@ export type DiscoveredExecutable = {
   size_bytes: number;
 };
 
+export async function focusGameWindow(pid: number): Promise<void> {
+  await invoke<void>("focus_game_window", { pid });
+}
+
 export async function discoverExecutables(dir: string): Promise<DiscoveredExecutable[]> {
   try {
     return await invoke<DiscoveredExecutable[]>("discover_executables", { dir });
