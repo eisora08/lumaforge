@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Gamepad2,
   PackageSearch,
 } from "lucide-react";
@@ -92,6 +94,7 @@ const REVIEW_CONCURRENCY = 3;
 const INITIAL_CATALOG_SIZE = 500;
 const BATCH_SIZE = 200;
 const PAGE_SIZE = 30;
+const PAGE_SIZES = [12, 24, 36, 48] as const;
 
 function mapSteamFeaturedItemToPackageGame(
   item: SteamFeaturedItem
@@ -258,6 +261,7 @@ export default function Store() {
   >(null);
 
   const [browsePage, setBrowsePage] = useState(1);
+  const [browsePageSize, setBrowsePageSize] = useState(PAGE_SIZE);
 
   const [sourcesLoadingByAppId, setSourcesLoadingByAppId] = useState<
     Record<string, boolean>
@@ -537,10 +541,50 @@ export default function Store() {
     return sections.filter((section) => section.games.length > 0);
   }, [results, installedStatusByAppId]);
 
+  const featuredGames = useMemo(() => {
+    const pool: PackageGame[] = [];
+    const seen = new Set<string>();
+
+    // Source: top 200 ranked games (most relevant catalog entries)
+    for (const entry of rankedSteamCatalog.slice(0, 200)) {
+      const appId = String(entry.appid);
+      if (seen.has(appId)) continue;
+      seen.add(appId);
+      pool.push({
+        appId,
+        title: entry.name,
+        imageUrl: undefined,
+        platforms: [],
+        sources: [],
+      });
+    }
+
+    if (pool.length === 0) return [];
+
+    // Weighted: prefer games with available sources, then by rank
+    const scored = pool.map((g) => {
+      const overlay = providerOverlayByAppId[g.appId];
+      const hasSource = overlay && overlay.sources.some((s) => s.available);
+      return { game: g, score: hasSource ? 1 : 0 };
+    });
+    scored.sort((a, b) => b.score - a.score);
+
+    // Day rotation for variety within top scored pool
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 0);
+    const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+    const topPool = scored.slice(0, 40);
+    const count = Math.min(topPool.length, 8);
+    const start = dayOfYear % Math.max(1, topPool.length - count + 1);
+
+    return topPool.slice(start, start + count).map((s) => s.game);
+  }, [rankedSteamCatalog, providerOverlayByAppId]);
+
   const dynamicDiscoverSections = useMemo(() => {
     const usedIds = new Set<string>();
     steamStoreSections.forEach((s) => s.games.forEach((g) => usedIds.add(g.appId)));
     lumaForgeSections.forEach((s) => s.games.forEach((g) => usedIds.add(g.appId)));
+    featuredGames.forEach((g) => usedIds.add(g.appId));
 
     function takeUnique(games: PackageGame[], limit: number) {
       const out: PackageGame[] = [];
@@ -564,37 +608,46 @@ export default function Store() {
       sources: [] as PackageSource[],
     }));
 
-    // --- New Releases ---
+    // --- Discover Picks (daily rotating, weighted random) ---
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 0);
+    const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+    const picksPool = topGames.filter((g) => !usedIds.has(g.appId));
+    if (picksPool.length > 20) {
+      const start = dayOfYear % (picksPool.length - 20);
+      const picks = takeUnique(picksPool.slice(start, start + 40), 20);
+      if (picks.length > 0) {
+        sections.push({ id: "discover-picks", title: "Discover Picks", description: "Curated selection for today.", games: picks });
+      }
+    }
+
+    // --- Top Sellers (stable ranking order) ---
+    const ts = takeUnique(topGames, 20);
+    if (ts.length > 0) {
+      sections.push({ id: "top-sellers", title: "Top Sellers", description: "Top ranked games in the catalog.", games: ts });
+    }
+
+    // --- Trending Now (games with available sources, variety) ---
+    const withSources = topGames.filter((g) => {
+      const overlay = providerOverlayByAppId[g.appId];
+      return overlay && overlay.sources.some((s) => s.available);
+    });
+    if (withSources.length >= 4) {
+      const trendingStart = (dayOfYear * 7) % withSources.length;
+      const trending = takeUnique(
+        [...withSources.slice(trendingStart), ...withSources.slice(0, trendingStart)],
+        20
+      );
+      if (trending.length > 0) {
+        sections.push({ id: "trending", title: "Trending Now", description: "Games with available download sources.", games: trending });
+      }
+    }
+
+    // --- New Releases (newest appIds) ---
     const newest = [...topGames].sort((a, b) => Number(b.appId) - Number(a.appId));
     const nr = takeUnique(newest, 20);
     if (nr.length > 0) {
       sections.push({ id: "new-releases", title: "New Releases", description: "Latest games added to the catalog.", games: nr });
-    }
-
-    // --- Trending Now ---
-    const trending = [...topGames].sort((a, b) => Number(b.appId) - Number(a.appId));
-    const tr = takeUnique(trending, 20);
-    if (tr.length > 0) {
-      sections.push({ id: "trending", title: "Trending Now", description: "Popular games in the catalog.", games: tr });
-    }
-
-    // --- Top Sellers ---
-    const ts = takeUnique(topGames, 20);
-    if (ts.length > 0) {
-      sections.push({ id: "top-sellers", title: "Top Sellers", description: "Popular games in the catalog.", games: ts });
-    }
-
-    // --- Specials (daily rotating selection) ---
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 0);
-    const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
-    const specialsPool = topGames.filter((g) => !usedIds.has(g.appId));
-    if (specialsPool.length > 20) {
-      const start = dayOfYear % (specialsPool.length - 20);
-      const specials = takeUnique(specialsPool.slice(start, start + 40), 20);
-      if (specials.length > 0) {
-        sections.push({ id: "specials", title: "Specials", description: "Curated selection for today.", games: specials });
-      }
     }
 
     // --- Genres (from metadata, limited to top games) ---
@@ -639,7 +692,7 @@ export default function Store() {
     }
 
     return sections;
-  }, [steamStoreSections, lumaForgeSections, rankedSteamCatalog, storeMetadataByAppId, installedStatusByAppId]);
+  }, [steamStoreSections, lumaForgeSections, rankedSteamCatalog, storeMetadataByAppId, installedStatusByAppId, featuredGames]);
 
   const allStoreSections = useMemo(() => {
     return [...steamStoreSections, ...lumaForgeSections, ...dynamicDiscoverSections];
@@ -696,33 +749,6 @@ export default function Store() {
     console.log(`[Store] luaReadyGames: ${games.length} games`);
     return games;
   }, [catalogGames, results, steamStoreSections, providerOverlayByAppId]);
-
-  const featuredGames = useMemo(() => {
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 0);
-    const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
-
-    const pool: PackageGame[] = [];
-    const seen = new Set<string>();
-
-    function tryAdd(game: PackageGame) {
-      if (seen.has(game.appId)) return;
-      seen.add(game.appId);
-      pool.push(providerOverlayByAppId[game.appId] ?? game);
-    }
-
-    // Priority: ranked catalog (first 200 are most relevant)
-    catalogGames.slice(0, 200).forEach(tryAdd);
-    // Also include featured/luma/results for variety
-    steamStoreSections.forEach((s) => s.games.forEach(tryAdd));
-    lumaForgeSections.forEach((s) => s.games.forEach(tryAdd));
-    results.forEach(tryAdd);
-
-    // Rotate based on day of year so hero changes daily
-    const count = Math.min(pool.length, 8);
-    const start = dayOfYear % Math.max(1, pool.length - count + 1);
-    return pool.slice(start, start + count);
-  }, [catalogGames, steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
 
   const newsItems = useMemo<StoreNewsItem[]>(() => {
     const items: StoreNewsItem[] = [];
@@ -1695,10 +1721,10 @@ export default function Store() {
 
             <div className="min-w-0 flex-1">
               {(() => {
-                const totalPages = Math.ceil(filteredBrowseGames.length / PAGE_SIZE) || 1;
+                const totalPages = Math.ceil(filteredBrowseGames.length / browsePageSize) || 1;
                 const safePage = Math.min(browsePage, totalPages);
-                const startIdx = (safePage - 1) * PAGE_SIZE;
-                const endIdx = startIdx + PAGE_SIZE;
+                const startIdx = (safePage - 1) * browsePageSize;
+                const endIdx = startIdx + browsePageSize;
                 const pageGames = filteredBrowseGames.slice(startIdx, endIdx);
 
                 return (
@@ -1730,71 +1756,58 @@ export default function Store() {
                       </div>
                     )}
 
-                    {totalPages > 1 && (
-                      <div className="flex items-center justify-center gap-2 pt-4">
-                        <button
-                          type="button"
-                          disabled={safePage <= 1}
-                          onClick={() => setBrowsePage(safePage - 1)}
-                          className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-default disabled:opacity-30"
+                    <div className="mt-5 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs text-(--color-muted)">
+                        <span>Grid:</span>
+                        <select
+                          value={browsePageSize}
+                          onChange={(e) => {
+                            setBrowsePageSize(Number(e.target.value));
+                            setBrowsePage(1);
+                          }}
+                          className="lf-select lf-popover-enter rounded-lg border px-2 py-1 text-xs outline-none focus:border-(--color-accent)/40"
                         >
-                          Previous
-                        </button>
-
-                        {(() => {
-                          const pages: (number | "...")[] = [];
-                          const maxVisible = 7;
-
-                          if (totalPages <= maxVisible + 2) {
-                            for (let i = 1; i <= totalPages; i++) pages.push(i);
-                          } else {
-                            pages.push(1);
-                            let start = Math.max(2, safePage - 2);
-                            let end = Math.min(totalPages - 1, safePage + 2);
-
-                            if (safePage <= 4) {
-                              end = Math.min(maxVisible - 1, totalPages - 1);
-                            }
-                            if (safePage >= totalPages - 3) {
-                              start = Math.max(2, totalPages - maxVisible + 2);
-                            }
-
-                            if (start > 2) pages.push("...");
-                            for (let i = start; i <= end; i++) pages.push(i);
-                            if (end < totalPages - 1) pages.push("...");
-                            pages.push(totalPages);
-                          }
-
-                          return pages.map((p, i) =>
-                            p === "..." ? (
-                              <span key={`ellipsis-${i}`} className="px-1 text-sm text-(--color-muted)">...</span>
-                            ) : (
-                              <button
-                                key={p}
-                                type="button"
-                                onClick={() => setBrowsePage(p)}
-                                className={`cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                                  safePage === p
-                                    ? "bg-(--color-accent) text-black"
-                                    : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
-                                }`}
-                              >
-                                {p}
-                              </button>
-                            )
-                          );
-                        })()}
-
-                        <button
-                          type="button"
-                          disabled={safePage >= totalPages}
-                          onClick={() => setBrowsePage(safePage + 1)}
-                          className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-default disabled:opacity-30"
-                        >
-                          Next
-                        </button>
+                          {PAGE_SIZES.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
                       </div>
-                    )}
+
+                      {totalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={safePage <= 1}
+                            onClick={() => setBrowsePage(safePage - 1)}
+                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          </button>
+                          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                            <button
+                              key={page}
+                              type="button"
+                              onClick={() => setBrowsePage(page)}
+                              className={`inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-xs font-medium transition ${
+                                safePage === page
+                                  ? "bg-(--color-accent)/20 text-(--color-accent)"
+                                  : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            disabled={safePage >= totalPages}
+                            onClick={() => setBrowsePage(safePage + 1)}
+                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
