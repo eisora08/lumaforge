@@ -45,6 +45,8 @@ export type LibraryGame = {
   achievementTotal?: number;
   /** Whether metadata says Steam Achievements is supported */
   achievementsSupported?: boolean;
+  /** User-defined favorite flag */
+  isFavorite?: boolean;
 };
 
 export type LibraryFilter = "all" | "steam" | "local" | "lua" | "installed" | "uninstalled" | "lua-ready" | "disabled" | "updates";

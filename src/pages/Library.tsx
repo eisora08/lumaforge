@@ -491,6 +491,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                   </div>
                 )}
 
+
                 {paginatedGames.length === 0 ? (
                   <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
                     <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />

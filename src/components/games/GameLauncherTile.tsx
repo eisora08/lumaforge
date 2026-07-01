@@ -33,6 +33,7 @@ import {
   loadGameAppInfoWithMediaFallback,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
+import { useFavorites } from "../../context/FavoritesContext";
 import { showSuccess, showError } from "../toast/GameToast";
 
 type GameLauncherTileProps = {
@@ -85,7 +86,8 @@ export default function GameLauncherTile({
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const [favorite, setFavorite] = useState(false);
+  const { isFavorite, toggleFavorite } = useFavorites();
+  const favorite = game.appId ? isFavorite(game.appId) : false;
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -297,7 +299,7 @@ export default function GameLauncherTile({
             <MenuItem
               label={favorite ? "Remove from favorites" : "Add to favorites"}
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
-              onClick={() => { setFavorite(!favorite); setMenuOpen(false); }}
+              onClick={() => { if (game.appId) toggleFavorite(game.appId); setMenuOpen(false); }}
             />
             <MenuItem
               label="Browse Local Files"

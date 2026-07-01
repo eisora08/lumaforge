@@ -56,6 +56,7 @@ import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements } from "../../services/steamAchievementsResolver";
 import { useSettings } from "../../context/SettingsContext";
+import { useFavorites } from "../../context/FavoritesContext";
 import AchievementsModal from "./AchievementsModal";
 import type { AppPage } from "../../types/navigation";
 
@@ -203,7 +204,8 @@ export default function LibraryGameDetails({
 }: LibraryGameDetailsProps) {
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
-  const [favorite, setFavorite] = useState(false);
+  const { isFavorite, toggleFavorite } = useFavorites();
+  const favorite = game.appId ? isFavorite(game.appId) : false;
   const actionsRef = useRef<HTMLDivElement>(null);
 
   const detailTitle = appInfoEntry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
@@ -754,7 +756,7 @@ export default function LibraryGameDetails({
               {/* Favorite button */}
               <button
                 type="button"
-                onClick={() => setFavorite(!favorite)}
+                onClick={() => { if (game.appId) toggleFavorite(game.appId); }}
                 className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs transition hover:bg-white/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 title={favorite ? "Remove from favorites" : "Add to favorites"}
               >

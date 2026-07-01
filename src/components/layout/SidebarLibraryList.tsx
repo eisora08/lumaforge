@@ -15,6 +15,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
+import { useFavorites } from "../../context/FavoritesContext";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
@@ -86,7 +87,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
   const [menuGame, setMenuGame] = useState<LibraryGame | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const [favorites, setFavorites] = useState<Record<string, boolean>>({});
+  const { isFavorite, toggleFavorite } = useFavorites();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
@@ -404,7 +405,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
             const isRunning = mState === "running";
             const mAction = menuGame.isPlayable || menuGame.steamInstalled ? "play" : "install";
             const mHasLua = menuGame.luaScripts.length > 0;
-            const isFavorite = !!favorites[menuGame.id];
+            const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
 
             return (
               <>
@@ -428,10 +429,10 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                   />
                 )}
                 <MenuItem
-                  label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-                  icon={<Heart className={`h-3.5 w-3.5 ${isFavorite ? "fill-current" : ""}`} />}
+                  label={fav ? "Remove from favorites" : "Add to favorites"}
+                  icon={<Heart className={`h-3.5 w-3.5 ${fav ? "fill-current" : ""}`} />}
                   onClick={() => {
-                    setFavorites((prev) => ({ ...prev, [menuGame.id]: !prev[menuGame.id] }));
+                    if (menuGame.appId) toggleFavorite(menuGame.appId);
                     handleMenuClose();
                   }}
                 />

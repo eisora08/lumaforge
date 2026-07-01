@@ -2,8 +2,8 @@ import { useEffect, useMemo } from "react";
 import { Activity } from "lucide-react";
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
-import LuaReadySection from "../components/dashboard/LuaReadySection";
-import LibrarySection from "../components/dashboard/LibrarySection";
+import FavoritesSection from "../components/dashboard/FavoritesSection";
+import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
 import { getCachedSnapshot } from "../services/startupSnapshotService";
@@ -84,8 +84,12 @@ export default function Home({ onNavigate }: Props) {
           onNavigate={onNavigate}
           excludeAppId={runningAppId}
         />
-        <LuaReadySection onNavigate={onNavigate} />
-        <LibrarySection
+        <FavoritesSection
+          snapshot={snapshot}
+          onNavigate={onNavigate}
+          excludeAppIds={[runningAppId].filter(Boolean) as string[]}
+        />
+        <TopPlayedSection
           snapshot={snapshot}
           onNavigate={onNavigate}
           excludeAppIds={[runningAppId].filter(Boolean) as string[]}
