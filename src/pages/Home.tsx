@@ -3,6 +3,7 @@ import { Activity } from "lucide-react";
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
 import FavoritesSection from "../components/dashboard/FavoritesSection";
+import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
@@ -68,6 +69,18 @@ export default function Home({ onNavigate }: Props) {
     return running?.appId;
   }, [sessions]);
 
+  const continuePlayingAppIds = useMemo(() => {
+    const snapshotGames = snapshot?.library?.games || [];
+    const ids = new Set<string>();
+    for (const g of snapshotGames) {
+      if (g.appId && (g.lastPlayed || g.installed)) {
+        ids.add(g.appId);
+      }
+    }
+    if (runningAppId) ids.add(runningAppId);
+    return ids;
+  }, [snapshot, runningAppId]);
+
   const dedupedActivity = useMemo(() => deduplicateActivities(activities), [activities]);
 
   const installedCount = snapshot?.library?.games?.filter((g) => g.installed).length ?? 0;
@@ -88,6 +101,10 @@ export default function Home({ onNavigate }: Props) {
           snapshot={snapshot}
           onNavigate={onNavigate}
           excludeAppIds={[runningAppId].filter(Boolean) as string[]}
+        />
+        <RecommendedSection
+          onNavigate={onNavigate}
+          continuePlayingAppIds={continuePlayingAppIds}
         />
         <TopPlayedSection
           snapshot={snapshot}
