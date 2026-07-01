@@ -1,44 +1,60 @@
-import type { LauncherGame } from "../types/launcherGame";
+import { invoke } from "@tauri-apps/api/core";
+import type { LibraryGame } from "../types/libraryGame";
 
-const CACHE_KEY = "lumaforge-detected-games-cache-v2";
+const CACHE_KEY = "lumaforge-library-games-v3";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 type DetectedGamesCache = {
   savedAt: number;
-  games: LauncherGame[];
+  games: LibraryGame[];
   warnings?: string[];
   errors?: string[];
 };
 
-export function loadCachedGames(): DetectedGamesCache | null {
+let inMemoryCache: DetectedGamesCache | null = null;
+let loadPromise: Promise<DetectedGamesCache | null> | null = null;
+
+async function readFromSqlite(): Promise<DetectedGamesCache | null> {
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const cache: DetectedGamesCache = JSON.parse(raw);
-    if (!Array.isArray(cache.games) || typeof cache.savedAt !== "number") {
+    const json = await invoke<string | null>("read_library_cache", { key: CACHE_KEY });
+    if (!json) return null;
+    const parsed: DetectedGamesCache = JSON.parse(json);
+    if (!Array.isArray(parsed.games) || typeof parsed.savedAt !== "number") {
       return null;
     }
-    return cache;
+    return parsed;
   } catch {
     return null;
   }
 }
 
-export function saveCachedGames(
-  games: LauncherGame[],
+export async function loadCachedGames(): Promise<DetectedGamesCache | null> {
+  if (inMemoryCache) return inMemoryCache;
+  if (loadPromise) return loadPromise;
+  loadPromise = readFromSqlite().then((cache) => {
+    inMemoryCache = cache;
+    loadPromise = null;
+    return cache;
+  });
+  return loadPromise;
+}
+
+export async function saveCachedGames(
+  games: LibraryGame[],
   warnings?: string[],
-  errors?: string[]
-): void {
+  errors?: string[],
+): Promise<void> {
+  const cache: DetectedGamesCache = {
+    savedAt: Date.now(),
+    games,
+    warnings,
+    errors,
+  };
+  inMemoryCache = cache;
   try {
-    const cache: DetectedGamesCache = {
-      savedAt: Date.now(),
-      games,
-      warnings,
-      errors,
-    };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+    await invoke("write_library_cache", { key: CACHE_KEY, value: JSON.stringify(cache) });
   } catch {
-    // localStorage full or unavailable
+    // SQLite unavailable
   }
 }
 
@@ -46,9 +62,10 @@ export function isCacheExpired(cache: DetectedGamesCache): boolean {
   return Date.now() - cache.savedAt > CACHE_TTL_MS;
 }
 
-export function clearCachedGames(): void {
+export async function clearCachedGames(): Promise<void> {
+  inMemoryCache = null;
   try {
-    localStorage.removeItem(CACHE_KEY);
+    await invoke("delete_library_cache", { key: CACHE_KEY });
   } catch {
     // ignore
   }

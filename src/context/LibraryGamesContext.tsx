@@ -1,10 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { LibraryGame } from "../types/libraryGame";
 import type { AppSettings } from "../types/settings";
-import type { SteamAppMetadata } from "../types/gameMetadata";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
-import { loadCachedGames, isCacheExpired } from "../services/gameDetectionCache";
-import { loadMetadataCache } from "../services/gameMetadataResolver";
+import { loadCachedGames, isCacheExpired, saveCachedGames } from "../services/gameDetectionCache";
 import { loadLibraryAppInfo, updateLibraryAppInfo } from "../services/libraryLocalCacheService";
 import type { LibraryAppInfoMap } from "../services/tauri";
 import {
@@ -86,38 +84,6 @@ export function useLibraryGames(): LibraryGamesState {
     throw new Error("useLibraryGames must be used within LibraryGamesProvider");
   }
   return ctx;
-}
-
-function resolveCachedMetadata(appId?: string): SteamAppMetadata | undefined {
-  if (!appId) return undefined;
-  const cache = loadMetadataCache();
-  return cache[appId] ?? undefined;
-}
-
-function mapCachedToLibraryGame(g: any): LibraryGame {
-  const meta = resolveCachedMetadata(g.appId);
-  return {
-    id: g.id,
-    appId: g.appId,
-    title: g.title,
-    source: g.source,
-    executablePath: g.executablePath,
-    installDir: g.installDir,
-    libraryPath: g.libraryPath,
-    imageUrl: g.imageUrl || (meta ? (meta.header_image || meta.capsule_image || meta.capsule_image_v5 || undefined) : undefined),
-    metadata: meta,
-    isPlayable: g.isPlayable,
-    isInstallable: !g.isInstalled && !!g.appId,
-    steamInstalled: g.isInstalled && g.source === "steam",
-    sizeOnDisk: g.sizeOnDisk,
-    lastUpdated: g.lastUpdated,
-    luaScripts: [],
-    hasLua: false,
-    isLuaActive: false,
-    isLuaDisabled: false,
-    hasLuaSource: false,
-    sources: [],
-  };
 }
 
 export function LibraryGamesProvider({ children }: { children: React.ReactNode }) {
@@ -223,10 +189,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       seedResolvedMediaCacheFromSnapshot(snapshot.library.games);
     }
 
-    const cached = loadCachedGames();
-    if (cached) {
-      const loaded = cached.games.map(mapCachedToLibraryGame);
-      setGames(loaded);
+    // Load enriched games from SQLite cache (instant — no blocking)
+    const cached = await loadCachedGames();
+    if (cached && cached.games.length > 0) {
+      setGames(cached.games);
       setWarnings(cached.warnings || []);
       setInitialLoading(false);
     } else {
@@ -234,15 +200,16 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
 
     // Schedule background Steam scan after main window is visible.
-    // This is non-blocking — snapshot/cached games show immediately.
-    // Manual Refresh Library still does a full scan.
+    // This is non-blocking — cached games show immediately with correct stats.
     const needsScan = !cached || isCacheExpired(cached);
     if (needsScan) {
       scheduleAfterMain(async () => {
         setLoading(true);
         try {
           const result = await resolveLibraryGames(settings);
-          setGames(result.games);
+          const enriched = await enrichWithStats(result.games);
+          await saveCachedGames(enriched, result.warnings);
+          setGames(enriched);
           setWarnings(result.warnings);
         } catch (error) {
           console.error("[LibraryGamesContext] scan error:", error);
@@ -284,6 +251,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     try {
       const result = await resolveLibraryGames(settings);
       const enriched = await enrichWithStats(result.games);
+      await saveCachedGames(enriched, result.warnings);
       setGames(enriched);
       setWarnings(result.warnings);
       await updateAppInfoFromGames(enriched).catch(() => {});

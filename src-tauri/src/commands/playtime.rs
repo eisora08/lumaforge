@@ -89,19 +89,29 @@ fn ensure_entry(
     let key = game_key.to_string();
     let prov = provider.to_string();
     let t = title.to_string();
-    store.games.entry(key).or_insert_with(|| PlaytimeEntry {
-        game_key: game_key.to_string(),
-        app_id,
-        provider: prov,
-        title: t,
-        external_playtime_seconds: 0,
-        external_source: None,
-        external_imported_at: None,
-        local_playtime_seconds: 0,
-        total_playtime_seconds: 0,
-        last_played_at: None,
-        last_session_seconds: None,
-        sessions: Vec::new(),
+    store.games.entry(key).or_insert_with(|| {
+        let playtime_source = if prov == "steam" {
+            Some("external".to_string())
+        } else if prov == "local" {
+            Some("local".to_string())
+        } else {
+            None
+        };
+        PlaytimeEntry {
+            game_key: game_key.to_string(),
+            app_id,
+            provider: prov,
+            title: t,
+            playtime_source,
+            external_playtime_seconds: 0,
+            external_source: None,
+            external_imported_at: None,
+            local_playtime_seconds: 0,
+            total_playtime_seconds: 0,
+            last_played_at: None,
+            last_session_seconds: None,
+            sessions: Vec::new(),
+        }
     });
 }
 
@@ -111,7 +121,12 @@ fn update_external(entry: &mut PlaytimeEntry, external_seconds: u64, external_so
         entry.external_source = Some(external_source.to_string());
         entry.external_imported_at = Some(now_secs());
     }
-    entry.total_playtime_seconds = entry.external_playtime_seconds + entry.local_playtime_seconds;
+    // Source-aware total: external games don't accumulate local
+    if entry.playtime_source.as_deref() == Some("external") || entry.external_source.is_some() {
+        entry.total_playtime_seconds = entry.external_playtime_seconds;
+    } else {
+        entry.total_playtime_seconds = entry.external_playtime_seconds + entry.local_playtime_seconds;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +162,18 @@ pub fn record_play_session_start(
         &input.provider,
         &input.title,
     );
+
+    // Auto-close any stale sessions (endedAt = null) for this game
+    if let Some(entry) = store.games.get_mut(&input.game_key) {
+        let now = input.started_at;
+        for session in entry.sessions.iter_mut() {
+            if session.ended_at.is_none() {
+                session.ended_at = Some(now);
+                session.exit_reason = Some("auto-closed".to_string());
+                session.duration_seconds = Some(now.saturating_sub(session.started_at));
+            }
+        }
+    }
 
     let entry = store.games.get_mut(&input.game_key).unwrap();
     while entry.sessions.len() >= MAX_SESSIONS_PER_GAME {
@@ -208,6 +235,7 @@ pub fn record_play_session_end(
     }
 
     let duration;
+    let is_external_game;
     {
         let entry = store.games.get_mut(&game_key).unwrap();
         let session = entry
@@ -222,10 +250,32 @@ pub fn record_play_session_end(
         duration = input.ended_at.saturating_sub(session.started_at);
         session.duration_seconds = Some(duration);
 
-        entry.local_playtime_seconds += duration;
-        entry.total_playtime_seconds = entry.external_playtime_seconds + entry.local_playtime_seconds;
-        entry.last_played_at = Some(input.ended_at);
-        entry.last_session_seconds = Some(duration);
+        // Set playtime_source if not already set
+        if entry.playtime_source.is_none() {
+            entry.playtime_source = if entry.external_source.is_some() || entry.provider == "steam" {
+                Some("external".to_string())
+            } else {
+                Some("local".to_string())
+            };
+        }
+
+        is_external_game = entry.playtime_source.as_deref() == Some("external");
+
+        if duration < 15 {
+            // Too short — close session but don't count toward playtime
+            entry.last_played_at = Some(input.ended_at);
+        } else if is_external_game {
+            // External game: don't persist to local, total = external + current session
+            entry.total_playtime_seconds = entry.external_playtime_seconds + duration;
+            entry.last_played_at = Some(input.ended_at);
+            entry.last_session_seconds = Some(duration);
+        } else {
+            // Local game: accumulate normally
+            entry.local_playtime_seconds += duration;
+            entry.total_playtime_seconds = entry.external_playtime_seconds + entry.local_playtime_seconds;
+            entry.last_played_at = Some(input.ended_at);
+            entry.last_session_seconds = Some(duration);
+        }
     }
 
     store.updated_at = now_secs();

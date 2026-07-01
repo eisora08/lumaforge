@@ -5,6 +5,7 @@ export type PlaytimeEntry = {
   appId: string | null;
   provider: string;
   title: string;
+  playtimeSource: string | null;
   externalPlaytimeSeconds: number;
   externalSource: string | null;
   externalImportedAt: number | null;
@@ -113,6 +114,16 @@ export async function endPlaySession(input: PlaySessionEnd): Promise<PlaytimeEnt
     cachedStore.updatedAt = Date.now();
   }
   return entry;
+}
+
+export const MIN_SESSION_SECONDS = 15;
+
+/** Compute total playtime based on source: external games don't accumulate local */
+export function computeTotalPlaytime(entry: PlaytimeEntry): number {
+  if (entry.playtimeSource === "external" || entry.externalSource != null) {
+    return entry.externalPlaytimeSeconds;
+  }
+  return (entry.localPlaytimeSeconds ?? 0);
 }
 
 export function formatPlaytime(seconds: number): string {

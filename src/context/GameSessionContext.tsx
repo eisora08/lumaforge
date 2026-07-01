@@ -1102,19 +1102,23 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           durationSeconds: Math.max(1, durationSeconds),
         });
 
-        // End playtime session
+        // End playtime session (skip if duration < 15s)
         const sessionId = activePlaySessionsRef.current[key];
         if (sessionId) {
           delete activePlaySessionsRef.current[key];
-          const exitReason = prevSession.state === "stopping" ? "stopped" : "process-exited";
-          endPlaySession({
-            sessionId,
-            gameKey: key,
-            endedAt: Math.floor(Date.now() / 1000),
-            exitReason: exitReason as "stopped" | "process-exited",
-          }).catch((err: unknown) => {
-            console.warn("[Playtime] end failed", err);
-          });
+          if (durationSeconds >= 15) {
+            const exitReason = prevSession.state === "stopping" ? "stopped" : "process-exited";
+            endPlaySession({
+              sessionId,
+              gameKey: key,
+              endedAt: Math.floor(Date.now() / 1000),
+              exitReason: exitReason as "stopped" | "process-exited",
+            }).catch((err: unknown) => {
+              console.warn("[Playtime] end failed", err);
+            });
+          } else {
+            console.debug("[Playtime] skipped end — duration below 15s", { gameKey: key, durationSeconds });
+          }
         }
 
         // Clean up media ref

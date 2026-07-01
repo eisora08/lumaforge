@@ -29,6 +29,9 @@ pub struct PlaytimeEntry {
     #[serde(rename = "totalPlaytimeSeconds")]
     pub total_playtime_seconds: u64,
 
+    #[serde(rename = "playtimeSource", default)]
+    pub playtime_source: Option<String>,
+
     #[serde(rename = "lastPlayedAt")]
     pub last_played_at: Option<u64>,
     #[serde(rename = "lastSessionSeconds")]

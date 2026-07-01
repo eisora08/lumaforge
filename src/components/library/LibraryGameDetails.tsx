@@ -50,7 +50,7 @@ import {
 } from "../../services/libraryLocalCacheService";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
-import { getPlaytimeEntry, formatPlaytime as formatPlaytimeSeconds } from "../../services/playtimeService";
+import { getPlaytimeEntry, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime } from "../../services/playtimeService";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievementsSummary } from "../../types/gameAchievements";
@@ -290,7 +290,7 @@ export default function LibraryGameDetails({
   // Try playtime store first, fallback to Steam/local stats
   const gameKey = game.id || (game.appId ? `app-${game.appId}` : null);
   const ptEntry = gameKey ? getPlaytimeEntry(gameKey) : null;
-  const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? 0;
+  const totalSeconds = ptEntry ? computeTotalPlaytime(ptEntry) : 0;
   const hasPlaytimeStore = totalSeconds > 0;
   const playTimeValue = hasPlaytimeStore
     ? Math.round(totalSeconds / 60)

@@ -59,6 +59,16 @@ fn init_tables(conn: &Connection) -> Result<(), String> {
         let _ = conn.execute(sql, []);
     }
 
+    // Library cache table — stores enriched game list as JSON blob for instant startup
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS library_cache (
+            cache_key   TEXT PRIMARY KEY,
+            cache_value TEXT NOT NULL,
+            saved_at    INTEGER NOT NULL DEFAULT 0
+        );",
+    )
+    .map_err(|e| format!("Failed to create library_cache table: {}", e))?;
+
     Ok(())
 }
 
@@ -263,6 +273,71 @@ pub fn insert_metadata_cache(
             ],
         )
         .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Library cache — stores enriched game list as JSON blob for instant startup
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn read_library_cache(
+    key: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Option<String>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(None),
+    };
+
+    let mut stmt = guard
+        .prepare("SELECT cache_value FROM library_cache WHERE cache_key = ?1")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+
+    let result = stmt.query_row([&key], |row| row.get::<_, String>(0)).ok();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn write_library_cache(
+    key: String,
+    value: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO library_cache (cache_key, cache_value, saved_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![key, value, now],
+        )
+        .map_err(|e| format!("Insert error: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_library_cache(
+    key: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+
+    guard
+        .execute("DELETE FROM library_cache WHERE cache_key = ?1", [&key])
+        .map_err(|e| format!("Delete error: {}", e))?;
 
     Ok(())
 }
