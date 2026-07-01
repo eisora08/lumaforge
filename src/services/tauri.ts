@@ -8,7 +8,6 @@ import type { LuaActionResult } from "../types/luaAction";
 import type { GameNameResult } from "../types/gameName";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
-import type { SteamFeaturedCategory } from "../types/steamFeatured";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
 import type { SteamGridDbArtwork } from "../types/steamGridDb";
 import type { SteamInstalledGame } from "../types/steamInstalled";
@@ -118,19 +117,6 @@ export async function resolveSteamReviewSummaries(
   return await invoke<SteamReviewSummary[]>("resolve_steam_review_summaries", {
     appIds,
   });
-}
-
-export async function resolveSteamFeaturedCategories(params?: {
-  countryCode?: string;
-  language?: string;
-}): Promise<SteamFeaturedCategory[]> {
-  return await invoke<SteamFeaturedCategory[]>(
-    "resolve_steam_featured_categories",
-    {
-      countryCode: params?.countryCode,
-      language: params?.language,
-    }
-  );
 }
 
 export async function resolveSteamStoreSearch(params: {

@@ -2,7 +2,13 @@ import { useMemo, useState } from "react";
 
 import {
   Download,
+  Flame,
   Gamepad2,
+  Link2,
+  Rocket,
+  Sparkles,
+  Star,
+  Zap,
 } from "lucide-react";
 
 import type { PackageGame, PackageSource } from "../../types/package";
@@ -22,10 +28,25 @@ import {
 
 import StoreSourceSelectorModal from "../store/StoreSourceSelectorModal";
 
+type StoreBadge = {
+  type: string;
+  label: string;
+};
+
+const BADGE_ICON_MAP: Record<string, typeof Sparkles> = {
+  trending: Flame,
+  "top-rated": Star,
+  popular: Zap,
+  recommended: Sparkles,
+  new: Rocket,
+  "has-sources": Link2,
+};
+
 type PackageCardProps = {
   game: PackageGame;
   storeMetadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
+  badges?: StoreBadge[];
   onInstallComplete?: () => void;
   variant?: "landscape" | "poster";
   onOpenGame?: (game: PackageGame) => void;
@@ -92,6 +113,7 @@ function CardImage({
 export default function PackageCard({
   game,
   storeMetadata,
+  badges,
   onInstallComplete,
   variant = "landscape",
   onOpenGame,
@@ -295,6 +317,23 @@ export default function PackageCard({
               </div>
             )}
 
+            {badges && badges.length > 0 && (
+              <div className="pointer-events-none absolute left-2 top-2 z-10 flex gap-1.5">
+                {badges.map((badge) => {
+                  const Icon = BADGE_ICON_MAP[badge.type];
+                  return (
+                    <span
+                      key={badge.type}
+                      className="inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm"
+                    >
+                      {Icon && <Icon className="h-3 w-3" />}
+                      {badge.label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/75 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
               {actionButtons}
             </div>
@@ -350,6 +389,23 @@ export default function PackageCard({
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-white/5">
             <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+          </div>
+        )}
+
+        {badges && badges.length > 0 && (
+          <div className="pointer-events-none absolute left-2 top-2 z-10 flex gap-1.5">
+            {badges.map((badge) => {
+              const Icon = BADGE_ICON_MAP[badge.type];
+              return (
+                <span
+                  key={badge.type}
+                  className="inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm"
+                >
+                  {Icon && <Icon className="h-3 w-3" />}
+                  {badge.label}
+                </span>
+              );
+            })}
           </div>
         )}
 
