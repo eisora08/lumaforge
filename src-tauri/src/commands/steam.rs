@@ -10,10 +10,10 @@ use crate::models::steam_installed_game::SteamInstalledGame;
 use crate::models::steam_paths::SteamPaths;
 use crate::utils::path_utils;
 
-struct SteamLibraryPath {
-    library_root: PathBuf,
-    steamapps_path: PathBuf,
-    common_path: PathBuf,
+pub struct SteamLibraryPath {
+    pub library_root: PathBuf,
+    pub steamapps_path: PathBuf,
+    pub common_path: PathBuf,
 }
 
 #[tauri::command]
@@ -21,7 +21,7 @@ pub fn detect_steam_paths() -> Option<SteamPaths> {
     path_utils::detect_steam_paths()
 }
 
-fn normalize_steam_library_path(input: &Path) -> Option<SteamLibraryPath> {
+pub fn normalize_steam_library_path(input: &Path) -> Option<SteamLibraryPath> {
     if !input.exists() {
         return None;
     }
@@ -108,7 +108,7 @@ fn collect_safe_fallback_steam_paths() -> Vec<PathBuf> {
     results
 }
 
-fn is_valid_steamapps_path(path: &Path) -> bool {
+pub fn is_valid_steamapps_path(path: &Path) -> bool {
     if !path.is_dir() {
         return false;
     }
@@ -302,7 +302,7 @@ pub fn scan_steam_installed_games(
 }
 
 /// Parse libraryfolders.vdf and return library root paths (not yet joined with steamapps).
-fn collect_library_roots_from_vdf(vdf_path: &Path) -> Vec<PathBuf> {
+pub fn collect_library_roots_from_vdf(vdf_path: &Path) -> Vec<PathBuf> {
     let content = match fs::read_to_string(vdf_path) {
         Ok(c) => c,
         Err(_) => return Vec::new(),
@@ -373,7 +373,7 @@ fn parse_vdf_line(line: &str) -> Option<(String, String)> {
     Some((key, value))
 }
 
-fn parse_appmanifest(
+pub fn parse_appmanifest(
     path: &Path,
     common_path: &Path,
     steamapps_dir: &Path,

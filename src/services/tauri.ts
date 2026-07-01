@@ -1113,6 +1113,67 @@ export async function insertMetadataCacheSqlite(entry: SqliteMetadataCacheEntry)
   }
 }
 
+// ---------------------------------------------------------------------------
+// Games table — full Steam dataset (Phase 3)
+// ---------------------------------------------------------------------------
+
+export type GameEntry = {
+  appId: string;
+  title: string;
+  installed: boolean;
+  playtime: number;
+  lastPlayed: number;
+  metadataJson: string;
+  updatedAt: number;
+};
+
+export async function upsertGame(entry: GameEntry): Promise<void> {
+  try {
+    await invoke("upsert_game", { entry });
+  } catch {
+    // silent — best-effort only
+  }
+}
+
+export async function batchUpsertGames(entries: GameEntry[]): Promise<void> {
+  try {
+    await invoke("batch_upsert_games", { entries });
+  } catch {
+    // silent — best-effort only
+  }
+}
+
+export async function readAllGames(): Promise<GameEntry[]> {
+  try {
+    return await invoke<GameEntry[]>("read_all_games");
+  } catch {
+    return [];
+  }
+}
+
+export async function getGameCount(): Promise<number> {
+  try {
+    return await invoke<number>("get_game_count");
+  } catch {
+    return 0;
+  }
+}
+
+export async function scanAndBuildFullDataset(
+  settings: { steamPath?: string; luaPath?: string; depotcachePath?: string; gameScanFolders?: string[] },
+): Promise<number> {
+  try {
+    return await invoke<number>("scan_and_build_full_dataset", {
+      steamPath: settings.steamPath || null,
+      luaPath: settings.luaPath || null,
+      depotcachePath: settings.depotcachePath || null,
+      gameScanFolders: settings.gameScanFolders?.length ? settings.gameScanFolders : null,
+    });
+  } catch {
+    return 0;
+  }
+}
+
 // --- Installed Games Registry (file-based) ---
 
 export async function readInstalledGamesRegistry(): Promise<string> {

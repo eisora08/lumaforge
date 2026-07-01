@@ -69,6 +69,20 @@ fn init_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create library_cache table: {}", e))?;
 
+    // Games table — full Steam dataset (Phase 3)
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS games (
+            appId        TEXT PRIMARY KEY,
+            title        TEXT NOT NULL DEFAULT '',
+            installed    INTEGER NOT NULL DEFAULT 0,
+            playtime     INTEGER NOT NULL DEFAULT 0,
+            lastPlayed   INTEGER NOT NULL DEFAULT 0,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at   INTEGER NOT NULL DEFAULT 0
+        );",
+    )
+    .map_err(|e| format!("Failed to create games table: {}", e))?;
+
     Ok(())
 }
 
@@ -340,4 +354,129 @@ pub fn delete_library_cache(
         .map_err(|e| format!("Delete error: {}", e))?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Games table — full Steam dataset (Phase 3)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameEntry {
+    pub app_id: String,
+    pub title: String,
+    pub installed: bool,
+    pub playtime: i64,
+    pub last_played: i64,
+    pub metadata_json: String,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub fn upsert_game(
+    entry: GameEntry,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                entry.app_id,
+                entry.title,
+                entry.installed as i32,
+                entry.playtime,
+                entry.last_played,
+                entry.metadata_json,
+                entry.updated_at,
+            ],
+        )
+        .map_err(|e| format!("Upsert game error: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn batch_upsert_games(
+    entries: Vec<GameEntry>,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+
+    for entry in &entries {
+        guard
+            .execute(
+                "INSERT OR REPLACE INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    entry.app_id,
+                    entry.title,
+                    entry.installed as i32,
+                    entry.playtime,
+                    entry.last_played,
+                    entry.metadata_json,
+                    entry.updated_at,
+                ],
+            )
+            .map_err(|e| format!("Batch upsert game error: {}", e))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn read_all_games(
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<GameEntry>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+
+    let mut stmt = guard
+        .prepare("SELECT appId, title, installed, playtime, lastPlayed, metadata_json, updated_at FROM games ORDER BY title ASC")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(GameEntry {
+                app_id: row.get(0)?,
+                title: row.get(1)?,
+                installed: row.get::<_, i32>(2)? != 0,
+                playtime: row.get(3)?,
+                last_played: row.get(4)?,
+                metadata_json: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| format!("Query error: {}", e))?;
+
+    let mut games = Vec::new();
+    for row in rows {
+        games.push(row.map_err(|e| format!("Row error: {}", e))?);
+    }
+
+    Ok(games)
+}
+
+#[tauri::command]
+pub fn get_game_count(
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<i64, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(0),
+    };
+
+    let count: i64 = guard
+        .query_row("SELECT COUNT(*) FROM games", [], |row| row.get(0))
+        .map_err(|e| format!("Count error: {}", e))?;
+
+    Ok(count)
 }

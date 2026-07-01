@@ -28,13 +28,10 @@ import {
   markSyncIndexItem,
 } from "../services/tauri";
 import { checkInstalledLuaUpdates } from "../services/installedLuaUpdateChecker";
-import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 
 import type { LibraryGame } from "../types/libraryGame";
-import type { InstalledLuaScript } from "../types/installedLua";
-import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { PackageGame, PackageSource } from "../types/package";
 import type { SyncIndexItem } from "../types/syncIndex";
 import type { AppPage } from "../types/navigation";
@@ -58,9 +55,6 @@ export default function LibraryPage({ onNavigate }: Props) {
   const hasLuaPath = Boolean(settings.luaPath);
   const [, startTransition] = useTransition();
 
-  const [luaScripts, setLuaScripts] = useState<InstalledLuaScript[]>([]);
-  const [luaMetadata, setLuaMetadata] = useState<Record<number, SteamAppMetadata>>({});
-  const [scanningLua, setScanningLua] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
   const [filter, setFilter] = useState<LibraryFilter>("all");
@@ -68,80 +62,12 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const queuedMediaRef = useRef<Set<string>>(new Set());
 
-  // On mount: scan Lua scripts from config/lua
-  useEffect(() => {
-    if (hasLuaPath) {
-      scanLuaScripts();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasLuaPath]);
-
-  async function scanLuaScripts() {
-    if (!hasLuaPath) return;
-    try {
-      setScanningLua(true);
-      const results = await scanInstalledLuaScripts(settings.luaPath);
-      setLuaScripts(results);
-      const appIds = results.map((s) => s.app_id);
-      if (appIds.length > 0) {
-        const metadata = await resolveGameMetadata(appIds);
-        setLuaMetadata(metadata);
-      }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setScanningLua(false);
-    }
-  }
-
-  // Build Lua game items from scripts (old Biblioteca behavior)
-  const luaGames: LibraryGame[] = useMemo(() => {
-    return luaScripts.map((script) => {
-      const appId = script.app_id;
-      const meta = luaMetadata[appId];
-      const appInfo = appInfoMap[String(appId)];
-      const id = `lua-${appId}`;
-      return {
-        id,
-        appId: String(appId),
-        title: appInfo?.name || meta?.name || `Steam App ${appId}`,
-        source: "lua" as const,
-        imageUrl: appInfo?.header_image || meta?.header_image || meta?.capsule_image || meta?.capsule_image_v5 || undefined,
-        metadata: meta,
-        isPlayable: false,
-        isInstallable: true,
-        steamInstalled: games.some((g) => g.appId === String(appId) && g.steamInstalled),
-        luaScripts: [script],
-        hasLua: true,
-        isLuaActive: !script.is_disabled,
-        isLuaDisabled: script.is_disabled,
-        hasLuaSource: false,
-        sources: [],
-      };
-    });
-  }, [luaScripts, luaMetadata, games, appInfoMap]);
-
-  // Merge with context games for display
+  // displayGames comes directly from context — no separate luaGames list.
+  // Games from LibraryGamesContext already have hasLua flag merged via
+  // libraryGameResolver.ts, which uses Lua as an overlay, not a source.
   const displayGames = useMemo(() => {
-    const merged = [...games];
-    for (const luaGame of luaGames) {
-      const existing = merged.findIndex((g) => g.id === luaGame.id || g.appId === luaGame.appId);
-      if (existing >= 0) {
-        // Merge Lua-specific fields into existing game — preserve Steam core fields
-        merged[existing] = {
-          ...merged[existing],
-          luaScripts: luaGame.luaScripts,
-          hasLua: true,
-          isLuaActive: luaGame.isLuaActive,
-          isLuaDisabled: luaGame.isLuaDisabled,
-          hasLuaSource: luaGame.hasLuaSource,
-        };
-      } else {
-        merged.push(luaGame);
-      }
-    }
-    return merged.sort((a, b) => a.title.localeCompare(b.title));
-  }, [games, luaGames]);
+    return [...games].sort((a, b) => a.title.localeCompare(b.title));
+  }, [games]);
 
   const filteredGames = useMemo(() => {
     let result = displayGames;
@@ -300,7 +226,6 @@ export default function LibraryPage({ onNavigate }: Props) {
     try {
       await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
       showSuccess("Lua script deleted.", { title: "Deleted" });
-      await scanLuaScripts();
       await refresh();
     } catch (err) {
       showError(String(err), { title: "Error" });
@@ -312,13 +237,14 @@ export default function LibraryPage({ onNavigate }: Props) {
       showWarning("Configure a Lua path first.", { title: "Path required" });
       return;
     }
-    if (luaScripts.length === 0) {
-      showWarning("No Lua scripts to check.", { title: "No updates" });
-      return;
-    }
     try {
       setCheckingUpdates(true);
-      await checkInstalledLuaUpdates(luaScripts, settings);
+      const scripts = await scanInstalledLuaScripts(settings.luaPath);
+      if (scripts.length === 0) {
+        showWarning("No Lua scripts to check.", { title: "No updates" });
+        return;
+      }
+      await checkInstalledLuaUpdates(scripts, settings);
       showSuccess("Update check complete.", { title: "Checked" });
     } catch {
       showError("Update check failed.", { title: "Error" });
@@ -379,7 +305,6 @@ export default function LibraryPage({ onNavigate }: Props) {
       };
       await markSyncIndexItem(syncItem);
       showSuccess(`Sync complete from ${source.providerName}.`, { title: "Synced" });
-      await scanLuaScripts();
       await refresh();
     } catch (error) {
       console.error(error);
@@ -388,7 +313,8 @@ export default function LibraryPage({ onNavigate }: Props) {
   }
 
   const showLuaSetup = !hasLuaPath;
-  const showEmptyLua = hasLuaPath && luaScripts.length === 0 && !scanningLua;
+  const hasLuaGames = games.some((g) => g.hasLua);
+  const showEmptyLua = hasLuaPath && !hasLuaGames;
 
   function handleOpenGame(game: LibraryGame) {
     setSelectedGame(game);
@@ -453,7 +379,6 @@ export default function LibraryPage({ onNavigate }: Props) {
                     <p className="mt-1 text-sm text-(--color-muted)">
                       {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
                       {loading && !initialLoading && " · scanning..."}
-                      {scanningLua && " · scanning Lua..."}
                     </p>
                   </div>
 
@@ -461,7 +386,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                     <button
                       type="button"
                       onClick={handleCheckUpdates}
-                      disabled={checkingUpdates || luaScripts.length === 0}
+                      disabled={checkingUpdates || !hasLuaGames}
                       className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50 lf-press-effect"
                       title="Check Updates"
                     >

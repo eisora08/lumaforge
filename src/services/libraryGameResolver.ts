@@ -77,51 +77,19 @@ function buildFromLocalExe(
   };
 }
 
-function buildFromLuaScript(
-  script: InstalledLuaScript,
-  metadata: Record<number, SteamAppMetadata>,
-): LibraryGame {
-  const appId = script.app_id;
-  const meta = metadata[appId];
-  const metaName = meta?.resolved ? meta.name : undefined;
-  const id = stableIdFromString("lua", String(appId));
-  const isDisabled = script.is_disabled;
-  return {
-    id,
-    appId: String(appId),
-    title: metaName || `Steam App ${appId}`,
-    source: "lua",
-    imageUrl: getImageUrl(meta),
-    metadata: meta,
-    isPlayable: false,
-    isInstallable: !!script.app_id,
-    steamInstalled: false,
-    luaScripts: [script],
-    hasLua: true,
-    isLuaActive: !isDisabled,
-    isLuaDisabled: isDisabled,
-    hasLuaSource: false,
-    sources: [],
-  };
-}
-
 function mergeLuaIntoGame(
   game: LibraryGame,
+  hasLua: boolean,
   scripts: InstalledLuaScript[],
   sources: Set<string>,
 ): void {
+  if (!hasLua) return;
   game.luaScripts = scripts;
   game.hasLua = true;
   game.isLuaActive = scripts.some((s) => !s.is_disabled);
   game.isLuaDisabled = scripts.every((s) => s.is_disabled);
   if (game.appId) {
     game.hasLuaSource = sources.has(game.appId);
-  }
-  if (game.source === "lua" && game.title === `Steam App ${game.appId}`) {
-    const firstScript = scripts[0];
-    if (firstScript) {
-      game.title = `App ${game.appId}`;
-    }
   }
 }
 
@@ -130,7 +98,7 @@ export async function resolveLibraryGames(
 ): Promise<{ games: LibraryGame[]; warnings: string[] }> {
   const warnings: string[] = [];
 
-  // 1. Steam installed scan
+  // 1. Steam installed scan — this provides the PRIMARY game list
   let steamGames: SteamInstalledGame[] = [];
   try {
     steamGames = await scanSteamInstalledGames({
@@ -153,7 +121,7 @@ export async function resolveLibraryGames(
     }
   }
 
-  // 3. Lua script scan
+  // 3. Lua script scan — only for overlay flags, NOT for building game list
   let luaScripts: InstalledLuaScript[] = [];
   if (settings.luaPath) {
     try {
@@ -168,9 +136,6 @@ export async function resolveLibraryGames(
   for (const g of steamGames) {
     steamAppIds.add(g.appId);
   }
-  for (const s of luaScripts) {
-    steamAppIds.add(s.app_id);
-  }
 
   let metadata: Record<number, SteamAppMetadata> = {};
   if (steamAppIds.size > 0) {
@@ -181,7 +146,7 @@ export async function resolveLibraryGames(
     }
   }
 
-  // 5. Read sync index for Lua sources
+  // 6. Read sync index for Lua sources
   const sourceAppIds = new Set<string>();
   try {
     const syncIndexData = await readSyncIndex();
@@ -192,26 +157,27 @@ export async function resolveLibraryGames(
     // sync index is optional
   }
 
-  // 6. Merge everything
+  // 7. Build games map from Steam games (PRIMARY list)
   const gamesMap = new Map<string, LibraryGame>();
+  const steamByAppId = new Map<string, LibraryGame>();
 
-  // Steam games first
   for (const steam of steamGames) {
     const game = buildFromSteam(steam, metadata);
     gamesMap.set(game.id, game);
-  }
-
-  // Local EXEs
-  for (const exe of localExes) {
-    const game = buildFromLocalExe(exe);
-    // Dedup by executable path
-    const existingKey = game.id;
-    if (!gamesMap.has(existingKey)) {
-      gamesMap.set(existingKey, game);
+    if (game.appId) {
+      steamByAppId.set(game.appId, game);
     }
   }
 
-  // Lua scripts — merge into existing or create new
+  // 8. Local EXEs
+  for (const exe of localExes) {
+    const game = buildFromLocalExe(exe);
+    if (!gamesMap.has(game.id)) {
+      gamesMap.set(game.id, game);
+    }
+  }
+
+  // 9. Apply Lua overlay: for each Lua script, find matching Steam game and flag it
   const luaByAppId = new Map<number, InstalledLuaScript[]>();
   for (const script of luaScripts) {
     const list = luaByAppId.get(script.app_id) || [];
@@ -221,19 +187,13 @@ export async function resolveLibraryGames(
 
   for (const [appIdNum, scripts] of luaByAppId) {
     const appIdStr = String(appIdNum);
-    const existingGame = Array.from(gamesMap.values()).find(
-      (g) => g.appId === appIdStr,
-    );
+    const existingGame = steamByAppId.get(appIdStr);
     if (existingGame) {
-      mergeLuaIntoGame(existingGame, scripts, sourceAppIds);
-    } else {
-      const game = buildFromLuaScript(scripts[0], metadata);
-      game.luaScripts = scripts;
-      game.isLuaActive = scripts.some((s) => !s.is_disabled);
-      game.isLuaDisabled = scripts.every((s) => s.is_disabled);
-      game.hasLuaSource = sourceAppIds.has(appIdStr);
-      gamesMap.set(game.id, game);
+      // Merge Lua into existing Steam game
+      mergeLuaIntoGame(existingGame, true, scripts, sourceAppIds);
     }
+    // Games that are ONLY in Lua (no Steam manifest) are NOT added to the main list.
+    // They appear in the Store "Lua Ready" tab for download.
   }
 
   const games = Array.from(gamesMap.values()).sort((a, b) =>

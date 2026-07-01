@@ -89,6 +89,8 @@ type StoreSectionModel = {
 
 const METADATA_CONCURRENCY = 5;
 const REVIEW_CONCURRENCY = 3;
+const INITIAL_CATALOG_SIZE = 500;
+const BATCH_SIZE = 200;
 
 function mapSteamFeaturedItemToPackageGame(
   item: SteamFeaturedItem
@@ -258,6 +260,11 @@ export default function Store() {
     Record<string, boolean>
   >({});
 
+  const [steamCatalog, setSteamCatalog] = useState<{ appid: number; name: string }[]>([]);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_CATALOG_SIZE);
+  const catalogLoadingMoreRef = useRef(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
   const sourceCacheLoadedRef = useRef(false);
   useEffect(() => {
     if (sourceCacheLoadedRef.current) return;
@@ -309,12 +316,43 @@ export default function Store() {
     loadSteamFeaturedCategories();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/data/steamdb.json")
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<{ appid: number; name: string }[]>;
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setSteamCatalog(data);
+          console.log(`[Store] steamdb.json loaded: ${data.length} total games`);
+        }
+      })
+      .catch((err) => {
+        console.error("[Store] Failed to load steamdb.json", err);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const steamStoreSections = useMemo(() => {
     return steamFeaturedCategories
       .map(mapSteamCategoryToStoreSection)
       .filter((section) => section.games.length > 0)
       .slice(0, 6);
   }, [steamFeaturedCategories]);
+
+  const catalogGames = useMemo(() => {
+    const slice = steamCatalog.slice(0, visibleCount);
+    console.log(`[Store] catalogGames: ${slice.length} / ${steamCatalog.length} games rendered`);
+    return slice.map((entry) => ({
+      appId: String(entry.appid),
+      title: entry.name,
+      imageUrl: undefined as string | undefined,
+      platforms: [] as string[],
+      sources: [] as PackageSource[],
+    }));
+  }, [steamCatalog, visibleCount]);
 
   const installedStatusByAppId = useMemo(() => {
     const map = new Map<string, PackageInstallStatus>();
@@ -383,16 +421,16 @@ export default function Store() {
   }, [storeSearchQuery, installedStatusByAppId]);
 
   useEffect(() => {
-    const steamGames = steamStoreSections.flatMap((section) => section.games);
+    const featuredGames = steamStoreSections.flatMap((section) => section.games);
+    const allGames = [...featuredGames, ...catalogGames];
 
-    if (steamGames.length === 0) {
-      setProviderOverlayByAppId({});
+    if (allGames.length === 0) {
       return;
     }
 
     const hydrated: Record<string, PackageGame> = {};
 
-    for (const game of steamGames) {
+    for (const game of allGames) {
       const cached = getSourceAvailability(game.appId);
       if (cached && cached.status === "ready" && cached.availableSources.length > 0) {
         hydrated[game.appId] = {
@@ -408,11 +446,13 @@ export default function Store() {
       }
     }
 
-    setProviderOverlayByAppId((current) => ({
-      ...current,
-      ...hydrated,
-    }));
-  }, [steamStoreSections]);
+    if (Object.keys(hydrated).length > 0) {
+      setProviderOverlayByAppId((current) => ({
+        ...current,
+        ...hydrated,
+      }));
+    }
+  }, [steamStoreSections, catalogGames]);
 
   const isSearchResultsView = submittedSearchQuery.trim().length > 0;
 
@@ -482,26 +522,32 @@ export default function Store() {
   }, [steamStoreSections, lumaForgeSections]);
 
   const browseGames = useMemo(() => {
-    const allGames: PackageGame[] = [];
+    const gameMap = new Map<string, PackageGame>();
+
+    catalogGames.forEach((game) => {
+      gameMap.set(game.appId, game);
+    });
 
     steamStoreSections.forEach((section) => {
       section.games.forEach((game) => {
-        allGames.push(providerOverlayByAppId[game.appId] ?? game);
+        gameMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
       });
     });
 
     lumaForgeSections.forEach((section) => {
       section.games.forEach((game) => {
-        allGames.push(providerOverlayByAppId[game.appId] ?? game);
+        gameMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
       });
     });
 
     results.forEach((game) => {
-      allGames.push(providerOverlayByAppId[game.appId] ?? game);
+      gameMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
     });
 
-    return dedupeGames(allGames);
-  }, [steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
+    const games = Array.from(gameMap.values());
+    console.log(`[Store] browseGames: ${games.length} total games`);
+    return games;
+  }, [catalogGames, steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
 
   const luaReadyGames = useMemo(() => {
     const seen = new Set<string>();
@@ -516,14 +562,16 @@ export default function Store() {
       }
     };
 
+    catalogGames.forEach(addIfReady);
     results.forEach(addIfReady);
 
     steamStoreSections.forEach((section) => {
       section.games.forEach(addIfReady);
     });
 
+    console.log(`[Store] luaReadyGames: ${games.length} games`);
     return games;
-  }, [results, steamStoreSections, providerOverlayByAppId]);
+  }, [catalogGames, results, steamStoreSections, providerOverlayByAppId]);
 
   const featuredGames = useMemo(() => {
     const seen = new Set<string>();
@@ -546,8 +594,10 @@ export default function Store() {
 
     results.forEach(tryAdd);
 
+    catalogGames.forEach(tryAdd);
+
     return games.slice(0, 8);
-  }, [steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
+  }, [steamStoreSections, lumaForgeSections, results, catalogGames, providerOverlayByAppId]);
 
   const newsItems = useMemo<StoreNewsItem[]>(() => {
     const items: StoreNewsItem[] = [];
@@ -702,6 +752,13 @@ export default function Store() {
   const visibleAppIds = useMemo(() => {
     const appIds = new Set<number>();
 
+    catalogGames.forEach((game) => {
+      const appId = Number(game.appId);
+      if (Number.isFinite(appId)) {
+        appIds.add(appId);
+      }
+    });
+
     results.forEach((game) => {
       const appId = Number(game.appId);
       if (Number.isFinite(appId)) {
@@ -740,10 +797,12 @@ export default function Store() {
       }
     }
 
-    return Array.from(appIds);
+    const ids = Array.from(appIds);
+    console.log(`[Store] visibleAppIds: ${ids.length} total unique app IDs`);
+    return ids;
     // NOTE: storeMetadataByAppId intentionally NOT in deps to avoid render loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results, steamStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame]);
+  }, [catalogGames, results, steamStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame]);
 
   const visibleAppIdsKey = visibleAppIds.join(",");
 
@@ -769,6 +828,7 @@ export default function Store() {
 
         if (!cancelled) {
           setStoreMetadataByAppId(metadata);
+          console.log(`[Store] metadata loaded: ${Object.keys(metadata).length} games resolved`);
         }
       } catch (error) {
         console.error(error);
@@ -825,12 +885,49 @@ export default function Store() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleAppIdsKey]);
 
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    if (activeStoreTab !== "browse") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        if (catalogLoadingMoreRef.current) return;
+        if (visibleCount >= steamCatalog.length) return;
+
+        catalogLoadingMoreRef.current = true;
+        setVisibleCount((prev) => {
+          const next = prev + BATCH_SIZE;
+          return next > steamCatalog.length ? steamCatalog.length : next;
+        });
+      },
+      { rootMargin: "400px 0px" }
+    );
+
+    observer.observe(sentinel);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [visibleCount, steamCatalog.length, activeStoreTab]);
+
+  useEffect(() => {
+    catalogLoadingMoreRef.current = false;
+  }, [visibleCount]);
+
   const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {
     if (!selectedDetailGameWithOverlay) {
       return [];
     }
 
     const relatedMap = new Map<string, PackageGame>();
+
+    catalogGames.forEach((game) => {
+      if (game.appId !== selectedDetailGameWithOverlay.appId) {
+        relatedMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
+      }
+    });
 
     allStoreSections.forEach((section) => {
       section.games.forEach((game) => {
@@ -857,6 +954,7 @@ export default function Store() {
       }));
   }, [
     selectedDetailGameWithOverlay,
+    catalogGames,
     allStoreSections,
     results,
     providerOverlayByAppId,
@@ -1461,6 +1559,9 @@ export default function Store() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
                   {filteredBrowseGames.map(renderStoreCard)}
                 </div>
+              )}
+              {activeStoreTab === "browse" && steamCatalog.length > visibleCount && (
+                <div ref={sentinelRef} className="h-2" />
               )}
             </div>
           </div>

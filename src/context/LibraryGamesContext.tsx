@@ -4,6 +4,7 @@ import type { AppSettings } from "../types/settings";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
 import { loadCachedGames, isCacheExpired, saveCachedGames } from "../services/gameDetectionCache";
 import { loadLibraryAppInfo, updateLibraryAppInfo } from "../services/libraryLocalCacheService";
+import { triggerBackgroundScan } from "../services/fullSteamGameIndex";
 import type { LibraryAppInfoMap } from "../services/tauri";
 import {
   loadSteamStats,
@@ -221,6 +222,15 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           await saveCachedGames(enriched, result.warnings);
           setGames(enriched);
           setWarnings(result.warnings);
+
+          // Phase 3: background full dataset scan (batched metadata resolve)
+          // This populates the SQLite `games` table for instant startup on next boot.
+          // Heavy work runs in Rust in batches of 10, never blocks the UI.
+          triggerBackgroundScan(settings).then((count) => {
+            if (count > 0) {
+              console.debug(`[LibraryGamesContext] Full dataset scan complete: ${count} games indexed`);
+            }
+          }).catch(() => {});
         } catch (error) {
           console.error("[LibraryGamesContext] scan error:", error);
         } finally {
