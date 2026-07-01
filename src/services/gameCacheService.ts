@@ -56,8 +56,8 @@ export { readGameMediaDataUrl };
 // Debug log flags
 // ---------------------------------------------------------------------------
 
-const ENABLE_VERBOSE_GAME_CACHE_LOGS = true;
-const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = true;
+const ENABLE_VERBOSE_GAME_CACHE_LOGS = false;
+const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = false;
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false; // Toggle for Part 4 debug logs
 
 // ---------------------------------------------------------------------------

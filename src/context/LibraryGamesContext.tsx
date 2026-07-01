@@ -23,9 +23,7 @@ import {
 import {
   scheduleSnapshotWrite,
 } from "../services/startupSnapshotService";
-import {
-  scheduleBackgroundValidation,
-} from "../services/backgroundValidator";
+
 
 const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
 
@@ -134,22 +132,34 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         );
         mergeSteamStatsIntoGames(games, steamStats);
 
-        // Import Steam playtime for any games where it's now available
-        for (const game of games) {
-          if (!game.appId) continue;
-          const appIdNum = Number(game.appId);
-          if (!Number.isFinite(appIdNum)) continue;
+        // Batch-import Steam playtime — 10 per batch with delay to avoid burst
+        const playtimeGames = games.filter((g) => {
+          if (!g.appId) return false;
+          const appIdNum = Number(g.appId);
+          if (!Number.isFinite(appIdNum)) return false;
           const stat = steamStats.get(appIdNum);
-          if (stat?.playtimeMinutes && stat.playtimeMinutes > 0) {
-            const gameKey = game.id || `app-${game.appId}`;
-            importExternalPlaytime({
-              gameKey,
-              appId: game.appId,
-              provider: "steam",
-              title: game.title,
-              externalPlaytimeSeconds: stat.playtimeMinutes * 60,
-              externalSource: "steam",
-            }).catch(() => { /* non-critical */ });
+          return stat?.playtimeMinutes != null && stat.playtimeMinutes > 0;
+        });
+
+        const BATCH_SIZE = 10;
+        const BATCH_DELAY_MS = 200;
+        for (let i = 0; i < playtimeGames.length; i += BATCH_SIZE) {
+          const batch = playtimeGames.slice(i, i + BATCH_SIZE);
+          await Promise.allSettled(
+            batch.map((game) => {
+              const gameKey = game.id || `app-${game.appId}`;
+              return importExternalPlaytime({
+                gameKey,
+                appId: game.appId!,
+                provider: "steam",
+                title: game.title,
+                externalPlaytimeSeconds: steamStats.get(Number(game.appId))!.playtimeMinutes! * 60,
+                externalSource: "steam",
+              });
+            })
+          );
+          if (i + BATCH_SIZE < playtimeGames.length) {
+            await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
           }
         }
       }
@@ -233,17 +243,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Debounced snapshot write when games and appinfo are available
+  // Debounced snapshot write — deferred to 60s idle so boot remains zero-work
   useEffect(() => {
     if (games.length === 0) return;
     if (Object.keys(appInfoMap).length === 0) return;
-    scheduleSnapshotWrite(games, appInfoMap, null);
-  }, [games, appInfoMap]);
-
-  // Background media validation after UI is shown
-  useEffect(() => {
-    if (games.length === 0) return;
-    scheduleBackgroundValidation(games, appInfoMap);
+    scheduleSnapshotWrite(games, appInfoMap, null, 60000);
   }, [games, appInfoMap]);
 
   async function refresh() {

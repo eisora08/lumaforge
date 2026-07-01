@@ -1,4 +1,4 @@
-import { loadStartupSnapshot, hydrateStartupSnapshotMedia, saveStartupSnapshot, flushPendingAppInfoUpdates } from "./startupSnapshotService";
+import { loadStartupSnapshot } from "./startupSnapshotService";
 import type { StartupSnapshot } from "./startupSnapshotService";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -163,23 +163,9 @@ export async function runBootTasks(): Promise<void> {
           });
 
           await track("hydrate-snapshot-media", async () => {
-            logBoot("prepare library start");
-            if (!_snapshotLoaded) return;
-            try {
-              await flushPendingAppInfoUpdates(2000);
-              const result = await hydrateStartupSnapshotMedia(_snapshotLoaded);
-              logBoot(
-                `snapshot synced — ready: ${result.readyCount}, partial: ${result.partialCount}, ` +
-                `missing: ${result.missingCount}, stale: ${result.staleCount}`
-              );
-              if (result.changed) {
-                await saveStartupSnapshot(_snapshotLoaded);
-                logBoot("wrote repaired snapshot");
-              }
-            } catch (err) {
-              console.warn("[BootSnapshot] hydrate error:", String(err));
-            }
-            logBoot("prepare library end");
+            // Skipped — SQLite library_cache is the primary source.
+            // No media validation needed at boot; resolution is lazy per-game.
+            logBoot("snapshot hydration skipped (trusting SQLite cache)");
           });
 
           if (_snapshotResolve) _snapshotResolve();

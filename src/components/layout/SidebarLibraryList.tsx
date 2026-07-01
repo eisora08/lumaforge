@@ -90,6 +90,13 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
+  const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
+
+  // Defer all batch processing by 5s so initial mount stays zero-work
+  useEffect(() => {
+    const t = setTimeout(() => setStartupBatchDelayPassed(true), 5000);
+    return () => clearTimeout(t);
+  }, []);
 
   const installed = useMemo(() => {
     return games.filter((g) => g.isPlayable || g.steamInstalled || (g.source === "local" && !!g.executablePath));
@@ -109,8 +116,9 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
   const isCompactMode = compact && !collapsed;
   const isFullMode = !compact && !collapsed;
 
-  // Load canonical appinfo lazily — only for filtered (visible) games
+  // Load canonical appinfo lazily — only for filtered (visible) games, deferred 5s on mount
   useEffect(() => {
+    if (!startupBatchDelayPassed) return;
     const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
     if (ids.length === 0) return;
     const allIds = [...new Set(ids)];
