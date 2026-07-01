@@ -342,9 +342,29 @@ export default function Store() {
       .slice(0, 6);
   }, [steamFeaturedCategories]);
 
+  const rankedSteamCatalog = useMemo(() => {
+    if (steamCatalog.length === 0) return [];
+
+    const featuredSet = new Set<string>();
+    steamStoreSections.forEach((section) => {
+      section.games.forEach((g) => featuredSet.add(g.appId));
+    });
+
+    const sorted = [...steamCatalog];
+    sorted.sort((a, b) => {
+      const aFeatured = featuredSet.has(String(a.appid)) ? 1 : 0;
+      const bFeatured = featuredSet.has(String(b.appid)) ? 1 : 0;
+      if (bFeatured !== aFeatured) return bFeatured - aFeatured;
+      return a.appid - b.appid;
+    });
+
+    console.log(`[Store] rankedSteamCatalog: ${sorted.length} games ranked`);
+    return sorted;
+  }, [steamCatalog, steamStoreSections]);
+
   const catalogGames = useMemo(() => {
-    const slice = steamCatalog.slice(0, visibleCount);
-    console.log(`[Store] catalogGames: ${slice.length} / ${steamCatalog.length} games rendered`);
+    const slice = rankedSteamCatalog.slice(0, visibleCount);
+    console.log(`[Store] catalogGames: ${slice.length} / ${rankedSteamCatalog.length} games rendered (visibleCount: ${visibleCount})`);
     return slice.map((entry) => ({
       appId: String(entry.appid),
       title: entry.name,
@@ -352,7 +372,7 @@ export default function Store() {
       platforms: [] as string[],
       sources: [] as PackageSource[],
     }));
-  }, [steamCatalog, visibleCount]);
+  }, [rankedSteamCatalog, visibleCount]);
 
   const installedStatusByAppId = useMemo(() => {
     const map = new Map<string, PackageInstallStatus>();
@@ -1278,16 +1298,21 @@ export default function Store() {
     const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
 
     return (
-      <PackageCard
+      <div
         key={game.appId}
-        game={gameWithOverlay}
-        storeMetadata={storeMetadataByAppId[Number(game.appId)]}
-        reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
-        onInstallComplete={refreshInstalledScripts}
-        onOpenDetails={openDetailsForGame}
-        onOpenSourceSelector={openSourceSelectorForGame}
-        onDownload={handleGameDownload}
-      />
+        className="lf-virtual-card"
+        style={{ contentVisibility: "auto", containIntrinsicSize: "280px" }}
+      >
+        <PackageCard
+          game={gameWithOverlay}
+          storeMetadata={storeMetadataByAppId[Number(game.appId)]}
+          reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
+          onInstallComplete={refreshInstalledScripts}
+          onOpenDetails={openDetailsForGame}
+          onOpenSourceSelector={openSourceSelectorForGame}
+          onDownload={handleGameDownload}
+        />
+      </div>
     );
   }
 
