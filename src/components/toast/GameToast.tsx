@@ -68,7 +68,7 @@ function GameToast({
 
   return (
     <div
-      className={`pointer-events-auto relative min-w-85 max-w-110 overflow-hidden rounded-3xl border border-white/15 bg-black/35 px-5 py-4 text-(--color-text) shadow-[0_24px_70px_rgba(0,0,0,0.45)] backdrop-blur-2xl transition-all duration-300 ${
+      className={`pointer-events-auto relative min-w-85 max-w-110 overflow-hidden rounded-3xl lf-toast-surface px-5 py-4 text-(--color-text) transition-all duration-300 ${
         t.visible
           ? "translate-y-0 scale-100 opacity-100"
           : "-translate-y-3 scale-95 opacity-0"
@@ -83,14 +83,14 @@ function GameToast({
       />
 
       <div className="relative z-10 flex items-start gap-4">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-(--surface-active-border) bg-(--surface-active)">
           <Icon className={`h-5 w-5 ${config.iconClass}`} />
         </div>
 
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          <h3 className="text-sm font-semibold text-(--color-text)">{title}</h3>
 
-          <p className="mt-1 text-sm leading-5 text-white/70">
+          <p className="mt-1 text-sm leading-5 text-(--color-muted)">
             {message}
           </p>
         </div>
@@ -102,13 +102,13 @@ function GameToast({
             event.stopPropagation();
             toast.dismiss(t.id);
           }}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/50 transition hover:bg-white/10 hover:text-white"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-(--color-muted) transition hover:bg-(--surface-active-hover) hover:text-(--color-text)"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="absolute bottom-0 left-0 h-0.75 w-full bg-white/10">
+      <div className="absolute bottom-0 left-0 h-0.75 w-full bg-(--surface-active-border)">
         <div
           className={`h-full origin-left bg-linear-to-r ${config.accent}`}
           style={{

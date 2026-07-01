@@ -102,7 +102,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
     try {
       await focusGameWindow(pid);
     } catch {
-      showError("Could not focus game window");
+      showError("Game window could not be focused");
     }
   }, [activeSession]);
 
@@ -118,11 +118,11 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
         onMouseLeave={() => setHovered(false)}
       >
         <div
-          className={`flex items-center gap-3 rounded-full border border-white/10 bg-black/60 shadow-2xl backdrop-blur-xl transition-all duration-300 ease-out ${
+          className={`lf-hud-surface flex items-center gap-3 rounded-full shadow-2xl transition-all duration-300 ease-out ${
             hovered
-              ? "scale-105 bg-black/75 px-5 py-2.5"
+              ? "lf-hud-surface-hover scale-105 px-5 py-2.5"
               : "scale-100 px-4 py-2"
-          }`}
+          } ${isLaunching ? "lf-launch-shimmer" : ""}`}
         >
           {/* Artwork / Icon */}
           <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10">
@@ -134,17 +134,21 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
                 onError={() => setImageUrl(null)}
               />
             ) : (
-              <Gamepad2 className="h-4 w-4 text-white/60" />
+              <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
             )}
           </div>
 
-          {/* Title + Elapsed */}
+          {/* Title + Elapsed / Launching */}
           <div className="flex flex-col leading-tight">
-            <span className="max-w-[140px] truncate text-sm font-medium text-white">
+            <span className="max-w-[140px] truncate text-sm font-medium text-(--color-text)">
               {activeSession?.title || "Unknown Game"}
             </span>
-            {!isLaunching && (
-              <span className="tabular-nums text-xs text-white/50">
+            {isLaunching ? (
+              <span className="lf-launch-pulse text-xs text-(--color-accent) font-medium tracking-wide">
+                Launching...
+              </span>
+            ) : (
+              <span className="tabular-nums text-xs text-(--color-muted)">
                 {elapsed}
               </span>
             )}
@@ -156,19 +160,19 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
               hovered ? "ml-1 w-auto opacity-100" : "w-0 opacity-0"
             }`}
           >
-            {/* Resume */}
-            <button
-              onClick={handleResume}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 active:scale-90"
-              aria-label="Resume game"
-            >
-              <Play className="h-3 w-3 ml-0.5 fill-current" />
-            </button>
+            {!isLaunching && (
+              <button
+                onClick={handleResume}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-(--color-text) transition hover:bg-white/20 active:scale-90"
+                aria-label="Resume game"
+              >
+                <Play className="h-3 w-3 ml-0.5 fill-current" />
+              </button>
+            )}
 
-            {/* Stop */}
             <button
               onClick={handleStop}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-(--color-accent) text-black transition hover:bg-(--color-accent)/80 active:scale-90"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-(--color-accent) text-black transition hover:brightness-110 active:scale-90"
               aria-label="Stop game"
             >
               <Square className="h-3 w-3 fill-current" />

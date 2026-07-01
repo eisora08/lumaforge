@@ -215,37 +215,39 @@ pub fn file_exists(path: String) -> bool {
 #[tauri::command]
 pub fn focus_game_window(pid: u32) -> Result<(), String> {
     unsafe {
-        let mut found: windows::Win32::Foundation::HWND =
-            windows::Win32::Foundation::HWND(0);
+        use windows::Win32::UI::WindowsAndMessaging::*;
+        use windows::Win32::Foundation::*;
+
+        let mut found: HWND = HWND(0);
         let mut ctx = (&mut found, pid);
 
-        let enum_result = windows::Win32::UI::WindowsAndMessaging::EnumWindows(
+        EnumWindows(
             Some(enum_window_callback),
-            windows::Win32::Foundation::LPARAM(
-                &mut ctx as *mut _ as isize,
-            ),
-        );
+            LPARAM(&mut ctx as *mut _ as isize),
+        )
+        .map_err(|_| "Failed to enumerate windows".to_string())?;
 
-        if enum_result.is_err() {
-            return Err("Failed to enumerate windows".to_string());
+        if found.0 == 0 {
+            return Err(format!("No visible window found for PID {}", pid));
         }
 
-        if found.0 != 0 {
-            if windows::Win32::UI::WindowsAndMessaging::IsIconic(found)
-                .as_bool()
-            {
-                let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
-                    found,
-                    windows::Win32::UI::WindowsAndMessaging::SW_RESTORE,
-                );
-            }
-            let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
-                found,
-            );
-            Ok(())
-        } else {
-            Err(format!("No visible window found for PID {}", pid))
+        // Restore if minimized
+        if IsIconic(found).as_bool() {
+            let _ = ShowWindow(found, SW_RESTORE);
         }
+
+        // Attempt focus with fallback
+        let mut focus_ok = SetForegroundWindow(found).as_bool();
+        if !focus_ok {
+            let _ = ShowWindow(found, SW_RESTORE);
+            focus_ok = SetForegroundWindow(found).as_bool();
+        }
+        if !focus_ok {
+            let _ = ShowWindow(found, SW_SHOW);
+            let _ = SetForegroundWindow(found);
+        }
+
+        Ok(())
     }
 }
 
@@ -253,20 +255,35 @@ unsafe extern "system" fn enum_window_callback(
     hwnd: windows::Win32::Foundation::HWND,
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::BOOL {
-    let ctx = &mut *(lparam.0 as *mut (&mut windows::Win32::Foundation::HWND, u32));
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    use windows::Win32::Foundation::*;
+
+    let ctx = &mut *(lparam.0 as *mut (&mut HWND, u32));
     let mut window_pid = 0u32;
-    let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
-        hwnd,
-        Some(&mut window_pid),
-    );
+    let _ = GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
+
     if window_pid == ctx.1 {
-        if windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd).as_bool() {
-            *ctx.0 = hwnd;
-            return windows::Win32::Foundation::FALSE;
+        if !IsWindowVisible(hwnd).as_bool() {
+            return TRUE;
         }
-        if ctx.0 .0 == 0 {
+
+        // Filter out tool windows and system overlay windows
+        let ex_style = GetWindowLongW(hwnd, WINDOW_LONG_PTR_INDEX(-20)) as u32;
+        if (ex_style & WS_EX_TOOLWINDOW.0) != 0 || (ex_style & WS_EX_NOACTIVATE.0) != 0 {
+            return TRUE;
+        }
+
+        // Check for caption bar — indicates a main application window
+        let style = GetWindowLongW(hwnd, WINDOW_LONG_PTR_INDEX(-16)) as u32;
+        let has_caption = (style & WS_CAPTION.0) == WS_CAPTION.0;
+
+        // Prefer main windows (with caption). Keep first match as fallback.
+        if ctx.0.0 == 0 || has_caption {
             *ctx.0 = hwnd;
+            if has_caption {
+                return FALSE; // stop — found the main window
+            }
         }
     }
-    windows::Win32::Foundation::TRUE
+    TRUE
 }
