@@ -147,6 +147,8 @@ pub fn run() {
             commands::installed_games_registry::read_installed_games_registry,
             commands::installed_games_registry::write_installed_games_registry,
             commands::process::file_exists,
+            commands::desktop::open_folder,
+            commands::desktop::create_shortcut,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

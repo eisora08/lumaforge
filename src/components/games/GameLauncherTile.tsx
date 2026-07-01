@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
@@ -32,6 +33,7 @@ import {
   loadGameAppInfoWithMediaFallback,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
+import { showSuccess, showError } from "../toast/GameToast";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -182,9 +184,8 @@ export default function GameLauncherTile({
             handleCardClick();
           }
         }}
-        className={`relative cursor-pointer overflow-hidden rounded-t-2xl ${
-          artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[5/3]"
-        }`}
+        className={`relative cursor-pointer overflow-hidden rounded-t-2xl ${artworkMode === "poster" ? "aspect-[2/3]" : "aspect-[5/3]"
+          }`}
       >
         {mediaLoading ? (
           <SkeletonBox className="h-full w-full rounded-t-2xl" />
@@ -304,15 +305,81 @@ export default function GameLauncherTile({
               onClick={() => {
                 setMenuOpen(false);
                 if (game.installDir) {
-                  console.log("Browse:", game.installDir);
+                  invoke("open_folder", { path: game.installDir }).catch((err) => {
+                    showError(`Could not open folder: ${err}`);
+                  });
                 }
               }}
             />
             <MenuItem
               label="Create Shortcut"
               icon={<FileText className="h-3.5 w-3.5" />}
-              onClick={() => { setMenuOpen(false); console.log("Create shortcut for", game.title); }}
+              onClick={async () => {
+                setMenuOpen(false);
+
+                try {
+                  if (!game?.appId) {
+                    showError("Game ID not available");
+                    return;
+                  }
+
+                  const { getExePathFromEntry, setInstalledGameEntry } = await import(
+                    "../../services/installedGamesRegistry"
+                  );
+
+                  let exePath = await getExePathFromEntry(game.appId);
+
+                  if (!exePath && game.executablePath) {
+                    exePath = game.executablePath;
+                  }
+
+                  if (!exePath && game.installDir) {
+                    const { discoverExecutables } = await import(
+                      "../../services/tauri"
+                    );
+
+                    const executables = await discoverExecutables(game.installDir);
+
+                    if (executables?.length > 0) {
+                      const validExe =
+                        executables.find(e =>
+                          !["launcher", "crash", "setup"].some(x =>
+                            e.file_name.toLowerCase().includes(x)
+                          )
+                        ) || executables[0];
+
+                      exePath = validExe.exe_path;
+
+
+                      await setInstalledGameEntry({
+                        gameId: game.appId,
+                        exePath: validExe.exe_path,
+                        exeName: validExe.file_name,
+                        installDir: game.installDir,
+                        provider: "unknown",
+                        lastValidated: Date.now(),
+                      });
+                    }
+                  }
+
+                  if (!exePath) {
+                    showError("Could not locate executable for this game");
+                    return;
+                  }
+
+                  const path = await invoke<string>("create_shortcut", {
+                    exePath,
+                    name: game.title || `Game ${game.appId}`,
+                  });
+
+                  showSuccess(`Shortcut created:\n${path}`);
+
+                } catch (err) {
+                  showError(`Could not create shortcut: ${err}`);
+                }
+              }}
             />
+
             <MenuItem
               label="Manage"
               icon={<Settings className="h-3.5 w-3.5" />}
@@ -325,14 +392,14 @@ export default function GameLauncherTile({
                 },
                 ...(hasLua
                   ? [{
-                      label: "Delete Lua",
-                      icon: <X className="h-3.5 w-3.5" />,
-                      destructive: true as const,
-                      onClick: onDeleteScript
-                        ? () => { setMenuOpen(false); onDeleteScript(game); }
-                        : undefined,
-                      disabled: !onDeleteScript,
-                    }]
+                    label: "Delete Lua",
+                    icon: <X className="h-3.5 w-3.5" />,
+                    destructive: true as const,
+                    onClick: onDeleteScript
+                      ? () => { setMenuOpen(false); onDeleteScript(game); }
+                      : undefined,
+                    disabled: !onDeleteScript,
+                  }]
                   : []),
               ]}
             />

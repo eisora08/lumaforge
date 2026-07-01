@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -22,6 +23,7 @@ import { batchLoadGameMedia, resolveSidebarMedia } from "../../services/gameCach
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
+import { showSuccess, showError } from "../toast/GameToast";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 
@@ -173,6 +175,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
   function handleContextMenu(e: React.MouseEvent<HTMLButtonElement>, game: LibraryGame) {
     e.preventDefault();
     e.stopPropagation();
+    setSelectedGame(game);
     sidebarMenuAnchorRef.current = e.currentTarget;
     setContextMenuPos({ x: e.clientX, y: e.clientY });
     setMenuGame(game);
@@ -229,9 +232,8 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
       )}
 
       {/* Game list */}
-      <div className={`${
-        isCollapsedMode ? "space-y-2" : "space-y-0.5"
-      }`}>
+      <div className={`${isCollapsedMode ? "space-y-2" : "space-y-0.5"
+        }`}>
         {(initialLoading || (loading && games.length === 0)) ? (
           isCollapsedMode ? (
             <div className="space-y-2 py-1">
@@ -282,11 +284,10 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                     onOpenGame?.();
                   }}
                   onContextMenu={(e) => handleContextMenu(e, game)}
-                  className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors ${
-                    isSelected
-                      ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
-                      : "hover:bg-white/[0.06]"
-                  }`}
+                  className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors ${isSelected
+                    ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
+                    : "hover:bg-white/[0.06]"
+                    }`}
                 >
                   <div className="relative h-10 w-10 overflow-hidden rounded-xl object-cover">
                     {resolvedThumb ? (
@@ -321,15 +322,13 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                   onOpenGame?.();
                 }}
                 onContextMenu={(e) => handleContextMenu(e, game)}
-                className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-                  isSelected
-                    ? "bg-(--color-accent)/10 text-(--color-accent)"
-                    : "text-(--color-text) hover:bg-white/[0.06]"
-                }`}
+                className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isSelected
+                  ? "bg-(--color-accent)/10 text-(--color-accent)"
+                  : "text-(--color-text) hover:bg-white/[0.06]"
+                  }`}
               >
-                <div className={`relative shrink-0 overflow-hidden rounded object-cover ${
-                  isCompactMode ? "h-6 w-9" : "h-6 w-10"
-                }`}>
+                <div className={`relative shrink-0 overflow-hidden rounded object-cover ${isCompactMode ? "h-6 w-9" : "h-6 w-10"
+                  }`}>
                   {resolvedThumb ? (
                     <AsyncImage
                       src={resolvedThumb}
@@ -357,9 +356,8 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     {isRunning && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
-                    <span className={`truncate font-medium leading-tight ${
-                      isCompactMode ? "text-[11px]" : ""
-                    }`}>
+                    <span className={`truncate font-medium leading-tight ${isCompactMode ? "text-[11px]" : ""
+                      }`}>
                       {isCompactMode && displayTitle.length > 16
                         ? displayTitle.slice(0, 14) + ".."
                         : displayTitle
@@ -435,15 +433,55 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                   onClick={() => {
                     handleMenuClose();
                     if (menuGame.installDir) {
-                      console.log("Browse:", menuGame.installDir);
+                      invoke("open_folder", { path: menuGame.installDir }).catch((err) => {
+                        showError(`Could not open folder: ${err}`);
+                      });
                     }
                   }}
                 />
                 <MenuItem
                   label="Create Shortcut"
                   icon={<FileText className="h-3.5 w-3.5" />}
-                  onClick={() => { handleMenuClose(); console.log("Create shortcut for", menuGame.title); }}
+                  onClick={async () => {
+                    handleMenuClose();
+
+                    try {
+                      const installDir = menuGame.installDir;
+
+                      if (!installDir) {
+                        showError("Install directory not found");
+                        return;
+                      }
+
+                      const { discoverExecutables } = await import("../../services/tauri");
+
+                      const executables = await discoverExecutables(installDir);
+
+                      console.log("Executables found:", executables);
+
+                      if (!executables.length) {
+                        showError("No executables found in this folder");
+                        return;
+                      }
+
+                      const exe = executables[0];
+
+                      const exePath = exe.exe_path;
+
+                      const path = await invoke<string>("create_shortcut", {
+                        exePath,
+                        name: menuGame.title || `Game ${menuGame.appId}`,
+                      });
+
+                      showSuccess(`Shortcut created:\n${path}`);
+
+                    } catch (err) {
+                      showError(`Could not create shortcut: ${err}`);
+                    }
+                  }}
                 />
+
+
                 <MenuItem
                   label="Manage"
                   icon={<Settings className="h-3.5 w-3.5" />}
@@ -456,11 +494,11 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                     },
                     ...(mHasLua
                       ? [{
-                          label: "Delete Lua",
-                          icon: <X className="h-3.5 w-3.5" />,
-                          destructive: true as const,
-                          disabled: true,
-                        }]
+                        label: "Delete Lua",
+                        icon: <X className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        disabled: true,
+                      }]
                       : []),
                   ]}
                 />
