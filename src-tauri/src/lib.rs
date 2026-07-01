@@ -150,6 +150,7 @@ pub fn run() {
             commands::process::file_exists,
             commands::desktop::open_folder,
             commands::desktop::create_shortcut,
+            commands::toast::show_toast_notification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

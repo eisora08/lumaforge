@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notification</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      justify-content: flex-end;
+      align-items: flex-start;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #toast-container {
+      padding: 18px;
+      width: 100%;
+    }
+
+    .toast {
+      min-width: 340px;
+      max-width: 420px;
+      border-radius: 24px;
+      padding: 16px 20px;
+      position: relative;
+      overflow: hidden;
+      background: rgba(48, 43, 47, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow:
+        0 24px 70px rgba(0, 0, 0, 0.45),
+        0 0 0 1px rgba(184, 215, 220, 0.12),
+        0 0 28px rgba(184, 215, 220, 0.06);
+      animation: toastEntry 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .toast.exit {
+      animation: toastExit 240ms ease-in forwards;
+    }
+
+    @keyframes toastEntry {
+      from {
+        opacity: 0;
+        transform: translateY(-12px) scale(0.96);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes toastExit {
+      from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateY(8px) scale(0.96);
+      }
+    }
+
+    .toast-glow {
+      position: absolute;
+      left: -64px;
+      top: -64px;
+      width: 128px;
+      height: 128px;
+      border-radius: 9999px;
+      pointer-events: none;
+    }
+
+    .toast-accent-bar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 3px;
+      pointer-events: none;
+    }
+
+    .toast-body {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .toast-icon-wrap {
+      width: 44px;
+      height: 44px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .toast-icon-wrap svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .toast-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .toast-title {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.25;
+      color: #fff;
+    }
+
+    .toast-message {
+      margin-top: 4px;
+      font-size: 14px;
+      line-height: 1.25;
+      color: #9ca3af;
+      opacity: 0.8;
+    }
+
+    .toast-progress-track {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      pointer-events: none;
+    }
+
+    .toast-progress-fill {
+      height: 100%;
+      transform-origin: left;
+    }
+
+    @keyframes toastProgress {
+      from {
+        transform: scaleX(1);
+      }
+
+      to {
+        transform: scaleX(0);
+      }
+    }
+
+    /* Variant configs (injected via JS) */
+  </style>
+</head>
+
+<body>
+  <div id="toast-container"></div>
+  <script>
+    window.__showToast = function (data) {
+      var container = document.getElementById('toast-container');
+      // Remove existing toast with exit animation
+      var existing = container.querySelector('.toast');
+      if (existing) {
+        existing.classList.add('exit');
+        setTimeout(function () { existing.remove(); }, 300);
+      }
+
+      var variant = data.variant || 'info';
+      var configs = {
+        success: {
+          icon: 'check',
+          iconColor: '#6ee7b7',
+          glow: 'rgba(52,211,153,0.25)',
+          accent: 'linear-gradient(90deg, #34d399, #4ade80, #10b981)',
+        },
+        error: {
+          icon: 'shield',
+          iconColor: '#fca5a5',
+          glow: 'rgba(251,113,133,0.25)',
+          accent: 'linear-gradient(90deg, #fb7185, #f87171, #ec4899)',
+        },
+        warning: {
+          icon: 'alert',
+          iconColor: '#fcd34d',
+          glow: 'rgba(251,146,60,0.25)',
+          accent: 'linear-gradient(90deg, #fbbf24, #fb923c, #eab308)',
+        },
+        info: {
+          icon: 'info',
+          iconColor: '#7dd3fc',
+          glow: 'rgba(34,211,238,0.25)',
+          accent: 'linear-gradient(90deg, #7dd3fc, #22d3ee, #3b82f6)',
+        },
+      };
+      var cfg = configs[variant] || configs.info;
+
+      var iconSvg = '';
+      if (cfg.icon === 'check') {
+        iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="' + cfg.iconColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+      } else if (cfg.icon === 'shield') {
+        iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="' + cfg.iconColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>';
+      } else if (cfg.icon === 'alert') {
+        iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="' + cfg.iconColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+      } else {
+        iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="' + cfg.iconColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+      }
+
+      var toast = document.createElement('div');
+      toast.className = 'toast';
+
+      // Apply theme colors from data
+      if (data.theme) {
+        var t = data.theme;
+
+        toast.style.background = t.surfaceActive || 'rgba(48,43,47,0.95)';
+        toast.style.borderColor = t.surfaceBorder || 'rgba(255,255,255,0.1)';
+
+        if (t.surfaceBlur && t.surfaceBlur !== 'none') {
+          toast.style.backdropFilter = t.surfaceBlur;
+          toast.style.webkitBackdropFilter = t.surfaceBlur;
+        }
+
+        if (t.colorText) toast.style.setProperty('color', t.colorText);
+        if (t.colorMuted) toast.style.setProperty('--toast-muted', t.colorMuted);
+        // Add accent glow
+        var accent = t.colorAccent || '#b8d7dc';
+        toast.style.boxShadow =
+          '0 24px 70px rgba(0,0,0,0.45), 0 0 0 1px ' + accent + '12, 0 0 28px' + accent + '06';
+      }
+
+      toast.innerHTML =
+        '<div class="toast-glow" style="background:' + cfg.glow + '"></div>' +
+        '<div class="toast-accent-bar" style="background:' + cfg.accent + '"></div>' +
+        '<div class="toast-body">' +
+        '<div class="toast-icon-wrap" style="border-color:' + (data.theme ? data.theme.surfaceBorder || 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.1)') + ';background:' + (data.theme ? data.theme.surfaceActive || 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.045)') + '">' +
+        iconSvg +
+        '</div>' +
+        '<div class="toast-content">' +
+        '<div class="toast-title" style="color:' + (data.theme ? data.theme.colorText || '#fff' : '#fff') + '">' + escapeHtml(data.title || '') + '</div>' +
+        '<div class="toast-message" style="color:' + (data.theme ? data.theme.colorMuted || '#9ca3af' : '#9ca3af') + '">' + escapeHtml(data.message || '') + '</div>' +
+        '</div>' +
+        '</div>' +
+        '<div class="toast-progress-track" style="background:' + (data.theme ? data.theme.surfaceBorder || 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.1)') + '">' +
+        '<div class="toast-progress-fill" style="background:' + cfg.accent + ';animation:toastProgress ' + (data.duration || 2800) + 'ms linear forwards"></div>' +
+        '</div>';
+
+      container.appendChild(toast);
+
+      var duration = data.duration || 2800;
+      // Clear any existing timer
+      if (window.__toastTimer) clearTimeout(window.__toastTimer);
+      // Auto-dismiss
+      window.__toastTimer = setTimeout(function () {
+        toast.classList.add('exit');
+        setTimeout(function () {
+          if (toast.parentNode) toast.remove();
+        }, 300);
+      }, duration);
+    };
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  </script>
+</body>
+
+</html>

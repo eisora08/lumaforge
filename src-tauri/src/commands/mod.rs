@@ -27,3 +27,4 @@ pub mod source_cache;
 pub mod playtime;
 pub mod installed_games_registry;
 pub mod desktop;
+pub mod toast;

@@ -653,7 +653,50 @@ html {
   border-color: var(--surface-active-border);
   backdrop-filter: var(--surface-active-blur);
   -webkit-backdrop-filter: var(--surface-active-blur);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.45),
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 12%, transparent),
+    0 0 28px color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+/* =========================
+   TOAST ENTRY ANIMATION
+   Premium layered entry: fade + translate + scale
+========================= */
+
+.lf-toast-entry {
+  animation: lfToastEntry 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes lfToastEntry {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* =========================
+   TOAST EXIT ANIMATION
+   Smooth natural exit: fade + slight downward + scale
+========================= */
+
+.lf-toast-exit {
+  animation: lfToastExit 240ms ease-in forwards;
+}
+
+@keyframes lfToastExit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
 }
 
 /* =========================
@@ -822,6 +865,8 @@ html[data-compact="true"] .lf-sidebar-overlay,
 html[data-compact="true"] .lf-sidebar-drawer,
 html[data-compact="true"] .lf-sidebar-drawer-exit,
 html[data-compact="true"] .lf-card-stagger > *,
+html[data-compact="true"] .lf-toast-entry,
+html[data-compact="true"] .lf-toast-exit,
 html[data-compact="true"] .lf-press-effect,
 html[data-compact="true"] .lf-hud-entry,
 html[data-compact="true"] .lf-hud-exit,
@@ -859,7 +904,9 @@ html[data-compact="true"] .lf-launch-bar {
   .lf-hud-exit,
   .lf-launch-shimmer::after,
   .lf-launch-pulse,
-  .lf-launch-bar {
+  .lf-launch-bar,
+  .lf-toast-entry,
+  .lf-toast-exit {
     animation: none;
     transition: none;
   }

@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -56,6 +57,32 @@ const variantConfig = {
   },
 };
 
+function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI__" in window;
+}
+
+function getCssVar(name: string, fallback: string): string {
+  try {
+    return (
+      getComputedStyle(document.documentElement).getPropertyValue(name).trim() ||
+      fallback
+    );
+  } catch {
+    return fallback;
+  }
+}
+
+function getThemeVars() {
+  return {
+    surfaceActive: getCssVar("--surface-active", "rgba(48,43,47,0.95)"),
+    surfaceBorder: getCssVar("--surface-active-border", "rgba(255,255,255,0.1)"),
+    surfaceBlur: getCssVar("--surface-active-blur", "none"),
+    colorText: getCssVar("--color-text", "#ffffff"),
+    colorMuted: getCssVar("--color-muted", "#9ca3af"),
+    colorAccent: getCssVar("--color-accent", "#b8d7dc"),
+  };
+}
+
 function GameToast({
   t,
   variant,
@@ -68,18 +95,15 @@ function GameToast({
 
   return (
     <div
-      className={`pointer-events-auto relative min-w-85 max-w-110 overflow-hidden rounded-3xl lf-toast-surface px-5 py-4 text-(--color-text) transition-all duration-300 ${
-        t.visible
-          ? "translate-y-0 scale-100 opacity-100"
-          : "-translate-y-3 scale-95 opacity-0"
-      }`}
+      className={`pointer-events-auto relative min-w-85 max-w-110 overflow-hidden rounded-3xl lf-toast-surface px-5 py-4 text-(--color-text) ${t.visible ? "lf-toast-entry" : "lf-toast-exit"
+        }`}
     >
       <div
-        className={`absolute -left-16 -top-16 h-32 w-32 rounded-full blur-3xl ${config.glow}`}
+        className={`pointer-events-none absolute -left-16 -top-16 h-32 w-32 rounded-full blur-3xl ${config.glow}`}
       />
 
       <div
-        className={`absolute inset-x-0 top-0 h-0.75 bg-linear-to-r ${config.accent}`}
+        className={`pointer-events-none absolute inset-x-0 top-0 h-0.75 bg-linear-to-r ${config.accent}`}
       />
 
       <div className="relative z-10 flex items-start gap-4">
@@ -88,9 +112,11 @@ function GameToast({
         </div>
 
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-(--color-text)">{title}</h3>
+          <p className="text-sm font-bold leading-5 text-(--color-text)">
+            {title}
+          </p>
 
-          <p className="mt-1 text-sm leading-5 text-(--color-muted)">
+          <p className="mt-1 text-sm leading-5 text-(--color-muted) opacity-80">
             {message}
           </p>
         </div>
@@ -108,7 +134,7 @@ function GameToast({
         </button>
       </div>
 
-      <div className="absolute bottom-0 left-0 h-0.75 w-full bg-(--surface-active-border)">
+      <div className="pointer-events-none absolute bottom-0 left-0 h-0.75 w-full bg-(--surface-active-border)">
         <div
           className={`h-full origin-left bg-linear-to-r ${config.accent}`}
           style={{
@@ -120,20 +146,43 @@ function GameToast({
   );
 }
 
-function showGameToast(
+async function showGameToast(
   variant: ToastVariant,
   message: string,
   options: GameToastOptions = {}
 ) {
   const duration = options.duration ?? 2800;
   const config = variantConfig[variant];
+  const title = options.title ?? config.title;
+
+  if (isTauri()) {
+    const theme = getThemeVars();
+    try {
+      await invoke("show_toast_notification", {
+        message,
+        variant,
+        title,
+        duration,
+        themeSurfaceActive: theme.surfaceActive,
+        themeSurfaceBorder: theme.surfaceBorder,
+        themeSurfaceBlur: theme.surfaceBlur,
+        themeColorText: theme.colorText,
+        themeColorMuted: theme.colorMuted,
+        themeColorAccent: theme.colorAccent,
+      });
+
+      return;
+    } catch (err) {
+      console.warn("[GameToast] Overlay failed, falling back to in-app:", err);
+    }
+  }
 
   toast.custom(
     (t) => (
       <GameToast
         t={t}
         variant={variant}
-        title={options.title ?? config.title}
+        title={title}
         message={message}
         duration={duration}
       />
@@ -173,6 +222,7 @@ export function GameToastViewport() {
         zIndex: TOAST_Z_INDEX,
         top: 18,
         right: 18,
+        pointerEvents: "none",
       }}
     />
   );
