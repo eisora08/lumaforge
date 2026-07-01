@@ -36,7 +36,7 @@ export default function InstalledGameTile({ game, onSelect, onPlay, onInstallSte
 
   return (
     <div
-      className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40"
+      className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={() => onSelect(game)}
@@ -45,7 +45,7 @@ export default function InstalledGameTile({ game, onSelect, onPlay, onInstallSte
         <img
           src={imageUrl}
           alt={game.title}
-          className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+          className="h-full w-full object-cover"
           loading="lazy"
           onError={() => setImageFailed(true)}
         />

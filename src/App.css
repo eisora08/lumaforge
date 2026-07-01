@@ -353,11 +353,7 @@ html {
 }
 
 .lf-card-hover {
-  transition: background-color 200ms ease, border-color 200ms ease, transform 150ms ease, box-shadow 200ms ease;
-}
-
-.lf-card-hover:hover {
-  transform: translateY(-2px) scale(1.02);
+  transition: background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
 }
 
 .lf-hover-surface {

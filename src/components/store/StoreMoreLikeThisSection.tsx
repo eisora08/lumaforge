@@ -86,12 +86,12 @@ export default function StoreMoreLikeThisSection({
                 key={game.appId}
                 type="button"
                 onClick={() => onOpenGame?.(game)}
-                className="group relative h-36 w-64 shrink-0 cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/25 text-left transition hover:border-(--color-accent)/40"
+                className="group relative h-36 w-64 shrink-0 cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/25 text-left transition hover:bg-white/[0.04] hover:border-(--color-accent)/40"
               >
                 <AsyncImage
                   src={imageUrl}
                   alt={title}
-                  className="h-full w-full transition duration-300 group-hover:scale-105"
+                  className="h-full w-full"
                   fallback={
                     <div className="flex h-full w-full items-center justify-center bg-white/5">
                       <Gamepad2 className="h-8 w-8 text-(--color-muted)" />

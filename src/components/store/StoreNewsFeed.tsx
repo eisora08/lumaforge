@@ -151,7 +151,7 @@ function NewsCard({ item, onOpenGame }: NewsCardProps) {
             <AsyncImage
               src={item.imageUrl}
               alt={item.title}
-              className="h-full w-full transition duration-300 group-hover:scale-[1.03]"
+              className="h-full w-full"
             />
           </div>
         )}

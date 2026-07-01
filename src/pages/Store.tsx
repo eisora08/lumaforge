@@ -91,6 +91,7 @@ const METADATA_CONCURRENCY = 5;
 const REVIEW_CONCURRENCY = 3;
 const INITIAL_CATALOG_SIZE = 500;
 const BATCH_SIZE = 200;
+const PAGE_SIZE = 30;
 
 function mapSteamFeaturedItemToPackageGame(
   item: SteamFeaturedItem
@@ -256,14 +257,14 @@ export default function Store() {
     string | null
   >(null);
 
+  const [browsePage, setBrowsePage] = useState(1);
+
   const [sourcesLoadingByAppId, setSourcesLoadingByAppId] = useState<
     Record<string, boolean>
   >({});
 
   const [steamCatalog, setSteamCatalog] = useState<{ appid: number; name: string }[]>([]);
-  const [visibleCount, setVisibleCount] = useState(INITIAL_CATALOG_SIZE);
-  const catalogLoadingMoreRef = useRef(false);
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [visibleCount] = useState(INITIAL_CATALOG_SIZE);
 
   const sourceCacheLoadedRef = useRef(false);
   useEffect(() => {
@@ -352,13 +353,12 @@ export default function Store() {
 
     const sorted = [...steamCatalog];
     sorted.sort((a, b) => {
-      const aFeatured = featuredSet.has(String(a.appid)) ? 1 : 0;
-      const bFeatured = featuredSet.has(String(b.appid)) ? 1 : 0;
-      if (bFeatured !== aFeatured) return bFeatured - aFeatured;
+      const aScore = featuredSet.has(String(a.appid)) ? 10000 : 0;
+      const bScore = featuredSet.has(String(b.appid)) ? 10000 : 0;
+      if (bScore !== aScore) return bScore - aScore;
       return a.appid - b.appid;
     });
 
-    console.log(`[Store] rankedSteamCatalog: ${sorted.length} games ranked`);
     return sorted;
   }, [steamCatalog, steamStoreSections]);
 
@@ -537,9 +537,113 @@ export default function Store() {
     return sections.filter((section) => section.games.length > 0);
   }, [results, installedStatusByAppId]);
 
+  const dynamicDiscoverSections = useMemo(() => {
+    const usedIds = new Set<string>();
+    steamStoreSections.forEach((s) => s.games.forEach((g) => usedIds.add(g.appId)));
+    lumaForgeSections.forEach((s) => s.games.forEach((g) => usedIds.add(g.appId)));
+
+    function takeUnique(games: PackageGame[], limit: number) {
+      const out: PackageGame[] = [];
+      for (const g of games) {
+        if (usedIds.has(g.appId)) continue;
+        usedIds.add(g.appId);
+        out.push(g);
+        if (out.length >= limit) break;
+      }
+      return out;
+    }
+
+    const sections: StoreSectionModel[] = [];
+
+    const topRaw = rankedSteamCatalog.slice(0, 500);
+    const topGames: PackageGame[] = topRaw.map((e) => ({
+      appId: String(e.appid),
+      title: e.name,
+      imageUrl: undefined as string | undefined,
+      platforms: [] as string[],
+      sources: [] as PackageSource[],
+    }));
+
+    // --- New Releases ---
+    const newest = [...topGames].sort((a, b) => Number(b.appId) - Number(a.appId));
+    const nr = takeUnique(newest, 20);
+    if (nr.length > 0) {
+      sections.push({ id: "new-releases", title: "New Releases", description: "Latest games added to the catalog.", games: nr });
+    }
+
+    // --- Trending Now ---
+    const trending = [...topGames].sort((a, b) => Number(b.appId) - Number(a.appId));
+    const tr = takeUnique(trending, 20);
+    if (tr.length > 0) {
+      sections.push({ id: "trending", title: "Trending Now", description: "Popular games in the catalog.", games: tr });
+    }
+
+    // --- Top Sellers ---
+    const ts = takeUnique(topGames, 20);
+    if (ts.length > 0) {
+      sections.push({ id: "top-sellers", title: "Top Sellers", description: "Popular games in the catalog.", games: ts });
+    }
+
+    // --- Specials (daily rotating selection) ---
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 0);
+    const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+    const specialsPool = topGames.filter((g) => !usedIds.has(g.appId));
+    if (specialsPool.length > 20) {
+      const start = dayOfYear % (specialsPool.length - 20);
+      const specials = takeUnique(specialsPool.slice(start, start + 40), 20);
+      if (specials.length > 0) {
+        sections.push({ id: "specials", title: "Specials", description: "Curated selection for today.", games: specials });
+      }
+    }
+
+    // --- Genres (from metadata, limited to top games) ---
+    const genreGroups = new Map<string, PackageGame[]>();
+    for (const game of topGames) {
+      if (usedIds.has(game.appId)) continue;
+      const meta = storeMetadataByAppId[Number(game.appId)];
+      if (!meta?.genres?.length) continue;
+      for (const genre of meta.genres) {
+        if (!genreGroups.has(genre)) genreGroups.set(genre, []);
+        const list = genreGroups.get(genre)!;
+        if (list.length < 20) {
+          list.push(game);
+        }
+      }
+    }
+    const TARGET_GENRES = ["Action", "RPG", "Shooter", "Indie", "Simulation", "Adventure", "Strategy"];
+    for (const genre of TARGET_GENRES) {
+      const games = genreGroups.get(genre);
+      if (games && games.length >= 4) {
+        sections.push({ id: `genre-${genre.toLowerCase()}`, title: genre, description: `Popular ${genre} games`, games });
+        games.forEach((g) => usedIds.add(g.appId));
+      }
+    }
+
+    // --- Recommended for You (based on installed games' genres) ---
+    const preferredGenres = new Set<string>();
+    for (const [appIdStr] of installedStatusByAppId) {
+      const meta = storeMetadataByAppId[Number(appIdStr)];
+      if (meta?.genres) meta.genres.forEach((g) => preferredGenres.add(g));
+    }
+    if (preferredGenres.size > 0) {
+      const recommended = topGames.filter((g) => {
+        if (usedIds.has(g.appId) || installedStatusByAppId.has(g.appId)) return false;
+        const meta = storeMetadataByAppId[Number(g.appId)];
+        return meta?.genres?.some((gen) => preferredGenres.has(gen));
+      });
+      const rec = takeUnique(recommended, 20);
+      if (rec.length > 0) {
+        sections.push({ id: "recommended", title: "Recommended for You", description: "Based on your installed games.", games: rec });
+      }
+    }
+
+    return sections;
+  }, [steamStoreSections, lumaForgeSections, rankedSteamCatalog, storeMetadataByAppId, installedStatusByAppId]);
+
   const allStoreSections = useMemo(() => {
-    return [...steamStoreSections, ...lumaForgeSections];
-  }, [steamStoreSections, lumaForgeSections]);
+    return [...steamStoreSections, ...lumaForgeSections, ...dynamicDiscoverSections];
+  }, [steamStoreSections, lumaForgeSections, dynamicDiscoverSections]);
 
   const browseGames = useMemo(() => {
     const gameMap = new Map<string, PackageGame>();
@@ -594,30 +698,31 @@ export default function Store() {
   }, [catalogGames, results, steamStoreSections, providerOverlayByAppId]);
 
   const featuredGames = useMemo(() => {
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 0);
+    const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+
+    const pool: PackageGame[] = [];
     const seen = new Set<string>();
-    const games: PackageGame[] = [];
 
     function tryAdd(game: PackageGame) {
       if (seen.has(game.appId)) return;
-      const overlayed = providerOverlayByAppId[game.appId] ?? game;
       seen.add(game.appId);
-      games.push(overlayed);
+      pool.push(providerOverlayByAppId[game.appId] ?? game);
     }
 
-    steamStoreSections.forEach((section) => {
-      section.games.forEach(tryAdd);
-    });
-
-    lumaForgeSections.forEach((section) => {
-      section.games.forEach(tryAdd);
-    });
-
+    // Priority: ranked catalog (first 200 are most relevant)
+    catalogGames.slice(0, 200).forEach(tryAdd);
+    // Also include featured/luma/results for variety
+    steamStoreSections.forEach((s) => s.games.forEach(tryAdd));
+    lumaForgeSections.forEach((s) => s.games.forEach(tryAdd));
     results.forEach(tryAdd);
 
-    catalogGames.forEach(tryAdd);
-
-    return games.slice(0, 8);
-  }, [steamStoreSections, lumaForgeSections, results, catalogGames, providerOverlayByAppId]);
+    // Rotate based on day of year so hero changes daily
+    const count = Math.min(pool.length, 8);
+    const start = dayOfYear % Math.max(1, pool.length - count + 1);
+    return pool.slice(start, start + count);
+  }, [catalogGames, steamStoreSections, lumaForgeSections, results, providerOverlayByAppId]);
 
   const newsItems = useMemo<StoreNewsItem[]>(() => {
     const items: StoreNewsItem[] = [];
@@ -867,6 +972,46 @@ export default function Store() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleAppIdsKey]);
 
+  // Smart preload: proactively load metadata for upcoming items
+  useEffect(() => {
+    const preloadIds: number[] = [];
+
+    // Next batch of catalog games (beyond current visibleCount)
+    const nextBatchEnd = Math.min(visibleCount + BATCH_SIZE, rankedSteamCatalog.length);
+    for (let i = visibleCount; i < nextBatchEnd; i++) {
+      const entry = rankedSteamCatalog[i];
+      if (entry) preloadIds.push(entry.appid);
+    }
+
+    // Featured games
+    for (const game of featuredGames) {
+      const id = Number(game.appId);
+      if (Number.isFinite(id)) preloadIds.push(id);
+    }
+
+    // First items of each discover section
+    for (const section of allStoreSections) {
+      for (const game of section.games.slice(0, 3)) {
+        const id = Number(game.appId);
+        if (Number.isFinite(id)) preloadIds.push(id);
+      }
+    }
+
+    if (preloadIds.length === 0) return;
+
+    const unique = Array.from(new Set(preloadIds));
+    const missing = unique.filter((id) => !storeMetadataByAppId[id]);
+
+    if (missing.length === 0) return;
+
+    resolveGameMetadata(missing)
+      .then((metadata) => {
+        setStoreMetadataByAppId((prev) => ({ ...prev, ...metadata }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleCount, steamCatalog.length]);
+
   useEffect(() => {
     if (visibleAppIdsKey === appIdScopeKeyRef.current) return;
 
@@ -904,37 +1049,6 @@ export default function Store() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleAppIdsKey]);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-    if (activeStoreTab !== "browse") return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        if (catalogLoadingMoreRef.current) return;
-        if (visibleCount >= steamCatalog.length) return;
-
-        catalogLoadingMoreRef.current = true;
-        setVisibleCount((prev) => {
-          const next = prev + BATCH_SIZE;
-          return next > steamCatalog.length ? steamCatalog.length : next;
-        });
-      },
-      { rootMargin: "400px 0px" }
-    );
-
-    observer.observe(sentinel);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [visibleCount, steamCatalog.length, activeStoreTab]);
-
-  useEffect(() => {
-    catalogLoadingMoreRef.current = false;
-  }, [visibleCount]);
 
   const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {
     if (!selectedDetailGameWithOverlay) {
@@ -1178,6 +1292,12 @@ export default function Store() {
     setActiveStoreTab(tab);
     setActiveSectionId(null);
     setActiveGenreSectionId(null);
+    setSelectedDetailGame(null);
+    setSteamSearchItems([]);
+    setSteamSubmittedSearchGames([]);
+    setStoreSearchQuery("");
+    setSubmittedSearchQuery("");
+    setQuery("");
   }
 
   function handleProviderChange(value: typeof selectedProvider) {
@@ -1336,9 +1456,50 @@ export default function Store() {
     log("store-search", `final status { appId: "${selectedAppId}", status: "${sourceStatus}", sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
   }
 
-  if (selectedDetailGameWithOverlay) {
-    return (
-      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7 lf-fade-in">
+
+
+  return (
+    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-5 pb-5 lg:px-7 lg:pb-7 lf-fade-in">
+      <div className="sticky top-0 z-30 -mx-5 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-5 py-2.5 backdrop-blur-md lg:-mx-7 lg:px-7">
+        <div className="flex items-center gap-4">
+          <div className="flex gap-1">
+            {STORE_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => handleStoreTabChange(tab.id)}
+                    className={`relative cursor-pointer px-3 py-1.5 text-sm font-medium transition ${
+                  activeStoreTab === tab.id
+                    ? "text-(--color-accent)"
+                    : "text-(--color-muted) hover:text-(--color-text)"
+                }`}
+              >
+                {tab.label}
+                {activeStoreTab === tab.id && (
+                  <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="ml-auto w-full max-w-[360px]">
+            <PackagesToolbar
+              compact
+              query={storeSearchQuery}
+              selectedProvider={selectedProvider}
+              onQueryChange={handleToolbarQueryChange}
+              onProviderChange={handleProviderChange}
+              searchItems={steamSearchItems}
+              searchLoading={steamSearchLoading}
+              onSubmitSearch={submitSteamSearch}
+              onViewAllSearchResults={submitSteamSearch}
+              onSelectSearchItem={handleSelectSearchItem}
+            />
+          </div>
+        </div>
+      </div>
+
+      {selectedDetailGameWithOverlay ? (
         <StoreGameDetailsPage
           game={selectedDetailGameWithOverlay}
           metadata={
@@ -1432,52 +1593,7 @@ export default function Store() {
               });
           }}
         />
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-5 pb-5 lg:px-7 lg:pb-7 lf-fade-in">
-      <div className="sticky top-0 z-30 -mx-5 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-5 py-2.5 backdrop-blur-md lg:-mx-7 lg:px-7">
-        <div className="flex items-center gap-4">
-          <div className="flex gap-1">
-            {STORE_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => handleStoreTabChange(tab.id)}
-                    className={`relative cursor-pointer px-3 py-1.5 text-sm font-medium transition ${
-                  activeStoreTab === tab.id
-                    ? "text-(--color-accent)"
-                    : "text-(--color-muted) hover:text-(--color-text)"
-                }`}
-              >
-                {tab.label}
-                {activeStoreTab === tab.id && (
-                  <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
-                )}
-              </button>
-            ))}
-          </div>
-
-          <div className="ml-auto w-full max-w-[360px]">
-            <PackagesToolbar
-              compact
-              query={storeSearchQuery}
-              selectedProvider={selectedProvider}
-              onQueryChange={handleToolbarQueryChange}
-              onProviderChange={handleProviderChange}
-              searchItems={steamSearchItems}
-              searchLoading={steamSearchLoading}
-              onSubmitSearch={submitSteamSearch}
-              onViewAllSearchResults={submitSteamSearch}
-              onSelectSearchItem={handleSelectSearchItem}
-            />
-          </div>
-        </div>
-      </div>
-
-      {loading ? (
+      ) : loading ? (
         <StoreLoadingState />
       ) : activeSection ? (
         <section className="space-y-5">
@@ -1542,7 +1658,7 @@ export default function Store() {
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
               <button
                 type="button"
-                onClick={() => setActiveGenreSectionId(null)}
+                onClick={() => { setActiveGenreSectionId(null); setBrowsePage(1); }}
                 className={`whitespace-nowrap cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                   activeGenreSectionId === null
                     ? "bg-(--color-accent) text-black"
@@ -1556,7 +1672,7 @@ export default function Store() {
                 <button
                   key={section.id}
                   type="button"
-                  onClick={() => setActiveGenreSectionId(section.id)}
+                  onClick={() => { setActiveGenreSectionId(section.id); setBrowsePage(1); }}
                   className={`whitespace-nowrap cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     activeGenreSectionId === section.id
                       ? "bg-(--color-accent) text-black"
@@ -1572,22 +1688,116 @@ export default function Store() {
           <div className="lg:flex lg:gap-6 lg:items-start">
             <StoreBrowseFiltersPanel
               filters={browseFilters}
-              onFiltersChange={setBrowseFilters}
+              onFiltersChange={(filters) => { setBrowseFilters(filters); setBrowsePage(1); }}
               totalGames={browseGames.length}
               filteredGames={filteredBrowseGames.length}
             />
 
             <div className="min-w-0 flex-1">
-              {filteredBrowseGames.length === 0 ? (
-                <StoreEmptyState />
-              ) : (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
-                  {filteredBrowseGames.map(renderStoreCard)}
-                </div>
-              )}
-              {activeStoreTab === "browse" && steamCatalog.length > visibleCount && (
-                <div ref={sentinelRef} className="h-2" />
-              )}
+              {(() => {
+                const totalPages = Math.ceil(filteredBrowseGames.length / PAGE_SIZE) || 1;
+                const safePage = Math.min(browsePage, totalPages);
+                const startIdx = (safePage - 1) * PAGE_SIZE;
+                const endIdx = startIdx + PAGE_SIZE;
+                const pageGames = filteredBrowseGames.slice(startIdx, endIdx);
+
+                return (
+                  <div className="space-y-5">
+                    {pageGames.length === 0 ? (
+                      <StoreEmptyState />
+                    ) : (
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
+                        {pageGames.map((game) => {
+                          const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
+                          return (
+                            <div
+                              key={game.appId}
+                              className="lf-virtual-card"
+                              style={{ contentVisibility: "auto", containIntrinsicSize: "280px" }}
+                            >
+                              <PackageCard
+                                game={gameWithOverlay}
+                                storeMetadata={storeMetadataByAppId[Number(game.appId)]}
+                                reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
+                                onInstallComplete={refreshInstalledScripts}
+                                onOpenDetails={openDetailsForGame}
+                                onOpenSourceSelector={openSourceSelectorForGame}
+                                onDownload={handleGameDownload}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-center gap-2 pt-4">
+                        <button
+                          type="button"
+                          disabled={safePage <= 1}
+                          onClick={() => setBrowsePage(safePage - 1)}
+                          className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-default disabled:opacity-30"
+                        >
+                          Previous
+                        </button>
+
+                        {(() => {
+                          const pages: (number | "...")[] = [];
+                          const maxVisible = 7;
+
+                          if (totalPages <= maxVisible + 2) {
+                            for (let i = 1; i <= totalPages; i++) pages.push(i);
+                          } else {
+                            pages.push(1);
+                            let start = Math.max(2, safePage - 2);
+                            let end = Math.min(totalPages - 1, safePage + 2);
+
+                            if (safePage <= 4) {
+                              end = Math.min(maxVisible - 1, totalPages - 1);
+                            }
+                            if (safePage >= totalPages - 3) {
+                              start = Math.max(2, totalPages - maxVisible + 2);
+                            }
+
+                            if (start > 2) pages.push("...");
+                            for (let i = start; i <= end; i++) pages.push(i);
+                            if (end < totalPages - 1) pages.push("...");
+                            pages.push(totalPages);
+                          }
+
+                          return pages.map((p, i) =>
+                            p === "..." ? (
+                              <span key={`ellipsis-${i}`} className="px-1 text-sm text-(--color-muted)">...</span>
+                            ) : (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setBrowsePage(p)}
+                                className={`cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                                  safePage === p
+                                    ? "bg-(--color-accent) text-black"
+                                    : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            )
+                          );
+                        })()}
+
+                        <button
+                          type="button"
+                          disabled={safePage >= totalPages}
+                          onClick={() => setBrowsePage(safePage + 1)}
+                          className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-default disabled:opacity-30"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </section>

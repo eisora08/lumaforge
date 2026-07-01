@@ -279,14 +279,14 @@ export default function PackageCard({
               handleOpenDetails();
             }
           }}
-          className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40 lf-press-effect"
+          className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
         >
           <div className="relative w-full shrink-0 overflow-hidden">
             {displayImageUrl && !imageFailed ? (
               <CardImage
                 src={displayImageUrl}
                 alt={displayTitle}
-                objectClass="object-cover group-hover:scale-105"
+                objectClass="object-cover"
                 onError={() => setImageFailed(true)}
               />
             ) : (
@@ -338,13 +338,13 @@ export default function PackageCard({
             handleOpenDetails();
           }
         }}
-        className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:border-(--color-accent)/40 lf-press-effect"
+        className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
       >
         {displayImageUrl && !imageFailed ? (
           <CardImage
             src={displayImageUrl}
             alt={displayTitle}
-            objectClass="object-cover group-hover:scale-105"
+            objectClass="object-cover"
             onError={() => setImageFailed(true)}
           />
         ) : (

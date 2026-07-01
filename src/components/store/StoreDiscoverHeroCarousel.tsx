@@ -102,7 +102,7 @@ export default function StoreDiscoverHeroCarousel({
           <AsyncImage
             src={currentImage}
             alt={current.title}
-            className="h-full w-full transition duration-500 group-hover:scale-[1.02]"
+            className="h-full w-full"
             loading="eager"
             fallback={
               <div className="flex h-full w-full items-center justify-center">
