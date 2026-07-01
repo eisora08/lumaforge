@@ -102,6 +102,25 @@ const RANKING_WEIGHTS = {
   userInterest: 0.10,
 } as const;
 
+type InteractionEvent = {
+  type: "view" | "click" | "download";
+  timestamp: number;
+};
+
+const EVENT_WEIGHTS: Record<InteractionEvent["type"], number> = {
+  view: 1,
+  click: 2,
+  download: 4,
+};
+
+const TRENDING_LAMBDA = 0.00003;
+const TRENDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const TRENDING_RECALC_MS = 30000;
+const MAX_EVENTS_PER_GAME = 200;
+
+const INTENT_WINDOW_MS = 30 * 60 * 1000;
+const PREDICTION_BOOST_MULTIPLIER = 3;
+
 function mapSteamDropdownItemToPackageGame(
   item: StoreSearchDropdownItem
 ): PackageGame {
@@ -245,6 +264,10 @@ export default function Store() {
   const [visibleCount] = useState(INITIAL_CATALOG_SIZE);
 
   const [interactionScoreByAppId, setInteractionScoreByAppId] = useState<Record<string, number>>({});
+  const [interactionEventsByAppId, setInteractionEventsByAppId] = useState<
+    Record<string, InteractionEvent[]>
+  >({});
+  const [trendRecalcKey, setTrendRecalcKey] = useState(0);
 
   const sourceCacheLoadedRef = useRef(false);
   useEffect(() => {
@@ -292,6 +315,19 @@ export default function Store() {
     return () => { cancelled = true; };
   }, []);
 
+  // Recalculate trending scores every 30s
+  useEffect(() => {
+    const id = setInterval(() => setTrendRecalcKey((n) => n + 1), TRENDING_RECALC_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // Recalculate trending on window focus
+  useEffect(() => {
+    const onFocus = () => setTrendRecalcKey((n) => n + 1);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
   const rankedSteamCatalog = useMemo(() => {
     if (steamCatalog.length === 0) return [];
 
@@ -300,6 +336,26 @@ export default function Store() {
 
     return sorted;
   }, [steamCatalog]);
+
+  const genreConfidence = useMemo(() => {
+    const scores: Record<string, number> = {};
+    const now = Date.now();
+
+    for (const [appId, events] of Object.entries(interactionEventsByAppId)) {
+      const meta = storeMetadataByAppId[Number(appId)];
+      if (!meta?.genres || meta.genres.length === 0) continue;
+
+      const recent = events.filter((e) => now - e.timestamp < INTENT_WINDOW_MS);
+      if (recent.length === 0) continue;
+
+      const totalWeight = recent.reduce((sum, e) => sum + EVENT_WEIGHTS[e.type], 0);
+      for (const genre of meta.genres) {
+        scores[genre] = (scores[genre] ?? 0) + totalWeight;
+      }
+    }
+
+    return scores;
+  }, [interactionEventsByAppId, storeMetadataByAppId, trendRecalcKey]);
 
   const highQualityPool = useMemo(() => {
     if (rankedSteamCatalog.length === 0) return [];
@@ -314,6 +370,9 @@ export default function Store() {
       const provScore = (overlay && overlay.sources.some((s) => s.available)) ? 1 : 0;
       const recScore = Math.min(1, entry.appid / 400000);
       const userScore = Math.min(1, interaction / 5);
+      const predictionBoost = meta?.genres
+        ? meta.genres.reduce((sum, g) => sum + (genreConfidence[g] ?? 0), 0) * PREDICTION_BOOST_MULTIPLIER
+        : 0;
 
       return {
         appId: id,
@@ -323,12 +382,31 @@ export default function Store() {
           RANKING_WEIGHTS.metadata * metaScore +
           RANKING_WEIGHTS.provider * provScore +
           RANKING_WEIGHTS.recency * recScore +
-          RANKING_WEIGHTS.userInterest * userScore,
+          RANKING_WEIGHTS.userInterest * (userScore + predictionBoost),
         hasSource: provScore > 0,
         hasMeta: metaScore > 0,
       };
     }).sort((a, b) => b.score - a.score);
-  }, [rankedSteamCatalog, providerOverlayByAppId, storeMetadataByAppId, interactionScoreByAppId]);
+  }, [rankedSteamCatalog, providerOverlayByAppId, storeMetadataByAppId, interactionScoreByAppId, genreConfidence]);
+
+  const trendingScoreByAppId = useMemo(() => {
+    const scores: Record<string, number> = {};
+    const now = Date.now();
+
+    for (const [appId, events] of Object.entries(interactionEventsByAppId)) {
+      if (events.length === 0) continue;
+      let total = 0;
+      for (const event of events) {
+        const age = now - event.timestamp;
+        const baseWeight = EVENT_WEIGHTS[event.type];
+        const decayedWeight = baseWeight * Math.exp(-TRENDING_LAMBDA * age);
+        total += decayedWeight;
+      }
+      if (total > 0.01) scores[appId] = total;
+    }
+
+    return scores;
+  }, [interactionEventsByAppId, trendRecalcKey]);
 
   const catalogGames = useMemo(() => {
     const slice = rankedSteamCatalog.slice(0, visibleCount);
@@ -568,7 +646,7 @@ export default function Store() {
     }
 
     if (preferredGenres.size > 0 || Object.keys(interactionScoreByAppId).length > 0) {
-      // Score each candidate by genre overlap + interaction boost + base quality
+      // Score each candidate by genre overlap + interaction boost + prediction boost
       const scored = topGames.map((g) => {
         let matchScore = 0;
         const meta = storeMetadataByAppId[Number(g.appId)];
@@ -577,6 +655,9 @@ export default function Store() {
         matchScore += overlap * 3;
         const interaction = interactionScoreByAppId[g.appId] ?? 0;
         matchScore += interaction * 5;
+        // Add prediction boost for genres matching session intent
+        const predBoost = gs.reduce((sum, gen) => sum + (genreConfidence[gen] ?? 0), 0) * PREDICTION_BOOST_MULTIPLIER;
+        matchScore += predBoost;
         if (installedStatusByAppId.has(g.appId)) matchScore = -999;
         return { game: g, score: matchScore };
       });
@@ -587,13 +668,18 @@ export default function Store() {
       }
     }
 
-    // --- Trending Now (high-scoring games with provider availability) ---
-    const trendingPool = topGames.filter((g) => {
-      const overlay = providerOverlayByAppId[g.appId];
-      return overlay && overlay.sources.some((s) => s.available);
-    });
-    if (trendingPool.length >= 4) {
-      const tr = takeUnique(trendingPool, 20);
+    // --- Trending Now (ranked by real-time trending score + available sources) ---
+    const trendScored = topGames
+      .map((g) => {
+        const overlay = providerOverlayByAppId[g.appId];
+        const hasSource = overlay && overlay.sources.some((s) => s.available);
+        const trend = trendingScoreByAppId[g.appId] ?? 0;
+        return { game: g, score: trend + (hasSource ? 2 : 0), hasSource };
+      })
+      .filter((s) => s.score > 0)
+      .sort((a, b) => b.score - a.score);
+    if (trendScored.length >= 4) {
+      const tr = takeUnique(trendScored.map((s) => s.game), 20);
       if (tr.length > 0) {
         sections.push({ id: "trending", title: "Trending Now", description: "Popular games with available download sources.", games: tr });
       }
@@ -626,7 +712,14 @@ export default function Store() {
       }
     }
     const TARGET_GENRES = ["Action", "RPG", "Shooter", "Indie", "Simulation", "Adventure", "Strategy"];
-    for (const genre of TARGET_GENRES) {
+    // Sort genres by session confidence so predicted preferences appear first
+    const sortedGenres = [...TARGET_GENRES].sort((a, b) => {
+      const confA = genreConfidence[a] ?? 0;
+      const confB = genreConfidence[b] ?? 0;
+      if (confB !== confA) return confB - confA;
+      return TARGET_GENRES.indexOf(a) - TARGET_GENRES.indexOf(b);
+    });
+    for (const genre of sortedGenres) {
       const games = genreGroups.get(genre);
       if (games && games.length >= 4) {
         sections.push({ id: `genre-${genre.toLowerCase()}`, title: genre, description: `Popular ${genre} games`, games });
@@ -635,7 +728,7 @@ export default function Store() {
     }
 
     return sections;
-  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames]);
+  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence]);
 
   const allStoreSections = useMemo(() => {
     return [...lumaForgeSections, ...dynamicDiscoverSections];
@@ -1103,6 +1196,21 @@ export default function Store() {
     return getBestAvailableSource(game);
   }
 
+  function pushInteractionEvent(appId: string, type: InteractionEvent["type"]) {
+    const now = Date.now();
+    setInteractionEventsByAppId((prev) => {
+      const events = prev[appId] ?? [];
+      const updated = [...events, { type, timestamp: now }];
+      // Keep only most recent events within the time window
+      const cutoff = now - TRENDING_WINDOW_MS;
+      const pruned = updated.filter((e) => e.timestamp >= cutoff);
+      if (pruned.length > MAX_EVENTS_PER_GAME) {
+        return { ...prev, [appId]: pruned.slice(-MAX_EVENTS_PER_GAME) };
+      }
+      return { ...prev, [appId]: pruned };
+    });
+  }
+
   function openSourceSelectorForGame(game: PackageGame) {
     setSourceSelectorGame(game);
   }
@@ -1110,7 +1218,11 @@ export default function Store() {
   const sourceResolveReqRef = useRef(0);
 
   function openDetailsForGame(game: PackageGame) {
-    // Track interaction for user profile
+    // Track view + click interactions
+    pushInteractionEvent(game.appId, "view");
+    pushInteractionEvent(game.appId, "click");
+
+    // Track interaction for user profile (legacy counter)
     setInteractionScoreByAppId((prev) => ({
       ...prev,
       [game.appId]: (prev[game.appId] ?? 0) + 1,
@@ -1358,6 +1470,7 @@ export default function Store() {
 
   async function handleGameDownload(game: PackageGame) {
     // Track download interaction
+    pushInteractionEvent(game.appId, "download");
     setInteractionScoreByAppId((prev) => ({
       ...prev,
       [game.appId]: (prev[game.appId] ?? 0) + 3,
@@ -1717,20 +1830,21 @@ export default function Store() {
                     {pageGames.length === 0 ? (
                       <StoreEmptyState />
                     ) : (
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
-                        {pageGames.map((game) => {
-                          const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
-                          return (
-                            <div
-                              key={game.appId}
-                              className="lf-virtual-card"
-                              style={{ contentVisibility: "auto", containIntrinsicSize: "280px" }}
-                            >
-                              <PackageCard
-                                game={gameWithOverlay}
-                                storeMetadata={storeMetadataByAppId[Number(game.appId)]}
-                                reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
-                                badges={getBadgesForGame(game.appId)}
+                      <div key={safePage} className="lf-fade-in">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
+                          {pageGames.map((game) => {
+                            const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
+                            return (
+                              <div
+                                key={game.appId}
+                                className="lf-virtual-card"
+                                style={{ contentVisibility: "auto", containIntrinsicSize: "280px" }}
+                              >
+                                <PackageCard
+                                  game={gameWithOverlay}
+                                  storeMetadata={storeMetadataByAppId[Number(game.appId)]}
+                                  reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
+                                  badges={getBadgesForGame(game.appId)}
                                 onInstallComplete={refreshInstalledScripts}
                                 onOpenDetails={openDetailsForGame}
                                 onOpenSourceSelector={openSourceSelectorForGame}
@@ -1739,6 +1853,7 @@ export default function Store() {
                             </div>
                           );
                         })}
+                        </div>
                       </div>
                     )}
 

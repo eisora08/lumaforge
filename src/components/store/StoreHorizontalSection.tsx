@@ -84,7 +84,8 @@ export default function StoreHorizontalSection({
           {items.map((item, index) => (
             <div
               key={index}
-              className="w-[min(82vw,420px)] shrink-0 snap-start md:w-95 xl:w-105"
+              className="w-[min(82vw,420px)] shrink-0 snap-start md:w-95 xl:w-105 lf-fade-in"
+              style={{ animationDelay: `${index * 30}ms` }}
             >
               {item}
             </div>
