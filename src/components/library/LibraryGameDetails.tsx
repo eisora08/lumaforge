@@ -56,7 +56,7 @@ import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
-import { showAchievementToast } from "./AchievementToast";
+import { showAchievementToast, showGroupedAchievementToast, showTestAchievementToast } from "./AchievementToast";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl } from "../../services/achievementImageQueue";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -475,10 +475,10 @@ export default function LibraryGameDetails({
     const events = achievementsSummary.newlyUnlocked;
     const maxShow = 3;
     for (let i = 0; i < Math.min(events.length, maxShow); i++) {
-      showAchievementToast(events[i], appIdStr ?? undefined);
+      showAchievementToast(events[i], appIdStr ?? undefined, detailTitle);
     }
     if (events.length > maxShow) {
-      toast.success(`${events.length - maxShow} more achievements unlocked`, { duration: 5000 });
+      showGroupedAchievementToast(events.length - maxShow);
     }
     console.debug(`[ACH][UNLOCK] toasts=${Math.min(events.length, maxShow)} extra=${Math.max(0, events.length - maxShow)}`);
   }, [achievementsSummary?.newlyUnlocked, appIdStr]);
@@ -1250,18 +1250,28 @@ export default function LibraryGameDetails({
                         View all achievements ({achievementsSummary.total})
                       </button>
                       {import.meta.env.DEV && (
-                        <button
-                          type="button"
-                          onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
-                            accountId: settings.steamAccountId,
-                            steamPath: settings.steamRoot,
-                            achievementSchemaPath: settings.achievementSchemaPath,
-                          }); }}
-                          className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                          title="Debug achievement progress"
-                        >
-                          Debug
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
+                              accountId: settings.steamAccountId,
+                              steamPath: settings.steamRoot,
+                              achievementSchemaPath: settings.achievementSchemaPath,
+                            }); }}
+                            className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                            title="Debug achievement progress"
+                          >
+                            Debug
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => showTestAchievementToast(detailTitle)}
+                            className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                            title="Show test achievement toast"
+                          >
+                            Test Toast
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>

@@ -824,6 +824,49 @@ html {
 }
 
 /* =========================
+   ACHIEVEMENT TOAST ENTRY
+   Slide-up entry for bottom-right achievement unlock toasts
+   Duration: 220ms (spec)
+   Easing: cubic-bezier(.2,.8,.2,1)
+========================= */
+
+.lf-ach-toast-enter {
+  animation: lfAchToastEnter 220ms cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+@keyframes lfAchToastEnter {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* =========================
+   ACHIEVEMENT TOAST EXIT
+   Slide-right exit for achievement toasts
+   Duration: 180ms
+========================= */
+
+.lf-ach-toast-exit {
+  animation: lfAchToastExit 180ms cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+@keyframes lfAchToastExit {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px) scale(0.98);
+  }
+}
+
+/* =========================
    LAUNCHING SHIMMER
 ========================= */
 
@@ -996,6 +1039,8 @@ html[data-compact="true"] .lf-sidebar-overlay,
 html[data-compact="true"] .lf-sidebar-drawer,
 html[data-compact="true"] .lf-sidebar-drawer-exit,
 html[data-compact="true"] .lf-card-stagger > *,
+html[data-compact="true"] .lf-ach-toast-enter,
+html[data-compact="true"] .lf-ach-toast-exit,
 html[data-compact="true"] .lf-toast-entry,
 html[data-compact="true"] .lf-toast-exit,
 html[data-compact="true"] .lf-press-effect,
@@ -1043,6 +1088,8 @@ html[data-compact="true"] .lf-launch-bar {
   .lf-launch-shimmer::after,
   .lf-launch-pulse,
   .lf-launch-bar,
+  .lf-ach-toast-enter,
+  .lf-ach-toast-exit,
   .lf-toast-entry,
   .lf-toast-exit {
     animation: none;

@@ -26,6 +26,7 @@ export type UnlockEvent = {
   iconUrl?: string;
   iconGrayUrl?: string;
   unlockTime?: number;
+  rarityPercent?: number;
 };
 
 /** Check if a string is a valid image source URL.
@@ -874,6 +875,7 @@ export async function resolveSteamAchievements(params: {
               iconUrl: a.iconUrl,
               iconGrayUrl: a.iconGrayUrl,
               unlockTime: a.unlockTime,
+              rarityPercent: a.rarityPercent,
             });
           }
         }

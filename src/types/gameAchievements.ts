@@ -18,6 +18,7 @@ export type UnlockEvent = {
   iconUrl?: string;
   iconGrayUrl?: string;
   unlockTime?: number;
+  rarityPercent?: number;
 };
 
 export type GameAchievementsSummary = {
