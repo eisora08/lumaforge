@@ -69,11 +69,20 @@ function getRarityScore(achievements: GameAchievement[]): number {
   return vals.reduce((s, v) => s + v, 0) / vals.length;
 }
 
-function isDlcAchievement(apiName: string, _name: string): boolean {
-  const upper = apiName.toUpperCase();
-  if (upper.includes("DLC")) return true;
-  if (upper.includes("EXPANSION")) return true;
+function isDlcAchievement(apiName: string, name: string): boolean {
+  const upperApi = apiName.toUpperCase();
+  const upperName = name.toUpperCase();
+
+  if (upperApi.includes("DLC")) return true;
+  if (upperApi.includes("EXPANSION")) return true;
   if (/^WORLD\d*DLC/i.test(apiName)) return true;
+
+  if (/\bNEW\s*GAME\s*\+|\bNGPLUS\b|\bNEWGAMEPLUS\b/i.test(upperName)) return true;
+  if (/\bUPDATE\b/i.test(upperApi)) return true;
+  if (/\bISLE\s+IV\b/i.test(upperName)) return true;
+  if (/DELICIOUS\s*LAST\s*COURSE/i.test(upperName)) return true;
+  if (/MS\.?\s*CHALICE/i.test(upperName)) return true;
+
   return false;
 }
 
@@ -107,7 +116,11 @@ function buildSortedLocked(list: GameAchievement[]): GameAchievement[] {
 function filterBySearch(list: GameAchievement[], query: string): GameAchievement[] {
   if (!query.trim()) return list;
   const q = query.trim().toLowerCase();
-  return list.filter((a) => a.name.toLowerCase().includes(q) || a.description?.toLowerCase().includes(q));
+  return list.filter((a) =>
+    a.name.toLowerCase().includes(q) ||
+    a.description?.toLowerCase().includes(q) ||
+    a.apiName.toLowerCase().includes(q)
+  );
 }
 
 function resolveGameIconUrl(gameIconUrl: string | undefined, appIdStr: string | undefined): string | undefined {
@@ -141,6 +154,13 @@ export default function AchievementsModal({
   const cleanupDoneRef = useRef(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to top when switching tabs
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [activeTab]);
 
   // Portal — prevent body scroll
   useEffect(() => {
@@ -237,16 +257,16 @@ export default function AchievementsModal({
     return { unlockedList, lockedList };
   }, [summary.achievements, filter, sort, search]);
 
-  // --- Tab: Global Achievements ---
-  const globalAchievementsList = useMemo(() => {
-    const sorted = sortGlobalAchievements(summary.achievements);
-    if (search.trim()) return filterBySearch(sorted, search);
-    return sorted;
-  }, [summary.achievements, search]);
-
   // --- Tab: Achievement Groups ---
   const achievementGroups = useMemo((): GroupInfo[] => {
-    const all = summary.achievements;
+    let all = summary.achievements;
+
+    // Apply search filter before grouping
+    if (search.trim()) {
+      all = filterBySearch(all, search);
+    }
+    if (all.length === 0) return [];
+
     if (groupMode === "dlc") {
       const base: GameAchievement[] = [];
       const dlc: GameAchievement[] = [];
@@ -293,7 +313,8 @@ export default function AchievementsModal({
         unknown: [],
       };
       for (const a of all) {
-        const tier = getRarityTier(a.rarityPercent);
+        const pct = a.rarityPercent;
+        const tier = (pct != null && Number.isFinite(pct)) ? getRarityTier(pct) : "unknown";
         tiers[tier].push(a);
       }
       const order = ["common", "uncommon", "rare", "ultra-rare", "unknown"];
@@ -332,7 +353,7 @@ export default function AchievementsModal({
       return groups;
     }
     return [];
-  }, [summary.achievements, groupMode]);
+  }, [summary.achievements, groupMode, search]);
 
   // Expand groups by default when data changes
   useEffect(() => {
@@ -532,26 +553,33 @@ export default function AchievementsModal({
         {/* ===== CONTENT ===== */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain scrollbar-thin">
           {activeTab === "my-achievements" && (
-            <MyAchievementsTab
-              unlockedList={myAchievementsContent.unlockedList}
-              lockedList={myAchievementsContent.lockedList}
-              totalUnlocked={summary.achievements.filter((a) => a.unlocked).length}
-              progressAvailable={summary.progressAvailable}
-              search={search}
-            />
+            <div className="lf-tab-panel-in">
+              <MyAchievementsTab
+                unlockedList={myAchievementsContent.unlockedList}
+                lockedList={myAchievementsContent.lockedList}
+                totalUnlocked={summary.achievements.filter((a) => a.unlocked).length}
+                progressAvailable={summary.progressAvailable}
+                search={search}
+              />
+            </div>
           )}
           {activeTab === "global-achievements" && (
-            <GlobalAchievementsTab list={globalAchievementsList} />
+            <div className="lf-tab-panel-in">
+              <GlobalAchievementsTab achievements={summary.achievements} />
+            </div>
           )}
           {activeTab === "achievement-groups" && (
-            <AchievementGroupsTab
-              groups={achievementGroups}
-              groupMode={groupMode}
-              onGroupModeChange={setGroupMode}
-              expandedGroups={expandedGroups}
-              onToggleGroup={toggleGroup}
-              progressAvailable={summary.progressAvailable}
-            />
+            <div className="lf-tab-panel-in">
+              <AchievementGroupsTab
+                groups={achievementGroups}
+                groupMode={groupMode}
+                onGroupModeChange={setGroupMode}
+                expandedGroups={expandedGroups}
+                onToggleGroup={toggleGroup}
+                progressAvailable={summary.progressAvailable}
+                search={search}
+              />
+            </div>
           )}
         </div>
 
@@ -673,8 +701,69 @@ function MyAchievementsTab({
 /*  Global Achievements Tab                                            */
 /* ------------------------------------------------------------------ */
 
-function GlobalAchievementsTab({ list }: { list: GameAchievement[] }) {
-  if (list.length === 0) {
+type GlobalFilterMode = "all" | "unlocked" | "locked" | "ultra-rare" | "rare" | "unknown";
+
+const GLOBAL_FILTERS: { key: GlobalFilterMode; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "unlocked", label: "Unlocked" },
+  { key: "locked", label: "Locked" },
+  { key: "ultra-rare", label: "Ultra Rare" },
+  { key: "rare", label: "Rare" },
+  { key: "unknown", label: "Missing" },
+];
+
+function getRarityLabel(pct: number | undefined | null): string {
+  const tier = getRarityTier(pct);
+  return RARITY_LABELS[tier].label;
+}
+
+function getRarityColor(pct: number | undefined | null): string {
+  const tier = getRarityTier(pct);
+  return RARITY_LABELS[tier].color;
+}
+
+function formatRarityPercent(pct: number | undefined | null): string | null {
+  if (pct == null) return null;
+  if (!Number.isFinite(pct)) return null;
+  return pct.toFixed(1);
+}
+
+function GlobalAchievementsTab({
+  achievements,
+}: {
+  achievements: GameAchievement[];
+}) {
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [globalFilter, setGlobalFilter] = useState<GlobalFilterMode>("all");
+
+  const filteredSorted = useMemo(() => {
+    let result = sortGlobalAchievements(achievements);
+
+    if (globalFilter === "unlocked") result = result.filter((a) => a.unlocked);
+    else if (globalFilter === "locked") result = result.filter((a) => !a.unlocked);
+    else if (globalFilter === "ultra-rare") result = result.filter((a) => a.rarityPercent != null && a.rarityPercent < 10);
+    else if (globalFilter === "rare") result = result.filter((a) => a.rarityPercent != null && a.rarityPercent >= 10 && a.rarityPercent < 25);
+    else if (globalFilter === "unknown") result = result.filter((a) => a.rarityPercent == null);
+
+    if (globalSearch.trim()) {
+      result = filterBySearch(result, globalSearch);
+    }
+
+    return result;
+  }, [achievements, globalSearch, globalFilter]);
+
+  const totalCount = achievements.length;
+  const rarityKnown = achievements.filter((a) => a.rarityPercent != null && Number.isFinite(a.rarityPercent)).length;
+  const rarityMissing = totalCount - rarityKnown;
+  const ultraRareCount = achievements.filter((a) => a.rarityPercent != null && a.rarityPercent < 10).length;
+  const rareCount = achievements.filter((a) => a.rarityPercent != null && a.rarityPercent >= 10 && a.rarityPercent < 25).length;
+  const unlockedByUser = achievements.filter((a) => a.unlocked).length;
+
+  if (import.meta.env.DEV) {
+    console.debug(`[ACH][GLOBAL] appid=? total=${totalCount} rarityKnown=${rarityKnown} rarityMissing=${rarityMissing}`);
+  }
+
+  if (totalCount === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
         <Globe className="h-10 w-10 text-(--color-muted)/40" />
@@ -684,23 +773,103 @@ function GlobalAchievementsTab({ list }: { list: GameAchievement[] }) {
   }
 
   return (
-    <div className="p-2">
-      <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-wider text-(--color-muted)/50">
-        <span>Achievement</span>
-        <span>Global Rate</span>
+    <div className="p-2 space-y-2">
+      {/* Summary header */}
+      <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-white/[0.02] border border-(--surface-active-border)">
+        <div className="flex items-center gap-1.5 text-[10px] text-(--color-muted)/70">
+          <span className="font-semibold text-(--color-text) text-xs">{totalCount}</span>
+          achievements
+        </div>
+        <span className="text-(--color-muted)/20">|</span>
+        <div className="flex items-center gap-1.5 text-[10px] text-(--color-muted)/70">
+          <span className="font-semibold text-(--color-accent) text-xs">{rarityKnown}</span>
+          with global rarity
+        </div>
+        {ultraRareCount > 0 && (
+          <>
+            <span className="text-(--color-muted)/20">|</span>
+            <div className="flex items-center gap-1.5 text-[10px] text-(--color-muted)/70">
+              <span className="font-semibold text-yellow-400 text-xs">{ultraRareCount}</span>
+              ultra rare
+            </div>
+          </>
+        )}
+        {rareCount > 0 && (
+          <>
+            <span className="text-(--color-muted)/20">|</span>
+            <div className="flex items-center gap-1.5 text-[10px] text-(--color-muted)/70">
+              <span className="font-semibold text-purple-400 text-xs">{rareCount}</span>
+              rare
+            </div>
+          </>
+        )}
+        {unlockedByUser > 0 && (
+          <>
+            <span className="text-(--color-muted)/20">|</span>
+            <div className="flex items-center gap-1.5 text-[10px] text-(--color-muted)/70">
+              <span className="font-semibold text-emerald-400 text-xs">{unlockedByUser}</span>
+              unlocked by you
+            </div>
+          </>
+        )}
       </div>
-      <div className="space-y-0.5">
-          {list.map((ach) => (
-          <GlobalAchievementRow key={ach.id} achievement={ach} />
-        ))}
+
+      {/* Controls bar */}
+      <div className="flex flex-wrap items-center gap-3 px-1">
+        {/* Filter */}
+        <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
+          {GLOBAL_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setGlobalFilter(f.key)}
+              className={`cursor-pointer px-2.5 py-1 text-[10px] font-medium transition ${
+                globalFilter === f.key
+                  ? "bg-(--color-accent)/20 text-(--color-accent)"
+                  : "text-(--color-muted) hover:text-(--color-text)"
+              }`}
+              aria-pressed={globalFilter === f.key}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Search */}
+        <div className="relative ml-auto min-w-0">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
+          <input
+            type="text"
+            value={globalSearch}
+            onChange={(e) => setGlobalSearch(e.target.value)}
+            placeholder="Search..."
+            className="h-7 w-32 rounded-lg border border-(--surface-active-border) bg-white/5 pl-7 pr-2 text-[11px] text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent) focus:w-44 transition-all"
+            aria-label="Search global achievements"
+          />
+        </div>
       </div>
+
+      {filteredSorted.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12">
+          <Globe className="h-8 w-8 text-(--color-muted)/30" />
+          <p className="mt-2 text-xs text-(--color-muted)">No achievements match your criteria.</p>
+        </div>
+      ) : (
+        <div className="space-y-0.5">
+          {filteredSorted.map((ach) => (
+            <GlobalAchievementRow key={ach.id} achievement={ach} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function GlobalAchievementRow({ achievement }: { achievement: GameAchievement }) {
   const isUnlocked = achievement.unlocked;
-  const displayPct = achievement.rarityPercent != null ? achievement.rarityPercent.toFixed(1) : null;
+  const displayPct = formatRarityPercent(achievement.rarityPercent);
+  const tierLabel = getRarityLabel(achievement.rarityPercent);
+  const tierColor = getRarityColor(achievement.rarityPercent);
 
   return (
     <div
@@ -716,9 +885,14 @@ function GlobalAchievementRow({ achievement }: { achievement: GameAchievement })
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <span className={`text-sm font-medium ${isUnlocked ? "text-(--color-text)" : "text-(--color-text)/80"}`}>
-              {achievement.name}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`text-sm font-medium ${isUnlocked ? "text-(--color-text)" : "text-(--color-text)/80"}`}>
+                {achievement.name}
+              </span>
+              {!isUnlocked && (
+                <Lock className="h-3 w-3 shrink-0 text-(--color-muted)/40" />
+              )}
+            </div>
             {achievement.description && (
               <p className="mt-0.5 text-xs leading-relaxed text-(--color-muted)/80 line-clamp-1">
                 {achievement.description}
@@ -726,8 +900,19 @@ function GlobalAchievementRow({ achievement }: { achievement: GameAchievement })
             )}
           </div>
           <div className="shrink-0 text-right">
-            <div className="text-sm font-semibold tabular-nums text-(--color-text)">
-              {displayPct != null ? `${displayPct}%` : "N/A"}
+            <div className="flex items-center gap-1.5 justify-end">
+              {displayPct != null ? (
+                <>
+                  <span className="text-sm font-semibold tabular-nums text-(--color-text)">
+                    {displayPct}%
+                  </span>
+                  <span className={`text-[9px] font-medium ${tierColor}`}>
+                    {tierLabel}
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm text-(--color-muted)/50">N/A</span>
+              )}
             </div>
             <div className="text-[10px] text-(--color-muted)/50">of all players</div>
           </div>
@@ -750,7 +935,7 @@ function GlobalAchievementRow({ achievement }: { achievement: GameAchievement })
 /* ------------------------------------------------------------------ */
 
 function AchievementGroupsTab({
-  groups, groupMode, onGroupModeChange, expandedGroups, onToggleGroup, progressAvailable,
+  groups, groupMode, onGroupModeChange, expandedGroups, onToggleGroup, progressAvailable, search,
 }: {
   groups: GroupInfo[];
   groupMode: GroupMode;
@@ -758,12 +943,22 @@ function AchievementGroupsTab({
   expandedGroups: Set<string>;
   onToggleGroup: (title: string) => void;
   progressAvailable: boolean;
+  search: string;
 }) {
+  if (import.meta.env.DEV && groups.length > 0) {
+    const total = groups.reduce((s, g) => s + g.totalCount, 0);
+    console.debug(`[ACH][GROUPS] mode=${groupMode} groups=${groups.length} total=${total}`);
+  }
+
+  const showNoResults = groups.length === 0 && search.trim().length > 0;
+
   if (groups.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
         <Layers className="h-10 w-10 text-(--color-muted)/40" />
-        <p className="mt-3 text-sm text-(--color-muted)">No groups available.</p>
+        <p className="mt-3 text-sm text-(--color-muted)">
+          {showNoResults ? "No achievements match your search." : "No groups available."}
+        </p>
       </div>
     );
   }
@@ -795,10 +990,12 @@ function AchievementGroupsTab({
         </div>
       </div>
 
-      <div className="space-y-2">
+      {/* Grouped content keyed on groupMode for fade transition */}
+      <div key={groupMode} className="space-y-2 lf-tab-panel-in">
         {groups.map((group) => {
           const isExpanded = expandedGroups.has(group.title);
           const groupPercent = group.totalCount > 0 ? Math.round((group.unlockedCount / group.totalCount) * 100) : 0;
+          const isStatusGroup = groupMode === "status";
 
           return (
             <div key={group.title} className="rounded-xl border border-(--surface-active-border) overflow-hidden">
@@ -813,39 +1010,94 @@ function AchievementGroupsTab({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-(--color-text)">{group.title}</span>
-                    <span className="text-[11px] text-(--color-muted)">
-                      {group.unlockedCount} / {group.totalCount}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <div className="h-1 flex-1 max-w-[120px] overflow-hidden rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-(--color-accent) transition-all"
-                        style={{ width: `${groupPercent}%` }}
-                      />
-                    </div>
-                    <span className="text-[10px] text-(--color-muted)/60">{groupPercent}%</span>
+                    {isStatusGroup ? (
+                      <span className="text-[11px] text-(--color-muted)">
+                        {group.totalCount} {group.totalCount === 1 ? "achievement" : "achievements"}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-(--color-muted)">
+                        {group.unlockedCount} / {group.totalCount}
+                      </span>
+                    )}
+                    {!isStatusGroup && groupPercent > 0 && (
+                      <span className="text-[10px] font-medium text-emerald-400/80">
+                        &middot; {groupPercent}%
+                      </span>
+                    )}
                     {group.rarityScore != null && group.rarityScore > 0 && (
                       <span className="text-[10px] text-(--color-muted)/40">
-                        avg {group.rarityScore.toFixed(1)}%
+                        &middot; avg {group.rarityScore.toFixed(1)}%
                       </span>
                     )}
                   </div>
+                  {!isStatusGroup && (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <div className="h-1 flex-1 max-w-[100px] overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-(--color-accent) transition-all duration-500 ease-out"
+                          style={{ width: `${groupPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </button>
-              {isExpanded && (
-                <div className="border-t border-(--surface-active-border) p-2 space-y-0.5">
-                  {group.achievements.map((ach) => (
-                    <AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />
-                  ))}
+
+              {/* Smooth collapse/expand */}
+              <div
+                className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                  isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                }`}
+              >
+                <div className="min-h-0 overflow-hidden">
+                  {isExpanded && (
+                    <div className="border-t border-(--surface-active-border) p-2 space-y-0.5">
+                      {renderGroupAchievements(group.achievements, groupMode, progressAvailable)}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
       </div>
     </div>
   );
+}
+
+function renderGroupAchievements(list: GameAchievement[], groupMode: GroupMode, progressAvailable: boolean) {
+  const result: React.ReactNode[] = [];
+
+  // Rarity groups: sort by rarity ascending inside the tier
+  if (groupMode === "rarity") {
+    const sorted = [...list].sort((a, b) => {
+      const ar = a.rarityPercent ?? 101;
+      const br = b.rarityPercent ?? 101;
+      if (ar !== br) return ar - br;
+      return a.name.localeCompare(b.name);
+    });
+    for (const ach of sorted) {
+      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />);
+    }
+    return result;
+  }
+
+  // DLC / Status groups: unlocked first by date desc, then locked by rarity asc
+  const unlocked = list.filter((a) => a.unlocked);
+  const locked = list.filter((a) => !a.unlocked);
+
+  if (unlocked.length > 0) {
+    for (const ach of buildSortedUnlocked(unlocked)) {
+      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />);
+    }
+  }
+  if (locked.length > 0) {
+    for (const ach of buildSortedLocked(locked)) {
+      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />);
+    }
+  }
+
+  return result;
 }
 
 /* ------------------------------------------------------------------ */

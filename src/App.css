@@ -334,18 +334,123 @@ html {
 ========================= */
 
 .lf-fade-in {
-  animation: lfFadeIn 200ms ease-out both;
+  animation: lfFadeIn 220ms cubic-bezier(.2,.8,.2,1) both;
 }
 
 @keyframes lfFadeIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* =========================
+   TAB PANEL TRANSITION
+   Used when switching tab content panels
+   Duration: 180ms (tab content speed)
+   Easing: consistent cubic-bezier
+========================= */
+
+.lf-tab-panel-in {
+  animation: lfTabPanelIn 220ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+@keyframes lfTabPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* =========================
+   PAGE TRANSITION
+   Slightly slower for page-level navigation
+   Duration: 240ms
+========================= */
+
+.lf-page-in {
+  animation: lfPageIn 240ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+@keyframes lfPageIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =========================
+   SLIDE-FADE VARIANT
+   For larger content transitions
+========================= */
+
+.lf-slide-fade-in {
+  animation: lfSlideFadeIn 220ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+@keyframes lfSlideFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =========================
+   SCALE-FADE VARIANT
+   For dialog / modal content transitions
+========================= */
+
+.lf-scale-fade-in {
+  animation: lfScaleFadeIn 200ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+@keyframes lfScaleFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* =========================
+   HOVER LIFT
+   Subtle upward shift on hover
+========================= */
+
+.lf-hover-lift {
+  transition: transform 150ms cubic-bezier(.2,.8,.2,1), box-shadow 150ms cubic-bezier(.2,.8,.2,1);
+}
+
+.lf-hover-lift:hover {
+  transform: translateY(-1px);
+}
+
+/* =========================
+   ACTIVE GLOW
+   Smooth glow on active nav/tab items
+========================= */
+
+.lf-active-glow {
+  transition: box-shadow 180ms cubic-bezier(.2,.8,.2,1), background-color 180ms cubic-bezier(.2,.8,.2,1);
 }
 
 .lf-transition {
@@ -842,6 +947,12 @@ html {
 ========================= */
 
 html[data-compact="true"] .lf-fade-in,
+html[data-compact="true"] .lf-tab-panel-in,
+html[data-compact="true"] .lf-page-in,
+html[data-compact="true"] .lf-slide-fade-in,
+html[data-compact="true"] .lf-scale-fade-in,
+html[data-compact="true"] .lf-hover-lift,
+html[data-compact="true"] .lf-active-glow,
 html[data-compact="true"] .lf-popover-enter,
 html[data-compact="true"] .lf-scale-in,
 html[data-compact="true"] .lf-transition,
@@ -876,6 +987,12 @@ html[data-compact="true"] .lf-launch-bar {
 
 @media (prefers-reduced-motion: reduce) {
   .lf-fade-in,
+  .lf-tab-panel-in,
+  .lf-page-in,
+  .lf-slide-fade-in,
+  .lf-scale-fade-in,
+  .lf-hover-lift,
+  .lf-active-glow,
   .lf-popover-enter,
   .lf-scale-in,
   .lf-transition,

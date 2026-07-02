@@ -1581,7 +1581,7 @@ export default function Store() {
 
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-5 pb-5 lg:px-7 lg:pb-7 lf-fade-in">
+    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-5 pb-5 lg:px-7 lg:pb-7 lf-page-in">
       <div className="sticky top-0 z-30 -mx-5 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-5 py-2.5 backdrop-blur-md lg:-mx-7 lg:px-7">
         <div className="flex items-center gap-4">
           <div className="flex gap-1">
@@ -1775,7 +1775,7 @@ export default function Store() {
           );
         })()
       ) : activeStoreTab === "browse" ? (
-        <section className="space-y-5">
+        <div className="lf-tab-panel-in"><section className="space-y-5">
           {allStoreSections.length > 0 && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
               <button
@@ -1913,25 +1913,27 @@ export default function Store() {
               })()}
             </div>
           </div>
-        </section>
+        </section></div>
       ) : activeStoreTab === "lua-ready" ? (
-        luaReadyGames.length === 0 ? (
-          <StoreLuaReadyEmptyState />
-        ) : (
-          <section className="space-y-5">
+        <div className="lf-tab-panel-in">
+          {luaReadyGames.length === 0 ? (
+            <StoreLuaReadyEmptyState />
+          ) : (
+            <section className="space-y-5">
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
-              {luaReadyGames.map(renderStoreCard)}
-            </div>
-          </section>
-        )
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
+                {luaReadyGames.map(renderStoreCard)}
+              </div>
+            </section>
+          )}
+        </div>
       ) : activeStoreTab === "news" ? (
-        <StoreNewsFeed
+        <div className="lf-tab-panel-in"><StoreNewsFeed
           items={newsItems}
           onOpenGame={openDetailsForGame}
-        />
+        /></div>
       ) : (
-        <div className="space-y-8">
+        <div className="lf-tab-panel-in"><div className="space-y-8">
           <StoreDiscoverHeroCarousel
             games={featuredGames}
             storeMetadataByAppId={storeMetadataByAppId}
@@ -1962,7 +1964,7 @@ export default function Store() {
               </div>
             </details>
           )}
-        </div>
+        </div></div>
       )}
 
       <StoreSourceSelectorModal
