@@ -10,7 +10,7 @@ use crate::models::steam_appcache_achievements::{
   AchievementsAppSchemaResult, AppAchievementCache, AppAchievementCacheEntry,
   AppAchievementPercentagesEntry, DebugAchievementReport, DebugFileInfo, DebugKvNode,
   DebugMatchResult, LibraryCacheProgress,
-  LibraryCacheValue, LocaleValue, StatPair, SteamAppcacheAchievement,
+  LibraryCacheValue, LocaleValue, OrphanCleanupResult, StatPair, SteamAppcacheAchievement,
   SteamAppcacheParsedProgress, SteamAppcacheScanResult, SteamAppcacheSchemaEntry,
   UserGameStatsRawResult,
 };
@@ -1610,7 +1610,8 @@ pub fn debug_achievement_progress(
 
 // ---------------------------------------------------------------------------
 // download_achievement_image — download a single achievement image from URL,
-// save to achievements/<appid>/img/<file_name>, return data URL.
+// save to achievements/<appid>/img/<file_name>, return local file path.
+// Does NOT embed as data URL.
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1620,32 +1621,26 @@ pub fn download_achievement_image(
   url: String,
   file_name: String,
 ) -> Result<Option<String>, String> {
-  diag_log(format!("=== download_achievement_image app_id={} file_name={} ===", app_id, file_name));
-
   if url.starts_with("data:") {
     return Ok(Some(url));
   }
 
   let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
   let img_dir = cache_dir.join("img");
-  fs::create_dir_all(&img_dir)
-    .map_err(|e| format!("Failed to create img dir: {}", e))?;
-
   let dest_path = img_dir.join(&file_name);
 
-  // Check if already exists and non-empty
+  // Return existing valid file path
   if dest_path.is_file() {
     if let Ok(meta) = fs::metadata(&dest_path) {
       if meta.len() > 0 {
-        if let Some(data_url) = embed_image_as_data_url(&dest_path) {
-          return Ok(Some(data_url));
-        }
-        let _ = fs::remove_file(&dest_path);
-      } else {
-        let _ = fs::remove_file(&dest_path);
+        return Ok(Some(dest_path.to_string_lossy().to_string()));
       }
+      let _ = fs::remove_file(&dest_path);
     }
   }
+
+  fs::create_dir_all(&img_dir)
+    .map_err(|e| format!("Failed to create img dir: {}", e))?;
 
   let client = match build_client() {
     Ok(c) => c,
@@ -1678,16 +1673,8 @@ pub fn download_achievement_image(
     return Ok(None);
   }
 
-  match embed_image_as_data_url(&dest_path) {
-    Some(data_url) => {
-      diag_log(format!("Image downloaded: {} -> data URL ({} chars)", file_name, data_url.len()));
-      Ok(Some(data_url))
-    }
-    None => {
-      eprintln!("[ACH][IMG] failed appid={} file={} reason=convert_error", app_id, file_name);
-      Ok(None)
-    }
-  }
+  eprintln!("[ACH][IMG] downloaded appid={} file={}", app_id, file_name);
+  Ok(Some(dest_path.to_string_lossy().to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -2172,5 +2159,92 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
     achievements,
     achievement_percentages,
     base_dir: Some(base_dir.to_string_lossy().to_string()),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// cleanup_achievement_orphan_images — validate and optionally delete orphan
+// achievement images not referenced by canonical achievements.json.
+// dry_run=true: only report, do not delete.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn cleanup_achievement_orphan_images(
+  app_handle: AppHandle,
+  app_id: u32,
+  dry_run: bool,
+) -> Result<OrphanCleanupResult, String> {
+  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+  let img_dir = cache_dir.join("img");
+
+  // Build expected file set from achievements.json
+  let cache_path = cache_dir.join("achievements.json");
+  let entries: Vec<AppAchievementCacheEntry> = if cache_path.is_file() {
+    serde_json::from_str(
+      &fs::read_to_string(&cache_path).map_err(|e| format!("Failed to read cache: {}", e))?,
+    )
+    .map_err(|e| format!("Failed to parse cache: {}", e))?
+  } else {
+    return Err("achievements.json not found".to_string());
+  };
+
+  let mut expected: std::collections::HashSet<String> = std::collections::HashSet::new();
+  for entry in &entries {
+    if let Some(ref path) = entry.icon_url {
+      if let Some(fname) = Path::new(path).file_name().and_then(|n| n.to_str()) {
+        expected.insert(fname.to_string());
+      }
+    }
+    if let Some(ref path) = entry.icon_gray_url {
+      if let Some(fname) = Path::new(path).file_name().and_then(|n| n.to_str()) {
+        expected.insert(fname.to_string());
+      }
+    }
+  }
+
+  let expected_max = entries.len() * 2;
+  let expected_referenced = expected.len();
+
+  // Scan img folder
+  let mut actual_files: Vec<String> = Vec::new();
+  if img_dir.is_dir() {
+    if let Ok(rd) = fs::read_dir(&img_dir) {
+      for entry in rd.flatten() {
+        if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+          if let Some(name) = entry.file_name().to_str() {
+            actual_files.push(name.to_string());
+          }
+        }
+      }
+    }
+  }
+
+  let actual_count = actual_files.len();
+  let orphaned: Vec<String> = actual_files
+    .into_iter()
+    .filter(|fname| !expected.contains(fname))
+    .collect();
+  let orphaned_count = orphaned.len();
+
+  eprintln!(
+    "[ACH][IMG_CLEANUP] appid={} dryRun={} expectedMax={} expectedReferenced={} actual={} orphaned={}",
+    app_id, dry_run, expected_max, expected_referenced, actual_count, orphaned_count
+  );
+
+  // Delete orphans if not dry run
+  if !dry_run {
+    for fname in &orphaned {
+      let path = img_dir.join(fname);
+      let _ = fs::remove_file(&path);
+      eprintln!("[ACH][IMG_CLEANUP] deleted appid={} file={}", app_id, fname);
+    }
+    eprintln!("[ACH][IMG_CLEANUP] appid={} deleted={}", app_id, orphaned_count);
+  }
+
+  Ok(OrphanCleanupResult {
+    expected_max,
+    actual_files: actual_count,
+    orphaned_files: orphaned,
+    orphaned_count,
   })
 }

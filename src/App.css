@@ -453,7 +453,7 @@ html {
 ========================= */
 
 .lf-modal-overlay {
-  animation: lfModalOverlayIn 150ms ease-out both;
+  animation: lfModalOverlayIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes lfModalOverlayIn {
@@ -466,13 +466,13 @@ html {
 }
 
 .lf-modal-panel {
-  animation: lfModalPanelIn 180ms ease-out both;
+  animation: lfModalPanelIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes lfModalPanelIn {
   from {
     opacity: 0;
-    transform: scale(0.97) translateY(4px);
+    transform: scale(0.96) translateY(16px);
   }
   to {
     opacity: 1;

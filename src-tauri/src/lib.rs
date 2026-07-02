@@ -73,6 +73,7 @@ pub fn run() {
             commands::steam_achievements::ensure_achievement_images,
             commands::steam_achievements::debug_achievement_progress,
             commands::steam_achievements::parse_librarycache_achievements,
+            commands::steam_achievements::cleanup_achievement_orphan_images,
             commands::game::scan_local_games,
             commands::game::scan_local_game_folders,
             commands::process::launch_executable,

@@ -206,9 +206,7 @@ pub struct AchievementImageStatus {
   pub icon_gray_exists: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Librarycache models — <steamRoot>/userdata/<accountId>/config/librarycache/<appid>.json
-// ---------------------------------------------------------------------------
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryCacheAchievementEntry {
@@ -334,4 +332,12 @@ pub struct UserGameStatsRawResult {
 pub struct StatPair {
   pub stat_id: u32,
   pub value: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrphanCleanupResult {
+  pub expected_max: usize,
+  pub actual_files: usize,
+  pub orphaned_files: Vec<String>,
+  pub orphaned_count: usize,
 }

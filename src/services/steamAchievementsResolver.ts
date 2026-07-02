@@ -13,7 +13,6 @@ import {
 import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, SteamAppcacheSchemaEntry, SteamAppcacheParsedProgress, UserGameStatsRawResult, DebugAchievementReport, LibraryCacheProgress } from "./tauri";
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
-const SCHEMA_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days for schema-only cache
 const ACHIEVEMENT_CACHE_VERSION = 6;
 
 // Track previous unlocked state for unlock detection
@@ -590,33 +589,36 @@ export async function resolveSteamAchievements(params: {
 
   // 1. Try disk cache first — but do NOT return for schema-only cache, continue to progress sources
   let cachedSchemaAchievements: AppAchievementCacheEntry[] | null = null;
-  if (!params.forceRefresh) {
-    try {
-      const cached = await readAchievementCache(appIdNum);
-      if (cached && cached.summary.cache_version === ACHIEVEMENT_CACHE_VERSION) {
-        if (cached.summary.progress_available && Date.now() - cached.summary.updated_at < CACHE_TTL_MS) {
-          console.debug(`[ACH][CACHE] App ${appIdStr}: using disk cache (${cached.achievements.length} achievements, progress=${cached.summary.progress_available})`);
-          return cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
-        }
-        if (!cached.summary.progress_available && cached.summary.source === "schema-only" && Date.now() - cached.summary.updated_at < SCHEMA_CACHE_TTL_MS) {
-          console.debug(`[ACH][MERGE] schemaOnlyCache=true continuing to progress sources (${cached.achievements.length} schema entries)`);
-          cachedSchemaAchievements = cached.achievements;
-          // Populate schemaMap from cached schema data
-          for (const a of cached.achievements) {
-            schemaMap.set(a.api_name, {
-              name: a.api_name,
-              displayName: a.name,
-              description: a.description,
-              icon: a.icon_url,
-              icongray: a.icon_gray_url,
-            });
-          }
-          // Do NOT return — continue to progress sources
+  try {
+    const cached = await readAchievementCache(appIdNum);
+    if (cached && cached.summary.cache_version === ACHIEVEMENT_CACHE_VERSION) {
+      if (!params.forceRefresh && cached.summary.progress_available && Date.now() - cached.summary.updated_at < CACHE_TTL_MS) {
+        console.debug(`[ACH][CACHE] App ${appIdStr}: using disk cache (${cached.achievements.length} achievements, progress=${cached.summary.progress_available})`);
+        return cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
+      }
+      // Always populate cached schema metadata — even with forceRefresh, this ensures progress
+      // sources like librarycache have schema entries to match against
+      cachedSchemaAchievements = cached.achievements;
+      for (const a of cached.achievements) {
+        if (!schemaMap.has(a.api_name)) {
+          schemaMap.set(a.api_name, {
+            name: a.api_name,
+            displayName: a.name,
+            description: a.description,
+            icon: a.icon_url,
+            icongray: a.icon_gray_url,
+          });
         }
       }
-    } catch (err) {
-      console.warn(`[ACH][CACHE] App ${appIdStr}: disk cache read failed:`, err);
+      if (cached.summary.progress_available) {
+        console.debug(`[ACH][CACHE] App ${appIdStr}: cached progress found; forceRefresh=${!!params.forceRefresh} — using as metadata fallback`);
+      } else if (cached.summary.source === "schema-only") {
+        console.debug(`[ACH][MERGE] schemaOnlyCache=true continuing to progress sources (${cached.achievements.length} schema entries)`);
+      }
+      // Do NOT return on progress_available when forceRefresh, nor on schema-only — continue to progress sources
     }
+  } catch (err) {
+    console.warn(`[ACH][CACHE] App ${appIdStr}: disk cache read failed:`, err);
   }
 
   // 2. Achievements App schema folder (local JSON) - works without API key
@@ -893,6 +895,41 @@ export async function resolveSteamAchievements(params: {
 
   // Save to disk cache if we have achievements (progress or schema-only)
   if (summary.achievements.length > 0) {
+    // Protect against overwriting cache with schema-only when valid progress exists
+    if (!params.forceRefresh && summary.source === "schema-only" && !summary.progressAvailable) {
+      try {
+        const existing = await readAchievementCache(appIdNum);
+        if (existing?.summary?.progress_available === true && existing.summary.source !== "schema-only") {
+          console.debug(`[ACH][CACHE] write protected reason=would-downgrade-progress appid=${appIdStr} (existing progress_available=true source=${existing.summary.source})`);
+          // Merge existing progress with refreshed metadata
+          const mergedAchievements: GameAchievement[] = summary.achievements.map((a) => {
+            const existingA = existing.achievements.find((ea) => ea.api_name === a.apiName);
+            const existingUnlocked = existingA?.unlocked ?? false;
+            const existingUnlockTime = existingA?.unlock_time ? existingA.unlock_time * 1000 : undefined;
+            return {
+              ...a,
+              unlocked: existingUnlocked,
+              unlockTime: existingUnlockTime,
+              rarityPercent: a.rarityPercent ?? existingA?.rarity_percent,
+            };
+          });
+          summary = {
+            appId: appIdStr,
+            achievements: mergedAchievements,
+            total: existing.summary.total || summary.achievements.length,
+            unlocked: existing.summary.unlocked ?? mergedAchievements.filter((a) => a.unlocked).length,
+            percent: existing.summary.percent ?? 0,
+            progressAvailable: true,
+            source: (existing.summary.source === "librarycache" ? "librarycache-stale" : (existing.summary.source + "-stale")) as GameAchievementsSummary["source"],
+            updatedAt: Date.now(),
+            errorReason: "schema-only-refresh",
+          };
+          console.debug(`[ACH][CACHE] App ${appIdStr}: merged existing progress (${summary.unlocked}/${summary.total}) with refreshed metadata`);
+        }
+      } catch (err) {
+        console.warn(`[ACH][CACHE] App ${appIdStr}: cache read for downgrade check failed:`, err);
+      }
+    }
     try {
       const { achievements, pcts, summaryData } = summaryToCacheData(summary);
       await writeAchievementCache(appIdNum, {

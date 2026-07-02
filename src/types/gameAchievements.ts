@@ -36,7 +36,11 @@ export type GameAchievementsSummary = {
     | "setup-required"
     | "disabled"
     | "unavailable"
-    | "librarycache";
+    | "librarycache"
+    | "librarycache-stale"
+    | "steam-web-api-stale"
+    | "steam-appcache-stale"
+    | "local-cache-stale";
   errorReason?: string;
   updatedAt?: number;
   newlyUnlocked?: UnlockEvent[];

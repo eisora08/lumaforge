@@ -422,6 +422,23 @@ export async function resolveAchievementImagePaths(appId: number): Promise<Achie
   return await invoke<AchievementImageStatus[]>("resolve_achievement_image_paths", { appId });
 }
 
+export type OrphanCleanupResult = {
+  expected_max: number;
+  actual_files: number;
+  orphaned_files: string[];
+  orphaned_count: number;
+};
+
+export async function cleanupAchievementOrphanImages(params: {
+  appId: number;
+  dryRun: boolean;
+}): Promise<OrphanCleanupResult> {
+  return await invoke<OrphanCleanupResult>("cleanup_achievement_orphan_images", {
+    appId: params.appId,
+    dryRun: params.dryRun,
+  });
+}
+
 export async function ensureAchievementImages(params: {
   appId: number;
   mode: string;

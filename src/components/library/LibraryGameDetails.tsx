@@ -53,7 +53,7 @@ import { useGamePlayStats } from "../../services/gamePlayStats";
 import { getPlaytimeEntry, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime } from "../../services/playtimeService";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
-import type { GameAchievementsSummary } from "../../types/gameAchievements";
+import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
 import { showAchievementToast } from "./AchievementToast";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl } from "../../services/achievementImageQueue";
@@ -222,6 +222,7 @@ export default function LibraryGameDetails({
   const { settings } = useSettings();
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(null);
   const [achievementsLoading, setAchievementsLoading] = useState(false);
+  const [achievementsRefreshing, setAchievementsRefreshing] = useState(false);
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
 
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
@@ -449,25 +450,27 @@ export default function LibraryGameDetails({
         if (!cancelled) {
           setAchievementsSummary(summary);
           setAchievementsLoading(false);
-          // Detailed progress debug
-          const withStatIds = summary.achievements.filter((a: any) => a.statId != null).length;
           console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
-          console.debug(`[ACH][PROGRESS] accountId=${settings.steamAccountId}`);
-          console.debug(`[ACH][PROGRESS] schemaTotal=${summary.achievements.length}`);
-          console.debug(`[ACH][PROGRESS] schemaWithStatIdBit=${withStatIds}`);
           console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
           console.debug(`[ACH][PROGRESS] progressAvailable=${summary.progressAvailable}`);
         }
       })
-      .catch(() => {
-        if (!cancelled) setAchievementsLoading(false);
+      .catch((err) => {
+        if (!cancelled) {
+          setAchievementsLoading(false);
+          console.warn(`[ACH][PROGRESS] failed appid=${appIdStr} reason=${err}`);
+        }
       });
     return () => { cancelled = true; };
   }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
   // PART 3-4: Premium achievement toast notifications — max 3, then group
+  const lastUnlockKey = useRef<string | null>(null);
   useEffect(() => {
     if (!achievementsSummary?.newlyUnlocked?.length) return;
+    const key = JSON.stringify(achievementsSummary.newlyUnlocked.map((e) => e.apiName));
+    if (lastUnlockKey.current === key) return;
+    lastUnlockKey.current = key;
     const events = achievementsSummary.newlyUnlocked;
     const maxShow = 3;
     for (let i = 0; i < Math.min(events.length, maxShow); i++) {
@@ -477,7 +480,7 @@ export default function LibraryGameDetails({
       toast.success(`${events.length - maxShow} more achievements unlocked`, { duration: 5000 });
     }
     console.debug(`[ACH][UNLOCK] toasts=${Math.min(events.length, maxShow)} extra=${Math.max(0, events.length - maxShow)}`);
-  }, [achievementsSummary?.newlyUnlocked]);
+  }, [achievementsSummary?.newlyUnlocked, appIdStr]);
 
   // Subscribe to image download updates — replaces iconUrl/iconGrayUrl when downloaded
   useEffect(() => {
@@ -497,18 +500,25 @@ export default function LibraryGameDetails({
     return unsub;
   }, []);
 
-  // Enqueue missing achievement images when summary loads
+  // Enqueue missing achievement images when summary loads — once per loadKey change
+  const lastEnqueueKey = useRef<string>("");
   useEffect(() => {
-    if (!achievementsSummary?.achievements?.length) return;
+    if (!achievementsSummary?.achievements?.length || !appIdStr) return;
+    const currentKey = `${appIdStr}:${achievementsSummary.source}:${achievementsSummary.total}:${achievementsSummary.updatedAt ?? 0}`;
+    if (lastEnqueueKey.current === currentKey) {
+      console.debug(`[ACH][IMG_QUEUE] ensure skipped reason=already-ensured appid=${appIdStr}`);
+      return;
+    }
+    lastEnqueueKey.current = currentKey;
     const items: import("../../services/achievementImageQueue").ImageQueueItem[] = [];
     for (const a of achievementsSummary.achievements) {
       if (a.iconUrl && !isResolvedUrl(a.iconUrl)) {
-        const resolved = resolveImageSource(a.iconUrl, appIdStr!, "icon");
-        if (resolved) items.push({ appId: appIdStr!, apiName: a.apiName, ...resolved, type: "icon", priority: "high" });
+        const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "high" });
       }
       if (a.iconGrayUrl && !isResolvedUrl(a.iconGrayUrl)) {
-        const resolved = resolveImageSource(a.iconGrayUrl, appIdStr!, "icon_gray");
-        if (resolved) items.push({ appId: appIdStr!, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high" });
+        const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high" });
       }
     }
     if (items.length > 0) {
@@ -1388,9 +1398,14 @@ export default function LibraryGameDetails({
         <AchievementsModal
           summary={achievementsSummary}
           appIdStr={appIdStr}
+          gameTitle={detailTitle}
+          gameIconUrl={game.metadata?.capsule_image || game.metadata?.header_image || game.imageUrl || undefined}
           onClose={() => setShowAchievementsModal(false)}
           onRefresh={() => {
-            setAchievementsLoading(true);
+            const previousSummary = achievementsSummary;
+            console.debug(`[ACH][REFRESH] appid=${appIdStr} start`);
+            console.debug(`[ACH][REFRESH] previous source=${previousSummary?.source} progressAvailable=${previousSummary?.progressAvailable} unlocked=${previousSummary?.unlocked}`);
+            setAchievementsRefreshing(true);
             resolveSteamAchievements({
               appId: appIdStr!,
               steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -1402,12 +1417,46 @@ export default function LibraryGameDetails({
               achievementSchemaPath: settings.achievementSchemaPath || undefined,
             })
               .then((s) => {
-                setAchievementsSummary(s);
-                setAchievementsLoading(false);
+                console.debug(`[ACH][REFRESH] next source=${s.source} progressAvailable=${s.progressAvailable} unlocked=${s.unlocked}`);
+                const downgrade = previousSummary?.progressAvailable === true && s.progressAvailable === false && (s.source === "schema-only" || s.source === "global-percentages");
+                console.debug(`[ACH][REFRESH] downgradeDetected=${!!downgrade}`);
+                if (downgrade && previousSummary) {
+                  console.debug(`[ACH][REFRESH] preservingPreviousProgress=true — merging schema metadata with previous progress`);
+                  // Merge metadata from new scan, keep progress from previous
+                  const merged: GameAchievement[] = s.achievements.map((a) => {
+                    const prev = previousSummary.achievements.find((pa) => pa.apiName === a.apiName);
+                    return {
+                      ...a,
+                      unlocked: prev?.unlocked ?? a.unlocked,
+                      unlockTime: prev?.unlockTime ?? a.unlockTime,
+                      rarityPercent: a.rarityPercent ?? prev?.rarityPercent,
+                    };
+                  });
+                  setAchievementsSummary({
+                    appId: previousSummary.appId,
+                    achievements: merged,
+                    total: s.achievements.length || previousSummary.total,
+                    unlocked: previousSummary.unlocked ?? merged.filter((a) => a.unlocked).length,
+                    percent: previousSummary.percent ?? 0,
+                    progressAvailable: true,
+                    source: (previousSummary.source === "librarycache" ? "librarycache-stale" : (previousSummary.source + "-stale")) as GameAchievementsSummary["source"],
+                    updatedAt: Date.now(),
+                    errorReason: "showing-last-known-progress",
+                  });
+                  toast("Showing last known achievement progress.", { duration: 4000, icon: "🔄" });
+                } else {
+                  setAchievementsSummary(s);
+                }
+                console.debug(`[ACH][REFRESH] done`);
+                setAchievementsRefreshing(false);
               })
-              .catch(() => setAchievementsLoading(false));
+              .catch((err) => {
+                console.warn(`[ACH][REFRESH] failed keeping previous summary reason=${err}`);
+                setAchievementsRefreshing(false);
+                toast.error("Failed to refresh achievements", { duration: 3000 });
+              });
           }}
-          refreshing={achievementsLoading}
+          refreshing={achievementsRefreshing}
         />
       )}
     </div>
