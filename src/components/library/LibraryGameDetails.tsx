@@ -42,6 +42,7 @@ import {
 import toast from "react-hot-toast";
 import AsyncImage from "../common/AsyncImage";
 import AchievementIcon from "../common/AchievementIcon";
+import AchievementTooltip from "../common/AchievementTooltip";
 import { SkeletonBox } from "../common/Skeleton";
 import { useGameActivity } from "../../context/GameActivityContext";
 import {
@@ -1203,27 +1204,32 @@ export default function LibraryGameDetails({
                         {achievementsSummary.percent}% complete
                       </p>
                     </div>
-                    {/* PART 10: Recent achievements (top 5) */}
+                    {/* Recent achievements (top 5) */}
                     <div className="space-y-1">
                       {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
                         <div
                           key={ach.id}
                           className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
+                          aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
                         >
-                          <AchievementIcon
-                            iconUrl={ach.iconUrl}
-                            iconGrayUrl={ach.iconGrayUrl}
-                            unlocked={ach.unlocked}
-                            size="sm"
-                          />
+                          <AchievementTooltip achievement={ach}>
+                            <AchievementIcon
+                              iconUrl={ach.iconUrl}
+                              iconGrayUrl={ach.iconGrayUrl}
+                              unlocked={ach.unlocked}
+                              size="sm"
+                            />
+                          </AchievementTooltip>
                           <div className="min-w-0 flex-1">
                             <span className="block truncate text-xs text-(--color-text)">
                               {ach.name}
                             </span>
-                            {ach.rarityPercent != null && (
+                            {ach.rarityPercent != null ? (
                               <span className="block text-[9px] text-(--color-muted)/50">
-                                {ach.rarityPercent.toFixed(1)}% earned
+                                {ach.rarityPercent.toFixed(1)}% rarity
                               </span>
+                            ) : (
+                              <span className="block text-[9px] text-(--color-muted)/30">N/A rarity</span>
                             )}
                           </div>
                           <span className={`shrink-0 text-[9px] font-medium ${
@@ -1238,8 +1244,9 @@ export default function LibraryGameDetails({
                       <button
                         type="button"
                         onClick={() => setShowAchievementsModal(true)}
-                        className="flex-1 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                        className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                       >
+                        <Trophy className="h-3.5 w-3.5" />
                         View all achievements ({achievementsSummary.total})
                       </button>
                       {import.meta.env.DEV && (
@@ -1272,16 +1279,33 @@ export default function LibraryGameDetails({
                       {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
                         <div
                           key={ach.id}
-                          className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
+                          className="flex items-center  gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
+                          aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
                         >
-                          <AchievementIcon
-                            iconUrl={ach.iconUrl}
-                            iconGrayUrl={ach.iconGrayUrl}
-                            unlocked={false}
-                            size="sm"
-                          />
-                          <span className="min-w-0 flex-1 truncate text-xs text-(--color-text)">
-                            {ach.name}
+                          <AchievementTooltip achievement={ach}>
+                            <AchievementIcon
+                              iconUrl={ach.iconUrl}
+                              iconGrayUrl={ach.iconGrayUrl}
+                              unlocked={ach.unlocked}
+                              size="sm"
+                            />
+                          </AchievementTooltip>
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-xs text-(--color-text)">
+                              {ach.name}
+                            </span>
+                            {ach.rarityPercent != null ? (
+                              <span className="block text-[9px] text-(--color-muted)/50">
+                                {ach.rarityPercent.toFixed(1)}% rarity
+                              </span>
+                            ) : (
+                              <span className="block text-[9px] text-(--color-muted)/30">N/A rarity</span>
+                            )}
+                          </div>
+                          <span className={`shrink-0 text-[9px] font-medium ${
+                            ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
+                          }`}>
+                            {ach.unlocked ? "Unlocked" : "Locked"}
                           </span>
                         </div>
                       ))}
@@ -1290,8 +1314,9 @@ export default function LibraryGameDetails({
                       <button
                         type="button"
                         onClick={() => setShowAchievementsModal(true)}
-                        className="flex-1 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                        className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                       >
+                        <Trophy className="h-3.5 w-3.5" />
                         View all achievements
                       </button>
                       {import.meta.env.DEV && (
