@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
-import { Search, RefreshCw, Trophy, X, Calendar, Star, Lock, Unlock } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { Search, RefreshCw, Trophy, X, Calendar, Star } from "lucide-react";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
-import AsyncImage from "../common/AsyncImage";
+import AchievementIcon from "../common/AchievementIcon";
+import { achievementImageQueue, resolveImageSource, isResolvedUrl } from "../../services/achievementImageQueue";
 
 type Props = {
   summary: GameAchievementsSummary;
@@ -12,17 +13,49 @@ type Props = {
 };
 
 type FilterMode = "all" | "unlocked" | "locked";
-type SortMode = "name" | "date" | "rarity";
+type SortMode = "default" | "name" | "date" | "rarity";
 
 function formatAchievementDate(ts: number): string {
-  const d = new Date(ts);
+  // unlockTime may be seconds or milliseconds
+  let t = ts;
+  if (t > 0 && t < 1000000000000) {
+    t *= 1000;
+  }
+  const d = new Date(t);
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Normalize unlockTime: convert seconds to ms if needed, return null if invalid */
+function normalizeUnlockTime(ts: number | undefined | null): number | undefined {
+  if (ts == null || ts === 0) return undefined;
+  if (ts < 1000000000000) return ts * 1000;
+  return ts;
 }
 
 export default function AchievementsModal({ summary, appIdStr, onClose, onRefresh, refreshing }: Props) {
   const [filter, setFilter] = useState<FilterMode>("all");
-  const [sort, setSort] = useState<SortMode>("name");
+  const [sort, setSort] = useState<SortMode>("default");
   const [search, setSearch] = useState("");
+
+  // Enqueue missing achievement images when modal opens
+  useEffect(() => {
+    if (!summary.achievements?.length || !appIdStr) return;
+    const items: import("../../services/achievementImageQueue").ImageQueueItem[] = [];
+    for (const a of summary.achievements) {
+      if (a.iconUrl && !isResolvedUrl(a.iconUrl)) {
+        const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "high" });
+      }
+      if (a.iconGrayUrl && !isResolvedUrl(a.iconGrayUrl)) {
+        const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high" });
+      }
+    }
+    if (items.length > 0) {
+      console.debug(`[ACH][IMG] modal enqueued ${items.length} images for appid=${appIdStr}`);
+      achievementImageQueue.enqueue(items);
+    }
+  }, [summary.achievements, appIdStr]);
 
   const filtered = useMemo(() => {
     let list = summary.achievements;
@@ -38,7 +71,22 @@ export default function AchievementsModal({ summary, appIdStr, onClose, onRefres
     }
 
     list = [...list];
-    if (sort === "name") {
+    if (sort === "default") {
+      list.sort((a, b) => {
+        if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
+        if (a.unlocked && b.unlocked) {
+          const at = a.unlockTime ?? 0;
+          const bt = b.unlockTime ?? 0;
+          if (at !== bt) return bt - at;
+        }
+        if (!a.unlocked && !b.unlocked) {
+          const ar = a.rarityPercent ?? 101;
+          const br = b.rarityPercent ?? 101;
+          if (ar !== br) return ar - br;
+        }
+        return a.name.localeCompare(b.name);
+      });
+    } else if (sort === "name") {
       list.sort((a, b) => a.name.localeCompare(b.name));
     } else if (sort === "date") {
       list.sort((a, b) => {
@@ -132,6 +180,7 @@ export default function AchievementsModal({ summary, appIdStr, onClose, onRefres
               onChange={(e) => setSort(e.target.value as SortMode)}
               className="rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-xs text-(--color-text) outline-none focus:border-(--color-accent)"
             >
+              <option value="default">Default</option>
               <option value="name">Name</option>
               <option value="date">Date</option>
               <option value="rarity">Rarity</option>
@@ -179,30 +228,14 @@ export default function AchievementsModal({ summary, appIdStr, onClose, onRefres
 }
 
 function AchievementRow({ achievement, progressAvailable }: { achievement: GameAchievement; progressAvailable: boolean }) {
+  const unlockTime = normalizeUnlockTime(achievement.unlockTime);
   return (
     <div className="flex items-start gap-3 rounded-xl px-3 py-2.5 transition hover:bg-white/[0.03]">
-      {/* Icon */}
-      <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-white/5">
-        {achievement.unlocked && achievement.iconUrl ? (
-          <AsyncImage
-            src={achievement.iconUrl}
-            alt={achievement.name}
-            className="h-full w-full"
-            fallback={<div className="flex h-full w-full items-center justify-center text-(--color-muted)"><Trophy className="h-5 w-5" /></div>}
-          />
-        ) : achievement.iconGrayUrl ? (
-          <AsyncImage
-            src={achievement.iconGrayUrl}
-            alt={achievement.name}
-            className="h-full w-full opacity-50"
-            fallback={<div className="flex h-full w-full items-center justify-center text-(--color-muted)/50"><Lock className="h-5 w-5" /></div>}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-(--color-muted)">
-            {achievement.unlocked ? <Unlock className="h-5 w-5 text-emerald-400" /> : <Lock className="h-5 w-5" />}
-          </div>
-        )}
-      </div>
+      <AchievementIcon
+        iconUrl={achievement.iconUrl}
+        iconGrayUrl={achievement.iconGrayUrl}
+        unlocked={achievement.unlocked}
+      />
 
       {/* Info */}
       <div className="min-w-0 flex-1">
@@ -220,10 +253,10 @@ function AchievementRow({ achievement, progressAvailable }: { achievement: GameA
           </p>
         )}
         <div className="mt-1 flex items-center gap-3 text-[10px] text-(--color-muted)/60">
-          {achievement.unlockTime && (
+          {unlockTime && (
             <span className="inline-flex items-center gap-1">
               <Calendar className="h-3 w-3" />
-              {formatAchievementDate(achievement.unlockTime)}
+              {formatAchievementDate(unlockTime)}
             </span>
           )}
           {achievement.rarityPercent != null && (

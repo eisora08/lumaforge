@@ -6,9 +6,13 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::models::steam_appcache_achievements::{
+  AchievementImageStatus, AchievementsAppSchemaEntry, AchievementsAppPercentagesFile,
   AchievementsAppSchemaResult, AppAchievementCache, AppAchievementCacheEntry,
-  AppAchievementPercentagesEntry, AchievementsAppSchemaEntry, AchievementsAppPercentagesFile,
-  SteamAppcacheAchievement, SteamAppcacheParsedProgress, SteamAppcacheScanResult, SteamAppcacheSchemaEntry,
+  AppAchievementPercentagesEntry, DebugAchievementReport, DebugFileInfo, DebugKvNode,
+  DebugMatchResult, LibraryCacheProgress,
+  LibraryCacheValue, LocaleValue, StatPair, SteamAppcacheAchievement,
+  SteamAppcacheParsedProgress, SteamAppcacheScanResult, SteamAppcacheSchemaEntry,
+  UserGameStatsRawResult,
 };
 
 fn build_client() -> Result<reqwest::blocking::Client, String> {
@@ -102,7 +106,7 @@ pub fn fetch_steam_achievement_schema(
 // Diagnostics log
 // ---------------------------------------------------------------------------
 fn diag_log(msg: impl std::fmt::Display) {
-  eprintln!("[SteamAchievementsLocal] {}", msg);
+  eprintln!("[ACH] {}", msg);
 }
 
 // ---------------------------------------------------------------------------
@@ -520,7 +524,7 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
 
   // Reject entries where display_name is a localization token
   if display_name.as_deref().map_or(true, |d| !is_valid_display_name(d)) {
-    diag_log(format!("Proto parser skipped token-only schema entry: api_name={}, display_name={:?}", api_name, display_name));
+    eprintln!("[ACH][SCHEMA] skipped token-only entry: api_name={}", api_name);
     return None;
   }
 
@@ -560,7 +564,7 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
   }
 
   if stat_id.is_some() || bit.is_some() {
-    diag_log(format!("Schema entry: api_name={}, stat_id={:?}, bit={:?}", api_name, stat_id, bit));
+    eprintln!("[ACH][SCHEMA] entry: api_name={}, stat_id={:?}, bit={:?}", api_name, stat_id, bit);
   }
 
   Some(SteamAppcacheSchemaEntry {
@@ -711,7 +715,7 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
     // Apply quality gate: skip entries with token-only display names
     let clean_name = display_name.as_deref().filter(|d| is_valid_display_name(d));
     if clean_name.is_none() {
-      diag_log(format!("Skipping token-only schema entry: api_name={}, display_name={:?}", name, display_name));
+      eprintln!("[ACH][SCHEMA] skipping token-only: api_name={}", name);
       continue;
     }
 
@@ -734,7 +738,7 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
 
   // Warn if most entries were rejected
   if entries.len() < names.len() / 2 {
-    diag_log(format!("Quality gate: {}/{} schema entries passed (many rejected as tokens)", entries.len(), names.len()));
+    eprintln!("[ACH][SCHEMA] quality gate: {}/{} passed (many rejected as tokens)", entries.len(), names.len());
   }
 
   Ok(entries)
@@ -758,17 +762,17 @@ fn read_and_parse_stats(path: &Path) -> Result<Vec<SteamAppcacheAchievement>, St
   // Try protobuf-aware parser first
   match try_parse_stats_proto(&data) {
     Ok(achievements) => {
-      diag_log(format!("Proto parser succeeded: {} achievements", achievements.len()));
+      eprintln!("[ACH][PROGRESS] proto parser: {} achievements", achievements.len());
       return Ok(achievements);
     }
     Err(e) => {
-      diag_log(format!("Proto parser failed ({}), trying text fallback...", e));
+      eprintln!("[ACH][PROGRESS] proto parser failed, trying text fallback: {}", e);
     }
   }
 
   // Fallback to text-based parser
   let result = try_parse_stats_fallback(&data)?;
-  diag_log(format!("Text fallback parser: {} achievements", result.len()));
+  eprintln!("[ACH][PROGRESS] text fallback: {} achievements", result.len());
   Ok(result)
 }
 
@@ -785,16 +789,16 @@ fn read_and_parse_schema(path: &Path) -> Result<Vec<SteamAppcacheSchemaEntry>, S
 
   match try_parse_schema_proto(&data) {
     Ok(entries) => {
-      diag_log(format!("Schema proto parser succeeded: {} entries", entries.len()));
+      eprintln!("[ACH][SCHEMA] proto parser: {} entries", entries.len());
       return Ok(entries);
     }
     Err(e) => {
-      diag_log(format!("Schema proto parser failed ({}), trying text fallback...", e));
+      eprintln!("[ACH][SCHEMA] proto parser failed, trying text fallback: {}", e);
     }
   }
 
   let result = try_parse_schema_fallback(&data)?;
-  diag_log(format!("Schema text fallback: {} entries", result.len()));
+  eprintln!("[ACH][SCHEMA] text fallback: {} entries", result.len());
   Ok(result)
 }
 
@@ -808,13 +812,13 @@ pub fn scan_steam_appcache_achievements(
   steam_account_id: Option<String>,
   app_id: u32,
 ) -> Result<SteamAppcacheScanResult, String> {
-  diag_log(format!("=== scan_steam_appcache_achievements app_id={} account_id={:?} ===", app_id, steam_account_id));
+  eprintln!("[ACH][SCHEMA] === scan app_id={} account_id={:?} ===", app_id, steam_account_id);
 
   let steam_root = resolve_steam_root(steam_path.as_deref())?;
   let stats_dir = find_appcache_stats_dir(&steam_root);
 
   if !stats_dir.is_dir() {
-    diag_log(format!("Stats directory not found: {}", stats_dir.display()));
+    eprintln!("[ACH][SCHEMA] stats dir not found: {}", stats_dir.display());
     return Ok(SteamAppcacheScanResult {
       stats_file_found: false,
       schema_file_found: false,
@@ -1015,6 +1019,805 @@ pub fn scan_steam_appcache_achievements(
 }
 
 // ---------------------------------------------------------------------------
+// parse_user_game_stats_raw — read raw stat values + achievement entries
+// from UserGameStats_<accountId>_<appId>.bin without requiring a schema file.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn parse_user_game_stats_raw(
+  steam_path: Option<String>,
+  steam_account_id: String,
+  app_id: u32,
+) -> Result<UserGameStatsRawResult, String> {
+  diag_log(format!("=== parse_user_game_stats_raw app_id={} account_id={} ===", app_id, steam_account_id));
+
+  let steam_root = resolve_steam_root(steam_path.as_deref())?;
+  let stats_dir = find_appcache_stats_dir(&steam_root);
+
+  if !stats_dir.is_dir() {
+    diag_log(format!("Stats directory not found: {}", stats_dir.display()));
+    return Ok(UserGameStatsRawResult {
+      file_found: false,
+      file_size: None,
+      stat_pairs: vec![],
+      achievement_entries: vec![],
+      error_reason: Some("stats-directory-not-found".to_string()),
+    });
+  }
+
+  let stats_path = stats_dir.join(format!("UserGameStats_{}_{}.bin", steam_account_id, app_id));
+  if !stats_path.is_file() {
+    diag_log(format!("Stats file NOT FOUND: {}", stats_path.display()));
+    return Ok(UserGameStatsRawResult {
+      file_found: false,
+      file_size: None,
+      stat_pairs: vec![],
+      achievement_entries: vec![],
+      error_reason: Some("file-not-found".to_string()),
+    });
+  }
+
+  let mut data = Vec::new();
+  fs::File::open(&stats_path)
+    .map_err(|e| format!("Failed to open stats file: {}", e))?
+    .read_to_end(&mut data)
+    .map_err(|e| format!("Failed to read stats file: {}", e))?;
+
+  let file_size = data.len() as u64;
+  diag_log(format!("Stats file FOUND: {} ({} bytes)", stats_path.display(), file_size));
+
+  let mut stat_pairs: Vec<StatPair> = Vec::new();
+  let mut achievement_entries: Vec<SteamAppcacheAchievement> = Vec::new();
+
+  // Try v2 parser for (stat_id, value) pairs
+  match try_parse_stats_proto_v2(&data) {
+    Ok((pairs, _count)) => {
+      stat_pairs = pairs
+        .into_iter()
+        .map(|(stat_id, value)| StatPair { stat_id, value })
+        .collect();
+      diag_log(format!("v2 parser extracted {} stat pairs", stat_pairs.len()));
+    }
+    Err(e) => {
+      diag_log(format!("v2 parser failed: {}", e));
+    }
+  }
+
+  // Try v1 parser for achievement entries with unlock_time
+  match try_parse_stats_proto(&data) {
+    Ok(achievements) => {
+      achievement_entries = achievements;
+      diag_log(format!("v1 parser extracted {} achievement entries", achievement_entries.len()));
+    }
+    Err(e) => {
+      diag_log(format!("v1 parser failed: {}", e));
+    }
+  }
+
+  eprintln!("[ACH][PROGRESS] appid={} statsFileFound=true size={}", app_id, file_size);
+  eprintln!("[ACH][PROGRESS] parsedStats={} achievementEntries={}", stat_pairs.len(), achievement_entries.len());
+
+  Ok(UserGameStatsRawResult {
+    file_found: true,
+    file_size: Some(file_size),
+    stat_pairs,
+    achievement_entries,
+    error_reason: None,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// debug_achievement_progress — deep diagnostic of achievement progress data
+// from Steam appcache/stats files. Returns raw hex, KV tree, stat pairs,
+// achievement times, per-achievement statId/bit matching, and full JSON report.
+// ---------------------------------------------------------------------------
+
+/// Build a KV tree view of the proto wire format (field_number → wire_type → value).
+fn build_kv_tree(data: &[u8]) -> Vec<DebugKvNode> {
+  let mut nodes = Vec::new();
+  let mut pos = 0;
+  while pos < data.len() {
+    let start = pos;
+    let (tag, p) = match read_varint(data, pos) {
+      Some(t) => t,
+      None => break,
+    };
+    pos = p;
+    let fn_num = field_number(tag);
+    let wt = wire_type(tag);
+    let wt_name = match wt {
+      0 => "varint",
+      1 => "64-bit",
+      2 => "length-delim",
+      5 => "32-bit",
+      _ => "unknown",
+    };
+
+    let (value_preview, consumed): (String, usize) = match wt {
+      0 => {
+        if let Some((val, p)) = read_varint(data, pos) {
+          let preview = if val > 100_000_000 {
+            // Likely a timestamp
+            format!("{} (timestamp?)", val)
+          } else {
+            val.to_string()
+          };
+          (preview, p - pos)
+        } else {
+          ("?varint".to_string(), 0)
+        }
+      }
+      1 => {
+        if pos + 8 <= data.len() {
+          let val = u64::from_le_bytes([
+            data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
+            data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7],
+          ]);
+          (format!("0x{:016x}", val), 8)
+        } else {
+          ("?64bit".to_string(), 0)
+        }
+      }
+      2 => {
+        if let Some((len, p)) = read_varint(data, pos) {
+          let end = p + len as usize;
+          if end <= data.len() {
+            let content = &data[p..end];
+            // Try to show as ASCII if printable
+            if content.iter().all(|&b| b.is_ascii_graphic() || b == b' ') && !content.is_empty() {
+              (format!("\"{}\"", String::from_utf8_lossy(content)), (end - start))
+            } else {
+              (format!("<{} bytes: {:02x}{}>", len, content.first().unwrap_or(&0), if len > 4 { ".." } else { "" }), (end - start))
+            }
+          } else {
+            (format!("<len={} exceeds data>", len), 0)
+          }
+        } else {
+          ("?delimited".to_string(), 0)
+        }
+      }
+      5 => {
+        if pos + 4 <= data.len() {
+          let val = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+          (format!("0x{:08x} ({})", val, val), 4)
+        } else {
+          ("?32bit".to_string(), 0)
+        }
+      }
+      _ => ("?wire".to_string(), 0),
+    };
+
+    let total_consumed = if consumed == 0 { pos - start } else { start + (pos - start) + consumed - start };
+    nodes.push(DebugKvNode {
+      field_number: fn_num,
+      wire_type: wt,
+      wire_type_name: wt_name.to_string(),
+      value_preview,
+      offset: start,
+      length: total_consumed,
+    });
+
+    // Advance past the field value
+    if consumed > 0 {
+      pos = start + (pos - start) + consumed;
+    } else {
+      pos = match skip_field(data, pos, wt) {
+        Some(p) => p,
+        None => break,
+      };
+    }
+
+    if pos >= data.len() {
+      break;
+    }
+  }
+  nodes
+}
+
+/// Extract stat pairs from raw data for debug display.
+fn extract_stat_pairs_for_debug(data: &[u8]) -> Vec<StatPair> {
+  let sub_msgs = collect_sub_messages(data);
+  let mut seen = std::collections::HashSet::new();
+  let mut pairs = Vec::new();
+  for msg in &sub_msgs {
+    if let Some((stat_id, value)) = parse_stat_value_from_submsg(&msg.raw) {
+      if seen.insert(stat_id) {
+        pairs.push(StatPair { stat_id, value });
+      }
+    }
+  }
+  pairs
+}
+
+// ---------------------------------------------------------------------------
+// parse_librarycache_achievements — read progress from Steam librarycache JSON
+// at <steamRoot>/userdata/<accountId>/config/librarycache/<appid>.json
+// ---------------------------------------------------------------------------
+
+/// Parse a librarycache JSON file and extract achievement progress.
+fn parse_librarycache_data(value: &LibraryCacheValue) -> LibraryCacheProgress {
+  let mut entries = Vec::new();
+  let mut n_total = None;
+  let mut n_achieved = None;
+  let mut progress_available = false;
+
+  if let Some(ref data) = value.data {
+    n_total = data.n_total;
+    n_achieved = data.n_achieved;
+
+    // Collect all entries
+    for ach in &data.vec_highlight {
+      entries.push(ach.clone());
+    }
+    for ach in &data.vec_achieved_hidden {
+      entries.push(ach.clone());
+    }
+    for ach in &data.vec_unachieved {
+      entries.push(ach.clone());
+    }
+
+    progress_available = data.n_total.unwrap_or(0) > 0;
+  }
+
+  LibraryCacheProgress {
+    file_found: true,
+    file_path: String::new(),
+    file_size: None,
+    n_total,
+    n_achieved,
+    progress_available,
+    entries,
+    error_reason: None,
+  }
+}
+
+#[tauri::command]
+pub fn parse_librarycache_achievements(
+  steam_path: Option<String>,
+  steam_account_id: String,
+  app_id: u32,
+) -> Result<LibraryCacheProgress, String> {
+  let steam_root = resolve_steam_root(steam_path.as_deref())?;
+  let lib_path = steam_root.join("userdata").join(&steam_account_id).join("config").join("librarycache").join(format!("{}.json", app_id));
+  let path_str = lib_path.to_string_lossy().to_string();
+
+  eprintln!("[ACH][LIBRARYCACHE] path={}", path_str);
+
+  if !lib_path.is_file() {
+    eprintln!("[ACH][LIBRARYCACHE] exists=false");
+    return Ok(LibraryCacheProgress {
+      file_found: false,
+      file_path: path_str,
+      file_size: None,
+      n_total: None,
+      n_achieved: None,
+      progress_available: false,
+      entries: vec![],
+      error_reason: Some("file-not-found".to_string()),
+    });
+  }
+
+  let meta = match fs::metadata(&lib_path) {
+    Ok(m) => m,
+    Err(e) => {
+      return Ok(LibraryCacheProgress {
+        file_found: false,
+        file_path: path_str,
+        file_size: None,
+        n_total: None,
+        n_achieved: None,
+        progress_available: false,
+        entries: vec![],
+        error_reason: Some(format!("metadata-error: {}", e)),
+      });
+    }
+  };
+
+  let file_size = Some(meta.len());
+  eprintln!("[ACH][LIBRARYCACHE] exists=true size={}", meta.len());
+
+  let raw = match fs::read_to_string(&lib_path) {
+    Ok(s) => s,
+    Err(e) => {
+      return Ok(LibraryCacheProgress {
+        file_found: true,
+        file_path: path_str,
+        file_size,
+        n_total: None,
+        n_achieved: None,
+        progress_available: false,
+        entries: vec![],
+        error_reason: Some(format!("read-error: {}", e)),
+      });
+    }
+  };
+
+  // The file is an array of [$key, $value] pairs; find the "achievements" entry
+  let root: Vec<serde_json::Value> = match serde_json::from_str(&raw) {
+    Ok(v) => v,
+    Err(e) => {
+      return Ok(LibraryCacheProgress {
+        file_found: true,
+        file_path: path_str,
+        file_size,
+        n_total: None,
+        n_achieved: None,
+        progress_available: false,
+        entries: vec![],
+        error_reason: Some(format!("parse-error: {}", e)),
+      });
+    }
+  };
+
+  for entry in &root {
+    if let Some(arr) = entry.as_array() {
+      if arr.len() >= 2 {
+        if let Some(key) = arr[0].as_str() {
+          if key == "achievements" {
+            let value: LibraryCacheValue = match serde_json::from_value(arr[1].clone()) {
+              Ok(v) => v,
+              Err(e) => {
+                return Ok(LibraryCacheProgress {
+                  file_found: true,
+                  file_path: path_str,
+                  file_size,
+                  n_total: None,
+                  n_achieved: None,
+                  progress_available: false,
+                  entries: vec![],
+                  error_reason: Some(format!("value-parse-error: {}", e)),
+                });
+              }
+            };
+            let mut result = parse_librarycache_data(&value);
+            result.file_path = path_str;
+            result.file_size = file_size;
+
+            eprintln!("[ACH][LIBRARYCACHE] appid={} found=true", app_id);
+            eprintln!("[ACH][LIBRARYCACHE] nTotal={:?}", result.n_total);
+            eprintln!("[ACH][LIBRARYCACHE] nAchieved={:?}", result.n_achieved);
+            eprintln!("[ACH][LIBRARYCACHE] progressEntries={}", result.entries.len());
+            eprintln!("[ACH][LIBRARYCACHE] progressAvailable={}", result.progress_available);
+
+            // Log first 10 entries
+            for ach in result.entries.iter().take(10) {
+              eprintln!(
+                "[ACH][LIBRARYCACHE_ENTRY] apiName={:?} name={:?} achieved={:?} unlockTime={:?} rarity={:?}",
+                ach.str_id, ach.str_name, ach.b_achieved, ach.rt_unlocked, ach.fl_achieved,
+              );
+            }
+
+            if let Some(ref data) = value.data {
+              eprintln!("[ACH][LIBRARYCACHE] vecHighlight={}", data.vec_highlight.len());
+              eprintln!("[ACH][LIBRARYCACHE] vecAchievedHidden={}", data.vec_achieved_hidden.len());
+              eprintln!("[ACH][LIBRARYCACHE] vecUnachieved={}", data.vec_unachieved.len());
+            }
+
+            return Ok(result);
+          }
+        }
+      }
+    }
+  }
+
+  Ok(LibraryCacheProgress {
+    file_found: true,
+    file_path: path_str,
+    file_size,
+    n_total: None,
+    n_achieved: None,
+    progress_available: false,
+    entries: vec![],
+    error_reason: Some("no-achievements-key-found".to_string()),
+  })
+}
+
+#[tauri::command]
+pub fn debug_achievement_progress(
+  steam_path: Option<String>,
+  steam_account_id: String,
+  app_id: u32,
+  achievement_schema_path: Option<String>,
+) -> Result<DebugAchievementReport, String> {
+  eprintln!("[ACH][DEBUG_REPORT] === debug_achievement_progress app_id={} ===", app_id);
+
+  let steam_root = match resolve_steam_root(steam_path.as_deref()) {
+    Ok(r) => r,
+    Err(e) => {
+      return Ok(DebugAchievementReport {
+        stats_file: DebugFileInfo { found: false, path: e.clone(), size: None, modified: None, hex_preview: String::new(), hex_preview_len: 0 },
+        schema_file: DebugFileInfo { found: false, path: String::new(), size: None, modified: None, hex_preview: String::new(), hex_preview_len: 0 },
+        stats_kv_tree: vec![], schema_kv_tree: vec![],
+        stat_pairs: vec![], achievement_entries: vec![], schema_entries: vec![],
+        app_schema: None, library_cache: None, match_results: vec![], v1_match_results: vec![],
+        error_reason: Some(format!("Steam root not found: {}", e)),
+      });
+    }
+  };
+
+  let stats_dir = find_appcache_stats_dir(&steam_root);
+  let stats_path = stats_dir.join(format!("UserGameStats_{}_{}.bin", steam_account_id, app_id));
+  let schema_path = stats_dir.join(format!("UserGameStatsSchema_{}.bin", app_id));
+
+  // --- Stats file ---
+  let (stats_file_info, stats_kv_tree, stat_pairs, achievement_entries) = {
+    let mut info = DebugFileInfo {
+      found: stats_path.is_file(),
+      path: stats_path.to_string_lossy().to_string(),
+      size: None, modified: None,
+      hex_preview: String::new(), hex_preview_len: 0,
+    };
+    let mut raw = Vec::new();
+    let mut kv = Vec::new();
+    let mut pairs = Vec::new();
+    let mut entries = Vec::new();
+
+    if stats_path.is_file() {
+      if let Ok(meta) = fs::metadata(&stats_path) {
+        info.size = Some(meta.len());
+        info.modified = meta.modified().ok()
+          .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+          .map(|d| d.as_secs());
+      }
+      if let Ok(mut f) = fs::File::open(&stats_path) {
+        let _ = f.read_to_end(&mut raw);
+      }
+      if !raw.is_empty() {
+        let preview_max = 256.min(raw.len());
+        info.hex_preview = raw[..preview_max].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        info.hex_preview_len = raw.len();
+
+        kv = build_kv_tree(&raw);
+        pairs = extract_stat_pairs_for_debug(&raw);
+
+        // v1 achievement parsing
+        match try_parse_stats_proto(&raw) {
+          Ok(ach) => entries = ach,
+          Err(_) => {
+            if let Ok(ach) = try_parse_stats_fallback(&raw) {
+              entries = ach;
+            }
+          }
+        }
+      }
+    }
+    (info, kv, pairs, entries)
+  };
+
+  // --- Schema file ---
+  let (schema_file_info, schema_kv_tree, schema_entries) = {
+    let mut info = DebugFileInfo {
+      found: schema_path.is_file(),
+      path: schema_path.to_string_lossy().to_string(),
+      size: None, modified: None,
+      hex_preview: String::new(), hex_preview_len: 0,
+    };
+    let mut raw = Vec::new();
+    let mut kv = Vec::new();
+    let mut entries = Vec::new();
+
+    if schema_path.is_file() {
+      if let Ok(meta) = fs::metadata(&schema_path) {
+        info.size = Some(meta.len());
+        info.modified = meta.modified().ok()
+          .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+          .map(|d| d.as_secs());
+      }
+      if let Ok(mut f) = fs::File::open(&schema_path) {
+        let _ = f.read_to_end(&mut raw);
+      }
+      if !raw.is_empty() {
+        let preview_max = 256.min(raw.len());
+        info.hex_preview = raw[..preview_max].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        info.hex_preview_len = raw.len();
+
+        kv = build_kv_tree(&raw);
+        match read_and_parse_schema(&schema_path) {
+          Ok(e) => entries = e,
+          Err(e) => eprintln!("[ACH][DEBUG_REPORT] schema parse error: {}", e),
+        }
+      }
+    }
+    (info, kv, entries)
+  };
+
+  // --- Per-achievement statId/bit matching against UserGameStatsSchema ---
+  let match_results: Vec<DebugMatchResult> = schema_entries.iter().map(|entry| {
+    let sid = entry.stat_id;
+    let bit = entry.bit;
+    let (stat_value, unlocked_by_bit) = sid.and_then(|sid| {
+      stat_pairs.iter().find(|sp| sp.stat_id == sid).map(|sp| {
+        let unlocked = bit.map_or(sp.value != 0, |b| (sp.value & (1u32 << b)) != 0);
+        (Some(sp.value), Some(unlocked))
+      })
+    }).unwrap_or((None, None));
+
+    DebugMatchResult {
+      api_name: entry.api_name.clone(),
+      display_name: entry.display_name.clone(),
+      stat_id: sid,
+      bit,
+      stat_value,
+      unlocked_by_bit,
+      unlocked_by_v1: None,
+      unlock_time: None,
+      source: "UserGameStatsSchema".to_string(),
+    }
+  }).collect();
+
+  // --- v1 matching (by api_name) ---
+  let v1_match_results: Vec<DebugMatchResult> = achievement_entries.iter().map(|ach| {
+    DebugMatchResult {
+      api_name: ach.api_name.clone(),
+      display_name: None,
+      stat_id: None,
+      bit: None,
+      stat_value: None,
+      unlocked_by_bit: None,
+      unlocked_by_v1: Some(ach.unlocked),
+      unlock_time: ach.unlock_time,
+      source: "UserGameStats_v1".to_string(),
+    }
+  }).collect();
+
+  // --- App schema (if provided) ---
+  let app_schema = achievement_schema_path.and_then(|path| {
+    match read_achievements_app_schema_folder(path, app_id) {
+      Ok(result) => Some(result),
+      Err(e) => {
+        eprintln!("[ACH][DEBUG_REPORT] app schema error: {}", e);
+        None
+      }
+    }
+  });
+
+  // --- Librarycache ---
+  let library_cache = {
+    let lib_path = steam_root.join("userdata").join(&steam_account_id).join("config").join("librarycache").join(format!("{}.json", app_id));
+    if lib_path.is_file() {
+      match parse_librarycache_achievements(steam_path.clone(), steam_account_id.clone(), app_id) {
+        Ok(p) => Some(p),
+        Err(e) => {
+          eprintln!("[ACH][DEBUG_REPORT] librarycache error: {}", e);
+          None
+        }
+      }
+    } else {
+      eprintln!("[ACH][DEBUG_REPORT] librarycache not found: {}", lib_path.display());
+      None
+    }
+  };
+
+  eprintln!("[ACH][DEBUG_REPORT] === report ready: stats={} schema={} statPairs={} v1Entries={} schemaEntries={} appSchema={} libcache={} ===",
+    stats_file_info.found, schema_file_info.found, stat_pairs.len(), achievement_entries.len(),
+    schema_entries.len(), app_schema.is_some(), library_cache.is_some());
+
+  Ok(DebugAchievementReport {
+    stats_file: stats_file_info,
+    schema_file: schema_file_info,
+    stats_kv_tree,
+    schema_kv_tree,
+    stat_pairs,
+    achievement_entries,
+    schema_entries,
+    app_schema,
+    library_cache,
+    match_results,
+    v1_match_results,
+    error_reason: None,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// download_achievement_image — download a single achievement image from URL,
+// save to achievements/<appid>/img/<file_name>, return data URL.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn download_achievement_image(
+  app_handle: AppHandle,
+  app_id: u32,
+  url: String,
+  file_name: String,
+) -> Result<Option<String>, String> {
+  diag_log(format!("=== download_achievement_image app_id={} file_name={} ===", app_id, file_name));
+
+  if url.starts_with("data:") {
+    return Ok(Some(url));
+  }
+
+  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+  let img_dir = cache_dir.join("img");
+  fs::create_dir_all(&img_dir)
+    .map_err(|e| format!("Failed to create img dir: {}", e))?;
+
+  let dest_path = img_dir.join(&file_name);
+
+  // Check if already exists and non-empty
+  if dest_path.is_file() {
+    if let Ok(meta) = fs::metadata(&dest_path) {
+      if meta.len() > 0 {
+        if let Some(data_url) = embed_image_as_data_url(&dest_path) {
+          return Ok(Some(data_url));
+        }
+        let _ = fs::remove_file(&dest_path);
+      } else {
+        let _ = fs::remove_file(&dest_path);
+      }
+    }
+  }
+
+  let client = match build_client() {
+    Ok(c) => c,
+    Err(e) => return Err(format!("Failed to create HTTP client: {}", e)),
+  };
+
+  let response = match client.get(&url).send() {
+    Ok(r) => r,
+    Err(e) => {
+      eprintln!("[ACH][IMG] failed appid={} file={} reason=network_error: {}", app_id, file_name, e);
+      return Ok(None);
+    }
+  };
+
+  if !response.status().is_success() {
+    eprintln!("[ACH][IMG] failed appid={} file={} reason=HTTP {}", app_id, file_name, response.status());
+    return Ok(None);
+  }
+
+  let bytes = match response.bytes() {
+    Ok(b) => b,
+    Err(e) => {
+      eprintln!("[ACH][IMG] failed appid={} file={} reason=read_error: {}", app_id, file_name, e);
+      return Ok(None);
+    }
+  };
+
+  if let Err(e) = fs::write(&dest_path, &bytes) {
+    eprintln!("[ACH][IMG] failed appid={} file={} reason=write_error: {}", app_id, file_name, e);
+    return Ok(None);
+  }
+
+  match embed_image_as_data_url(&dest_path) {
+    Some(data_url) => {
+      diag_log(format!("Image downloaded: {} -> data URL ({} chars)", file_name, data_url.len()));
+      Ok(Some(data_url))
+    }
+    None => {
+      eprintln!("[ACH][IMG] failed appid={} file={} reason=convert_error", app_id, file_name);
+      Ok(None)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// resolve_achievement_image_paths — check which achievement images exist
+// in the local cache/img directory without downloading or embedding.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn resolve_achievement_image_paths(
+  app_handle: AppHandle,
+  app_id: u32,
+) -> Result<Vec<AchievementImageStatus>, String> {
+  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+  let img_dir = cache_dir.join("img");
+
+  let cache_path = cache_dir.join("achievements.json");
+  if !cache_path.is_file() {
+    return Ok(vec![]);
+  }
+
+  let entries: Vec<AppAchievementCacheEntry> = serde_json::from_str(
+    &fs::read_to_string(&cache_path).map_err(|e| format!("Failed to read cache: {}", e))?,
+  )
+  .map_err(|e| format!("Failed to parse cache: {}", e))?;
+
+  let mut results = Vec::new();
+  for entry in &entries {
+    let icon_exists = entry.icon_url.as_ref().map_or(false, |path| {
+      let fname = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
+      img_dir.join(fname).is_file()
+    });
+    let icon_gray_exists = entry.icon_gray_url.as_ref().map_or(false, |path| {
+      let fname = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
+      img_dir.join(fname).is_file()
+    });
+    results.push(AchievementImageStatus {
+      api_name: entry.api_name.clone(),
+      icon_exists,
+      icon_gray_exists,
+    });
+  }
+
+  Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// ensure_achievement_images — download missing achievement images for a given appid.
+// mode=preload: first 5 missing; mode=details/modal: all missing.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn ensure_achievement_images(
+  app_handle: AppHandle,
+  app_id: u32,
+  mode: String,
+  schema_urls: Vec<String>,
+  schema_gray_urls: Vec<String>,
+) -> Result<(usize, usize), String> {
+  diag_log(format!("=== ensure_achievement_images app_id={} mode={} ===", app_id, mode));
+
+  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+  let img_dir = cache_dir.join("img");
+  fs::create_dir_all(&img_dir)
+    .map_err(|e| format!("Failed to create img dir: {}", e))?;
+
+  let max_count = match mode.as_str() {
+    "preload" => 5,
+    _ => usize::MAX,
+  };
+
+  let client = match build_client() {
+    Ok(c) => c,
+    Err(e) => return Err(format!("Failed to create HTTP client: {}", e)),
+  };
+
+  let mut downloaded = 0usize;
+  let mut failed = 0usize;
+
+  // Combine icon + gray URLs
+  let mut all_urls: Vec<(String, String)> = schema_urls
+    .into_iter()
+    .filter_map(|url| {
+      let fname = Path::new(&url)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())?;
+      Some((url, fname))
+    })
+    .collect();
+  for url in &schema_gray_urls {
+    if let Some(fname) = Path::new(url).file_name().and_then(|n| n.to_str()) {
+      all_urls.push((url.clone(), fname.to_string()));
+    }
+  }
+
+  let to_download: Vec<_> = all_urls
+    .into_iter()
+    .filter(|(_, fname)| {
+      let dest = img_dir.join(fname);
+      !dest.is_file() || fs::metadata(&dest).map(|m| m.len() == 0).unwrap_or(true)
+    })
+    .take(max_count)
+    .collect();
+
+  for (url, fname) in &to_download {
+    let dest = img_dir.join(fname);
+    match client.get(url).send() {
+      Ok(resp) if resp.status().is_success() => {
+        let bytes = match resp.bytes() {
+          Ok(b) => b,
+          Err(_) => { failed += 1; continue; }
+        };
+        if fs::write(&dest, &bytes).is_ok() {
+          downloaded += 1;
+        } else {
+          failed += 1;
+        }
+      }
+      _ => {
+        eprintln!("[ACH][IMG] failed appid={} file={} reason=HTTP", app_id, fname);
+        failed += 1;
+      }
+    }
+  }
+
+  eprintln!("[ACH][IMG] appid={} mode={} downloaded={} failed={}", app_id, mode, downloaded, failed);
+  Ok((downloaded, failed))
+}
+
+// ---------------------------------------------------------------------------
 // LumaForge achievement cache (on disk at app_data/achievements/{appid}/)
 // ---------------------------------------------------------------------------
 
@@ -1076,11 +1879,39 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
     return Ok(None);
   }
 
-  let summary: crate::models::steam_appcache_achievements::AppAchievementSummary =
+  eprintln!("[ACH][CACHE] read appid={}", app_id);
+
+  let mut summary: crate::models::steam_appcache_achievements::AppAchievementSummary =
     serde_json::from_str(
       &fs::read_to_string(&summary_path).map_err(|e| format!("Failed to read summary: {}", e))?,
     )
     .map_err(|e| format!("Failed to parse summary: {}", e))?;
+
+  // Cache migration: fill missing fields
+  let mut migrated = false;
+  if summary.source.is_empty() {
+    summary.source = "schema-only".to_string();
+    migrated = true;
+  }
+  if summary.updated_at == 0 {
+    summary.updated_at = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .map(|d| d.as_secs())
+      .unwrap_or(0);
+    migrated = true;
+  }
+  if summary.cache_version.is_none() {
+    summary.cache_version = Some(6);
+    migrated = true;
+  }
+
+  if migrated {
+    eprintln!("[ACH][CACHE] migrated old summary appid={}", app_id);
+    let summary_content =
+      serde_json::to_string_pretty(&summary).map_err(|e| format!("Failed to serialize migrated summary: {}", e))?;
+    fs::write(&summary_path, &summary_content)
+      .map_err(|e| format!("Failed to write migrated summary: {}", e))?;
+  }
 
   let achievements: Vec<crate::models::steam_appcache_achievements::AppAchievementCacheEntry> =
     serde_json::from_str(
@@ -1117,15 +1948,66 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
 // Achievements app schema folder reader
 // ---------------------------------------------------------------------------
 
-/// Resolve a locale map to a single string: try english first, then any locale, fallback to api_name.
-fn resolve_localized(map: &Option<std::collections::HashMap<String, String>>, _api_name: &str) -> Option<String> {
-  let map = map.as_ref()?;
-  if let Some(en) = map.get("english") {
-    if !en.is_empty() {
-      return Some(en.clone());
+/// Resolve a localized value to a single string.
+///
+/// If value is a string, use it directly (unless it's a token).
+/// If value is a map, resolve with fallback chain:
+///   1. preferred language
+///   2. latam
+///   3. spanish
+///   4. english
+///   5. first non-empty value that is NOT a token
+///   6. fallback to None (caller uses achievement name)
+///
+/// Never show a token if english exists.
+fn resolve_localized(value: &Option<LocaleValue>, _api_name: &str, preferred_lang: Option<&str>) -> Option<String> {
+  match value {
+    None => None,
+    Some(LocaleValue::String(s)) => {
+      let trimmed = s.trim().to_string();
+      if trimmed.is_empty() || is_probably_localization_token(&trimmed) {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    Some(LocaleValue::Map(map)) => {
+      // 1. Preferred language
+      if let Some(lang) = preferred_lang {
+        if let Some(v) = map.get(lang) {
+          if !v.is_empty() && !is_probably_localization_token(v) {
+            return Some(v.clone());
+          }
+        }
+      }
+      // 2. LATAM
+      if let Some(v) = map.get("latam") {
+        if !v.is_empty() && !is_probably_localization_token(v) {
+          return Some(v.clone());
+        }
+      }
+      // 3. spanish
+      if let Some(v) = map.get("spanish") {
+        if !v.is_empty() && !is_probably_localization_token(v) {
+          return Some(v.clone());
+        }
+      }
+      // 4. english
+      if let Some(v) = map.get("english") {
+        if !v.is_empty() && !is_probably_localization_token(v) {
+          return Some(v.clone());
+        }
+      }
+      // 5. First non-empty value that is NOT a token
+      for v in map.values() {
+        if !v.is_empty() && !is_probably_localization_token(v) {
+          return Some(v.clone());
+        }
+      }
+      // 6. Fallback
+      None
     }
   }
-  map.values().find(|v| !v.is_empty()).cloned()
 }
 
 /// Try to read an image file and encode it as a base64 data URL.
@@ -1172,22 +2054,31 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
     return Err(format!("[AchievementsSchema] Schema folder not found: {}", schema_dir.display()));
   }
 
-  // Support two layouts:
+  // Support three layouts:
   // 1. Direct: {path}/achievements.json
-  // 2. App subdir: {path}/{app_id}/achievements.json
+  // 2. steam-official subdir: {path}/steam-official/{app_id}/achievements.json
+  // 3. App subdir: {path}/{app_id}/achievements.json
   let base_dir: PathBuf;
   let achievements_path = if schema_dir.join("achievements.json").is_file() {
     base_dir = schema_dir.clone();
     schema_dir.join("achievements.json")
   } else {
-    let sub_dir = schema_dir.join(app_id.to_string());
-    let sub_path = sub_dir.join("achievements.json");
-    if sub_path.is_file() {
-      base_dir = sub_dir.clone();
-      diag_log(format!("[AchievementsSchema] Found in app subdirectory: {}", sub_path.display()));
-      sub_path
+    let steam_official_dir = schema_dir.join("steam-official").join(app_id.to_string());
+    let steam_official_path = steam_official_dir.join("achievements.json");
+    if steam_official_path.is_file() {
+      base_dir = steam_official_dir.clone();
+      diag_log(format!("[AchievementsSchema] Found in steam-official subdirectory: {}", steam_official_path.display()));
+      steam_official_path
     } else {
-      return Err(format!("[AchievementsSchema] achievements.json not found in {} or {}", schema_dir.display(), sub_dir.display()));
+      let sub_dir = schema_dir.join(app_id.to_string());
+      let sub_path = sub_dir.join("achievements.json");
+      if sub_path.is_file() {
+        base_dir = sub_dir.clone();
+        diag_log(format!("[AchievementsSchema] Found in app subdirectory: {}", sub_path.display()));
+        sub_path
+      } else {
+        return Err(format!("[AchievementsSchema] achievements.json not found in {}, {}/steam-official/{}/ or {}/{}", schema_dir.display(), schema_dir.display(), app_id, schema_dir.display(), app_id));
+      }
     }
   };
 
@@ -1201,6 +2092,9 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
 
   diag_log(format!("[AchievementsSchema] Parsed {} entries", raw_entries.len()));
 
+  // Log how many schema entries were parsed
+  eprintln!("[ACH][RUST_SCHEMA] appid={} entries={}", app_id, raw_entries.len());
+
   // Read achievementpercentages.json (optional) from same base_dir
   let pcts_path = base_dir.join("achievementpercentages.json");
   let pct_map: std::collections::HashMap<String, f64> = if pcts_path.is_file() {
@@ -1209,12 +2103,11 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
     ) {
       Ok(file) => {
         let map: std::collections::HashMap<_, _> = file
-          .achievementpercentages
           .achievements
           .into_iter()
           .map(|e| (e.name, e.percent))
           .collect();
-        diag_log(format!("Read {} entries from achievementpercentages.json", map.len()));
+        eprintln!("[ACH][RARITY] appid={} entries={}", app_id, map.len());
         map
       }
       Err(e) => {
@@ -1227,21 +2120,21 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
     std::collections::HashMap::new()
   };
 
-  // Normalize to AppAchievementCacheEntry with base64-embedded icons
+  // Normalize to AppAchievementCacheEntry — return raw paths, do NOT embed images
+  let mut localized_count = 0u32;
+
   let achievements: Vec<AppAchievementCacheEntry> = raw_entries
     .into_iter()
     .map(|entry| {
-      let name = resolve_localized(&entry.display_name, &entry.name).unwrap_or_else(|| entry.name.clone());
-      let description = resolve_localized(&entry.description, &entry.name);
+      let name = resolve_localized(&entry.display_name, &entry.name, None).unwrap_or_else(|| {
+        localized_count += 1;
+        entry.name.clone()
+      });
+      let description = resolve_localized(&entry.description, &entry.name, None);
 
-      let icon_url = entry.icon_path.and_then(|p| {
-        let full_path = base_dir.join(&p);
-        embed_image_as_data_url(&full_path)
-      });
-      let icon_gray_url = entry.icon_gray_path.and_then(|p| {
-        let full_path = base_dir.join(&p);
-        embed_image_as_data_url(&full_path)
-      });
+      // Return raw path from achievements.json, do not embed
+      let icon_url = entry.icon.as_ref().filter(|p| !p.is_empty()).cloned();
+      let icon_gray_url = entry.icon_gray.as_ref().filter(|p| !p.is_empty()).cloned();
 
       AppAchievementCacheEntry {
         id: entry.name.clone(),
@@ -1253,30 +2146,31 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
         unlocked: false,
         unlock_time: None,
         rarity_percent: None,
+        stat_id: entry.stat_id,
+        bit: entry.bit,
       }
     })
     .collect();
+
+  eprintln!("[ACH][RUST_SCHEMA] appid={} entries={}", app_id, achievements.len());
 
   // Build percentages
   let achievement_percentages: Vec<AppAchievementPercentagesEntry> = achievements
     .iter()
     .filter_map(|a| {
-      pct_map.get(&a.api_name).map(|&pct| AppAchievementPercentagesEntry {
-        name: a.api_name.clone(),
-        percent: pct,
+      pct_map.get(&a.api_name).map(|&pct| {
+        eprintln!("[ACH][RARITY] normalized percent name={} percent={}", a.api_name, pct);
+        AppAchievementPercentagesEntry {
+          name: a.api_name.clone(),
+          percent: pct,
+        }
       })
     })
     .collect();
 
-  diag_log(format!(
-    "[AchievementsSchema] Normalized {} achievements, {} percentages, {} icons embedded",
-    achievements.len(),
-    achievement_percentages.len(),
-    achievements.iter().filter(|a| a.icon_url.is_some() || a.icon_gray_url.is_some()).count(),
-  ));
-
   Ok(AchievementsAppSchemaResult {
     achievements,
     achievement_percentages,
+    base_dir: Some(base_dir.to_string_lossy().to_string()),
   })
 }

@@ -15,7 +15,6 @@ import {
   HardDrive,
   LifeBuoy,
   Loader2,
-  Lock,
   MessageCircle,
   MoreHorizontal,
   Play,
@@ -24,7 +23,6 @@ import {
   Square,
   Star,
   Trophy,
-  Unlock,
   X,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -41,7 +39,9 @@ import {
   getSteamSupportUrl,
   getSteamDbUrl,
 } from "../../utils/steamLinks";
+import toast from "react-hot-toast";
 import AsyncImage from "../common/AsyncImage";
+import AchievementIcon from "../common/AchievementIcon";
 import { SkeletonBox } from "../common/Skeleton";
 import { useGameActivity } from "../../context/GameActivityContext";
 import {
@@ -54,7 +54,8 @@ import { getPlaytimeEntry, formatPlaytime as formatPlaytimeSeconds, computeTotal
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievementsSummary } from "../../types/gameAchievements";
-import { resolveSteamAchievements } from "../../services/steamAchievementsResolver";
+import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
+import { achievementImageQueue, resolveImageSource, isResolvedUrl } from "../../services/achievementImageQueue";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import AchievementsModal from "./AchievementsModal";
@@ -447,13 +448,73 @@ export default function LibraryGameDetails({
         if (!cancelled) {
           setAchievementsSummary(summary);
           setAchievementsLoading(false);
+          // Detailed progress debug
+          const withStatIds = summary.achievements.filter((a: any) => a.statId != null).length;
+          console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
+          console.debug(`[ACH][PROGRESS] accountId=${settings.steamAccountId}`);
+          console.debug(`[ACH][PROGRESS] schemaTotal=${summary.achievements.length}`);
+          console.debug(`[ACH][PROGRESS] schemaWithStatIdBit=${withStatIds}`);
+          console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
+          console.debug(`[ACH][PROGRESS] progressAvailable=${summary.progressAvailable}`);
         }
       })
       .catch(() => {
         if (!cancelled) setAchievementsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAchievementsEnabled]);
+  }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
+
+  // PART 5: Toast notifications for newly unlocked achievements — max 3, then group
+  useEffect(() => {
+    if (!achievementsSummary?.newlyUnlocked?.length) return;
+    const events = achievementsSummary.newlyUnlocked;
+    const maxShow = 3;
+    for (let i = 0; i < Math.min(events.length, maxShow); i++) {
+      toast.success(`Achievement Unlocked: ${events[i].name}`, { duration: 5000 });
+    }
+    if (events.length > maxShow) {
+      toast.success(`${events.length - maxShow} more achievements unlocked`, { duration: 5000 });
+    }
+    console.debug(`[ACH][UNLOCK] toasts=${Math.min(events.length, maxShow)} extra=${Math.max(0, events.length - maxShow)}`);
+  }, [achievementsSummary?.newlyUnlocked]);
+
+  // Subscribe to image download updates — replaces iconUrl/iconGrayUrl when downloaded
+  useEffect(() => {
+    const unsub = achievementImageQueue.subscribe((apiName, type, dataUrl) => {
+      setAchievementsSummary((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          achievements: prev.achievements.map((a) =>
+            a.apiName === apiName
+              ? { ...a, [type === "icon" ? "iconUrl" : "iconGrayUrl"]: dataUrl }
+              : a,
+          ),
+        };
+      });
+    });
+    return unsub;
+  }, []);
+
+  // Enqueue missing achievement images when summary loads
+  useEffect(() => {
+    if (!achievementsSummary?.achievements?.length) return;
+    const items: import("../../services/achievementImageQueue").ImageQueueItem[] = [];
+    for (const a of achievementsSummary.achievements) {
+      if (a.iconUrl && !isResolvedUrl(a.iconUrl)) {
+        const resolved = resolveImageSource(a.iconUrl, appIdStr!, "icon");
+        if (resolved) items.push({ appId: appIdStr!, apiName: a.apiName, ...resolved, type: "icon", priority: "high" });
+      }
+      if (a.iconGrayUrl && !isResolvedUrl(a.iconGrayUrl)) {
+        const resolved = resolveImageSource(a.iconGrayUrl, appIdStr!, "icon_gray");
+        if (resolved) items.push({ appId: appIdStr!, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high" });
+      }
+    }
+    if (items.length > 0) {
+      console.debug(`[ACH][IMG] enqueued ${items.length} images for appid=${appIdStr}`);
+      achievementImageQueue.enqueue(items);
+    }
+  }, [achievementsSummary, appIdStr]);
 
   useEffect(() => {
     if (!showActions) return;
@@ -465,6 +526,25 @@ export default function LibraryGameDetails({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showActions]);
+
+  // PART 1: Sidebar sort — unlocked first, unlockTime desc, rarity asc, name
+  const sortedSidebarAchievements = useMemo(() => {
+    if (!achievementsSummary?.achievements) return null;
+    return [...achievementsSummary.achievements].sort((a, b) => {
+      if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
+      if (a.unlocked && b.unlocked) {
+        const at = a.unlockTime ?? 0;
+        const bt = b.unlockTime ?? 0;
+        if (at !== bt) return bt - at;
+      }
+      if (!a.unlocked && !b.unlocked) {
+        const ar = a.rarityPercent ?? 101;
+        const br = b.rarityPercent ?? 101;
+        if (ar !== br) return ar - br;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [achievementsSummary?.achievements]);
 
   if (loading) {
     return (
@@ -1114,34 +1194,17 @@ export default function LibraryGameDetails({
                     </div>
                     {/* Recent achievements (top 5) */}
                     <div className="space-y-1">
-                      {achievementsSummary.achievements.slice(0, 5).map((ach) => (
+                      {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
                         <div
                           key={ach.id}
                           className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
                         >
-                          <div className="h-7 w-7 shrink-0 overflow-hidden rounded-md bg-white/5">
-                            {ach.unlocked && ach.iconUrl ? (
-                              <img
-                                src={ach.iconUrl}
-                                alt=""
-                                className="h-full w-full object-cover"
-                                loading="lazy"
-                              />
-                            ) : ach.iconGrayUrl ? (
-                              <img
-                                src={ach.iconGrayUrl}
-                                alt=""
-                                className="h-full w-full object-cover opacity-50"
-                                loading="lazy"
-                              />
-                              ) : (
-                              <div className="flex h-full w-full items-center justify-center">
-                                {ach.unlocked
-                                  ? <Unlock className="h-4 w-4 text-emerald-400" />
-                                  : <Lock className="h-4 w-4 text-(--color-muted)" />}
-                              </div>
-                            )}
-                          </div>
+                          <AchievementIcon
+                            iconUrl={ach.iconUrl}
+                            iconGrayUrl={ach.iconGrayUrl}
+                            unlocked={ach.unlocked}
+                            size="sm"
+                          />
                           <span className="min-w-0 flex-1 truncate text-xs text-(--color-text)">
                             {ach.name}
                           </span>
@@ -1153,13 +1216,27 @@ export default function LibraryGameDetails({
                         </div>
                       ))}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowAchievementsModal(true)}
-                      className="w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                    >
-                      View all achievements ({achievementsSummary.total})
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAchievementsModal(true)}
+                        className="flex-1 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                      >
+                        View all achievements ({achievementsSummary.total})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
+                          accountId: settings.steamAccountId,
+                          steamPath: settings.steamRoot,
+                          achievementSchemaPath: settings.achievementSchemaPath,
+                        }); }}
+                        className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                        title="Debug achievement progress"
+                      >
+                        Debug
+                      </button>
+                    </div>
                   </div>
                 ) : achievementsSummary && !achievementsSummary.progressAvailable && achievementsSummary.achievements.length > 0 ? (
                   <div className="mt-3 space-y-3">
@@ -1172,38 +1249,44 @@ export default function LibraryGameDetails({
                       </p>
                     )}
                     <div className="space-y-1">
-                      {achievementsSummary.achievements.slice(0, 5).map((ach) => (
+                      {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
                         <div
                           key={ach.id}
                           className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
                         >
-                          <div className="h-7 w-7 shrink-0 overflow-hidden rounded-md bg-white/5">
-                            {ach.iconGrayUrl ? (
-                              <img
-                                src={ach.iconGrayUrl}
-                                alt=""
-                                className="h-full w-full object-cover opacity-50"
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center">
-                                <Lock className="h-4 w-4 text-(--color-muted)" />
-                              </div>
-                            )}
-                          </div>
+                          <AchievementIcon
+                            iconUrl={ach.iconUrl}
+                            iconGrayUrl={ach.iconGrayUrl}
+                            unlocked={false}
+                            size="sm"
+                          />
                           <span className="min-w-0 flex-1 truncate text-xs text-(--color-text)">
                             {ach.name}
                           </span>
                         </div>
                       ))}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowAchievementsModal(true)}
-                      className="w-full cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                    >
-                      View all achievements
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAchievementsModal(true)}
+                        className="flex-1 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                      >
+                        View all achievements
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
+                          accountId: settings.steamAccountId,
+                          steamPath: settings.steamRoot,
+                          achievementSchemaPath: settings.achievementSchemaPath,
+                        }); }}
+                        className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                        title="Debug achievement progress"
+                      >
+                        Debug
+                      </button>
+                    </div>
                   </div>
                 ) : achievementsSummary && achievementsSummary.source === "unavailable" && game.achievementsSupported ? (
                   <div className="mt-3">

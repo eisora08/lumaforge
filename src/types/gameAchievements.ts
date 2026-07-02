@@ -12,6 +12,13 @@ export type GameAchievement = {
   bit?: number;
 };
 
+export type UnlockEvent = {
+  apiName: string;
+  name: string;
+  iconUrl?: string;
+  unlockTime?: number;
+};
+
 export type GameAchievementsSummary = {
   appId: string;
   total: number;
@@ -27,7 +34,9 @@ export type GameAchievementsSummary = {
     | "global-percentages"
     | "setup-required"
     | "disabled"
-    | "unavailable";
+    | "unavailable"
+    | "librarycache";
   errorReason?: string;
   updatedAt?: number;
+  newlyUnlocked?: UnlockEvent[];
 };
