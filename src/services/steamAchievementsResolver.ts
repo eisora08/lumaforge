@@ -25,6 +25,7 @@ export type UnlockEvent = {
   apiName: string;
   name: string;
   iconUrl?: string;
+  iconGrayUrl?: string;
   unlockTime?: number;
 };
 
@@ -869,6 +870,7 @@ export async function resolveSteamAchievements(params: {
               apiName: a.apiName,
               name: a.name,
               iconUrl: a.iconUrl,
+              iconGrayUrl: a.iconGrayUrl,
               unlockTime: a.unlockTime,
             });
           }

@@ -55,6 +55,7 @@ import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
+import { showAchievementToast } from "./AchievementToast";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl } from "../../services/achievementImageQueue";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -464,13 +465,13 @@ export default function LibraryGameDetails({
     return () => { cancelled = true; };
   }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
-  // PART 5: Toast notifications for newly unlocked achievements — max 3, then group
+  // PART 3-4: Premium achievement toast notifications — max 3, then group
   useEffect(() => {
     if (!achievementsSummary?.newlyUnlocked?.length) return;
     const events = achievementsSummary.newlyUnlocked;
     const maxShow = 3;
     for (let i = 0; i < Math.min(events.length, maxShow); i++) {
-      toast.success(`Achievement Unlocked: ${events[i].name}`, { duration: 5000 });
+      showAchievementToast(events[i], appIdStr ?? undefined);
     }
     if (events.length > maxShow) {
       toast.success(`${events.length - maxShow} more achievements unlocked`, { duration: 5000 });
@@ -1192,7 +1193,7 @@ export default function LibraryGameDetails({
                         {achievementsSummary.percent}% complete
                       </p>
                     </div>
-                    {/* Recent achievements (top 5) */}
+                    {/* PART 10: Recent achievements (top 5) */}
                     <div className="space-y-1">
                       {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
                         <div
@@ -1205,9 +1206,16 @@ export default function LibraryGameDetails({
                             unlocked={ach.unlocked}
                             size="sm"
                           />
-                          <span className="min-w-0 flex-1 truncate text-xs text-(--color-text)">
-                            {ach.name}
-                          </span>
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-xs text-(--color-text)">
+                              {ach.name}
+                            </span>
+                            {ach.rarityPercent != null && (
+                              <span className="block text-[9px] text-(--color-muted)/50">
+                                {ach.rarityPercent.toFixed(1)}% earned
+                              </span>
+                            )}
+                          </div>
                           <span className={`shrink-0 text-[9px] font-medium ${
                             ach.unlocked ? "text-emerald-400" : "text-(--color-muted)/50"
                           }`}>
@@ -1224,18 +1232,20 @@ export default function LibraryGameDetails({
                       >
                         View all achievements ({achievementsSummary.total})
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
-                          accountId: settings.steamAccountId,
-                          steamPath: settings.steamRoot,
-                          achievementSchemaPath: settings.achievementSchemaPath,
-                        }); }}
-                        className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                        title="Debug achievement progress"
-                      >
-                        Debug
-                      </button>
+                      {import.meta.env.DEV && (
+                        <button
+                          type="button"
+                          onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
+                            accountId: settings.steamAccountId,
+                            steamPath: settings.steamRoot,
+                            achievementSchemaPath: settings.achievementSchemaPath,
+                          }); }}
+                          className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                          title="Debug achievement progress"
+                        >
+                          Debug
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : achievementsSummary && !achievementsSummary.progressAvailable && achievementsSummary.achievements.length > 0 ? (
@@ -1274,18 +1284,20 @@ export default function LibraryGameDetails({
                       >
                         View all achievements
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
-                          accountId: settings.steamAccountId,
-                          steamPath: settings.steamRoot,
-                          achievementSchemaPath: settings.achievementSchemaPath,
-                        }); }}
-                        className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                        title="Debug achievement progress"
-                      >
-                        Debug
-                      </button>
+                      {import.meta.env.DEV && (
+                        <button
+                          type="button"
+                          onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
+                            accountId: settings.steamAccountId,
+                            steamPath: settings.steamRoot,
+                            achievementSchemaPath: settings.achievementSchemaPath,
+                          }); }}
+                          className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-2 py-2 text-[10px] text-(--color-muted) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                          title="Debug achievement progress"
+                        >
+                          Debug
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : achievementsSummary && achievementsSummary.source === "unavailable" && game.achievementsSupported ? (

@@ -16,6 +16,7 @@ export type UnlockEvent = {
   apiName: string;
   name: string;
   iconUrl?: string;
+  iconGrayUrl?: string;
   unlockTime?: number;
 };
 
