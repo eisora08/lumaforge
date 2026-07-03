@@ -96,7 +96,10 @@ let appInfoFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function flushAppInfoUpdates() {
   appInfoFlushTimer = null;
-  const { getMediaEntry, setMediaEntry } = await import("./gameCacheService");
+  const [{ getMediaEntry, setMediaEntry }, { notifyMediaUpdated }] = await Promise.all([
+    import("./gameCacheService"),
+    import("./startupSnapshotService"),
+  ]);
   for (const [appId, fields] of pendingAppInfoUpdates) {
     const media: Record<string, string | null> = {
       coverPath: fields.coverPath ?? null,
@@ -134,11 +137,8 @@ async function flushAppInfoUpdates() {
       }
     }
 
-    // Notify snapshot so UI picks up changes
-    const { notifyMediaUpdated } = await import("./startupSnapshotService");
+    // Notify snapshot so UI picks up changes (debounced in startupSnapshotService)
     notifyMediaUpdated(appId).catch(() => {});
-
-    console.log(`[GAME_STORE] mediaUpdated appid=${appId}`);
   }
   pendingAppInfoUpdates.clear();
 }

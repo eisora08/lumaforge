@@ -6,6 +6,51 @@ import type {
 import { parseLibraryCacheAchievements, writeAchievementCache, readAchievementCache } from "./tauri";
 
 // ---------------------------------------------------------------------------
+// Source priority — lower number = higher priority (takes precedence)
+// ---------------------------------------------------------------------------
+
+export const SOURCE_PRIORITY: Record<string, number> = {
+  "librarycache": 0,
+  "local-cache": 1,
+  "local-cache-stale": 1,
+  "steam-web-api": 2,
+  "steam-web-api-stale": 3,
+  "steam-appcache": 4,
+  "steam-appcache-stale": 5,
+  "librarycache-stale": 6,
+  "schema-only": 7,
+  "setup-required": 8,
+  "disabled": 9,
+  "unavailable": 10,
+};
+
+export function isSourceNewerOrEqual(
+  incomingSource: string,
+  incomingTime: number | undefined,
+  existingSource: string | undefined,
+  existingTime: number | undefined,
+): boolean {
+  const inPri = SOURCE_PRIORITY[incomingSource] ?? 99;
+  const exPri = SOURCE_PRIORITY[existingSource ?? ""] ?? 99;
+
+  // Higher-priority source always wins (lower number = higher priority)
+  if (inPri < exPri) return true;
+  if (inPri > exPri) return false;
+
+  // Same priority: newer timestamp wins
+  if (incomingTime != null && existingTime != null) {
+    return incomingTime >= existingTime;
+  }
+
+  // If only one has a timestamp, that one wins
+  if (incomingTime != null) return true;
+  if (existingTime != null) return false;
+
+  // Neither has timestamp — incoming replaces existing
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -83,8 +128,40 @@ class AchievementStoreImpl {
   // ── Write full summary (from resolver) ──
 
   setSummary(appId: string, summary: GameAchievementsSummary): void {
-    this.summariesByAppId.set(appId, summary);
-    this.notify(appId, summary);
+    // Normalize missing source / updatedAt to prevent SOURCE_PRIORITY crashes
+    const safeSummary = {
+      ...summary,
+      source: summary.source ? summary.source : "local-cache",
+      updatedAt: summary.updatedAt || Date.now(),
+    };
+    const existing = this.summariesByAppId.get(appId);
+    if (existing) {
+      const accepted = isSourceNewerOrEqual(
+        safeSummary.source, safeSummary.updatedAt,
+        existing.source, existing.updatedAt,
+      );
+      console.log(
+        `[ACH][SUMMARY_SOURCE] appid=${appId} source=${safeSummary.source} ` +
+        `unlocked=${safeSummary.unlocked}/${safeSummary.total} updatedAt=${safeSummary.updatedAt} ` +
+        `progressAvailable=${safeSummary.progressAvailable} accepted=${accepted} ` +
+        `existingSource=${existing.source} existingUnlocked=${existing.unlocked}/${existing.total} existingUpdatedAt=${existing.updatedAt}`
+      );
+      if (!accepted) {
+        console.log(`[ACH][SUMMARY_MERGE] appid=${appId} rejected reason=older-or-equal-source`);
+        return;
+      }
+      if (accepted && existing.source !== safeSummary.source) {
+        console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${existing.source}:${existing.unlocked}/${existing.total} new=${safeSummary.source}:${safeSummary.unlocked}/${safeSummary.total} accepted=true reason=newer-source`);
+      }
+    } else {
+      console.log(
+        `[ACH][SUMMARY_SOURCE] appid=${appId} source=${safeSummary.source} ` +
+        `unlocked=${safeSummary.unlocked}/${safeSummary.total} updatedAt=${safeSummary.updatedAt} ` +
+        `progressAvailable=${safeSummary.progressAvailable} accepted=true reason=first-summary`
+      );
+    }
+    this.summariesByAppId.set(appId, safeSummary);
+    this.notify(appId, safeSummary);
   }
 
   // ── Fast progress patch from librarycache ──
@@ -102,6 +179,11 @@ class AchievementStoreImpl {
       return null;
     }
 
+    console.log(
+      `[ACH][SUMMARY_SOURCE] appid=${appId} source=librarycache(patch) ` +
+      `unlocked=${patch.unlocked}/${patch.total} progressMap=${patch.progressMap.size} trace=${tid}`
+    );
+
     // ── Build base achievements to patch onto ──
     let current = this.summariesByAppId.get(appId);
     let createdMinimalSummary = false;
@@ -111,6 +193,29 @@ class AchievementStoreImpl {
 
     // ── If no existing summary, try cache or build minimal ──
     if (!current) {
+      // Check if patch only has a subset of achievements (partial librarycache)
+      // Use nTotal/nAchieved for summary, but don't create a partial achievement list.
+      // The resolver will fill in the full list later.
+      const isPartial = patch.progressMap.size > 0 && patch.total > 0 && (patch.progressMap.size / patch.total) < 0.5;
+      if (isPartial) {
+        console.debug(`[ACH][STORE_PATCH][${tid}] skipped-minimal-summary reason=partial-librarycache progressMap=${patch.progressMap.size} total=${patch.total}`);
+        // Create a minimal summary with correct counts but no incomplete achievements list
+        current = {
+          appId,
+          total: patch.total,
+          unlocked: patch.unlocked,
+          percent: patch.total > 0 ? Math.round((patch.unlocked / patch.total) * 100) : 0,
+          progressAvailable: true,
+          source: "librarycache",
+          achievements: [],
+          updatedAt: Date.now(),
+        };
+        this.summariesByAppId.set(appId, current);
+        // Don't proceed to merge — just return the minimal total summary
+        console.debug(`[ACH][STORE_PATCH][${tid}] partialSummaryReturned total=${current.total} unlocked=${current.unlocked}`);
+        return current;
+      }
+
       // Build achievements from patch entries (minimal summary)
       const minimalAchievements: GameAchievement[] = [];
       for (const [apiName, progress] of patch.progressMap) {
@@ -203,8 +308,16 @@ class AchievementStoreImpl {
       updatedAt: Date.now(),
     };
 
-    console.debug(`[ACH][STORE_PATCH][${tid}] before=${prevUnlocked}/${current.total} after=${newUnlockedCount}/${total}`);
+    const oldUnlocked = `${prevUnlocked}/${current.total}`;
+    const newUnlocked = `${newUnlockedCount}/${total}`;
+    const accepted = isSourceNewerOrEqual("librarycache", Date.now(), current.source, current.updatedAt);
+    console.debug(`[ACH][STORE_PATCH][${tid}] before=${oldUnlocked} after=${newUnlocked}`);
     console.debug(`[ACH][STORE_PATCH][${tid}] summaryLoaded=${this.summariesByAppId.has(appId)} createdMinimalSummary=${createdMinimalSummary}`);
+    if (accepted) {
+      console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${current.source}:${oldUnlocked} new=librarycache:${newUnlocked} accepted=true reason=librarycache-patch`);
+    } else {
+      console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${current.source}:${oldUnlocked} new=librarycache:${newUnlocked} accepted=false reason=existing-newer`);
+    }
 
     // ── Detect new unlocks using SNAPSHOT (loaded BEFORE comparison) ──
     const snapshots = loadSnapshots();
@@ -253,6 +366,17 @@ class AchievementStoreImpl {
     patched.newlyUnlocked = newUnlocks;
 
     // ── Patch store (AFTER unlock detection, BEFORE snapshot save) ──
+    // Check freshness against current store value (may have been updated by another source)
+    const storeCurrent = this.summariesByAppId.get(appId);
+    const patchAccepted = !storeCurrent || isSourceNewerOrEqual(
+      patched.source, patched.updatedAt,
+      storeCurrent.source, storeCurrent.updatedAt,
+    );
+    if (!patchAccepted) {
+      console.debug(`[ACH][STORE_PATCH][${tid}] skipped-write reason=existing-newer source=${storeCurrent?.source} updatedAt=${storeCurrent?.updatedAt}`);
+      this.notify(appId, storeCurrent!); // re-notify with current state
+      return null;
+    }
     this.summariesByAppId.set(appId, patched);
     console.debug(`[ACH][STORE_PATCH][${tid}] subscribersNotified=true`);
 

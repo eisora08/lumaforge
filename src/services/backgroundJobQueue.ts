@@ -414,9 +414,15 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
     return;
   }
 
+  // ── Part 6: Limit per-app based on priority ──
+  // low priority (startup/background): first 5 icons only
+  // normal/high priority (user-triggered): all icons
+  const maxIcons = job.priority === "low" ? 5 : Infinity;
+
   const generationId = nextGenerationId(job.appId, "background-job");
   const items: import("./achievementImageQueue").ImageQueueItem[] = [];
   for (const ach of summary.achievements) {
+    if (items.length >= maxIcons * 2) break; // icon + icon_gray per ach
     if (ach.iconUrl) {
       const resolved = resolveImageSource(ach.iconUrl, job.appId, "icon");
       if (resolved) {
@@ -434,6 +440,7 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
       }
     }
     if (ach.iconGrayUrl) {
+      if (items.length >= maxIcons * 2) break;
       const resolved = resolveImageSource(ach.iconGrayUrl, job.appId, "icon_gray");
       if (resolved) {
         items.push({
@@ -450,8 +457,12 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
       }
     }
   }
+  const mode = job.priority === "low" ? "preload" : "full";
   if (items.length > 0) {
+    console.log(`[ACH][IMG_JOB] queued appid=${job.appId} mode=${mode} limit=${maxIcons} missing=${items.length}`);
     await achievementImageQueue.enqueue(items);
+  } else {
+    console.log(`[ACH][IMG_JOB] skipped appid=${job.appId} reason=already-cached`);
   }
 }
 

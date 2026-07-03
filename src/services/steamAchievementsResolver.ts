@@ -11,6 +11,7 @@ import {
   parseLibraryCacheAchievements,
 } from "./tauri";
 import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, SteamAppcacheSchemaEntry, SteamAppcacheParsedProgress, UserGameStatsRawResult, DebugAchievementReport, LibraryCacheProgress } from "./tauri";
+import { achievementStore, isSourceNewerOrEqual } from "./achievementStore";
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const ACHIEVEMENT_CACHE_VERSION = 6;
@@ -594,8 +595,19 @@ export async function resolveSteamAchievements(params: {
     const cached = await readAchievementCache(appIdNum);
     if (cached && cached.summary.cache_version === ACHIEVEMENT_CACHE_VERSION) {
       if (!params.forceRefresh && cached.summary.progress_available && Date.now() - cached.summary.updated_at < CACHE_TTL_MS) {
-        console.debug(`[ACH][CACHE] App ${appIdStr}: using disk cache (${cached.achievements.length} achievements, progress=${cached.summary.progress_available})`);
-        return cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
+        const cacheSummary = cacheEntryToSummary(appIdStr, cached.achievements, cached.achievement_percentages, cached.summary);
+        const stored = achievementStore.getSummary(appIdStr);
+        if (stored) {
+          const accept = isSourceNewerOrEqual(cacheSummary.source, cacheSummary.updatedAt, stored.source, stored.updatedAt);
+          console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=${accept} existingSource=${stored.source}`);
+          if (!accept) {
+            console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
+            return stored;
+          }
+        } else {
+          console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=true reason=first-summary`);
+        }
+        return cacheSummary;
       }
       // Always populate cached schema metadata — even with forceRefresh, this ensures progress
       // sources like librarycache have schema entries to match against
@@ -943,6 +955,19 @@ export async function resolveSteamAchievements(params: {
     } catch (err) {
       console.warn(`[ACH][CACHE] App ${appIdStr}: failed to write disk cache:`, err);
     }
+  }
+
+  // Check store freshness before returning — prefer newer data from watcher/auto-sync
+  const stored = achievementStore.getSummary(appIdStr);
+  if (stored) {
+    const accept = isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt);
+    console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=${accept} existingSource=${stored.source} existingUnlocked=${stored.unlocked}/${stored.total}`);
+    if (!accept) {
+      console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
+      return stored;
+    }
+  } else {
+    console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=true reason=first-summary`);
   }
 
   return summary;

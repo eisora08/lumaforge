@@ -61,7 +61,7 @@ import { showAchievementToast, showGroupedAchievementToast, showTestAchievementT
 import { sendAchievementNativeNotification } from "../../services/achievementNotificationService";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration } from "../../services/achievementImageQueue";
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
-import { achievementStore } from "../../services/achievementStore";
+import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -233,9 +233,14 @@ export default function LibraryGameDetails({
 
   const { settings } = useSettings();
   const { sessions: gameSessions } = useGameSession();
-  const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(null);
+  const appIdStr = game.appId;
+  const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
+    if (!appIdStr) return null;
+    return achievementStore.getSummary(appIdStr) ?? null;
+  });
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [achievementsRefreshing, setAchievementsRefreshing] = useState(false);
+  const achievementsSyncing = achievementsSummary != null && achievementsLoading;
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
 
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
@@ -317,7 +322,6 @@ export default function LibraryGameDetails({
   );
 
   const appIdNum = game.appId ? Number(game.appId) : null;
-  const appIdStr = game.appId;
   const { activities, addActivity } = useGameActivity();
   const { recordLaunch: recordGameLaunch } = useGamePlayStats(game.id);
 
@@ -472,6 +476,19 @@ export default function LibraryGameDetails({
     fetchSteamNews();
   }, [fetchSteamNews]);
 
+  // Sync achievement summary from store when appId changes
+  useEffect(() => {
+    if (!appIdStr) {
+      setAchievementsSummary(null);
+      return;
+    }
+    const stored = achievementStore.getSummary(appIdStr) ?? null;
+    setAchievementsSummary(prev => {
+      if (prev?.appId === stored?.appId && prev?.source === stored?.source && prev?.unlocked === stored?.unlocked && prev?.total === stored?.total) return prev;
+      return stored;
+    });
+  }, [appIdStr]);
+
   // Load achievements
   useEffect(() => {
     if (!appIdStr) return;
@@ -488,6 +505,15 @@ export default function LibraryGameDetails({
     })
       .then((summary) => {
         if (!cancelled) {
+          // Only update local state if resolver result is fresher than store
+          const stored = achievementStore.getSummary(appIdStr);
+          if (stored && stored.source !== summary.source) {
+            if (!isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt)) {
+              console.debug(`[ACH][DETAILS] skip-set-from-resolver reason=store-newer source=${stored.source} updatedAt=${stored.updatedAt}`);
+              setAchievementsLoading(false);
+              return;
+            }
+          }
           setAchievementsSummary(summary);
           achievementStore.setSummary(appIdStr, summary);
           setAchievementsLoading(false);
@@ -1344,6 +1370,9 @@ export default function LibraryGameDetails({
                       </div>
                       <p className="mt-1 text-[10px] text-(--color-muted)/60">
                         {achievementsSummary.percent}% complete
+                        {achievementsSyncing && (
+                          <span className="ml-2 italic">Syncing...</span>
+                        )}
                       </p>
                     </div>
                     {/* Recent achievements (top 5) */}

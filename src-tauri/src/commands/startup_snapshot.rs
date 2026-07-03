@@ -51,9 +51,16 @@ pub fn read_startup_snapshot(app_handle: AppHandle) -> Result<Option<StartupSnap
                     }
                     let game_count = snapshot.library.games.len();
                     let sidebar_count = snapshot.sidebar.items.len();
+                    let with_fav = snapshot.library.games.iter().filter(|g| g.favorite.is_some()).count();
+                    let fav_true = snapshot.library.games.iter().filter(|g| g.favorite.unwrap_or(false)).count();
+                    let with_hidden = snapshot.library.games.iter().filter(|g| g.hidden.is_some()).count();
+                    let hidden_true = snapshot.library.games.iter().filter(|g| g.hidden.unwrap_or(false)).count();
+                    let ach_some = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_some()).count();
+                    let ach_none = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_none()).count();
+                    let with_updated = snapshot.library.games.iter().filter(|g| g.updated_at.is_some()).count();
                     println!(
-                        "[BootSnapshot] found — games: {}, sidebar items: {}",
-                        game_count, sidebar_count
+                        "[BootSnapshot] games={} sidebar={} withFavoriteField={} favoriteTrue={} withHiddenField={} hiddenTrue={} withAchievementSummaryField={} achievementSummaryObject={} achievementSummaryNull={} withUpdatedAt={}",
+                        game_count, sidebar_count, with_fav, fav_true, with_hidden, hidden_true, (ach_some + ach_none), ach_some, ach_none, with_updated
                     );
                     Ok(Some(snapshot))
                 }
@@ -88,10 +95,17 @@ pub fn write_startup_snapshot(
         .map_err(|e| format!("Failed to rename snapshot file: {}", e))?;
 
     let game_count = snapshot.library.games.len();
+    let sidebar_count = snapshot.sidebar.items.len();
+    let with_fav = snapshot.library.games.iter().filter(|g| g.favorite.is_some()).count();
+    let fav_true = snapshot.library.games.iter().filter(|g| g.favorite.unwrap_or(false)).count();
+    let with_hidden = snapshot.library.games.iter().filter(|g| g.hidden.is_some()).count();
+    let hidden_true = snapshot.library.games.iter().filter(|g| g.hidden.unwrap_or(false)).count();
+    let ach_some = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_some()).count();
+    let ach_none = snapshot.library.games.iter().filter(|g| g.achievement_summary.is_none()).count();
+    let with_updated = snapshot.library.games.iter().filter(|g| g.updated_at.is_some()).count();
     println!(
-        "[BootSnapshot] write complete — games: {}, sidebar items: {}",
-        game_count,
-        snapshot.sidebar.items.len()
+        "[BootSnapshot] write — games={} sidebar={} withFavoriteField={} favoriteTrue={} withHiddenField={} hiddenTrue={} withAchievementSummaryField={} achievementSummaryObject={} achievementSummaryNull={} withUpdatedAt={}",
+        game_count, sidebar_count, with_fav, fav_true, with_hidden, hidden_true, (ach_some + ach_none), ach_some, ach_none, with_updated,
     );
 
     Ok(())

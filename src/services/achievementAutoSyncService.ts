@@ -221,6 +221,7 @@ class AchievementAutoSyncService {
       }
 
       // Update the central store for cross-surface consistency
+      console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=auto-sync:${reason} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable}`);
       achievementStore.setSummary(appId, summary);
 
       for (const cb of this.subscribers) {

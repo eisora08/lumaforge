@@ -1712,30 +1712,29 @@ pub fn download_achievement_image(
   let response = match client.get(&url).send() {
     Ok(r) => r,
     Err(e) => {
-      eprintln!("[ACH][IMG] failed appid={} file={} reason=network_error: {}", app_id, file_name, e);
+      diag_log(format!("download_achievement_image failed appid={} file={} reason=network_error: {}", app_id, file_name, e));
       return Ok(None);
     }
   };
 
   if !response.status().is_success() {
-    eprintln!("[ACH][IMG] failed appid={} file={} reason=HTTP {}", app_id, file_name, response.status());
+    diag_log(format!("download_achievement_image failed appid={} file={} reason=HTTP {}", app_id, file_name, response.status()));
     return Ok(None);
   }
 
   let bytes = match response.bytes() {
     Ok(b) => b,
     Err(e) => {
-      eprintln!("[ACH][IMG] failed appid={} file={} reason=read_error: {}", app_id, file_name, e);
+      diag_log(format!("download_achievement_image failed appid={} file={} reason=read_error: {}", app_id, file_name, e));
       return Ok(None);
     }
   };
 
   if let Err(e) = fs::write(&dest_path, &bytes) {
-    eprintln!("[ACH][IMG] failed appid={} file={} reason=write_error: {}", app_id, file_name, e);
+    diag_log(format!("download_achievement_image failed appid={} file={} reason=write_error: {}", app_id, file_name, e));
     return Ok(None);
   }
 
-  eprintln!("[ACH][IMG] downloaded appid={} file={}", app_id, file_name);
   Ok(Some(dest_path.to_string_lossy().to_string()))
 }
 
@@ -1856,7 +1855,6 @@ pub fn ensure_achievement_images(
         }
       }
       _ => {
-        eprintln!("[ACH][IMG] failed appid={} file={} reason=HTTP", app_id, fname);
         failed += 1;
       }
     }
@@ -2029,58 +2027,70 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
     )
     .map_err(|e| format!("Failed to parse achievements: {}", e))?;
 
-  // Part 4: On-read migration — normalize any CDN URLs in icon fields to relative img/ paths
+  // Part 4: On-read migration — normalize CDN URLs + repair truncated CDN folder URLs
   let mut migrated_icons = 0u32;
   let mut migrated_gray = 0u32;
+  let mut repaired_icons = 0u32;
+  let mut repaired_gray = 0u32;
   let mut sources_entries: Vec<serde_json::Value> = vec![];
 
   for entry in achievements.iter_mut() {
-    // Migrate icon_url if it's a Steam CDN URL
+    // Handle icon_url if it contains Steam CDN path
     if let Some(ref icon) = entry.icon_url.clone() {
-      if (icon.starts_with("https://steamcdn") || icon.starts_with("https://cdn.cloudflare.steamstatic.com"))
-        && icon.contains("/steamcommunity/public/images/apps/")
-      {
-        if let Some(rel) = cdn_url_to_relative_icon_path(icon, false) {
-          // Store the original remote URL in image_sources
-          let mut obj = serde_json::Map::new();
-          obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
-          obj.insert("remote_icon_url".to_string(), serde_json::Value::String(icon.clone()));
-          sources_entries.push(serde_json::Value::Object(obj));
-          entry.icon_url = Some(rel);
-          migrated_icons += 1;
+      if icon.contains("/steamcommunity/public/images/apps/") {
+        if is_valid_cdn_achievement_url(icon) {
+          // Complete CDN URL with valid hash → migrate to relative path
+          if let Some(rel) = cdn_url_to_relative_icon_path(icon, false) {
+            let mut obj = serde_json::Map::new();
+            obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
+            obj.insert("remote_icon_url".to_string(), serde_json::Value::String(icon.clone()));
+            sources_entries.push(serde_json::Value::Object(obj));
+            entry.icon_url = Some(rel);
+            migrated_icons += 1;
+          }
+        } else {
+          // Truncated CDN folder URL (no hash) → strip it
+          eprintln!("[ACH][SCHEMA_REPAIR] appid={} apiName={} stripping invalid icon_url (truncated CDN folder): {}", app_id, entry.api_name, icon);
+          entry.icon_url = None;
+          repaired_icons += 1;
         }
       }
     }
 
-    // Migrate icon_gray_url if it's a Steam CDN URL
+    // Handle icon_gray_url if it contains Steam CDN path
     if let Some(ref icon_gray) = entry.icon_gray_url.clone() {
-      if (icon_gray.starts_with("https://steamcdn") || icon_gray.starts_with("https://cdn.cloudflare.steamstatic.com"))
-        && icon_gray.contains("/steamcommunity/public/images/apps/")
-      {
-        if let Some(rel) = cdn_url_to_relative_icon_path(icon_gray, true) {
-          // Add remote gray URL to existing or new sources entry
-          if let Some(existing) = sources_entries.iter_mut().find(|v| {
-            v.get("api_name").and_then(|n| n.as_str()) == Some(&entry.api_name)
-          }) {
-            if let Some(obj) = existing.as_object_mut() {
+      if icon_gray.contains("/steamcommunity/public/images/apps/") {
+        if is_valid_cdn_achievement_url(icon_gray) {
+          // Complete CDN URL with valid hash → migrate to relative path
+          if let Some(rel) = cdn_url_to_relative_icon_path(icon_gray, true) {
+            if let Some(existing) = sources_entries.iter_mut().find(|v| {
+              v.get("api_name").and_then(|n| n.as_str()) == Some(&entry.api_name)
+            }) {
+              if let Some(obj) = existing.as_object_mut() {
+                obj.insert("remote_icon_gray_url".to_string(), serde_json::Value::String(icon_gray.clone()));
+              }
+            } else {
+              let mut obj = serde_json::Map::new();
+              obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
               obj.insert("remote_icon_gray_url".to_string(), serde_json::Value::String(icon_gray.clone()));
+              sources_entries.push(serde_json::Value::Object(obj));
             }
-          } else {
-            let mut obj = serde_json::Map::new();
-            obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
-            obj.insert("remote_icon_gray_url".to_string(), serde_json::Value::String(icon_gray.clone()));
-            sources_entries.push(serde_json::Value::Object(obj));
+            entry.icon_gray_url = Some(rel);
+            migrated_gray += 1;
           }
-          entry.icon_gray_url = Some(rel);
-          migrated_gray += 1;
+        } else {
+          // Truncated CDN folder URL (no hash) → strip it
+          eprintln!("[ACH][SCHEMA_REPAIR] appid={} apiName={} stripping invalid icon_gray_url (truncated CDN folder): {}", app_id, entry.api_name, icon_gray);
+          entry.icon_gray_url = None;
+          repaired_gray += 1;
         }
       }
     }
   }
 
-  if migrated_icons > 0 || migrated_gray > 0 {
-    eprintln!("[ACH][SCHEMA_MIGRATE] appid={} migratedIcons={} migratedGrayIcons={} unchanged={}", app_id, migrated_icons, migrated_gray, achievements.len().saturating_sub(migrated_icons.max(migrated_gray) as usize));
-    // Write migrated achievements.json
+  if migrated_icons > 0 || migrated_gray > 0 || repaired_icons > 0 || repaired_gray > 0 {
+    eprintln!("[ACH][SCHEMA_REPAIR] appid={} migratedIcons={} migratedGrayIcons={} repairedIcons={} repairedGrayIcons={} total={}", app_id, migrated_icons, migrated_gray, repaired_icons, repaired_gray, achievements.len());
+    // Write repaired/migrated achievements.json
     let achievements_content =
       serde_json::to_string_pretty(&achievements).map_err(|e| format!("Failed to serialize migrated achievements: {}", e))?;
     fs::write(&achievements_path, &achievements_content)
@@ -2278,19 +2288,27 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
       let raw_gray = entry.icon_gray.as_ref().filter(|p| !p.is_empty()).cloned();
       // Normalize without app_handle (no absolute local path conversion, just CDN → img/)
       let icon_url = raw_icon.and_then(|val| {
-        if (val.starts_with("https://steamcdn") || val.starts_with("https://cdn.cloudflare.steamstatic.com"))
-          && val.contains("/steamcommunity/public/images/apps/")
-        {
-          cdn_url_to_relative_icon_path(&val, false).or(Some(val))
+        if val.contains("/steamcommunity/public/images/apps/") {
+          if is_valid_cdn_achievement_url(&val) {
+            cdn_url_to_relative_icon_path(&val, false)
+          } else {
+            // Truncated CDN folder URL (no hash) → reject entirely
+            eprintln!("[ACH][SCHEMA_VALIDATE] appid={} invalidIconUrl reason=missing-hash url={}", app_id, val);
+            None
+          }
         } else {
           Some(val)
         }
       });
       let icon_gray_url = raw_gray.and_then(|val| {
-        if (val.starts_with("https://steamcdn") || val.starts_with("https://cdn.cloudflare.steamstatic.com"))
-          && val.contains("/steamcommunity/public/images/apps/")
-        {
-          cdn_url_to_relative_icon_path(&val, true).or(Some(val))
+        if val.contains("/steamcommunity/public/images/apps/") {
+          if is_valid_cdn_achievement_url(&val) {
+            cdn_url_to_relative_icon_path(&val, true)
+          } else {
+            // Truncated CDN folder URL (no hash) → reject entirely
+            eprintln!("[ACH][SCHEMA_VALIDATE] appid={} invalidGrayUrl reason=missing-hash url={}", app_id, val);
+            None
+          }
         } else {
           Some(val)
         }
@@ -2426,16 +2444,46 @@ pub fn cleanup_achievement_orphan_images(
 // Icon URL normalization helpers
 // ===================================================================
 
+/// Check if a URL string's last path segment is a valid 40-char hex hash.
+/// Parses the URL as a string (not Path) to avoid platform issues.
+fn is_valid_image_hash(url: &str) -> bool {
+  // Find the last '/' and take everything after it
+  let last_segment = match url.rsplit('/').next() {
+    Some(s) if !s.is_empty() => s,
+    _ => return false,
+  };
+  // Strip extension — must be .jpg or .png
+  let stem = match last_segment.strip_suffix(".jpg").or_else(|| last_segment.strip_suffix(".png")) {
+    Some(s) => s,
+    None => return false,
+  };
+  // Handle _gray suffix
+  let clean = stem.strip_suffix("_gray").unwrap_or(stem);
+  clean.len() == 40 && clean.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Extract a Steam CDN image hash from a URL like:
 /// https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/<appid>/<40hex>.jpg
+/// Uses string parsing (not Path) for reliable URL handling.
 fn extract_steam_image_hash(url: &str) -> Option<String> {
-  let path = std::path::Path::new(url);
-  let stem = path.file_stem()?.to_str()?;
-  if stem.len() == 40 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
-    Some(stem.to_string())
+  let last_segment = url.rsplit('/').next()?;
+  // Strip extension
+  let stem = last_segment
+    .strip_suffix(".jpg")
+    .or_else(|| last_segment.strip_suffix(".png"))?;
+  // Handle _gray suffix
+  let clean = stem.strip_suffix("_gray").unwrap_or(stem);
+  if clean.len() == 40 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
+    Some(clean.to_string())
   } else {
     None
   }
+}
+
+/// Check if a URL is a Steam CDN achievement icon URL (any host, with valid hash).
+/// Returns true if the URL contains the CDN path pattern and ends with a valid image hash.
+fn is_valid_cdn_achievement_url(url: &str) -> bool {
+  url.contains("/steamcommunity/public/images/apps/") && is_valid_image_hash(url)
 }
 
 /// Normalize a Steam CDN URL to a local relative path, extracting the image hash.
@@ -2454,7 +2502,8 @@ fn cdn_url_to_relative_icon_path(url: &str, is_gray: bool) -> Option<String> {
 /// - Remote Steam CDN URLs → `img/<hash>.jpg` (or `img/<hash>_gray.jpg` when `is_gray`)
 /// - Absolute local paths inside img dir → `img/<filename>`
 /// - Already relative `img/` paths → unchanged
-/// - Remote non-CDN URLs → stored as-is
+/// - Truncated CDN folder URLs (no hash) → `None` (rejected)
+/// - Remote non-CDN URLs → `None` (rejected — only img/ paths stored)
 fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Option<String>, is_gray: bool) -> Option<String> {
   let url = match url {
     Some(u) if !u.is_empty() => u,
@@ -2472,20 +2521,30 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
   }
 
   // Steam CDN URL → extract hash, store as img/<hash>.jpg
-  if (url.starts_with("https://steamcdn") || url.starts_with("https://cdn.cloudflare.steamstatic.com"))
-    && url.contains("/steamcommunity/public/images/apps/")
-  {
+  // Covers all Steam CDN hosts: steamcdn-a.akamaihd.net, cdn.cloudflare.steamstatic.com,
+  // steamcdn.cloudflare.steamstatic.com, media.steampowered.com, etc.
+  if is_valid_cdn_achievement_url(url) {
     if let Some(rel) = cdn_url_to_relative_icon_path(url, is_gray) {
-      eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url -> {} (from CDN URL)", app_id, rel);
+      if cfg!(debug_assertions) {
+        eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url -> {} (from CDN URL)", app_id, rel);
+      }
       return Some(rel);
     }
+  }
+
+  // URL matches CDN path pattern but has no valid hash → truncated folder URL, reject
+  if url.contains("/steamcommunity/public/images/apps/") {
+    if cfg!(debug_assertions) {
+      eprintln!("[ACH][SCHEMA_VALIDATE] appid={} invalidIconUrl reason=missing-hash url={}", app_id, url);
+    }
+    return None;
   }
 
   // Absolute local path → try to normalize to relative
   if url.starts_with('/') || url.chars().nth(1) == Some(':') {
     let app_dir = match app_handle.path().app_data_dir() {
       Ok(d) => d,
-      Err(_) => return Some(url.clone()),
+      Err(_) => return None,
     };
     let app_id_str = app_id.to_string();
     let possible_bases = vec![
@@ -2499,7 +2558,9 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
       if path_str.starts_with(&base_str) {
         let suffix = path_str[base_str.len()..].trim_start_matches('/');
         let rel_str = format!("img/{}", suffix);
-        eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+        if cfg!(debug_assertions) {
+          eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+        }
         return Some(rel_str);
       }
       // Also try with parent of img
@@ -2509,18 +2570,28 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
           let suffix = path_str[base_parent_str.len()..].trim_start_matches('/');
           if suffix.starts_with("img/") || suffix.starts_with("img\\") {
             let rel_str = suffix.replace('\\', "/");
-            eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+            if cfg!(debug_assertions) {
+              eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+            }
             return Some(rel_str);
           }
         }
       }
     }
+    // Absolute local path that doesn't match achievement dir → reject
+    return None;
   }
 
-  // Remote HTTP/HTTPS URL that is NOT a Steam CDN URL:
-  // Keep as-is for backward compatibility, but it will be migrated to image_sources.json separately
-  eprintln!("[ACH][SCHEMA_MIGRATE] appid={} keeping remote icon url (non-CDN): {}", app_id, url);
-  Some(url.clone())
+  // Any other remote HTTP/HTTPS URL → reject (do not keep remote URLs in cache)
+  if url.starts_with("http://") || url.starts_with("https://") {
+    if cfg!(debug_assertions) {
+      eprintln!("[ACH][SCHEMA_VALIDATE] appid={} rejectedRemoteIconUrl reason=non-cdn-url url={}", app_id, url);
+    }
+    return None;
+  }
+
+  // Unknown format → reject
+  None
 }
 
 // ===================================================================

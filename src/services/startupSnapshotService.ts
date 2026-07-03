@@ -11,6 +11,13 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 // Debug log flag — set to true during testing, false by default
 const ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS = false;
 
+// ── Write coalescing state (Part 2) ──
+let _mediaUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+let _dirtyAppIds = new Set<string>();
+let _writeInProgress = false;
+let _pendingAfterWrite = false;
+let _coalescedScheduleCount = 0;
+
 // Specific appIds for targeted debug logging regardless of ENABLE_VERBOSE flag
 const DEBUG_APP_IDS = new Set(["678950", "851850", "601150", "3017860"]);
 
@@ -158,9 +165,10 @@ type SnapshotMediaStatus = {
 async function setMediaStatusOnGame(
   game: SnapshotGame,
   originalMedia?: SnapshotGameMedia,
+  preValidated?: ValidatedMediaPaths,
 ): Promise<void> {
   const appId = game.appId || "";
-  const validated = await validateSnapshotMediaPaths(appId, game.media);
+  const validated = preValidated ?? await validateSnapshotMediaPaths(appId, game.media);
   const { mediaStatus, missingMedia } = computeMediaStatus(
     originalMedia || game.media,
     validated,
@@ -265,19 +273,29 @@ async function readCanonicalAppinfosBatch(appIds: string[]): Promise<Record<stri
 // appinfo with fallback to physical disk files.
 // ---------------------------------------------------------------------------
 
+type MediaForSnapshotResult = {
+  media: SnapshotGameMedia;
+  validated: ValidatedMediaPaths;
+  hasMedia: boolean;
+};
+
 async function resolveMediaForSnapshot(
   appId: string,
   canonicalInfos?: Record<string, GameAppInfo>,
-): Promise<{
-  media: SnapshotGameMedia;
-  hasMedia: boolean;
-}> {
-  const empty: SnapshotGameMedia = {
+): Promise<MediaForSnapshotResult> {
+  const emptyMedia: SnapshotGameMedia = {
     landscapePath: null,
     coverPath: null,
     backgroundPath: null,
     logoPath: null,
     iconPath: null,
+  };
+  const emptyValidated: ValidatedMediaPaths = {
+    landscapePath: null, landscapeExists: false,
+    coverPath: null, coverExists: false,
+    backgroundPath: null, backgroundExists: false,
+    logoPath: null, logoExists: false,
+    iconPath: null, iconExists: false,
   };
 
   // Check session cache first
@@ -293,10 +311,17 @@ async function resolveMediaForSnapshot(
           logoPath: cached.logoPath ?? null,
           iconPath: cached.iconPath ?? null,
         },
+        validated: {
+          landscapePath: cached.landscapePath ?? null, landscapeExists: !!cached.landscapePath,
+          coverPath: cached.coverPath ?? null, coverExists: !!cached.coverPath,
+          backgroundPath: cached.backgroundPath ?? null, backgroundExists: !!cached.backgroundPath,
+          logoPath: cached.logoPath ?? null, logoExists: !!cached.logoPath,
+          iconPath: cached.iconPath ?? null, iconExists: !!cached.iconPath,
+        },
         hasMedia: true,
       };
     }
-    return { media: empty, hasMedia: false };
+    return { media: emptyMedia, validated: emptyValidated, hasMedia: false };
   }
 
   // 1. Try canonical appinfo (lightweight — reads appinfo.json only)
@@ -320,7 +345,7 @@ async function resolveMediaForSnapshot(
         if (hasMedia && ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS) {
           console.log(`[BootSnapshot] media resolved { appId: ${appId}, landscape: ${!!validated.landscapePath}, cover: ${!!validated.coverPath}, background: ${!!validated.backgroundPath}, logo: ${!!validated.logoPath}, icon: ${!!validated.iconPath} }`);
         }
-        return { media: validated, hasMedia };
+        return { media: validated, validated, hasMedia };
       } else {
         debugAppLog(appId, "normalized media is null — no media paths in appinfo");
       }
@@ -356,7 +381,7 @@ async function resolveMediaForSnapshot(
       if (hasMedia && ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS) {
         console.log(`[BootSnapshot] media resolved (disk fallback) { appId: ${appId}, landscape: ${!!validated.landscapePath}, cover: ${!!validated.coverPath}, background: ${!!validated.backgroundPath}, logo: ${!!validated.logoPath}, icon: ${!!validated.iconPath} }`);
       }
-      return { media: validated, hasMedia };
+      return { media: validated, validated, hasMedia };
     } else {
       debugAppLog(appId, "disk fallback: no media files found");
     }
@@ -367,7 +392,7 @@ async function resolveMediaForSnapshot(
 
   canonicalMediaCache.set(appId, null);
   debugAppLog(appId, "no media resolved from any source");
-  return { media: empty, hasMedia: false };
+  return { media: emptyMedia, validated: emptyValidated, hasMedia: false };
 }
 
 /**
@@ -393,63 +418,111 @@ export function hasCanonicalMediaCacheEntry(appId: string): boolean {
 
 /**
  * Called after media is repaired or downloaded for a specific game.
- * Busts the in-memory cache, resolves fresh media paths, updates the
- * in-memory cached snapshot, and persists to disk immediately.
- * This ensures the startup snapshot stays in sync without waiting for
- * the next restart.
+ * Busts the in-memory cache and schedules a debounced snapshot write.
+ * Multiple calls within the debounce window coalesce into one write.
+ * This ensures the startup snapshot stays in sync without repeated
+ * disk writes for each individual field update.
  */
 export async function notifyMediaUpdated(appId: string): Promise<void> {
   canonicalMediaCache.delete(appId);
+  _dirtyAppIds.add(appId);
+  _scheduleMediaUpdateWrite("media-update", appId);
+}
 
-  // Track this update for flush coordination
-  trackPendingAppInfoUpdate();
+// ── Debounced media update write (Part 2) ──
 
-  try {
-    // Resolve fresh media paths for this app
-    const { media, hasMedia } = await resolveMediaForSnapshot(appId);
+function _scheduleMediaUpdateWrite(reason: string, appId?: string): void {
+  if (_mediaUpdateTimer) {
+    _coalescedScheduleCount++;
+    return;
+  }
+  if (_writeInProgress) {
+    _pendingAfterWrite = true;
+    return;
+  }
+  console.log(`[BootSnapshot][SCHEDULE] reason=${reason} appid=${appId ?? "?"} dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
+  _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 1000);
+}
 
-    if (!cachedSnapshot) return;
+async function _processDirtyAppIds(): Promise<void> {
+  _mediaUpdateTimer = null;
+  _writeInProgress = true;
 
-    // Update library game entry — full media object copy
-    for (const game of cachedSnapshot.library.games) {
-      if (game.appId === appId) {
-        const originalMedia = { ...game.media };
-        game.media = media;
-        // Compute media status after update
-        await setMediaStatusOnGame(game, originalMedia);
-        break;
-      }
-    }
+  const appIds = [..._dirtyAppIds];
+  const dirtyCount = appIds.length;
 
-    // Update sidebar entry
-    for (const item of cachedSnapshot.sidebar.items) {
-      if (item.appId === appId) {
-        item.media.landscapePath = media.landscapePath;
-        item.media.coverPath = media.coverPath;
-        break;
-      }
-    }
+  console.log(`[BootSnapshot][WRITE_START] dirtyAppIds=${dirtyCount}`);
 
-    // Update mediaReadyAppIds
-    if (hasMedia) {
-      if (!cachedSnapshot.indexes.mediaReadyAppIds.includes(appId)) {
-        cachedSnapshot.indexes.mediaReadyAppIds.push(appId);
-      }
-    } else {
-      cachedSnapshot.indexes.mediaReadyAppIds = cachedSnapshot.indexes.mediaReadyAppIds.filter((id) => id !== appId);
-    }
+  if (!cachedSnapshot) {
+    _writeInProgress = false;
+    _dirtyAppIds.clear();
+    return;
+  }
 
-    // Persist updated snapshot to disk immediately
+  const now = Math.floor(Date.now() / 1000);
+
+  // Process each dirty appId: resolve fresh media, update in-memory snapshot
+  for (const appId of appIds) {
     try {
-      await saveStartupSnapshot(cachedSnapshot);
-      if (ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS) {
-        console.log("[BootSnapshot] snapshot written");
+      const { media, validated, hasMedia } = await resolveMediaForSnapshot(appId);
+
+      // Update library game entry
+      for (const game of cachedSnapshot.library.games) {
+        if (game.appId === appId) {
+          const originalMedia = { ...game.media };
+          game.media = media;
+          game.updatedAt = now;
+          // Pass pre-validated result to avoid duplicate validation
+          await setMediaStatusOnGame(game, originalMedia, validated);
+          break;
+        }
       }
-    } catch {
-      console.warn("[BootSnapshot] write after media update failed");
+
+      // Update sidebar entry
+      for (const item of cachedSnapshot.sidebar.items) {
+        if (item.appId === appId) {
+          item.media.landscapePath = media.landscapePath;
+          item.media.coverPath = media.coverPath;
+          break;
+        }
+      }
+
+      // Update mediaReadyAppIds
+      if (hasMedia) {
+        if (!cachedSnapshot.indexes.mediaReadyAppIds.includes(appId)) {
+          cachedSnapshot.indexes.mediaReadyAppIds.push(appId);
+        }
+      } else {
+        cachedSnapshot.indexes.mediaReadyAppIds = cachedSnapshot.indexes.mediaReadyAppIds.filter((id) => id !== appId);
+      }
+    } catch (err) {
+      console.warn(`[BootSnapshot] failed to process dirty appId=${appId}:`, err);
     }
-  } finally {
-    completePendingAppInfoUpdate();
+  }
+
+  // Persist once for all dirty appIds
+  try {
+    await saveStartupSnapshot(cachedSnapshot);
+    const gamesCount = cachedSnapshot.library.games.length;
+    const sidebarCount = cachedSnapshot.sidebar.items.length;
+    console.log(`[BootSnapshot][WRITE_DONE] games=${gamesCount} sidebarItems=${sidebarCount} dirtyAppIds=${dirtyCount}`);
+    if (_coalescedScheduleCount > 0) {
+      console.log(`[BootSnapshot][WRITE_COALESCED] skippedExtraSchedules=${_coalescedScheduleCount}`);
+      _coalescedScheduleCount = 0;
+    }
+  } catch {
+    console.warn("[BootSnapshot] write after coalesced media update failed");
+  }
+
+  // Clear dirty set only after successful write
+  _dirtyAppIds.clear();
+  _writeInProgress = false;
+
+  // If writes came in while we were writing, schedule one more debounced write
+  if (_pendingAfterWrite) {
+    _pendingAfterWrite = false;
+    console.log(`[BootSnapshot][SCHEDULE] reason=pending-after-write dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
+    _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 1000);
   }
 }
 
@@ -492,12 +565,21 @@ export type MediaStatus = "ready" | "partial" | "missing" | "stale" | "pending";
 export const REQUIRED_UI_ROLES = ["cover", "landscape", "background"] as const;
 export const ALL_MEDIA_ROLES = ["cover", "landscape", "background", "logo", "icon"] as const;
 
+export type SnapshotAchievementSummary = {
+  total: number;
+  unlocked: number;
+  percent: number;
+  progressAvailable: boolean;
+};
+
 export type SnapshotGame = {
   appId: string;
   provider: string;
   title: string;
   installed: boolean;
   playable: boolean;
+  favorite?: boolean;
+  hidden?: boolean;
   source: string;
   installPath: string | null;
   media: SnapshotGameMedia;
@@ -506,7 +588,9 @@ export type SnapshotGame = {
   cloudStatus: string | null;
   mediaStatus: MediaStatus | null;
   missingMedia: string[];
+  achievementSummary?: SnapshotAchievementSummary | null;
   lastMediaCheckAt: number | null;
+  updatedAt?: number;
 };
 
 export type SnapshotGameMedia = {
@@ -705,12 +789,41 @@ export async function hydrateStartupSnapshotMedia(
   return { changed, repairedCount, repairedFromAppinfo, repairedFromPhysical, readyCount, partialCount, missingCount, staleCount };
 }
 
+function ensureSnapshotBackwardCompat(snapshot: StartupSnapshot): void {
+  const now = Math.floor(Date.now() / 1000);
+  for (const game of snapshot.library.games) {
+    game.favorite = game.favorite ?? false;
+    game.hidden = game.hidden ?? false;
+    if (!game.updatedAt) game.updatedAt = now;
+    // achievementSummary intentionally left null if not present — hydrated later
+  }
+}
+
+function snapshotNeedsUpgrade(snapshot: StartupSnapshot): boolean {
+  return snapshot.library.games.some(g =>
+    g.favorite == null || g.hidden == null || g.updatedAt == null
+  );
+}
+
 export async function loadStartupSnapshot(): Promise<StartupSnapshot | null> {
   if (cachedSnapshot) return cachedSnapshot;
   try {
     const result = await invoke<StartupSnapshot | null>("read_startup_snapshot");
     if (result && result.version === SNAPSHOT_VERSION) {
+      const needsUpgrade = snapshotNeedsUpgrade(result);
+      ensureSnapshotBackwardCompat(result);
       cachedSnapshot = result;
+      const withFavField = result.library.games.filter(g => g.favorite != null).length;
+      const favTrue = result.library.games.filter(g => g.favorite === true).length;
+      const withHiddenField = result.library.games.filter(g => g.hidden != null).length;
+      const hiddenTrue = result.library.games.filter(g => g.hidden === true).length;
+      const achObject = result.library.games.filter(g => g.achievementSummary != null).length;
+      const achNull = result.library.games.filter(g => g.achievementSummary == null).length;
+      const withUpdatedField = result.library.games.filter(g => g.updatedAt != null).length;
+      console.log(`[BootSnapshot][SHAPE] games=${result.library.games.length} withFavoriteField=${withFavField} favoriteTrue=${favTrue} withHiddenField=${withHiddenField} hiddenTrue=${hiddenTrue} withAchievementSummaryField=${result.library.games.length} achievementSummaryObject=${achObject} achievementSummaryNull=${achNull} withUpdatedAt=${withUpdatedField}`);
+      if (needsUpgrade) {
+        saveStartupSnapshot(result); // persist upgraded fields to disk
+      }
       return result;
     }
     return null;
@@ -725,8 +838,17 @@ export function getCachedSnapshot(): StartupSnapshot | null {
 
 export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<void> {
   cachedSnapshot = snapshot;
+  const withFavField = snapshot.library.games.filter(g => g.favorite != null).length;
+  const favTrue = snapshot.library.games.filter(g => g.favorite === true).length;
+  const withHiddenField = snapshot.library.games.filter(g => g.hidden != null).length;
+  const hiddenTrue = snapshot.library.games.filter(g => g.hidden === true).length;
+  const achObject = snapshot.library.games.filter(g => g.achievementSummary != null).length;
+  const achNull = snapshot.library.games.filter(g => g.achievementSummary == null).length;
+  const withUpdatedField = snapshot.library.games.filter(g => g.updatedAt != null).length;
+  console.log(`[BootSnapshot][SHAPE] games=${snapshot.library.games.length} withFavoriteField=${withFavField} favoriteTrue=${favTrue} withHiddenField=${withHiddenField} hiddenTrue=${hiddenTrue} withAchievementSummaryField=${snapshot.library.games.length} achievementSummaryObject=${achObject} achievementSummaryNull=${achNull} withUpdatedAt=${withUpdatedField}`);
   try {
     await invoke("write_startup_snapshot", { snapshot });
+    console.log(`[BootSnapshot] save ok`);
   } catch {
     // non-critical
   }
@@ -811,16 +933,23 @@ export async function buildStartupSnapshotFromCurrentState(
 
     // Resolve media: canonical appinfo as primary source
     let media: SnapshotGameMedia;
+    let validatedForStatus: ValidatedMediaPaths | null = null;
     let hasMedia = false;
 
     if (hasCanonical) {
       const normalized = normalizeAppInfoMedia(canonicalInfo);
       if (normalized) {
         debugAppLog(game.appId, `canonical media: cover=${!!normalized.coverPath} landscape=${!!normalized.landscapePath} bg=${!!normalized.backgroundPath} logo=${!!normalized.logoPath} icon=${!!normalized.iconPath}`);
-        const validated = await validateSnapshotMediaPaths(game.appId, normalized);
-        hasMedia = !!(validated.landscapePath || validated.coverPath || validated.backgroundPath || validated.logoPath || validated.iconPath);
-        debugAppLog(game.appId, `validated media: hasMedia=${hasMedia} cover=${!!validated.coverPath} landscape=${!!validated.landscapePath}`);
-        media = validated;
+        validatedForStatus = await validateSnapshotMediaPaths(game.appId, normalized);
+        hasMedia = !!(validatedForStatus.landscapePath || validatedForStatus.coverPath || validatedForStatus.backgroundPath || validatedForStatus.logoPath || validatedForStatus.iconPath);
+        debugAppLog(game.appId, `validated media: hasMedia=${hasMedia} cover=${!!validatedForStatus.coverPath} landscape=${!!validatedForStatus.landscapePath}`);
+        media = {
+          landscapePath: validatedForStatus.landscapePath,
+          coverPath: validatedForStatus.coverPath,
+          backgroundPath: validatedForStatus.backgroundPath,
+          logoPath: validatedForStatus.logoPath,
+          iconPath: validatedForStatus.iconPath,
+        };
       } else {
         debugAppLog(game.appId, "normalizeAppInfoMedia returned null");
         media = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
@@ -838,9 +967,15 @@ export async function buildStartupSnapshotFromCurrentState(
             logoPath: diskPaths.logoPath ?? null,
             iconPath: diskPaths.iconPath ?? null,
           };
-          const validated = await validateSnapshotMediaPaths(game.appId, rawMedia);
-          hasMedia = !!(validated.landscapePath || validated.coverPath || validated.backgroundPath || validated.logoPath || validated.iconPath);
-          media = validated;
+          validatedForStatus = await validateSnapshotMediaPaths(game.appId, rawMedia);
+          hasMedia = !!(validatedForStatus.landscapePath || validatedForStatus.coverPath || validatedForStatus.backgroundPath || validatedForStatus.logoPath || validatedForStatus.iconPath);
+          media = {
+            landscapePath: validatedForStatus.landscapePath,
+            coverPath: validatedForStatus.coverPath,
+            backgroundPath: validatedForStatus.backgroundPath,
+            logoPath: validatedForStatus.logoPath,
+            iconPath: validatedForStatus.iconPath,
+          };
         } else {
           media = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
         }
@@ -849,16 +984,39 @@ export async function buildStartupSnapshotFromCurrentState(
       }
     }
 
-    const gameMedia: SnapshotGameMedia = {
-      landscapePath: media.landscapePath,
-      coverPath: media.coverPath,
-      backgroundPath: media.backgroundPath,
-      logoPath: media.logoPath,
-      iconPath: media.iconPath,
-    };
-    // Compute media status from validated paths
-    const validatedForStatus = await validateSnapshotMediaPaths(game.appId, gameMedia);
-    const { mediaStatus, missingMedia } = computeMediaStatus(gameMedia, validatedForStatus);
+    // Reuse the validated result from above for media status computation,
+    // avoiding a duplicate Rust validation call per game.
+    if (!validatedForStatus) {
+      validatedForStatus = await validateSnapshotMediaPaths(game.appId, media);
+    }
+    const { mediaStatus, missingMedia } = computeMediaStatus(media, validatedForStatus);
+
+    // Derive achievement summary from in-memory store if already loaded
+    let achievementSummary: SnapshotAchievementSummary | null = null;
+    try {
+      const { achievementStore } = await import("./achievementStore");
+      const stored = achievementStore.getSummary(game.appId);
+      if (stored) {
+        achievementSummary = {
+          total: stored.total,
+          unlocked: stored.unlocked ?? 0,
+          percent: stored.percent ?? 0,
+          progressAvailable: stored.progressAvailable,
+        };
+      }
+    } catch {
+      // achievementStore not available or not loaded — leave null
+    }
+
+    // Fallback: derive basic summary from LibraryGame fields if available
+    if (!achievementSummary && game.achievementTotal != null) {
+      achievementSummary = {
+        total: game.achievementTotal,
+        unlocked: game.achievementUnlocked ?? 0,
+        percent: game.achievementTotal > 0 ? ((game.achievementUnlocked ?? 0) / game.achievementTotal) * 100 : 0,
+        progressAvailable: game.achievementsSupported ?? false,
+      };
+    }
 
     snapshotGames.push({
       appId: game.appId,
@@ -866,15 +1024,19 @@ export async function buildStartupSnapshotFromCurrentState(
       title,
       installed: game.steamInstalled,
       playable: game.isPlayable,
+      favorite: game.isFavorite ?? false,
+      hidden: false,
       source: game.source,
       installPath: game.installDir || null,
-      media: gameMedia,
+      media,
       lastPlayed: game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null,
       playtime: game.steamPlaytimeMinutes ?? null,
       cloudStatus: game.steamCloudStatus ?? null,
       mediaStatus,
       missingMedia,
+      achievementSummary,
       lastMediaCheckAt: now,
+      updatedAt: now,
     });
 
     if (hasMedia) {
@@ -933,15 +1095,20 @@ export function scheduleSnapshotWrite(
   if (debounceTimer) {
     clearTimeout(debounceTimer);
   }
+  console.log(`[BootSnapshot][SCHEDULE] reason=full-rebuild games=${games.length} alreadyScheduled=${!!debounceTimer}`);
   debounceTimer = setTimeout(async () => {
+    const dirtyCount = _dirtyAppIds.size;
+    console.log(`[BootSnapshot][WRITE_START] reason=full-rebuild dirtyAppIds=${dirtyCount}`);
     try {
       const snapshot = await buildStartupSnapshotFromCurrentState(games, appInfoMap, statsMap);
       await saveStartupSnapshot(snapshot);
-      if (ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS) {
-        console.log("[BootSnapshot] snapshot written");
+      console.log(`[BootSnapshot][WRITE_DONE] games=${snapshot.library.games.length} sidebarItems=${snapshot.sidebar.items.length} dirtyAppIds=${dirtyCount}`);
+      if (_coalescedScheduleCount > 0) {
+        console.log(`[BootSnapshot][WRITE_COALESCED] skippedExtraSchedules=${_coalescedScheduleCount}`);
+        _coalescedScheduleCount = 0;
       }
     } catch {
-      console.warn("[BootSnapshot] write failed");
+      console.warn("[BootSnapshot][WRITE] full-rebuild failed");
     }
   }, delayMs);
 }

@@ -44,6 +44,23 @@ pub struct SnapshotGame {
     pub missing_media: Option<Vec<String>>,
     #[serde(rename = "lastMediaCheckAt")]
     pub last_media_check_at: Option<u64>,
+    #[serde(default)]
+    pub favorite: Option<bool>,
+    #[serde(default)]
+    pub hidden: Option<bool>,
+    #[serde(rename = "achievementSummary", default)]
+    pub achievement_summary: Option<SnapshotAchievementSummary>,
+    #[serde(rename = "updatedAt", default)]
+    pub updated_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotAchievementSummary {
+    pub total: u32,
+    pub unlocked: u32,
+    pub percent: f64,
+    #[serde(rename = "progressAvailable")]
+    pub progress_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +105,12 @@ pub struct SnapshotIndexes {
     pub app_ids: Vec<String>,
     #[serde(rename = "mediaReadyAppIds")]
     pub media_ready_app_ids: Vec<String>,
+    #[serde(rename = "luaFingerprint", default)]
+    pub lua_fingerprint: Option<String>,
+    #[serde(rename = "appinfoFingerprint", default)]
+    pub appinfo_fingerprint: Option<String>,
+    #[serde(rename = "dashboardFingerprint", default)]
+    pub dashboard_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
