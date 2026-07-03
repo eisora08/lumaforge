@@ -16,6 +16,7 @@ import { resolveGameMetadata } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
 import { enqueueMediaDownload } from "../../services/mediaDownloadQueue";
 import { resolveProviderOverlaysForStoreGames } from "../../services/storeProviderOverlay";
+import { resolveStoreDetailsPreviewImage, logDetailsMedia } from "../../services/storeDetailsMediaResolver";
 import {
   getSourceAvailability,
   updateSourceAvailability,
@@ -331,6 +332,31 @@ export default function StoreGameDetailsPage({
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
+
+  const isChecking = effectiveSourceStatus === "checking" || effectiveSourceStatus === "idle";
+
+  // Resolve preview image independent of checking state
+  const previewResult = resolveStoreDetailsPreviewImage({
+    appId: game.appId,
+    game,
+    metadata,
+    selectedSource: effectiveSelectedSource,
+    providerResults: null,
+    isChecking,
+  });
+
+  // Diagnostic — source state on mount/change (change-only)
+  useEffect(() => {
+    const hasSavedSource = !!(effectiveSelectedSource || (game.sources && game.sources.length > 0));
+    const key = `${game.appId}|${isChecking}|${hasSavedSource}|${effectiveSelectedSource?.providerName || "null"}|${game.sources.length}|${!!imageUrl}`;
+    if (diagLogRef.current !== key) {
+      diagLogRef.current = key;
+      console.log(
+        `[STORE][SOURCE_STATE] appid=${game.appId} checking=${isChecking} savedSelected=${hasSavedSource} selectedProvider=${effectiveSelectedSource?.providerName || "null"} providerResults=${game.sources.length} hasPreview=${!!imageUrl}`,
+      );
+      logDetailsMedia(game.appId, previewResult, isChecking);
+    }
+  });
   const galleryImages = useMemo(
     () =>
       [
@@ -399,6 +425,7 @@ export default function StoreGameDetailsPage({
   }, [metadata?.resolved, metadata?.app_id]);
 
   const dlcRequestRef = useRef(0);
+  const diagLogRef = useRef<string>("");
   useEffect(() => {
     if (!dlcAppIds || dlcAppIds.length === 0) {
       setDlcMetadata([]);
@@ -552,6 +579,7 @@ export default function StoreGameDetailsPage({
           <aside className="space-y-4">
             <StoreGameSummaryPanel
               game={{ ...game, sources: effectiveSources }}
+              previewImageUrl={imageUrl}
               installStatus={installStatus}
               developer={developer}
               platforms={platforms}

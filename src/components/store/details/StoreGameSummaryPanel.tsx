@@ -19,6 +19,7 @@ import type { SourceCheckStatus } from "../../../services/sourceAvailabilityCach
 
 type StoreGameSummaryPanelProps = {
   game: PackageGame;
+  previewImageUrl?: string;
   installStatus?: PackageInstallStatus;
   developer: string;
   platforms: string[];
@@ -68,6 +69,7 @@ function getDownloadLabel(source?: PackageSource | null) {
 
 export default function StoreGameSummaryPanel({
   game,
+  previewImageUrl,
   installStatus = "not-installed",
   developer,
   platforms,
@@ -97,7 +99,7 @@ export default function StoreGameSummaryPanel({
       <div className="overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/20">
         <div className="aspect-[16/9] overflow-hidden bg-white/5">
           <AsyncImage
-            src={game.imageUrl}
+            src={previewImageUrl || game.imageUrl}
             alt={game.title}
             className="h-full w-full"
             fallback={

@@ -253,6 +253,10 @@ export async function resolveProviderOverlaysForStoreGames(
   return output;
 }
 
+export function loadStoreProviderOverlayCache(): OverlayCache {
+  return loadCache();
+}
+
 export function clearStoreProviderOverlayCache() {
   localStorage.removeItem(CACHE_KEY);
 }

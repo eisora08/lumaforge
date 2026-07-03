@@ -33,16 +33,18 @@ import {
 } from "../services/tauri";
 
 import { getBestAvailableSource, getSourceKey } from "../utils/sourceHelpers";
+import { isHttpUrl } from "../services/libraryLocalCacheService";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { searchSteamStore } from "../services/steamStoreSearchResolver";
-import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
+import { resolveProviderOverlaysForStoreGames, loadStoreProviderOverlayCache } from "../services/storeProviderOverlay";
 import {
   loadSourceAvailabilityIndex,
   getSourceAvailability,
   updateSourceAvailability,
   buildSourceAvailabilityFromProviders,
 } from "../services/sourceAvailabilityCacheService";
+import { getEnabledProviderIds } from "../services/providerSearch";
 import { consumePendingStoreDetailAppId } from "../services/storeNavigationService";
 import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
 
@@ -1252,6 +1254,29 @@ export default function Store() {
 
   const sourceResolveReqRef = useRef(0);
 
+  function tryLoadOverlayCache(appId: string) {
+    try {
+      const enabledProviderIds = getEnabledProviderIds(settings);
+      const overlayCache = loadStoreProviderOverlayCache();
+      const cacheKey = `${appId}::${enabledProviderIds.slice().sort().join(",")}`;
+      const cached = overlayCache[cacheKey];
+      if (cached && cached.game && cached.game.sources.length > 0) {
+        const overlayHasImage = !!cached.game.imageUrl;
+        const overlaySourceReady = cached.game.sources.some((s) => s.available);
+        log("store-search", `overlay cache hit { appId: "${appId}", hasImage: ${overlayHasImage}, sourceReady: ${overlaySourceReady} }`);
+        setProviderOverlayByAppId((current) => ({
+          ...current,
+          [appId]: cached.game,
+        }));
+        console.log(`[STORE][SOURCES_LOAD] appid=${appId} savedSelected=${overlaySourceReady} provider=${cached.game.sources.find(s => s.available)?.providerName || "unknown"} status=ready`);
+        return true;
+      }
+    } catch (e) {
+      log("store-search", `overlay cache error { appId: "${appId}", error: ${e} }`);
+    }
+    return false;
+  }
+
   function openDetailsForGame(game: PackageGame) {
     // Track view + click interactions
     pushInteractionEvent(game.appId, "view");
@@ -1289,7 +1314,15 @@ export default function Store() {
         setSelectedDetailGame(game);
       }
 
-      if (cached.status === "ready" || cached.status === "none") {
+      if (cached.status === "ready") {
+        const loadedOverlay = tryLoadOverlayCache(appId);
+        if (loadedOverlay) {
+          console.log(`[STORE][SOURCES_SEARCH_SKIP] appid=${appId} reason=saved-selected-source provider=${cached.availableSources[0]?.name || "unknown"}`);
+        }
+        return;
+      }
+
+      if (cached.status === "none") {
         return;
       }
     } else {
@@ -1328,6 +1361,7 @@ export default function Store() {
 
         const resolvedGame = overlayGame ?? game;
         const totalProviders = resolvedGame.sources.length;
+        const hasPreview = !!(resolvedGame.imageUrl && isHttpUrl(resolvedGame.imageUrl));
 
         const entry = buildSourceAvailabilityFromProviders(
           appId,
@@ -1335,6 +1369,8 @@ export default function Store() {
           resolvedGame.sources,
           totalProviders
         );
+        const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
+        console.log(`[STORE][SOURCE_SAVE] appid=${appId} provider=${savedProvider} hasPreview=${hasPreview}`);
         log("store-search", `saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
 
         updateSourceAvailability(appId, entry).catch(() => {});
@@ -1677,12 +1713,16 @@ export default function Store() {
           onBack={handleBackFromDetails}
           onDownloadSource={handleDownloadSource}
           onOpenGame={openDetailsForGame}
-          onSelectSourceKey={(sourceKey) =>
+          onSelectSourceKey={(sourceKey) => {
+            const appId = selectedDetailGameWithOverlay.appId;
+            const game = selectedDetailGameWithOverlay;
+            const oldSource = getSelectedSourceForGame(game);
+            console.log(`[STORE][SOURCE_CHANGE] appid=${appId} from=${oldSource?.providerName || "null"} to=${sourceKey}`);
             setSelectedSourceKeyByAppId((current) => ({
               ...current,
-              [selectedDetailGameWithOverlay.appId]: sourceKey,
-            }))
-          }
+              [appId]: sourceKey,
+            }));
+          }}
           onRefreshSources={() => {
             const game = selectedDetailGameWithOverlay;
             if (!game) return;
