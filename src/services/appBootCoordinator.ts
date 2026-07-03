@@ -15,6 +15,7 @@ export type BootTaskId =
   | "load-settings"
   | "migrate-portable-paths"
   | "load-startup-snapshot"
+  | "enrich-snapshot-titles"
   | "load-local-game-index"
   | "reconcile-lua-games"
   | "load-achievement-summaries"
@@ -228,6 +229,55 @@ export async function runBootTasks(): Promise<void> {
 
           if (_snapshotResolve) _snapshotResolve();
 
+          // Stage 3.5: Enrich snapshot game titles (resolve placeholders via metadata/store)
+          await track("enrich-snapshot-titles", async () => {
+            logBoot("enrich snapshot titles start");
+            if (_snapshotLoaded?.library?.games) {
+              const { isPlaceholderSteamTitle } = await import("./gameCacheService");
+              const { getStoreDetails } = await import("./tauri");
+              const { resolveGameMetadata } = await import("./gameMetadataResolver");
+              const placeholderGames = _snapshotLoaded.library.games.filter(
+                (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
+              );
+              if (placeholderGames.length > 0) {
+                const appIds = placeholderGames.map((g) => g.appId!);
+                const numIds = appIds.map(Number).filter((n) => !isNaN(n));
+                let metadataResolution: Record<number, import("../types/gameMetadata").SteamAppMetadata> = {};
+                if (numIds.length > 0) {
+                  try {
+                    metadataResolution = await resolveGameMetadata(numIds);
+                  } catch { /* non-critical */ }
+                }
+                let enrichedCount = 0;
+                for (const game of placeholderGames) {
+                  if (!game.appId) continue;
+                  const meta = metadataResolution[Number(game.appId)];
+                  if (meta?.name && !isPlaceholderSteamTitle(meta.name, game.appId)) {
+                    game.title = meta.name;
+                    enrichedCount++;
+                    logBoot(`enriched title: appid=${game.appId} name=${meta.name} source=metadata`);
+                    continue;
+                  }
+                  try {
+                    const sd = await getStoreDetails(game.appId).catch(() => null);
+                    const sdData = sd?.data as { name?: string } | null;
+                    if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
+                      game.title = sdData.name;
+                      enrichedCount++;
+                      logBoot(`enriched title: appid=${game.appId} name=${sdData.name} source=store`);
+                    }
+                  } catch { /* ignore */ }
+                }
+                if (enrichedCount > 0) {
+                  const { saveStartupSnapshot } = await import("./startupSnapshotService");
+                  await saveStartupSnapshot(_snapshotLoaded).catch(() => {});
+                  logBoot(`enriched ${enrichedCount}/${placeholderGames.length} snapshot titles`);
+                }
+              }
+            }
+            logBoot("enrich snapshot titles end");
+          });
+
           // Stage 4: Load local game index (SQLite, instant)
           await track("load-local-game-index", async () => {
             logBoot("load game index start");
@@ -300,11 +350,13 @@ export async function runBootTasks(): Promise<void> {
                 logBoot(`luaOnly=${luaOnly.length}`);
                 logBoot(`staleSqliteOnly=${staleSqliteOnly.length}`);
 
+                let reconciledGames: import("../types/libraryGame").LibraryGame[] | null = null;
+
                 if (missingFromSqlite.length > 0) {
                   // Build LibraryGames for missing entries by running the resolver
                   const { resolveLibraryGames } = await import("./libraryGameResolver");
                   const result = await resolveLibraryGames(settings);
-                  setReconciledGames(result.games);
+                  reconciledGames = result.games;
                   logBoot(`reconciled games count=${result.games.length}`);
 
                   // Persist reconciled list to SQLite cache so next boot is instant
@@ -312,53 +364,96 @@ export async function runBootTasks(): Promise<void> {
                     const { saveCachedGames } = await import("./gameDetectionCache");
                     await saveCachedGames(result.games, result.warnings).catch(() => {});
                     logBoot(`saved reconciled games to cache`);
-
-                    // Resolve names for games with placeholder/empty titles and
-                    // persist to canonical appinfo so snapshot hydration can use them.
-                    const { isPlaceholderSteamTitle } = await import("./gameCacheService");
-                    const { updateGameAppinfoMedia, readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
-                    const emptyTitleGames = result.games.filter(
-                      (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
-                    );
-                    if (emptyTitleGames.length > 0) {
-                      const appIds = emptyTitleGames.map((g) => g.appId!);
-                      const appinfos = await readCanonicalAppinfos(appIds).catch(() => ({} as Record<string, any>));
-                      for (const game of emptyTitleGames) {
-                        if (!game.appId) continue;
-                        const appinfo = appinfos[game.appId];
-                        let resolvedName: string | null = null;
-                        let source = "";
-                        if (appinfo?.name && !isPlaceholderSteamTitle(appinfo.name, game.appId)) {
-                          resolvedName = appinfo.name;
-                          source = "appinfo";
-                        }
-                        if (!resolvedName) {
-                          try {
-                            const sd = await getStoreDetails(game.appId).catch(() => null);
-                            const sdData = sd?.data as { name?: string } | null;
-                            if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
-                              resolvedName = sdData.name;
-                              source = "store-details";
-                            }
-                          } catch { /* ignore */ }
-                        }
-                        if (resolvedName) {
-                          console.log(`[NAME][CANONICAL_WRITE] appid=${game.appId} name=${resolvedName} source=${source}`);
-                          game.title = resolvedName;
-                          updateGameAppinfoMedia(
-                            game.appId, resolvedName,
-                            { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
-                            null,
-                          ).catch(() => {});
-                        } else {
-                          console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
-                        }
-                      }
-                      setReconciledGames(result.games);
-                    }
                   }
                 } else {
                   clearReconciledGames();
+                  // Use the cached games from SQLite for name enrichment
+                  if (sqliteCache && sqliteCache.games.length > 0) {
+                    const { loadSteamGameIndex } = await import("./fullSteamGameIndex");
+                    const index = await loadSteamGameIndex();
+                    const { indexEntryToLibraryGame } = await import("./fullSteamGameIndex");
+                    const luaOverlay = {} as Record<string, boolean>;
+                    for (const id of luaAppIds) luaOverlay[id] = true;
+                    reconciledGames = index.map((e) => indexEntryToLibraryGame(e, luaOverlay));
+                  }
+                }
+
+                // Resolve names for games with placeholder/empty titles and
+                // persist to canonical appinfo so snapshot hydration can use them.
+                // Runs regardless of whether reconciliation was needed.
+                if (reconciledGames && reconciledGames.length > 0) {
+                  const { isPlaceholderSteamTitle } = await import("./gameCacheService");
+                  const { updateGameAppinfoMedia, readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
+                  const { resolveGameMetadata } = await import("./gameMetadataResolver");
+                  const emptyTitleGames = reconciledGames.filter(
+                    (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
+                  );
+                  if (emptyTitleGames.length > 0) {
+                    const appIds = emptyTitleGames.map((g) => g.appId!);
+                    const appinfos = await readCanonicalAppinfos(appIds).catch(() => ({} as Record<string, any>));
+                    // Also resolve metadata — may find names that canonical/store don't have yet
+                    const numIds = appIds.map(Number).filter((n) => !isNaN(n));
+                    let metadataResolution: Record<number, import("../types/gameMetadata").SteamAppMetadata> = {};
+                    if (numIds.length > 0) {
+                      try { metadataResolution = await resolveGameMetadata(numIds); } catch { /* non-critical */ }
+                    }
+                    for (const game of emptyTitleGames) {
+                      if (!game.appId) continue;
+                      const appinfo = appinfos[game.appId];
+                      const meta = metadataResolution[Number(game.appId)];
+                      let resolvedName: string | null = null;
+                      let source = "";
+                      if (appinfo?.name && !isPlaceholderSteamTitle(appinfo.name, game.appId)) {
+                        resolvedName = appinfo.name;
+                        source = "appinfo";
+                      } else if (meta?.name && !isPlaceholderSteamTitle(meta.name, game.appId)) {
+                        resolvedName = meta.name;
+                        source = "metadata";
+                      }
+                      if (!resolvedName) {
+                        try {
+                          const sd = await getStoreDetails(game.appId).catch(() => null);
+                          const sdData = sd?.data as { name?: string } | null;
+                          if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
+                            resolvedName = sdData.name;
+                            source = "store-details";
+                          }
+                        } catch { /* ignore */ }
+                      }
+                      if (resolvedName) {
+                        console.log(`[NAME][CANONICAL_WRITE] appid=${game.appId} name=${resolvedName} source=${source}`);
+                        game.title = resolvedName;
+                        updateGameAppinfoMedia(
+                          game.appId, resolvedName,
+                          { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
+                          null,
+                        ).catch(() => {});
+                      } else {
+                        console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
+                      }
+                    }
+                    setReconciledGames(reconciledGames);
+
+                    // Update the cached in-memory snapshot so dashboard/grid surfaces
+                    // see the real names immediately (they read snapshot game.title).
+                    const { getCachedSnapshot, saveStartupSnapshot } = await import("./startupSnapshotService");
+                    const cachedSnap = getCachedSnapshot();
+                    if (cachedSnap?.library) {
+                      let snapChanged = false;
+                      for (const enriched of emptyTitleGames) {
+                        if (!enriched.appId) continue;
+                        const sg = cachedSnap.library.games.find(g => g.appId === enriched.appId);
+                        if (sg && sg.title !== enriched.title) {
+                          sg.title = enriched.title;
+                          snapChanged = true;
+                        }
+                      }
+                      if (snapChanged) {
+                        await saveStartupSnapshot(cachedSnap).catch(() => {});
+                        logBoot(`snapshot titles updated count=${emptyTitleGames.filter(g => g.appId && !isPlaceholderSteamTitle(g.title, g.appId)).length}`);
+                      }
+                    }
+                  }
                 }
 
                 logBoot(`finalGames=${allConfiguredAppIds.size}`);
@@ -478,6 +573,14 @@ export async function runBootTasks(): Promise<void> {
                       missing.push(appId);
                     }
                   }
+
+                  // Part 5: Repair existing cache entries with wrong icon_gray paths
+                  // (img/<hash>.jpg instead of img/<hash>_gray.jpg)
+                  const firstBatch = appIds.slice(0, 5);
+                  await Promise.allSettled(
+                    firstBatch.map((aid) => achievementStore.repairGrayIconPaths(aid, "boot"))
+                  );
+
                   // Batch to avoid overwhelming the queue
                   const batch = missing.slice(0, 10);
                   if (batch.length > 0) {

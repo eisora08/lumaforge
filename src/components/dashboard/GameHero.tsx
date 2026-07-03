@@ -4,7 +4,7 @@ import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
-import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showWarning } from "../toast/GameToast";
 import AsyncImage from "../common/AsyncImage";
@@ -170,7 +170,15 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       if (!cancelled) setBgUrl(url);
     });
     if (heroAppId && heroGame) {
-      setHeroTitle(resolveCanonicalDisplayTitle(heroAppId, heroGame));
+      // Resolve title via dashboard titles resolver (checks canonical appinfo)
+      resolveDashboardTitles([heroGame]).then((r: Record<string, { title: string; source: string }>) => {
+        if (!cancelled) {
+          const entry = r[heroAppId!];
+          const resolved = entry?.title;
+          setHeroTitle(resolved ?? heroGame!.title);
+          console.log(`[NAME][HERO] appid=${heroAppId} source=${entry?.source ?? "snapshot"} title=${resolved ?? heroGame!.title}`);
+        }
+      });
     }
     const selection = heroGame?.media?.backgroundPath ? "background" : "landscape";
     console.log(`[MEDIA][HERO] appid=${heroAppId} selected=${selection} bgExists=${!!bgPath} title=${heroTitle || heroGame?.title}`);

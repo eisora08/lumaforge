@@ -369,6 +369,52 @@ class AchievementStoreImpl {
     }
   }
 
+  // ── Part 5: Repair existing cache entries where icon_gray points to img/<hash>.jpg
+  // instead of img/<hash>_gray.jpg ──
+
+  async repairGrayIconPaths(appId: string, _traceId?: string): Promise<void> {
+    try {
+      const { readAchievementCache, writeAchievementCache } = await import("./tauri");
+      const cached = await readAchievementCache(Number(appId));
+      if (!cached) return;
+
+      let repaired = 0;
+      const patched = cached.achievements.map((entry) => {
+        const gray = entry.icon_gray_url ?? entry.icon_gray;
+        if (!gray) return entry;
+        if (gray.startsWith("img/") && !gray.endsWith("_gray.jpg")) {
+          const newGray = gray.replace(/\.jpg$/i, "_gray.jpg");
+          console.debug(`[ACH][SCHEMA_REPAIR_GRAY] appid=${appId} apiName=${entry.api_name} old=${gray} new=${newGray}`);
+          repaired++;
+          return { ...entry, icon_gray_url: newGray };
+        }
+        return entry;
+      });
+
+      if (repaired > 0) {
+        await writeAchievementCache(Number(appId), {
+          achievements: patched,
+          achievement_percentages: cached.achievement_percentages,
+          summary: cached.summary,
+        });
+        console.debug(`[ACH][SCHEMA_REPAIR_GRAY] appid=${appId} repaired=${repaired} entries`);
+        // Also update in-memory summary if present
+        const summary = this.summariesByAppId.get(appId);
+        if (summary) {
+          for (const ach of summary.achievements) {
+            const patch = patched.find((p) => p.api_name === ach.apiName);
+            if (patch && patch.icon_gray_url && ach.iconGrayUrl !== patch.icon_gray_url) {
+              ach.iconGrayUrl = patch.icon_gray_url;
+            }
+          }
+          this.notify(appId, summary);
+        }
+      }
+    } catch {
+      // non-critical repair
+    }
+  }
+
   // ── Internal notify ──
 
   private notify(appId: string, summary: GameAchievementsSummary): void {

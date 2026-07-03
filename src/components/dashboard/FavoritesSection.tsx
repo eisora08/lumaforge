@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Star } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
@@ -57,17 +57,20 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
     const resolve = async () => {
       const urls: Record<string, string | null> = {};
       const titles: Record<string, string> = {};
+      // Batch-resolve canonical names for all displayed games
+      const resolvedTitles = displayGames.length > 0 ? await resolveDashboardTitles(displayGames) : {};
       for (const appId of ids) {
         if (cancelled) break;
         const game = gameById.get(appId);
         if (!game) continue;
         const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath;
         urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
-        titles[appId] = resolveCanonicalDisplayTitle(appId, game);
+        titles[appId] = resolvedTitles[appId]?.title ?? game.title;
         if (imgPath && !cancelled) {
           const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : "background";
           console.log(`[MEDIA][DASH] section=Favorites appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
         }
+        console.log(`[NAME][DASH] section=Favorites appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setMediaUrlMap(prev => {

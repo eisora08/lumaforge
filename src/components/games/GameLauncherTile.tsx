@@ -32,6 +32,7 @@ import {
   loadGameAppInfoWithMediaFallback,
   resolveGameMediaUrl,
   resolveCanonicalDisplayTitle,
+  resolveCanonicalName,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -106,7 +107,16 @@ export default function GameLauncherTile({
     let cancelled = false;
     setMediaLoading(true);
     loadGameAppInfoWithMediaFallback(game.appId)
-      .then((appInfo) => {
+      .then(async (appInfo) => {
+        if (cancelled) return;
+        // Ensure canonical name is resolved — if appinfo.name is null/placeholder,
+        // try metadata resolver and store details, and write back to disk.
+        if (appInfo && (!appInfo.name || appInfo.name.startsWith("Steam App "))) {
+          const resolvedName = await resolveCanonicalName(game.appId!);
+          if (resolvedName) {
+            appInfo.name = resolvedName;
+          }
+        }
         if (!cancelled) {
           setCanonicalInfo(appInfo);
           setMediaLoading(false);
@@ -126,6 +136,20 @@ export default function GameLauncherTile({
     appInfoEntry,
     canonicalInfo,
   );
+
+  // Source trace log — emitted once per instance per game
+  const displayTraced = useRef(false);
+  if (!displayTraced.current && game.appId) {
+    displayTraced.current = true;
+    const sources = [
+      { key: "canonical", val: canonicalInfo?.name },
+      { key: "appInfoEntry", val: appInfoEntry?.name },
+      { key: "metadata", val: game?.metadata?.name },
+      { key: "gameTitle", val: game?.title },
+    ];
+    const winner = sources.find((s) => s.val && !s.val.startsWith("Steam App "));
+    console.log(`[NAME][SOURCE_TRACE] surface=grid appid=${game.appId} gameTitle=${game.title} canonicalName=${canonicalInfo?.name} metadataName=${game?.metadata?.name} final=${displayTitle} source=${winner?.key || "fallback"}`);
+  }
 
   const displayImage = useMemo(
     () => getCardImage(artworkMode, canonicalInfo),

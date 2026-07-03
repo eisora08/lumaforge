@@ -4,7 +4,7 @@ import { getCachedSourceAvailabilityIndex } from "../../services/sourceAvailabil
 import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabilityCacheService";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
-import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -67,6 +67,8 @@ export default function LuaReadySection({ onNavigate }: Props) {
     const resolve = async () => {
       const urls: Record<string, string | null> = {};
       const titles: Record<string, string> = {};
+      const luaGames = luaEntries.map(e => e.game);
+      const resolvedTitles = luaGames.length > 0 ? await resolveDashboardTitles(luaGames) : {};
       for (const appId of ids) {
         if (cancelled) break;
         const entry = entryById.get(appId);
@@ -74,11 +76,12 @@ export default function LuaReadySection({ onNavigate }: Props) {
         const { game } = entry;
         const imgPath = game.media?.landscapePath || game.media?.coverPath;
         urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
-        titles[appId] = resolveCanonicalDisplayTitle(appId, game);
+        titles[appId] = resolvedTitles[appId]?.title ?? game.title;
         if (imgPath && !cancelled) {
           const selection = game.media?.landscapePath ? "landscape" : "cover";
           console.log(`[MEDIA][DASH] section=LuaReady appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
         }
+        console.log(`[NAME][DASH] section=LuaReady appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setMediaUrlMap(prev => {

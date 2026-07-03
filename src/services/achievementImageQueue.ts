@@ -117,6 +117,7 @@ export function resolveImageSource(
   value: string | undefined | null,
   appId: string,
   type: ImageType,
+  apiName?: string,
 ): { sourceUrl: string; fileName: string; sourceKind: ImageSourceKind } | null {
   if (!value) return null;
   if (isResolvedUrl(value)) return null;
@@ -125,24 +126,33 @@ export function resolveImageSource(
 
   if (classification.kind === "steam-hash") {
     const suffix = type === "icon_gray" ? "_gray" : "";
+    const fileName = `${value}${suffix}.jpg`;
+    console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${value} fileName=${fileName}`);
     return {
       sourceUrl: buildCdnUrl(appId, value),
-      fileName: `${value}${suffix}.jpg`,
+      fileName,
       sourceKind: "steam-hash",
     };
   }
 
   if (classification.kind === "remote-url") {
-    const fileName = value.split("/").pop() || `${Date.now()}.jpg`;
+    const rawFileName = value.split("/").pop() || `${Date.now()}.jpg`;
+    // For icon_gray, ensure hash-based filenames get _gray suffix
+    const fileName = type === "icon_gray"
+      ? rawFileName.replace(/^([a-f0-9]{40})\.jpg$/i, "$1_gray.jpg")
+      : rawFileName;
+    console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${rawFileName.replace(/\.jpg$/i, "")} fileName=${fileName}`);
     return { sourceUrl: value, fileName, sourceKind: "remote-url" };
   }
 
   if (classification.kind === "relative-schema-path" && classification.cleaned && isSteamImageHash(classification.cleaned)) {
     const cleaned = classification.cleaned;
     const suffix = type === "icon_gray" ? "_gray" : "";
+    const fileName = `${cleaned}${suffix}.jpg`;
+    console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${cleaned} fileName=${fileName}`);
     return {
       sourceUrl: buildCdnUrl(appId, cleaned),
-      fileName: `${cleaned}${suffix}.jpg`,
+      fileName,
       sourceKind: "steam-hash",
     };
   }
@@ -211,6 +221,14 @@ class AchievementImageQueueImpl {
 
   enqueue(items: ImageQueueItem[]) {
     for (const item of items) {
+      // ── Part 2: Role mismatch detection ──
+      // If a source URL belongs to icon_gray but is being enqueued as "icon", flag it
+      const grayAsIcon = item.type === "icon" && item.sourceUrl.toLowerCase().includes("icongray");
+      if (grayAsIcon) {
+        console.warn(`[ACH][IMG_ROLE_MISMATCH] appid=${item.appId} apiName=${item.apiName} graySourceUsedAsIcon=true source=${item.sourceUrl}`);
+        continue;
+      }
+
       // ── Cross-AppID source URL validation (Part 4) ──
       const urlAppId = extractAppIdFromPath(item.sourceUrl);
       if (urlAppId && urlAppId !== item.appId) {
@@ -219,6 +237,25 @@ class AchievementImageQueueImpl {
       }
 
       const jobKey = this.getJobKey(item);
+
+      // ── Part 3: Dedup gray source creating icon job for same hash family ──
+      // If an icon job's hash matches an existing/completed icon_gray job's hash,
+      // skip the icon job to avoid duplicate download of the gray source.
+      const hashMatch = item.fileName.match(/^([a-f0-9]{40})\.jpg$/);
+      if (item.type === "icon" && hashMatch) {
+        const hash = hashMatch[1];
+        const grayFileName = `${hash}_gray.jpg`;
+        const grayQueued = this.queue.some(
+          (q) => q.appId === item.appId && q.type === "icon_gray" && q.fileName === grayFileName,
+        );
+        const grayKey = `${item.appId}:${item.apiName}:icon_gray`;
+        const grayActive = this.activeKeys.has(grayKey);
+        const grayCompleted = this.completedKeys.has(grayKey);
+        if (grayQueued || grayActive || grayCompleted) {
+          console.debug(`[ACH][IMG_DEDUP_GRAY] appid=${item.appId} apiName=${item.apiName} hash=${hash} skipped=${item.fileName} reason=gray-source-already-has-gray-file`);
+          continue;
+        }
+      }
 
       // ── Block progress-sync callers from downloading images (Part B10) ──
       if (item.caller === "progress-sync") {
@@ -251,7 +288,13 @@ class AchievementImageQueueImpl {
         continue;
       }
 
-      // Skip if already queued
+      // Skip if already queued (by destination path)
+      const alreadyQueued = this.queue.some(
+        (q) => q.appId === item.appId && q.fileName === item.fileName,
+      );
+      if (alreadyQueued) continue;
+
+      // Skip if already queued (by apiName+type)
       const already = this.queue.some(
         (q) => q.apiName === item.apiName && q.type === item.type && q.appId === item.appId,
       );
@@ -336,6 +379,34 @@ class AchievementImageQueueImpl {
     if (item.caller === "progress-sync") {
       console.debug(`[ACH][IMG_BLOCKED] reason=progress-sync-no-images caller=${item.caller}`);
       return;
+    }
+
+    // ── Part 6: Skip download if destination file already exists on disk ──
+    if (item.fileName.endsWith("_gray.jpg") || item.fileName.endsWith(".jpg")) {
+      try {
+        const { readAchievementCache } = await import("./tauri");
+        const cached = await readAchievementCache(Number(item.appId));
+        if (cached) {
+          // Check via resolveAchievementImagePaths without import
+          const { resolveAchievementImagePaths } = await import("./tauri");
+          const statuses = await resolveAchievementImagePaths(Number(item.appId));
+          const achStatus = statuses.find((s) => s.api_name === item.apiName);
+          if (achStatus) {
+            if (item.type === "icon_gray" && achStatus.icon_gray_exists) {
+              console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} type=icon_gray file=${item.fileName} reason=exists`);
+              this.completedKeys.add(key);
+              return;
+            }
+            if (item.type === "icon" && achStatus.icon_exists) {
+              console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} type=icon file=${item.fileName} reason=exists`);
+              this.completedKeys.add(key);
+              return;
+            }
+          }
+        }
+      } catch {
+        // Non-critical — proceed with download if cache read fails
+      }
     }
 
     // ── Image trace log (Part 9) ──
@@ -463,10 +534,79 @@ export async function validateAchievementIconResolution(appId: string): Promise<
   }
 }
 
+// ── Part 7: Dry-run duplicate detection ──
+
+export async function detectDuplicateGrayIcons(appId: string): Promise<{
+  appId: string;
+  pairs: Array<{ hash: string; normalFile: string; grayFile: string; normalReferenced: boolean; grayReferenced: boolean }>;
+  totalPairs: number;
+}> {
+  const pairs: Array<{ hash: string; normalFile: string; grayFile: string; normalReferenced: boolean; grayReferenced: boolean }> = [];
+  try {
+    const { readAchievementCache, resolveAchievementImagePaths } = await import("./tauri");
+    const [cached] = await Promise.all([
+      readAchievementCache(Number(appId)),
+      resolveAchievementImagePaths(Number(appId)).catch(() => []),
+    ]);
+    if (!cached) return { appId, pairs: [], totalPairs: 0 };
+
+    // Build set of referenced icon filenames (without img/ prefix)
+    const referencedIcons = new Set<string>();
+    const referencedGrayIcons = new Set<string>();
+    for (const ach of cached.achievements) {
+      const icon = ach.icon_url ?? ach.icon;
+      const gray = ach.icon_gray_url ?? ach.icon_gray;
+      if (icon) {
+        const fname = icon.replace(/^img\//, "");
+        referencedIcons.add(fname);
+      }
+      if (gray) {
+        const fname = gray.replace(/^img\//, "");
+        referencedGrayIcons.add(fname);
+      }
+    }
+
+    // Use the Rust orphan image cleanup to get actual files
+    const { cleanupAchievementOrphanImages } = await import("./tauri");
+    const result = await cleanupAchievementOrphanImages({ appId: Number(appId), dryRun: true });
+
+    // Find <hash>.jpg files that have a corresponding <hash>_gray.jpg
+    const grayFiles = result.orphaned_files.filter((f) => f.endsWith("_gray.jpg"));
+    const allFiles = result.orphaned_files;
+
+    for (const grayFile of grayFiles) {
+      const hash = grayFile.replace(/_gray\.jpg$/, "");
+      const normalFile = `${hash}.jpg`;
+      // Only consider if normal file also exists
+      if (allFiles.includes(normalFile) || allFiles.some((f) => f.endsWith(`/${normalFile}`))) {
+        const normalReferenced = referencedIcons.has(normalFile);
+        const grayReferenced = referencedGrayIcons.has(grayFile);
+        pairs.push({
+          hash,
+          normalFile,
+          grayFile,
+          normalReferenced,
+          grayReferenced,
+        });
+      }
+    }
+
+    for (const p of pairs) {
+      if (!p.normalReferenced && p.grayReferenced) {
+        console.debug(`[ACH][IMG_DUPLICATE_GRAY] appid=${appId} hash=${p.hash} normalFileUnreferenced=true grayReferenced=true`);
+      }
+    }
+  } catch {
+    // non-critical
+  }
+  return { appId, pairs, totalPairs: pairs.length };
+}
+
 // ── Dev console exposure ──
 
 if (typeof window !== "undefined") {
   const _w = window as unknown as Record<string, unknown>;
   _w.__validateAchievementImageFolder = validateAchievementImageFolder;
   _w.__validateAchievementIconResolution = validateAchievementIconResolution;
+  _w.__detectDuplicateGrayIcons = detectDuplicateGrayIcons;
 }

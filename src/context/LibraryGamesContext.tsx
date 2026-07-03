@@ -225,6 +225,19 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         }
       }
 
+      // Repair placeholder titles in cached games — try canonical appinfo/metadata/store
+      const { resolveCanonicalName } = await import("../services/gameCacheService");
+      await Promise.allSettled(loadedGames.map(async (game) => {
+        if (!game.appId) return;
+        if (!game.title || game.title.startsWith("Steam App ")) {
+          const realName = await resolveCanonicalName(game.appId);
+          if (realName) {
+            console.log(`[NAME][CACHE_REPAIR] appid=${game.appId} old=${game.title} new=${realName} source=canonical`);
+            game.title = realName;
+          }
+        }
+      }));
+
       setGames(loadedGames);
       setWarnings(cached.warnings || []);
       setInitialLoading(false);

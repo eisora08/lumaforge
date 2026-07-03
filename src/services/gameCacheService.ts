@@ -182,6 +182,107 @@ export function resolveCanonicalDisplayTitle(
 }
 
 // ---------------------------------------------------------------------------
+// Resolve titles for dashboard sections: batch-load canonical appinfos,
+// then resolve each game's display title with full fallback chain.
+// For games where canonical name is null/placeholder, attempts to fill
+// the name from metadata resolver / store details and writes back.
+// Returns a Record<appId, { title: string; source: string }>.
+export async function resolveDashboardTitles(
+  games: Array<{ appId: string; title?: string }>,
+): Promise<Record<string, { title: string; source: string }>> {
+  const result: Record<string, { title: string; source: string }> = {};
+  const ids = games.map(g => g.appId).filter(Boolean);
+  if (ids.length === 0) return result;
+
+  const { readCanonicalAppinfos } = await import("./tauri");
+  const canonicalInfos = await readCanonicalAppinfos(ids).catch(() => ({} as Record<string, any>));
+
+  for (const game of games) {
+    if (!game.appId) continue;
+    let ci = canonicalInfos[game.appId] ?? null;
+    const placeholderCi = !ci?.name || isPlaceholderSteamTitle(ci?.name, game.appId);
+
+    // If canonical appinfo has no real name, try filling from metadata/store
+    if (placeholderCi) {
+      const filled = await fillCanonicalName(game.appId);
+      if (filled) {
+        ci = { appId: game.appId, provider: "steam", name: filled, updatedAt: null, media: null, mediaSources: null, remote: null };
+      }
+    }
+
+    const title = resolveCanonicalDisplayTitle(game.appId, game as any, null, ci);
+
+    // Determine winning source
+    if (ci?.name && !isPlaceholderSteamTitle(ci.name, game.appId)) {
+      result[game.appId] = { title, source: "canonical" };
+    } else if ((game as any)?.metadata?.name && !isPlaceholderSteamTitle((game as any)?.metadata?.name, game.appId)) {
+      result[game.appId] = { title, source: "metadata" };
+    } else if (game.title && !isPlaceholderSteamTitle(game.title, game.appId)) {
+      result[game.appId] = { title, source: "snapshot" };
+    } else {
+      result[game.appId] = { title, source: "fallback" };
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Fill canonical appinfo name from metadata resolver or store details,
+// writing back to disk so subsequent reads get the real name.
+// Returns the resolved name (or null if unresolvable).
+// ---------------------------------------------------------------------------
+// Resolve canonical name for a game, trying local sources in order:
+// 1. canonical appinfo (appinfo.json on disk)
+// 2. metadata cache (resolveGameMetadata — disk cache, no network)
+// 3. store details (getStoreDetails — may have cached network data)
+// Writes the resolved name to canonical appinfo for persistence.
+// Safe to call from async contexts (not render).
+export async function resolveCanonicalName(appId: string): Promise<string | null> {
+  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  if (appInfo?.name && !isPlaceholderSteamTitle(appInfo.name, appId)) {
+    return appInfo.name;
+  }
+  return fillCanonicalName(appId);
+}
+
+async function fillCanonicalName(appId: string): Promise<string | null> {
+  const { resolveGameMetadata } = await import("./gameMetadataResolver");
+  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  if (appInfo?.name && !isPlaceholderSteamTitle(appInfo.name, appId)) {
+    return appInfo.name;
+  }
+  const appIdNum = Number(appId);
+  let resolvedName: string | null = null;
+  let source = "";
+  if (!isNaN(appIdNum)) {
+    const meta: Record<number, import("../types/gameMetadata").SteamAppMetadata> = await resolveGameMetadata([appIdNum]).catch(() => ({} as Record<number, import("../types/gameMetadata").SteamAppMetadata>));
+    const m = meta[appIdNum];
+    if (m?.name && !isPlaceholderSteamTitle(m.name, appId)) {
+      resolvedName = m.name;
+      source = "metadata";
+    }
+  }
+  if (!resolvedName) {
+    const sd = await getStoreDetails(appId).catch(() => null);
+    const sdData = sd?.data as { name?: string } | null;
+    if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, appId)) {
+      resolvedName = sdData.name;
+      source = "store-details";
+    }
+  }
+  if (resolvedName) {
+    console.log(`[NAME][CANONICAL_WRITE] appid=${appId} name=${resolvedName} source=${source}`);
+    updateGameAppinfoMedia(
+      appId, resolvedName,
+      { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
+      null,
+    ).catch(() => {});
+    return resolvedName;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Seed the session cache from a startup snapshot to avoid disk checks
 // during initial render. Call this once during boot before any component
 // tries to resolve media.

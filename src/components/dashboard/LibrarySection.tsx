@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Gamepad2 } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
@@ -56,17 +56,19 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
     const resolveAll = async () => {
       const urls: Record<string, string | null> = {};
       const titles: Record<string, string> = {};
+      const resolvedTitles = displayGames.length > 0 ? await resolveDashboardTitles(displayGames) : {};
       for (const appId of ids) {
         if (cancelled) break;
         const game = gameById.get(appId);
         if (!game) continue;
         const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath || game.media?.iconPath;
         urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
-        titles[appId] = resolveCanonicalDisplayTitle(appId, game);
+        titles[appId] = resolvedTitles[appId]?.title ?? game.title;
         if (imgPath && !cancelled) {
           const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : game.media?.backgroundPath ? "background" : "icon";
           console.log(`[MEDIA][DASH] section=Library appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
         }
+        console.log(`[NAME][DASH] section=Library appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setResolvedUrls(prev => {
