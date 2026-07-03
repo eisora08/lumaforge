@@ -3,8 +3,6 @@ import { useCallback, useEffect, useRef, type ElementType } from "react";
 import {
   Activity,
   Award,
-  ChevronLeft,
-  ChevronRight,
   Store,
   Download,
   Library,
@@ -14,6 +12,8 @@ import {
   Wrench,
   X,
   Flame,
+  PanelLeftOpen,
+  PanelLeftClose,
 } from "lucide-react";
 
 import type { AppPage } from "../../types/navigation";
@@ -99,44 +99,59 @@ export default function Sidebar({
       {/* Header — shrink-0 */}
       <div
         className={`flex shrink-0 h-16 items-center ${
-          showLabels ? "justify-between px-5" : "justify-center px-2"
+          isCollapsed ? "justify-center px-2" : isDrawer ? "justify-between px-5" : "justify-between px-5"
         }`}
       >
-        <div
-          className={`flex min-w-0 items-center gap-3 ${
-            isCollapsed ? "justify-center" : ""
-          }`}
-        >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-(--color-accent)/10 bg-(--color-accent)/8">
-            <Flame className="h-4.5 w-4.5 text-(--color-accent)" />
-          </div>
-
-          <div
-            className={`min-w-0 lf-sidebar-label ${
-              showLabels
-                ? "lf-sidebar-label-visible"
-                : "lf-sidebar-label-hidden"
-            }`}
-          >
-            <h1 className="font-bold leading-none text-(--color-text)">
-              LumaForge
-            </h1>
-            {mode === "expanded" && (
-              <p className="mt-1.5 text-[10px] text-(--color-muted)/50">
-                Premium Game Toolkit
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Close button (drawer) */}
-        {isDrawer && (
+        {isCollapsed ? (
+          /* Collapsed: centered logo button with hover swap to PanelLeftOpen */
           <button
-            onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10"
+            onClick={onToggleCollapse}
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+            className="group relative flex h-9 w-9 items-center justify-center rounded-xl border border-(--color-accent)/10 bg-(--color-accent)/8 transition hover:bg-white/10 active:scale-[0.97] lf-press-effect"
           >
-            <X className="h-5 w-5" />
+            <Flame className="absolute h-4.5 w-4.5 text-(--color-accent) transition-all duration-200 opacity-100 scale-100 group-hover:opacity-0 group-hover:scale-90 group-focus-visible:opacity-0" />
+            <PanelLeftOpen className="absolute h-4 w-4 text-(--color-accent) transition-all duration-200 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100" />
           </button>
+        ) : (
+          <>
+            {/* Left: logo + title */}
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-(--color-accent)/10 bg-(--color-accent)/8">
+                <Flame className="h-4.5 w-4.5 text-(--color-accent)" />
+              </div>
+
+              <div className="min-w-0 lf-sidebar-label lf-sidebar-label-visible">
+                <h1 className="font-bold leading-none text-(--color-text)">
+                  LumaForge
+                </h1>
+                {mode === "expanded" && (
+                  <p className="mt-1.5 text-[10px] text-(--color-muted)/50">
+                    Premium Game Toolkit
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Right: close button (drawer) or collapse toggle (desktop) */}
+            {isDrawer ? (
+              <button
+                onClick={onClose}
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            ) : (
+              <button
+                onClick={onToggleCollapse}
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) active:scale-[0.97] lf-press-effect"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -261,20 +276,7 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* Collapse/expand toggle (desktop only, not in drawer mode) */}
-      {!isDrawer && (
-        <button
-          onClick={onToggleCollapse}
-          title={isCollapsed ? "Expandir sidebar" : "Colapsar sidebar"}
-          className="absolute -right-3 top-24 z-50 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-(--color-surface) text-(--color-muted) shadow-md transition-colors hover:bg-(--color-panel) hover:text-(--color-text) hover:shadow-lg focus-visible:ring-2 focus-visible:ring-(--color-accent) lf-press-effect"
-        >
-          {isCollapsed ? (
-            <ChevronRight className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronLeft className="h-3.5 w-3.5" />
-          )}
-        </button>
-      )}
+
     </div>
   );
 
