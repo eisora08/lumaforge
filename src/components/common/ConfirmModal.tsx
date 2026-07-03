@@ -28,34 +28,29 @@ const variantConfig: Record<ConfirmVariant, {
 }> = {
   danger: {
     iconBg: "bg-red-500/10",
-    iconColor: "text-red-400",
+    iconColor: "text-red-500",
     btnClass: "bg-red-500 text-white hover:bg-red-500/80 active:scale-[0.97]",
     iconEl: <AlertTriangle className="h-5 w-5" />,
   },
   warning: {
-    iconBg: "bg-amber-500/10",
-    iconColor: "text-amber-400",
-    btnClass: "bg-amber-500 text-white hover:bg-amber-500/80 active:scale-[0.97]",
+    iconBg: "bg-(--color-warning)/10",
+    iconColor: "text-(--color-warning)",
+    btnClass: "bg-(--color-warning) text-white hover:opacity-85 active:scale-[0.97]",
     iconEl: <AlertCircle className="h-5 w-5" />,
   },
   info: {
-    iconBg: "bg-(--color-accent)/10",
-    iconColor: "text-(--color-accent)",
-    btnClass: "bg-(--color-accent) text-(--color-bg) hover:opacity-90 active:scale-[0.97]",
+    iconBg: "bg-(--color-info)/10",
+    iconColor: "text-(--color-info)",
+    btnClass: "bg-(--color-info) text-(--color-bg) hover:opacity-90 active:scale-[0.97]",
     iconEl: <Info className="h-5 w-5" />,
   },
   success: {
-    iconBg: "bg-emerald-500/10",
-    iconColor: "text-emerald-400",
-    btnClass: "bg-emerald-500 text-white hover:bg-emerald-500/80 active:scale-[0.97]",
+    iconBg: "bg-(--color-success)/10",
+    iconColor: "text-(--color-success)",
+    btnClass: "bg-(--color-success) text-white hover:opacity-85 active:scale-[0.97]",
     iconEl: <CheckCircle className="h-5 w-5" />,
   },
 };
-
-function getVariantBtn(v: ConfirmVariant | undefined, fallback: string): string {
-  if (!v) return fallback;
-  return variantConfig[v].btnClass;
-}
 
 export default function ConfirmModal({
   open,
@@ -146,11 +141,11 @@ export default function ConfirmModal({
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 lf-modal-overlay"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-md lf-modal-overlay"
     >
       <div
         ref={panelRef}
-        className="lf-modal-panel mx-4 w-full max-w-sm rounded-2xl border border-white/10 bg-[#101014] p-6 shadow-2xl"
+        className="lf-modal-panel mx-4 w-full max-w-sm rounded-2xl border p-6 lf-surface"
       >
         <div className="flex items-center gap-3">
           <div className={`flex h-10 w-10 items-center justify-center rounded-full ${icon ? "" : cfg.iconBg}`}>
@@ -160,41 +155,49 @@ export default function ConfirmModal({
               <span className={cfg.iconColor}>{cfg.iconEl}</span>
             )}
           </div>
-          <h2 id={titleId} className="text-lg font-bold text-white">{title}</h2>
+          <h2 id={titleId} className="text-lg font-bold text-(--color-text)">{title}</h2>
         </div>
 
-        <p id={descId} className="mt-4 text-sm leading-relaxed text-white/70">
+        <p id={descId} className="mt-4 text-sm leading-relaxed text-(--color-muted)">
           {description}
         </p>
 
         <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-          {extraActions}
-
-          {secondaryLabel && onSecondary && (
-            <button
-              type="button"
-              onClick={() => { onSecondary(); }}
-              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/30 ${getVariantBtn(secondaryVariant, "text-white")}`}
-            >
-              {secondaryLabel}
-            </button>
+          {(extraActions || (secondaryLabel && onSecondary)) && (
+            <div className="flex flex-wrap items-center gap-3 mr-auto">
+              {extraActions}
+              {secondaryLabel && onSecondary && (
+                <button
+                  type="button"
+                  onClick={() => { onSecondary(); }}
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${secondaryVariant
+                      ? variantConfig[secondaryVariant].btnClass
+                      : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+                    }`}
+                >
+                  {secondaryLabel}
+                </button>
+              )}
+            </div>
           )}
 
-          <button
-            type="button"
-            onClick={onCancel}
-            className="cursor-pointer rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/30"
-          >
-            {cancelLabel}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-text) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-text)/20"
+            >
+              {cancelLabel}
+            </button>
 
-          <button
-            type="button"
-            onClick={onConfirm}
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition focus-visible:ring-2 focus-visible:ring-white/50 ${cfg.btnClass}`}
-          >
-            {confirmLabel}
-          </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition focus-visible:ring-2 focus-visible:ring-(--color-text)/30 ${cfg.btnClass}`}
+            >
+              {confirmLabel}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

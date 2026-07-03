@@ -39,7 +39,7 @@ function getSourceStatus(source: PackageSource) {
   if (source.available) {
     return {
       label: "Ready",
-      className: "text-emerald-300",
+      className: "text-(--color-success)",
       icon: CheckCircle2,
     };
   }
@@ -47,14 +47,14 @@ function getSourceStatus(source: PackageSource) {
   if (source.requiresApiKey && !source.hasAuth) {
     return {
       label: "Needs API key",
-      className: "text-yellow-300",
+      className: "text-(--color-warning)",
       icon: KeyRound,
     };
   }
 
   return {
     label: "Unavailable",
-    className: "text-red-300",
+    className: "text-(--color-destructive)",
     icon: CircleX,
   };
 }
@@ -189,7 +189,7 @@ export default function StoreSourceSelectorModal({
                           </span>
 
                           {source.requiresApiKey && !source.hasAuth && (
-                            <span className="text-yellow-300/70">
+                            <span className="text-(--color-warning)/70">
                               API key required
                             </span>
                           )}

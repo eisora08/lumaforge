@@ -54,6 +54,10 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#ffffff",
     "--color-muted": "#9ca3af",
     "--color-accent": "#b8d7dc",
+    "--color-destructive": "#ef4444",
+    "--color-warning": "#d97706",
+    "--color-success": "#059669",
+    "--color-info": "#b8d7dc",
   },
 
   "midnight-blue": {
@@ -65,6 +69,10 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#f8fafc",
     "--color-muted": "#94a3b8",
     "--color-accent": "#38bdf8",
+    "--color-destructive": "#ef4444",
+    "--color-warning": "#fbbf24",
+    "--color-success": "#34d399",
+    "--color-info": "#38bdf8",
   },
 
   "steam-gray": {
@@ -76,6 +84,10 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#ffffff",
     "--color-muted": "#c7d5e0",
     "--color-accent": "#66c0f4",
+    "--color-destructive": "#ef4444",
+    "--color-warning": "#eab308",
+    "--color-success": "#22c55e",
+    "--color-info": "#66c0f4",
   },
 
   "oled-black": {
@@ -87,6 +99,10 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-text": "#ffffff",
     "--color-muted": "#a3a3a3",
     "--color-accent": "#ffffff",
+    "--color-destructive": "#ef4444",
+    "--color-warning": "#f59e0b",
+    "--color-success": "#22c55e",
+    "--color-info": "#ffffff",
   },
 };
 
