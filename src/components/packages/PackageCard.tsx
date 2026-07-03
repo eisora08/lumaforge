@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Download,
@@ -129,6 +129,12 @@ export default function PackageCard({
   const [imageFailed, setImageFailed] = useState(false);
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
 
+  const _mountedRef = useRef(true);
+  useEffect(() => {
+    _mountedRef.current = true;
+    return () => { _mountedRef.current = false; };
+  }, []);
+
   const availableSources = game.sources.filter((source) => source.available);
   const bestSource = useMemo(() => getBestAvailableSource(game), [game]);
 
@@ -179,11 +185,12 @@ export default function PackageCard({
   }
 
   async function internalDownload(source: PackageSource) {
+    if (!_mountedRef.current) return;
+
     if (!source.downloadUrl) {
       showError("Esta fuente no tiene una URL de descarga válida.", {
         title: "URL inválida",
       });
-
       return;
     }
 
@@ -191,7 +198,6 @@ export default function PackageCard({
       showWarning("Configura o detecta las rutas de Steam antes de instalar.", {
         title: "Rutas requeridas",
       });
-
       return;
     }
 
@@ -215,6 +221,11 @@ export default function PackageCard({
         tempFolder: settings.tempFolder,
       });
 
+      if (!_mountedRef.current) {
+        console.log(`[CARD][ASYNC_CANCELLED] appid=${game.appId} stage=after-download`);
+        return;
+      }
+
       updateJob(job.id, {
         status: "done",
         progress: 100,
@@ -226,8 +237,14 @@ export default function PackageCard({
         title: "Paquete instalado",
       });
 
+      console.log(`[LUA][INSTALL_COMPLETE] appid=${game.appId} provider=${source.providerName} title="${displayTitle}"`);
       onInstallComplete?.();
     } catch (error) {
+      if (!_mountedRef.current) {
+        console.log(`[CARD][ASYNC_CANCELLED] appid=${game.appId} stage=error`);
+        return;
+      }
+
       const message =
         error instanceof Error
           ? error.message
@@ -241,9 +258,21 @@ export default function PackageCard({
         error: message,
       });
 
-      showError(message, {
-        title: "Instalación fallida",
-      });
+      const statusMatch = message.match(/Status:\s*(\d+)/);
+      const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+      const isAuthError = statusCode === 401 || statusCode === 403;
+
+      if (isAuthError) {
+        console.log(`[CARD][PROVIDER_DOWNLOAD_FAILED] appid=${game.appId} provider=${source.providerName} status=${statusCode} title="${displayTitle}"`);
+        showError(
+          `Error de autenticación con ${source.providerName}. Verifica la API key o permisos. (HTTP ${statusCode})`,
+          { title: "Descarga fallida" }
+        );
+      } else {
+        showError(message, {
+          title: "Instalación fallida",
+        });
+      }
     }
   }
 

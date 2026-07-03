@@ -46,6 +46,7 @@ import {
 } from "../services/sourceAvailabilityCacheService";
 import { getEnabledProviderIds } from "../services/providerSearch";
 import { consumePendingStoreDetailAppId } from "../services/storeNavigationService";
+import { useLibraryGames } from "../context/LibraryGamesContext";
 import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
@@ -276,6 +277,15 @@ export default function Store() {
     sourceCacheLoadedRef.current = true;
     loadSourceAvailabilityIndex().catch(() => {});
   }, []);
+
+  // Cancellation guard for async Tauri operations — prevents setState after unmount
+  const _mountedRef = useRef(true);
+  useEffect(() => {
+    _mountedRef.current = true;
+    return () => { _mountedRef.current = false; };
+  }, []);
+
+  const { refresh: libraryRefresh } = useLibraryGames();
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -1446,11 +1456,12 @@ export default function Store() {
   }
 
   async function downloadFromSource(game: PackageGame, source: PackageSource) {
+    if (!_mountedRef.current) return;
+
     if (!source.available) {
       showWarning("Selecciona una fuente disponible antes de descargar.", {
         title: "Fuente requerida",
       });
-
       return;
     }
 
@@ -1458,7 +1469,6 @@ export default function Store() {
       showError("Esta fuente no tiene una URL de descarga válida.", {
         title: "URL inválida",
       });
-
       return;
     }
 
@@ -1466,7 +1476,6 @@ export default function Store() {
       showWarning("Configura o detecta las rutas de Steam antes de instalar.", {
         title: "Rutas requeridas",
       });
-
       return;
     }
 
@@ -1490,6 +1499,11 @@ export default function Store() {
         tempFolder: settings.tempFolder,
       });
 
+      if (!_mountedRef.current) {
+        console.log(`[STORE][ASYNC_CANCELLED] appid=${game.appId} stage=after-download`);
+        return;
+      }
+
       updateJob(job.id, {
         status: "done",
         progress: 100,
@@ -1502,7 +1516,21 @@ export default function Store() {
       });
 
       refreshInstalledScripts();
+
+      // Auto-register newly installed Lua package with library games context
+      console.log(`[LUA][REGISTER_PACKAGE] appid=${game.appId} provider=${source.providerName} title="${game.title}"`);
+      libraryRefresh().then(() => {
+        console.log(`[LIBRARY][GAME_UPSERT] appid=${game.appId} action=refresh`);
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[LIBRARY][GAME_UPSERT] appid=${game.appId} error="${msg}"`);
+      });
     } catch (error) {
+      if (!_mountedRef.current) {
+        console.log(`[STORE][ASYNC_CANCELLED] appid=${game.appId} stage=error`);
+        return;
+      }
+
       const message =
         error instanceof Error
           ? error.message
@@ -1516,9 +1544,42 @@ export default function Store() {
         error: message,
       });
 
-      showError(message, {
-        title: "Instalación fallida",
-      });
+      // Parse HTTP status code from Rust error message (e.g. "Status: 401")
+      const statusMatch = message.match(/Status:\s*(\d+)/);
+      const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+      const isAuthError = statusCode === 401 || statusCode === 403;
+
+      if (isAuthError) {
+        console.log(`[STORE][PROVIDER_DOWNLOAD_FAILED] appid=${game.appId} provider=${source.providerName} status=${statusCode} title="${game.title}"`);
+
+        // Mark source as failed in cache, but preserve available sources for Change Source option
+        updateSourceAvailability(game.appId, {
+          appId: game.appId,
+          title: game.title,
+          status: "error",
+          luaReady: false,
+          availableSources: game.sources.filter((s) => s.available).map((s) => ({
+            id: s.providerId,
+            name: s.providerName,
+            type: s.fileType,
+            status: "ready",
+            packageUrl: s.downloadUrl,
+            updatedAt: Math.floor(Date.now() / 1000),
+          })),
+          sourceCount: game.sources.filter((s) => s.available).length,
+          totalProviderCount: game.sources.length,
+          updatedAt: Math.floor(Date.now() / 1000),
+        }).catch(() => {});
+
+        showError(
+          `Error de autenticación con ${source.providerName}. Verifica la API key o permisos. (HTTP ${statusCode})`,
+          { title: "Descarga fallida" }
+        );
+      } else {
+        showError(message, {
+          title: "Instalación fallida",
+        });
+      }
     }
   }
 
