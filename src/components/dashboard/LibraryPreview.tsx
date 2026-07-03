@@ -1,4 +1,4 @@
-import { Gamepad2, Play, Star } from "lucide-react";
+import { Gamepad2, Play, Heart } from "lucide-react";
 
 const games = [
   {
@@ -40,7 +40,7 @@ export default function LibraryPreview() {
             <div className="mb-5 flex items-center justify-between">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/5">
                 {index === 1 ? (
-                  <Star className="h-5 w-5 text-yellow-300" />
+                  <Heart className="h-5 w-5 text-rose-400" />
                 ) : (
                   <Gamepad2 className="h-5 w-5 text-(--color-accent)" />
                 )}

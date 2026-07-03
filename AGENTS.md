@@ -317,3 +317,126 @@ The name enrichment code written in Session 4 (`appBootCoordinator.ts:303-358`) 
 - `tsc --noEmit` ✅ passes
 - `vite build` ✅ passes
 - `cargo check` ✅ passes
+
+## Session 7 — GameHero selection, hover overlay, render spam, heart icon
+
+### Step 25: GameHero selection + hover overlay + render spam
+- **GameHero selection logic**: Deterministic priority chain — running > lastPlayed > favoriteWithMedia > validMedia > installed > titledFallback. Added `[DASH][HERO_SELECT]`, `[DASH][HERO_RUNNING]`, `[DASH][HERO_CLEAR_RUNNING]` diagnostic logs (only log on change). Playtime store consulted for up-to-date lastPlayed.
+- **Dashboard card hover**: Removed `group-hover/card:scale-105` image zoom from all 6 sections. Added dark overlay `bg-black/30 opacity-0 group-hover/card:opacity-100` matching Library card hover. No padding/margin changes on hover — prevents layout shift.
+- **Render spam**: `[MEDIA][GRID_RENDER]` in GameLauncherTile gated behind ref-based change detection (only logs when state changes).
+
+### Step 27: Star → Heart replacements + PopularPicksSection
+- **Star → Heart**: FavoritesSection, LibraryPreview, LibraryGameDetails all use Heart icon. Active: `text-rose-400 fill-current` with `bg-black/50` dark translucent bg. Inactive: no fill, muted color. GameDetails achievements stat keeps Star (not a favorite toggle).
+- **PopularPicksSection created** (Step 27): Reads global catalog from `readAllGames()` (SQLite). Filters tool/system apps ("Steamworks", "Redistributable", "Utilities"). Excludes user's library games. Prefers games with metadata/media. Sorted by `updatedAt` descending.
+- **`[DASH][RECOMMEND]` diagnostic log**: Added to RecommendedSection with `source=personalized|fallback`, `appIds`, and genre tags (gated by ref).
+
+## Session 8 — Dashboard global catalog expansion (Step 28)
+
+### Problem
+Dashboard discovery sections were limited to the user's library games. Recommended for You had no way to suggest games the user doesn't own. No "New & Noteworthy" section existed. The "Popular Picks" label was misleading (no real popularity signal).
+
+### Global catalog audit (complete)
+Store page uses 4 sources — `steamdb.json` static file (primary 500K app catalog), `providerSearch` (mockPackages→real package registry), Steam store API for search, `sourceAvailabilityCache` for Lua-ready overlays. No rating/popularity/trending signal exists in any data source.
+
+### Data source decisions
+- `readAllGames()` from SQLite is the global catalog for dashboard discovery sections (not steamdb.json which is 500K+ entries).
+- No "Trending Right Now" section — no real trending/popularity signal exists.
+- PopularPicks → Featured Picks: per rule "Do not label as Popular if there is no popularity/rating signal".
+
+### Part 1: Recommended for You — global catalog fill
+- Added `getRecommendedWithGlobalFill()` in `recommendationService.ts` — first runs personalized scoring on libraryGames, then fills remaining slots (up to limit) from global catalog scored by genre/category match against user profile.
+- Catalog entries from `readAllGames()` have `metadataJson` parsed for `genres`/`categories` — scored the same way as library games.
+- Excludes library games, favorites, continuePlaying, and already-recommended from fill pool.
+- `RecommendedSection.tsx` updated to load `readAllGames()` on mount, use `getRecommendedWithGlobalFill`.
+- `handleOpen` navigates to store for catalog-only games (not in library).
+- Subtitle updated: `"Genre-matched games from the catalog"` for fallback mode.
+- `[DASH][GLOBAL_CATALOG]` diagnostic log reports total catalog size, metadata coverage, installed count.
+- `[DASH][RECOMMEND]` log enhanced with `personal=N` and `global=N` counts.
+
+### Part 2: PopularPicks → FeaturedPicks rename
+- `PopularPicksSection.tsx` → `FeaturedPicksSection.tsx` (file deleted, new file created).
+- Heading changed from "Popular Picks" to "Featured Picks".
+- Subtitle changed to "Curated games from the global catalog".
+- Added `[DASH][GLOBAL_CATALOG] section=featured` diagnostic log.
+- All imports in `Home.tsx` updated.
+
+### Part 3: NewNoteworthySection created
+- New `NewNoteworthySection.tsx` reads `readAllGames()` catalog, filters library games and tool apps.
+- Parses `release_date` from `SteamAppMetadata` (handles ISO dates, Steam text format like "Jan 15, 2024", "Coming Soon"/"TBA").
+- Sorts by `release_date` descending, prefers games with media.
+- Shows release date as pill badge on each card.
+- Navigation: library games → game detail, catalog-only → store.
+
+### Part 4: Heart/badge style refinement
+- **RecommendedSection**: Changed from `rounded-lg bg-black/50 p-1.5 text-yellow-400` (old star style) → `rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm` matching store minimal pill style.
+- **FavoritesSection**: Same style update for consistency.
+
+### Part 5: Home.tsx section ordering
+- New order: GameHero → ContinuePlaying → Favorites → Recommended → **NewNoteworthy** → **FeaturedPicks** → TopPlayed → StoreHighlights → QuickActions → System strip.
+- Discovery sections (NewNoteworthy, FeaturedPicks) placed after personalized sections, before playtime sections.
+
+### Key Files Changed
+- `src/services/recommendationService.ts` — `getRecommendedWithGlobalFill()`, `parseMetadataJson()`
+- `src/components/dashboard/RecommendedSection.tsx` — global catalog loading, fill candidates, catalog nav, heart style, diagnostic logs
+- `src/components/dashboard/FavoritesSection.tsx` — heart style consistency
+- `src/components/dashboard/PopularPicksSection.tsx` → deleted
+- `src/components/dashboard/FeaturedPicksSection.tsx` — new file (renamed + enhanced)
+- `src/components/dashboard/NewNoteworthySection.tsx` — new file
+- `src/pages/Home.tsx` — updated imports and section ordering
+
+### Build
+- `tsc --noEmit` ✅ passes
+- `vite build` ✅ passes
+
+## Session 9 — Mount global discovery sections with fallback catalog (Step 29)
+
+### Problem
+Sections from Session 8 (FeaturedPicks, NewNoteworthy) were mounted in JSX but returned `null` because `readAllGames()` SQLite table is empty on first boot / before full scan. `libraryGames` from context was already populated but not used as catalog fallback. Recommended for You also had no fallback for empty SQLite. No Trending Right Now section existed at all.
+
+### Root Cause
+- `readAllGames()` reads SQLite `games` table that may be empty until a full library scan completes
+- All three discovery sections only used `readAllGames()` — when empty, `displayGames.length === 0` → `return null`
+- No `[DASH][SECTION_SKIP]` diagnostic logs to explain missing sections
+- TrendingRightNowSection didn't exist (not even a placeholder)
+
+### Part 1: Fallback catalog from libraryGames
+- **FeaturedPicksSection**: Added `libraryGameToCatalogGame()` converter. `displayGames` computed from SQLite catalog when non-empty, else from `libraryGames` context (always populated after boot).
+- **NewNoteworthySection**: Same fallback pattern. Parse `release_date` from `LibraryGame.metadata` when SQLite is empty.
+- **RecommendedSection**: SQLite catalog loading now falls back to `libraryGames` converted to `GameEntry[]` format.
+- All three sections emit `[DASH][GLOBAL_CATALOG] loaded=N source=<sqlite|context-fallback>`.
+
+### Part 2: [DASH][SECTION_SKIP] diagnostic logs
+- **FeaturedPicks**: Logs `[DASH][SECTION_SKIP] section=FeaturedPicks reason=no-catalog-data|all-candidates-filtered` when hidden.
+- **NewNoteworthy**: Logs `[DASH][SECTION_SKIP] section=NewNoteworthy reason=no-release-date-metadata|all-candidates-filtered` when hidden.
+- **TrendingRightNow**: Logs `[DASH][SECTION_SKIP] section=TrendingRightNow reason=no-trending-signal` on mount.
+- Impossible for any section to disappear silently.
+
+### Part 3: [DASH][POPULAR] and [DASH][NEW] diagnostic logs
+- **FeaturedPicks**: `[DASH][POPULAR] candidates=N rendered=N source=<sqlite-catalog|context-fallback>` on each recompute.
+- **NewNoteworthy**: `[DASH][NEW] candidates=N rendered=N source=<metadata-releaseDate|context-fallback>` on each recompute.
+
+### Part 4: TrendingRightNowSection created (skip-only)
+- New `TrendingRightNowSection.tsx` — always logs skip and returns null.
+- No fake trending data. No fake cards. No random data.
+- Mounted in `Home.tsx` between FeaturedPicks and TopPlayed.
+
+### Part 5: Per-game source logs in RecommendedSection
+- First-time mount logs `[DASH][RECOMMEND] appid=<id> title=<title> source=<local|global-catalog> score=N reasons=<genres>` per final recommendation.
+- Source determination: `local` if game is in libraryGames, `global-catalog` if filled from catalog.
+
+### Part 6: Empty state behavior
+- All sections with no real data hide silently (return null).
+- TrendingRightNowSection always hides with a console log.
+- Diagnostic logs explain why any section is missing.
+- No mock cards, no random data, no fake content.
+
+### Key Files Changed
+- `src/components/dashboard/FeaturedPicksSection.tsx` — `libraryGameToCatalogGame` fallback, `[DASH][SECTION_SKIP]` + `[DASH][POPULAR]` logs
+- `src/components/dashboard/NewNoteworthySection.tsx` — `libraryGameToCatalogGame` fallback, `[DASH][SECTION_SKIP]` + `[DASH][NEW]` logs
+- `src/components/dashboard/RecommendedSection.tsx` — libraryGames fallback catalog, per-game source logs
+- `src/components/dashboard/TrendingRightNowSection.tsx` — new (skip-only with log)
+- `src/pages/Home.tsx` — TrendingRightNowSection mount, `[DASH][GLOBAL_CATALOG]` snapshot log
+
+### Build
+- `tsc --noEmit` ✅ passes
+- `vite build` ✅ passes

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity } from "lucide-react";
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
@@ -6,12 +6,17 @@ import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
+import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
+import NewNoteworthySection from "../components/dashboard/NewNoteworthySection";
+import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
 import { getCachedSnapshot } from "../services/startupSnapshotService";
 import { importSnapshotPlaytime } from "../services/playtimeService";
 import { useGameActivity } from "../context/GameActivityContext";
 import { useGameSession } from "../context/GameSessionContext";
+import { subscribeCatalogState, getCatalogState, getCachedCatalog, discoverGlobalCatalog } from "../services/globalCatalogService";
 import type { AppPage } from "../types/navigation";
+import type { CatalogStatus } from "../services/globalCatalogService";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -56,6 +61,36 @@ export default function Home({ onNavigate }: Props) {
   const snapshot = useMemo(() => getCachedSnapshot(), []);
   const { activities } = useGameActivity();
   const { sessions } = useGameSession();
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+
+  // Track catalog readiness for discovery sections
+  useEffect(() => {
+    const unsub = subscribeCatalogState((s) => {
+      setCatalogStatus(s.status);
+    });
+    return unsub;
+  }, []);
+
+  // Start loading the global catalog unconditionally — do not wait for child sections to mount
+  useEffect(() => {
+    discoverGlobalCatalog().catch(() => {});
+  }, []);
+
+  // Log catalog source once when it transitions from loading to ready
+  const sourceLogRef = useRef(false);
+  useEffect(() => {
+    if (sourceLogRef.current) return;
+    if (catalogStatus !== "loading") {
+      sourceLogRef.current = true;
+      const state = getCatalogState();
+      const normalized = getCachedCatalog();
+      console.log(
+        `[DASH][GLOBAL_CATALOG_SOURCE] source=steamdb.json rawTotal=${state.total} normalizedTotal=${normalized.length}`,
+      );
+    }
+  }, [catalogStatus]);
+
+  const dashboardDiscoveryReady = catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error";
 
   // One-time import of snapshot playtime data into playtime store (after boot)
   useEffect(() => {
@@ -106,6 +141,42 @@ export default function Home({ onNavigate }: Props) {
           onNavigate={onNavigate}
           continuePlayingAppIds={continuePlayingAppIds}
         />
+
+        {/* Global discovery sections — only evaluate when catalog is ready */}
+        {!dashboardDiscoveryReady && (
+          <section>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-(--color-text)">
+                  Discovering games
+                </h2>
+                <p className="mt-0.5 text-sm text-(--color-muted)">
+                  Loading global catalog&hellip;
+                </p>
+              </div>
+            </div>
+            <div className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56 animate-pulse"
+                >
+                  <div className="aspect-video rounded-xl bg-white/5" />
+                  <div className="mt-3 h-4 w-3/4 rounded bg-white/5" />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {dashboardDiscoveryReady && (
+          <>
+            <NewNoteworthySection onNavigate={onNavigate} />
+            <FeaturedPicksSection onNavigate={onNavigate} />
+            <TrendingRightNowSection onNavigate={onNavigate} />
+          </>
+        )}
+
         <TopPlayedSection
           snapshot={snapshot}
           onNavigate={onNavigate}

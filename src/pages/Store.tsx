@@ -43,6 +43,7 @@ import {
   updateSourceAvailability,
   buildSourceAvailabilityFromProviders,
 } from "../services/sourceAvailabilityCacheService";
+import { consumePendingStoreDetailAppId } from "../services/storeNavigationService";
 import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
@@ -294,6 +295,17 @@ export default function Store() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.luaPath]);
 
+  const pendingAppIdRef = useRef<string | null>(null);
+
+  // On mount, consume any pending store detail appId set by dashboard discovery sections
+  useEffect(() => {
+    const pending = consumePendingStoreDetailAppId();
+    if (pending) {
+      pendingAppIdRef.current = pending;
+      console.log(`[STORE][PENDING_NAV] appid=${pending} waiting for catalog`);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetch("/data/steamdb.json")
@@ -304,7 +316,7 @@ export default function Store() {
       .then((data) => {
         if (!cancelled) {
           setSteamCatalog(data);
-          console.log(`[Store] steamdb.json loaded: ${data.length} total games`);
+          console.log(`[STORE][CATALOG_SOURCE] total=${data.length} source=steamdb.json`);
         }
       })
       .catch((err) => {
@@ -312,6 +324,31 @@ export default function Store() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  // When steamCatalog is loaded and there's a pending appId, auto-open details
+  const openedPendingRef = useRef(false);
+  useEffect(() => {
+    if (steamCatalog.length === 0) return;
+    if (openedPendingRef.current) return;
+    const appIdStr = pendingAppIdRef.current;
+    if (!appIdStr) return;
+    openedPendingRef.current = true;
+
+    const appIdNum = parseInt(appIdStr, 10);
+    const entry = steamCatalog.find((e) => e.appid === appIdNum);
+    if (entry) {
+      console.log(`[STORE][PENDING_NAV] opening appid=${appIdStr} title="${entry.name}"`);
+      const game: PackageGame = {
+        appId: appIdStr,
+        title: entry.name,
+        platforms: [],
+        sources: [],
+      };
+      openDetailsForGame(game);
+    } else {
+      console.log(`[STORE][PENDING_NAV] appid=${appIdStr} not found in catalog`);
+    }
+  }, [steamCatalog]);
 
   // Recalculate trending scores every 30s
   useEffect(() => {

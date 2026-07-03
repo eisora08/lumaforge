@@ -1,5 +1,7 @@
 import type { LibraryGame } from "../types/libraryGame";
 import type { PlaytimeStore } from "./playtimeService";
+import type { GameEntry } from "./tauri";
+import type { SteamAppMetadata } from "../types/gameMetadata";
 
 type UserProfile = {
   genres: Set<string>;
@@ -145,4 +147,87 @@ function getFallbackRecommendations(
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Extend personalized recommendations with global catalog fill when the
+// user's library yields fewer than `limit` results.
+// ---------------------------------------------------------------------------
+export function getRecommendedWithGlobalFill(
+  games: LibraryGame[],
+  catalogEntries: GameEntry[],
+  favoriteIds: Set<string>,
+  playtimeStore: PlaytimeStore | null,
+  continuePlayingAppIds: Set<string>,
+  limit = 10,
+): LibraryGame[] {
+  // First run the existing personalized algorithm
+  const personalized = getRecommendedGames(games, favoriteIds, playtimeStore, continuePlayingAppIds, limit);
+
+  if (personalized.length >= limit) return personalized;
+
+  // Build user profile for scoring catalog entries
+  const profile = buildUserProfile(games, favoriteIds, playtimeStore);
+  if (profile.genres.size === 0 && profile.categories.size === 0) return personalized;
+
+  // Map library games to exclude
+  const excludeIds = new Set<string>();
+  for (const g of personalized) if (g.appId) excludeIds.add(g.appId);
+  for (const id of favoriteIds) excludeIds.add(id);
+  for (const id of continuePlayingAppIds) excludeIds.add(id);
+  for (const g of games) if (g.appId) excludeIds.add(g.appId);
+
+  // Score catalog entries by genre/category match
+  const scored: Array<{ game: LibraryGame; matchCount: number }> = [];
+  for (const entry of catalogEntries) {
+    if (!entry.appId || excludeIds.has(entry.appId)) continue;
+    const meta = parseMetadataJson(entry.metadataJson);
+    if (!meta) continue;
+
+    let matches = 0;
+    for (const g of meta.genres) {
+      if (profile.genres.has(g.toLowerCase())) matches++;
+    }
+    for (const c of meta.categories) {
+      if (profile.categories.has(c.toLowerCase())) matches++;
+    }
+    if (matches === 0) continue;
+
+    const fakeGame: Partial<LibraryGame> = {
+      id: `catalog-${entry.appId}`,
+      appId: entry.appId,
+      title: entry.title,
+      source: "steam",
+      metadata: meta,
+      steamInstalled: entry.installed,
+    };
+
+    scored.push({ game: fakeGame as LibraryGame, matchCount: matches });
+  }
+
+  scored.sort((a, b) => {
+    if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
+    return a.game.title.localeCompare(b.game.title);
+  });
+
+  const result = [...personalized];
+  const seen = new Set<string>();
+  for (const g of personalized) if (g.appId) seen.add(g.appId);
+  for (const { game } of scored) {
+    if (!game.appId || seen.has(game.appId)) continue;
+    seen.add(game.appId);
+    result.push(game);
+    if (result.length >= limit) break;
+  }
+
+  return result;
+}
+
+function parseMetadataJson(json: string): SteamAppMetadata | null {
+  try {
+    if (json && json !== "{}") {
+      return JSON.parse(json) as SteamAppMetadata;
+    }
+  } catch { /* ignore */ }
+  return null;
 }

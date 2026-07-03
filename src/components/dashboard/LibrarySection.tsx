@@ -158,12 +158,12 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
                   }}
                   className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
                 >
-                  <div className="aspect-video overflow-hidden">
+                  <div className="relative aspect-video overflow-hidden">
                     {imgUrl ? (
                       <AsyncImage
                         src={imgUrl}
                         alt={displayTitle}
-                        className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
+                        className="h-full w-full object-cover"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
                             <Gamepad2 className="h-6 w-6 text-(--color-muted)/40" />
@@ -175,6 +175,7 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
                         <Gamepad2 className="h-6 w-6 text-(--color-muted)/40" />
                       </div>
                     )}
+                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
                   </div>
 
                   <div className="p-3">

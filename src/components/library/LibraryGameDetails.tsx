@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   Play,
   Puzzle,
+  Heart,
   RefreshCw,
   Square,
   Star,
@@ -1020,8 +1021,8 @@ export default function LibraryGameDetails({
                 className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs transition hover:bg-white/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 title={favorite ? "Remove from favorites" : "Add to favorites"}
               >
-                <Star
-                  className={`h-3.5 w-3.5 ${favorite ? "text-yellow-400" : "text-(--color-muted)"}`}
+                <Heart
+                  className={`h-3.5 w-3.5 ${favorite ? "text-rose-400" : "text-(--color-muted)"}`}
                   fill={favorite ? "currentColor" : "none"}
                 />
               </button>

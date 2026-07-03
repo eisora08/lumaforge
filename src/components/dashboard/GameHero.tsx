@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gamepad2, Loader2, Play, Square, Sparkles, Store } from "lucide-react";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
+import { useFavorites } from "../../context/FavoritesContext";
+import { getCachedPlaytimeStore } from "../../services/playtimeService";
 import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showWarning } from "../toast/GameToast";
@@ -35,11 +37,28 @@ function formatLastPlayed(timestamp?: number | null): string | null {
   return new Date(timestamp * 1000).toLocaleDateString();
 }
 
+function hasValidMedia(game: SnapshotGame): boolean {
+  const m = game.media;
+  if (!m) return false;
+  return !!(m.landscapePath || m.coverPath || m.backgroundPath || m.logoPath || m.iconPath);
+}
+
+function getEffectiveLastPlayedMs(game: SnapshotGame): number {
+  const playtimeStore = getCachedPlaytimeStore();
+  if (playtimeStore && game.appId) {
+    const entry = playtimeStore.games[`app-${game.appId}`];
+    if (entry?.lastPlayedAt) return entry.lastPlayedAt * 1000;
+  }
+  if (game.lastPlayed) return game.lastPlayed * 1000;
+  return 0;
+}
+
 function findHeroGame(
   snapshotGames: SnapshotGame[],
   sessionKeysByAppId: Record<string, string>,
+  favoriteIds: Set<string>,
 ): HeroGameResult {
-  // Priority 1: Find a game that has a running session
+  // Priority 1: Running session game
   for (const [appId, key] of Object.entries(sessionKeysByAppId)) {
     const matchingGame = snapshotGames.find((g) => g.appId === appId);
     if (matchingGame) {
@@ -47,22 +66,46 @@ function findHeroGame(
     }
   }
 
-  // Priority 2: Last played game
-  const lastPlayedGame = [...snapshotGames]
-    .filter((game) => game.lastPlayed)
-    .sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0))[0];
+  // Priority 2: Most recently played game
+  const withPlaytime = snapshotGames
+    .filter((g) => g.appId && g.title && getEffectiveLastPlayedMs(g) > 0)
+    .sort((a, b) => getEffectiveLastPlayedMs(b) - getEffectiveLastPlayedMs(a));
 
-  if (lastPlayedGame) {
-    return { game: lastPlayedGame, sessionKey: null };
+  if (withPlaytime.length > 0) {
+    return { game: withPlaytime[0], sessionKey: null };
   }
 
-  // Priority 3: First installed game
-  const installedGame = snapshotGames.find((game) => game.installed);
+  // Priority 3: Most recent favorite with valid media
+  const favoriteWithMedia = snapshotGames
+    .filter((g) => g.appId && favoriteIds.has(g.appId) && hasValidMedia(g))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+  if (favoriteWithMedia.length > 0) {
+    return { game: favoriteWithMedia[0], sessionKey: null };
+  }
+
+  // Priority 4: Most recent game with valid media
+  const withMedia = snapshotGames
+    .filter((g) => g.appId && g.title && hasValidMedia(g))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+  if (withMedia.length > 0) {
+    return { game: withMedia[0], sessionKey: null };
+  }
+
+  // Priority 5: First installed game (title required)
+  const installedGame = snapshotGames.find((game) => game.installed && game.title);
   if (installedGame) {
     return { game: installedGame, sessionKey: null };
   }
 
-  // Priority 4: First available game
+  // Priority 6: Stable fallback — first game with a title
+  const titledGame = snapshotGames.find((game) => game.title);
+  if (titledGame) {
+    return { game: titledGame, sessionKey: null };
+  }
+
+  // Last resort
   return {
     game: snapshotGames[0] || null,
     sessionKey: null,
@@ -112,6 +155,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const snapshot = getCachedSnapshot();
 
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
+  const { favoriteIds } = useFavorites();
 
   const {
     sessions,
@@ -141,8 +185,8 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   }, [sessions]);
 
   const { game: heroGame, sessionKey } = useMemo(() => {
-    return findHeroGame(snapshotGames, sessionKeysByAppId);
-  }, [snapshotGames, sessionKeysByAppId]);
+    return findHeroGame(snapshotGames, sessionKeysByAppId, favoriteIds);
+  }, [snapshotGames, sessionKeysByAppId, favoriteIds]);
 
   // Read session state from the single source of truth
   const heroGameState: GameSessionState = sessionKey ? getState(sessionKey) : "idle";
@@ -154,6 +198,47 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const hasActiveSession = isRunning || isStopping || isLaunching;
 
   const heroAppId = heroGame?.appId;
+
+  // Diagnostic logs — once per selection change
+  const prevHeroRef = useRef<string | null>(null);
+  const prevRunningRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const reason = sessionKey
+      ? "running-session"
+      : (heroGame && getEffectiveLastPlayedMs(heroGame) > 0
+        ? "last-played"
+        : (heroGame && heroGame.appId && favoriteIds.has(heroGame.appId)
+          ? "favorite"
+          : (heroGame && hasValidMedia(heroGame)
+            ? "valid-media"
+            : (heroGame?.installed
+              ? "installed"
+              : (heroGame?.title
+                ? "titled-fallback"
+                : "last-resort")))));
+    if (prevHeroRef.current !== heroAppId) {
+      prevHeroRef.current = heroAppId || null;
+      console.log(`[DASH][HERO_SELECT] running=${heroAppId && sessionKey ? heroAppId : null} lastPlayed=${heroGame && getEffectiveLastPlayedMs(heroGame) > 0 ? heroAppId : null} favorite=${heroGame && heroGame.appId && favoriteIds.has(heroGame.appId) ? heroAppId : null} selected=${heroAppId || "empty"} reason=${reason}`);
+    }
+  }, [heroAppId, heroGame, sessionKey, favoriteIds]);
+
+  useEffect(() => {
+    if (isRunning && heroAppId) {
+      if (prevRunningRef.current !== heroAppId) {
+        console.log(`[DASH][HERO_RUNNING] appid=${heroAppId} running=true focused=true`);
+      }
+      prevRunningRef.current = heroAppId;
+    }
+    if (!isRunning && prevRunningRef.current != null) {
+      const wasAppId = prevRunningRef.current;
+      console.log(`[DASH][HERO_CLEAR_RUNNING] appid=${wasAppId} reason=process-ended`);
+      prevRunningRef.current = null;
+    }
+    if (!isRunning && !heroAppId) {
+      prevRunningRef.current = null;
+    }
+  }, [isRunning, heroAppId]);
 
   const libGame = useMemo(() => {
     if (!heroAppId) return undefined;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Star } from "lucide-react";
+import { ChevronLeft, ChevronRight, Heart } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -99,7 +99,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
           </div>
         </div>
         <div className="flex flex-col items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-6 py-12 text-center">
-          <Star className="mb-3 h-8 w-8 text-(--color-muted)/30" />
+          <Heart className="mb-3 h-8 w-8 text-(--color-muted)/30" />
           <p className="text-sm text-(--color-muted)">No favorite games yet.</p>
         </div>
       </section>
@@ -170,33 +170,34 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
                   }}
                   className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
                 >
-                  <div className="aspect-video overflow-hidden">
+                  <div className="relative aspect-video overflow-hidden">
                     {imgUrl ? (
                       <AsyncImage
                         src={imgUrl}
                         alt={displayTitle}
-                        className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
+                        className="h-full w-full object-cover"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
-                            <Star className="h-6 w-6 text-(--color-muted)/40" />
+                            <Heart className="h-6 w-6 text-(--color-muted)/40" />
                           </div>
                         }
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-white/5">
-                        <Star className="h-6 w-6 text-(--color-muted)/40" />
+                        <Heart className="h-6 w-6 text-(--color-muted)/40" />
                       </div>
                     )}
+                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         if (game.appId) toggleFavorite(game.appId);
                       }}
-                      className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-lg bg-black/50 p-1.5 text-yellow-400 backdrop-blur-sm transition hover:bg-black/70"
+                      className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
                       title="Remove from favorites"
                     >
-                      <Star className="h-4 w-4" fill="currentColor" />
+                      <Heart className="h-4 w-4" fill="currentColor" />
                     </button>
                   </div>
 

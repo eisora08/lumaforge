@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Heart, Sparkles } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
+import type { GameEntry } from "../../services/tauri";
+import type { CatalogStatus } from "../../services/globalCatalogService";
+import {
+  subscribeCatalogState,
+  getCatalogState,
+  loadNormalizedCatalog,
+  getCachedCatalog,
+} from "../../services/globalCatalogService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getCachedPlaytimeStore } from "../../services/playtimeService";
-import { getRecommendedGames } from "../../services/recommendationService";
+import { getRecommendedWithGlobalFill } from "../../services/recommendationService";
 import { localPathToUrl } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
@@ -27,12 +35,77 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
   const scrollRef = useRef<HTMLDivElement>(null);
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
+  const [catalogEntries, setCatalogEntries] = useState<GameEntry[]>([]);
 
   const playtimeStore = useMemo(() => getCachedPlaytimeStore(), []);
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+
+  // Subscribe to catalog readiness
+  useEffect(() => {
+    const unsub = subscribeCatalogState((s) => {
+      setCatalogStatus(s.status);
+    });
+    return unsub;
+  }, []);
+
+  // Load normalized catalog entries as fill pool — only when catalog is ready
+  useEffect(() => {
+    if (catalogStatus !== "ready") return;
+    let cancelled = false;
+    (async () => {
+      const cached = getCachedCatalog();
+      if (cancelled) return;
+      if (cached.length > 0) {
+        const gameEntries: GameEntry[] = cached.map((e) => ({
+          appId: e.appId,
+          title: e.title,
+          installed: false,
+          playtime: 0,
+          lastPlayed: 0,
+          metadataJson: e.metadata ? JSON.stringify(e.metadata) : "{}",
+          updatedAt: e.appId ? parseInt(e.appId, 10) || 0 : 0,
+        }));
+        setCatalogEntries(gameEntries);
+        return;
+      }
+      const { entries } = await loadNormalizedCatalog(1000);
+      if (cancelled) return;
+      if (entries.length > 0) {
+        const gameEntries: GameEntry[] = entries.map((e) => ({
+          appId: e.appId,
+          title: e.title,
+          installed: false,
+          playtime: 0,
+          lastPlayed: 0,
+          metadataJson: e.metadata ? JSON.stringify(e.metadata) : "{}",
+          updatedAt: e.appId ? parseInt(e.appId, 10) || 0 : 0,
+        }));
+        setCatalogEntries(gameEntries);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [catalogStatus]);
+
+  // Diagnostic log — global catalog state
+  const catalogLogRef = useRef<string>("");
+  const catalogLogKey = useMemo(
+    () => `${catalogEntries.length}|${catalogEntries.some((e) => e.metadataJson && e.metadataJson !== "{}")}`,
+    [catalogEntries],
+  );
+  useEffect(() => {
+    if (catalogEntries.length === 0) return;
+    if (catalogLogRef.current === catalogLogKey) return;
+    catalogLogRef.current = catalogLogKey;
+    const withMeta = catalogEntries.filter((e) => e.metadataJson && e.metadataJson !== "{}").length;
+    const withInstalled = catalogEntries.filter((e) => e.installed).length;
+    console.log(
+      `[DASH][GLOBAL_CATALOG] total=${catalogEntries.length} withMetadata=${withMeta} installed=${withInstalled}`,
+    );
+  }, [catalogEntries, catalogLogKey]);
 
   const displayGames = useMemo(
-    () => getRecommendedGames(libraryGames, favoriteIds, playtimeStore, continuePlayingAppIds, 10),
-    [libraryGames, favoriteIds, playtimeStore, continuePlayingAppIds],
+    () => getRecommendedWithGlobalFill(libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, 10),
+    [libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds],
   );
 
   useEffect(() => {
@@ -42,6 +115,34 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
       }
     }
   }, [displayGames]);
+
+  // Diagnostic log — once per recommendation set change
+  const recLogRef = useRef<string>("");
+  const perGameLogRef = useRef(false);
+  useEffect(() => {
+    if (displayGames.length === 0) return;
+    const hasUserData = favoriteIds.size > 0 || (playtimeStore && Object.values(playtimeStore.games).some(e => e.totalPlaytimeSeconds > 0));
+    const personalCount = displayGames.filter((g) => libraryGames.some((lg) => lg.appId === g.appId)).length;
+    const source = hasUserData ? `personalized+global` : "fallback+global";
+    const ids = displayGames.map(g => g.appId).filter(Boolean).join(",");
+    if (recLogRef.current !== `${source}|${ids}`) {
+      recLogRef.current = `${source}|${ids}`;
+      const tags = displayGames.slice(0, 3).map(g => g.metadata?.genres?.slice(0, 2).join(",") || "none").join(";");
+      console.log(`[DASH][RECOMMEND] source=${source} count=${displayGames.length} personal=${personalCount} global=${displayGames.length - personalCount} appids=${ids} tags=${tags}`);
+    }
+    // Per-game source log (once per mount)
+    if (!perGameLogRef.current) {
+      perGameLogRef.current = true;
+      for (const game of displayGames) {
+        if (!game.appId) continue;
+        const isLocal = libraryGames.some((lg) => lg.appId === game.appId);
+        const gameSource = isLocal ? "local" : "global-catalog";
+        const score = game.metadata?.genres?.length ?? 0;
+        const reasons = game.metadata?.genres?.slice(0, 3).join(",") || "no-metadata";
+        console.log(`[DASH][RECOMMEND] appid=${game.appId} title="${game.title}" source=${gameSource} score=${score} reasons=${reasons}`);
+      }
+    }
+  }, [displayGames, favoriteIds, playtimeStore, libraryGames]);
 
   const hasUserData = useMemo(() => {
     if (favoriteIds.size > 0) return true;
@@ -86,9 +187,13 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
   }
 
   function handleOpen(game: LibraryGame) {
-    if (game.appId) {
-      setSelectedGame(game);
+    if (!game.appId) return;
+    const libGame = libraryGames.find((g) => g.appId === game.appId);
+    if (libGame) {
+      setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
+    } else {
+      onNavigate?.("store");
     }
   }
 
@@ -102,7 +207,7 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
           <p className="mt-0.5 text-sm text-(--color-muted)">
             {hasUserData
               ? "Based on your favorites and playtime"
-              : "Popular games you might like"}
+              : "Genre-matched games from the catalog"}
           </p>
         </div>
       </div>
@@ -142,12 +247,12 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
                   }}
                   className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
                 >
-                  <div className="aspect-video overflow-hidden">
+                  <div className="relative aspect-video overflow-hidden">
                     {imgSrc ? (
                       <AsyncImage
                         src={imgSrc}
                         alt={game.title}
-                        className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
+                        className="h-full w-full object-cover"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
                             <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
@@ -159,13 +264,14 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
                         <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
                       </div>
                     )}
+                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         if (game.appId) toggleFavorite(game.appId);
                       }}
-                      className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-lg bg-black/50 p-1.5 text-yellow-400 backdrop-blur-sm transition hover:bg-black/70"
+                      className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
                       title={favoriteIds.has(game.appId!) ? "Remove from favorites" : "Add to favorites"}
                     >
                       <Heart

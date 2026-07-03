@@ -182,8 +182,13 @@ export default function GameLauncherTile({
     return () => { cancelled = true; };
   }, [game.appId, displayImage, artworkMode]);
 
-  // Render-time diagnostics — log actual state sent to AsyncImage
-  console.log(`[MEDIA][GRID_RENDER] appid=${game.appId} mediaLoading=${mediaLoading} hasResolvedSrc=${!!resolvedSrc} hasDisplayImage=${!!displayImage}`);
+  // Render-time diagnostics — log once on state change, not every render
+  const renderLogRef = useRef<string | null>(null);
+  const renderStateKey = `${game.appId}|${mediaLoading}|${!!resolvedSrc}|${!!displayImage}`;
+  if (renderLogRef.current !== renderStateKey) {
+    renderLogRef.current = renderStateKey;
+    console.log(`[MEDIA][GRID_RENDER] appid=${game.appId} mediaLoading=${mediaLoading} hasResolvedSrc=${!!resolvedSrc} hasDisplayImage=${!!displayImage}`);
+  }
 
   // Raw local path for data URL fallback (only if it's an absolute local file path)
   const fallbackLocalPath = useMemo(() => {

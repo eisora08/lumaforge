@@ -204,12 +204,12 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                 className="w-[min(80vw,340px)] shrink-0 snap-start"
               >
                 <div className="group/card relative cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">
-                  <div className="aspect-video overflow-hidden">
+                  <div className="relative aspect-video overflow-hidden">
                     {imgUrl ? (
                       <AsyncImage
                         src={imgUrl}
                         alt={displayTitle}
-                        className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
+                        className="h-full w-full object-cover"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
                             <Clock className="h-6 w-6 text-(--color-muted)/40" />
@@ -221,6 +221,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                         <Clock className="h-6 w-6 text-(--color-muted)/40" />
                       </div>
                     )}
+                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
                     {isRunning && (
                       <div className="absolute left-2 top-2 rounded-full bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
                         Playing
