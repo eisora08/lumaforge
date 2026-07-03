@@ -326,7 +326,11 @@ export type AppAchievementCacheEntry = {
   api_name: string;
   name: string;
   description?: string;
+  /** Serialized as "icon" in JSON; fall back to icon_url for backward compat. */
+  icon?: string;
   icon_url?: string;
+  /** Serialized as "icon_gray" in JSON; fall back to icon_gray_url for backward compat. */
+  icon_gray?: string;
   icon_gray_url?: string;
   unlocked: boolean;
   unlock_time?: number;
@@ -334,6 +338,15 @@ export type AppAchievementCacheEntry = {
   stat_id?: number;
   bit?: number;
 };
+
+/** Helper: resolve the effective icon path from an achievement cache entry.
+ *  Prefers the new "icon"/"icon_gray" field, falls back to old "icon_url"/"icon_gray_url". */
+export function entryIcon(entry: AppAchievementCacheEntry): string | undefined {
+  return entry.icon ?? entry.icon_url;
+}
+export function entryIconGray(entry: AppAchievementCacheEntry): string | undefined {
+  return entry.icon_gray ?? entry.icon_gray_url;
+}
 
 export type AppAchievementPercentagesEntry = {
   name: string;
@@ -453,6 +466,102 @@ export async function ensureAchievementImages(params: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Achievement folder migration
+// ---------------------------------------------------------------------------
+
+export type AchievementFolderMigrationResult = {
+  found: number;
+  migrated: number;
+  errors: string[];
+};
+
+export async function migrateAchievementsToProviderFolders(): Promise<AchievementFolderMigrationResult> {
+  return await invoke<AchievementFolderMigrationResult>("migrate_achievements_to_provider_folders");
+}
+
+// ---------------------------------------------------------------------------
+// Portable paths validation
+// ---------------------------------------------------------------------------
+
+export type PortablePathsValidation = {
+  absolutePaths: number;
+  assetUrlsPersisted: number;
+  remoteIconFields: number;
+  providerlessAchievementFolders: number;
+  missingFiles: number;
+  details: string[];
+};
+
+export async function validatePortablePaths(): Promise<PortablePathsValidation> {
+  return await invoke<PortablePathsValidation>("validate_portable_paths");
+}
+
+// ---------------------------------------------------------------------------
+// Generated achievement schema validation (Part 7)
+// ---------------------------------------------------------------------------
+
+export type AchievementsSchemaValidation = {
+  appId: number;
+  total: number;
+  remoteIconFields: number;
+  localIconFields: number;
+  missingLocalFiles: number;
+  details: string[];
+};
+
+export async function validateGeneratedAchievementSchema(appId: number): Promise<AchievementsSchemaValidation> {
+  return await invoke<AchievementsSchemaValidation>("validate_generated_achievement_schema", { appId });
+}
+
+// ---------------------------------------------------------------------------
+// Cache health validation (frontend-combined checks)
+// ---------------------------------------------------------------------------
+
+export type CacheHealthResult = {
+  orphan_achievement_images: number;
+  duplicate_queued_jobs: number;
+  missing_achievement_images: number;
+  missing_media_files: number;
+  details: string[];
+};
+
+export async function validateCacheHealth(achievementAppIds: string[]): Promise<CacheHealthResult> {
+  const details: string[] = [];
+  let orphanAchievementImages = 0;
+  let missingAchievementImages = 0;
+
+  // Check orphan/missing achievement images
+  const { validateAchievementImageFolder } = await import("./achievementImageQueue");
+  for (const appId of achievementAppIds) {
+    try {
+      const result = await validateAchievementImageFolder(appId);
+      if (result && result.orphaned > 0) {
+        orphanAchievementImages += result.orphaned;
+        details.push(`[HEALTH] appid=${appId} orphanAchievementImages=${result.orphaned}`);
+      }
+      if (result && result.actualFiles < result.expectedMax) {
+        const diff = result.expectedMax - result.actualFiles;
+        missingAchievementImages += diff;
+        details.push(`[HEALTH] appid=${appId} expectedFiles=${result.expectedMax} actualFiles=${result.actualFiles}`);
+      }
+    } catch { /* skip */ }
+  }
+
+  const fullValidation = await validatePortablePaths();
+  if (fullValidation.missingFiles > 0) {
+    details.push(`[HEALTH] missingLocalFiles=${fullValidation.missingFiles}`);
+  }
+
+  return {
+    orphan_achievement_images: orphanAchievementImages,
+    duplicate_queued_jobs: 0,
+    missing_achievement_images: missingAchievementImages,
+    missing_media_files: fullValidation.missingFiles,
+    details,
+  };
+}
+
 export type DebugFileInfo = {
   found: boolean;
   path: string;
@@ -520,6 +629,14 @@ export type LibraryCacheProgress = {
   error_reason?: string;
 };
 
+export type LibraryCacheFileMetadata = {
+  file_found: boolean;
+  file_path: string;
+  file_size?: number;
+  modified_at?: number;
+  error_reason?: string;
+};
+
 export async function parseLibraryCacheAchievements(params: {
   steamPath?: string;
   steamAccountId: string;
@@ -529,6 +646,28 @@ export async function parseLibraryCacheAchievements(params: {
     steamPath: params.steamPath ?? null,
     steamAccountId: params.steamAccountId,
     appId: params.appId,
+  });
+}
+
+export async function checkAchievementLibraryCacheMetadata(params: {
+  steamPath?: string;
+  steamAccountId: string;
+  appId: number;
+}): Promise<LibraryCacheFileMetadata> {
+  return await invoke<LibraryCacheFileMetadata>("check_achievement_librarycache_metadata", {
+    steamPath: params.steamPath ?? null,
+    steamAccountId: params.steamAccountId,
+    appId: params.appId,
+  });
+}
+
+export async function listLibraryCacheAppIds(params: {
+  steamPath?: string;
+  steamAccountId: string;
+}): Promise<number[]> {
+  return await invoke<number[]>("list_librarycache_appids", {
+    steamPath: params.steamPath ?? null,
+    steamAccountId: params.steamAccountId,
   });
 }
 
@@ -910,7 +1049,16 @@ export type GameAppInfo = {
   name: string | null;
   updatedAt: number | null;
   media: GameMediaPaths | null;
+  mediaSources: GameMediaSources | null;
   remote: GameRemoteRefs | null;
+};
+
+export type GameMediaSources = {
+  landscape: string | null;
+  cover: string | null;
+  background: string | null;
+  logo: string | null;
+  icon: string | null;
 };
 
 export type GameRemoteRefs = {
@@ -985,10 +1133,11 @@ export type ValidatedMediaPaths = {
 
 // Validate snapshot media paths — batch check which local files exist
 export async function validateSnapshotMediaPaths(
+  appId: string,
   media: SnapshotGameMediaForValidation,
 ): Promise<ValidatedMediaPaths> {
   try {
-    return await invoke<ValidatedMediaPaths>("validate_snapshot_media_paths", { media });
+    return await invoke<ValidatedMediaPaths>("validate_snapshot_media_paths", { appId, media });
   } catch {
     return {
       coverPath: media.coverPath,
@@ -1157,8 +1306,10 @@ export type GameRemoteRefsInput = {
   background_image: string | null;
 };
 
-export async function updateGameAppinfoMedia(appId: string, name: string | null, media: GameMediaPaths, remote?: GameRemoteRefsInput | null): Promise<void> {
-  return await invoke("update_game_appinfo_media", { appId, name, media, remote: remote ?? null });
+
+
+export async function updateGameAppinfoMedia(appId: string, name: string | null, media: GameMediaPaths, remote?: GameRemoteRefsInput | null, mediaSources?: GameMediaSources | null): Promise<void> {
+  return await invoke("update_game_appinfo_media", { appId, name, media, remote: remote ?? null, mediaSources: mediaSources ?? null });
 }
 
 export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | null, paths: GameMediaPaths): Promise<void> {
@@ -1168,6 +1319,86 @@ export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | nu
 // Migration
 export async function migrateToCanonicalCache(): Promise<MigrationSummary> {
   return await invoke<MigrationSummary>("migrate_to_canonical_cache");
+}
+
+// ---------------------------------------------------------------------------
+// Portable path resolvers (Part 4)
+// ---------------------------------------------------------------------------
+
+/** Resolve absolute path to a provider game directory. */
+export async function resolveProviderGamePath(provider: string, appId: string): Promise<string> {
+  return await invoke<string>("resolve_provider_game_path", { provider, appId });
+}
+
+/** Resolve absolute path for a game media file from relative path. */
+export async function resolveGameMediaPath(provider: string, appId: string, relativePath: string): Promise<string> {
+  return await invoke<string>("resolve_game_media_path", { provider, appId, relativePath });
+}
+
+/** Resolve absolute path to an achievement cache directory. */
+export async function resolveAchievementPath(provider: string, appId: number): Promise<string> {
+  return await invoke<string>("resolve_achievement_path", { provider, appId });
+}
+
+/** Resolve absolute path for an achievement image from relative path. */
+export async function resolveAchievementImagePath(provider: string, appId: number, relativePath: string): Promise<string> {
+  return await invoke<string>("resolve_achievement_image_path", { provider, appId, relativePath });
+}
+
+/** Convert an absolute path to a Tauri-compatible file:// URL. */
+export async function resolveToTauriAssetUrl(absPath: string): Promise<string> {
+  return await invoke<string>("resolve_to_tauri_asset_url", { absPath });
+}
+
+/** Scan all appinfo.json files and convert absolute paths to relative. */
+export async function migrateGameMediaToRelative(): Promise<number> {
+  return await invoke<number>("migrate_game_media_to_relative");
+}
+
+// ---------------------------------------------------------------------------
+// Media Manifest — per-game fast media index
+// ---------------------------------------------------------------------------
+
+export type MediaManifestEntry = {
+  path: string;
+  exists: boolean;
+  size?: number | null;
+  modifiedAt?: number | null;
+};
+
+export type MediaManifestFiles = {
+  cover: MediaManifestEntry;
+  landscape: MediaManifestEntry;
+  background: MediaManifestEntry;
+  logo: MediaManifestEntry;
+  icon: MediaManifestEntry;
+};
+
+export type FileFingerprints = {
+  lua?: string | null;
+  appinfo?: string | null;
+  dashboard?: string | null;
+};
+
+export type MediaManifest = {
+  provider: string;
+  appid: string;
+  version: number;
+  updatedAt: number;
+  files: MediaManifestFiles;
+  fingerprints?: FileFingerprints | null;
+};
+
+export async function readMediaManifest(appId: string): Promise<MediaManifest | null> {
+  return await invoke<MediaManifest | null>("read_media_manifest", { appId });
+}
+
+export async function writeMediaManifest(appId: string, manifest: MediaManifest): Promise<void> {
+  return await invoke<void>("write_media_manifest", { appId, manifest });
+}
+
+export async function getMediaManifestsBatch(appIds: string[]): Promise<Record<string, MediaManifest>> {
+  return await invoke<Record<string, MediaManifest>>("get_media_manifests_batch", { appIds });
 }
 
 // ---------------------------------------------------------------------------
@@ -1245,6 +1476,16 @@ export async function getMetadataCacheSqlite(gameId: string): Promise<SqliteMeta
   } catch {
     return null;
   }
+}
+
+// ── Dev console exposure ──
+
+if (typeof window !== "undefined") {
+  const _w = window as unknown as Record<string, unknown>;
+  _w.__validatePortablePaths = validatePortablePaths;
+  _w.__validateGeneratedAchievementSchema = validateGeneratedAchievementSchema;
+  _w.__cleanupAchievementOrphanImages = cleanupAchievementOrphanImages;
+  _w.__validateCacheHealth = validateCacheHealth;
 }
 
 export async function checkSqliteHealth(): Promise<boolean> {

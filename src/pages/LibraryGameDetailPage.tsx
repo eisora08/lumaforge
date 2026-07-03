@@ -14,9 +14,10 @@ import {
 } from "../services/libraryLocalCacheService";
 import type { GameMediaCacheEntry } from "../services/tauri";
 import type { GameAppInfo } from "../services/gameCacheService";
-import { loadGameAppInfoWithMediaFallback } from "../services/gameCacheService";
+import { loadGameAppInfoWithMediaFallback, resolveCanonicalDisplayTitle } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
 import { enqueueMediaDownload, cancelMediaJobsForApp } from "../services/mediaDownloadQueue";
+import { backgroundJobQueue } from "../services/backgroundJobQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
 import { useSettings } from "../context/SettingsContext";
@@ -52,7 +53,6 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [canonicalDiskFallback, setCanonicalDiskFallback] = useState<string | null>(null);
   const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
   const currentRequest = useRef<number | null>(null);
-  const artworkRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
 
   const gameKey = selectedGame ? computeGameKey(selectedGame) : "";
@@ -195,12 +195,16 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       });
   }, [selectedGame]);
 
-  // Resolve artwork for this game via queue — cache-first, non-blocking
-  // Uses ref-based tracking to prevent re-enqueue when canonicalAppInfo/mediaEntry update.
-  const mediaEnqueuedRef = useRef(false);
+  // Check if media is already complete — if not, queue a background repair job
+  // Resets when appId changes so a new game gets its own repair check.
+  const mediaCheckDoneRef = useRef(false);
+  useEffect(() => {
+    mediaCheckDoneRef.current = false;
+  }, [selectedGame?.appId]);
   useEffect(() => {
     if (!resolvedGame?.appId) return;
-    if (mediaEnqueuedRef.current) return;
+    if (mediaCheckDoneRef.current) return;
+    mediaCheckDoneRef.current = true;
 
     const appIdStr = resolvedGame.appId;
     const hasLandscape = !!canonicalAppInfo?.media?.landscapePath;
@@ -208,104 +212,17 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const hasBackground = !!canonicalAppInfo?.media?.backgroundPath;
     const hasLogo = !!canonicalAppInfo?.media?.logoPath;
     const hasIcon = !!canonicalAppInfo?.media?.iconPath;
+
     if (hasLandscape && hasCover && hasBackground && hasLogo && hasIcon) {
-      mediaEnqueuedRef.current = true;
       return;
     }
 
-    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
-
-    if (sgdbEnabled) {
-      const appIdNum = Number(appIdStr);
-      if (!appIdNum || isNaN(appIdNum)) return;
-
-      mediaEnqueuedRef.current = true;
-      const requestId = Date.now();
-      artworkRequest.current = requestId;
-
-      resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey)
-        .then((result) => {
-          if (artworkRequest.current !== requestId) return;
-          const entry = result[appIdStr];
-          if (entry) {
-            setArtwork(entry);
-
-            const meta = (resolvedGame.metadata || {}) as Record<string, any>;
-            const jobs: Array<{ mediaType: string; url?: string }> = [];
-
-            // Landscape: SGDB grid/hero > store header > store background
-            if (!hasLandscape) {
-              jobs.push({ mediaType: "landscape", url: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl || meta.header_image || meta.background_image });
-            }
-
-            // Cover: SGDB cover > store capsule
-            if (!hasCover) {
-              jobs.push({ mediaType: "cover", url: entry.sgdbCoverUrl || meta.capsule_image || meta.capsule_image_v5 || meta.header_image });
-            }
-
-            // Background: SGDB hero > store background_raw > store background > store header > landscape fallback (handled by Rust side)
-            if (!hasBackground) {
-              jobs.push({ mediaType: "background", url: entry.sgdbHeroUrl || meta.background_image || meta.library_hero_image || meta.header_image });
-            }
-
-            // Logo: SGDB logo only
-            if (!hasLogo) {
-              jobs.push({ mediaType: "logo", url: entry.sgdbLogoUrl });
-            }
-
-            // Icon: SGDB icon only
-            if (!hasIcon) {
-              jobs.push({ mediaType: "icon", url: entry.sgdbIconUrl });
-            }
-
-            for (const { mediaType, url } of jobs) {
-              if (!url) continue;
-              enqueueMediaDownload({
-                id: `detail-sgdb-${appIdStr}-${mediaType}`,
-                appId: appIdStr,
-                provider: "steamgriddb",
-                mediaType: mediaType as any,
-                url,
-                target: "canonical",
-                priority: mediaType === "background" || mediaType === "logo" ? "normal" : "high",
-              }).catch(() => {});
-            }
-          }
-        })
-        .catch(() => {});
-    } else {
-      // No SGDB — fallback from store metadata URLs
-      const meta = (resolvedGame.metadata || {}) as Record<string, any>;
-      const jobs: Array<{ mediaType: string; url?: string }> = [];
-
-      if (!hasLandscape) {
-        jobs.push({ mediaType: "landscape", url: meta.header_image || meta.background_image });
-      }
-      if (!hasCover) {
-        jobs.push({ mediaType: "cover", url: meta.capsule_image || meta.capsule_image_v5 || meta.header_image });
-      }
-      if (!hasBackground) {
-        jobs.push({ mediaType: "background", url: meta.background_image || meta.library_hero_image || meta.header_image });
-      }
-
-      const hasAnyJob = jobs.some(j => j.url);
-      if (hasAnyJob) {
-        mediaEnqueuedRef.current = true;
-        for (const { mediaType, url } of jobs) {
-          if (!url) continue;
-          enqueueMediaDownload({
-            id: `detail-store-${appIdStr}-${mediaType}`,
-            appId: appIdStr,
-            provider: "steam",
-            mediaType: mediaType as any,
-            url,
-            target: "canonical",
-            priority: mediaType === "background" ? "normal" : "high",
-          }).catch(() => {});
-        }
-      }
-    }
-  }, [resolvedGame, canonicalAppInfo?.media?.landscapePath, canonicalAppInfo?.media?.coverPath, canonicalAppInfo?.media?.backgroundPath, canonicalAppInfo?.media?.logoPath, canonicalAppInfo?.media?.iconPath, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
+    // Queue a background repair job with proper dedup
+    backgroundJobQueue.enqueue("repair-game-media", "steam", {
+      appId: appIdStr,
+      priority: "high",
+    });
+  }, [resolvedGame, canonicalAppInfo?.media?.landscapePath, canonicalAppInfo?.media?.coverPath, canonicalAppInfo?.media?.backgroundPath, canonicalAppInfo?.media?.logoPath, canonicalAppInfo?.media?.iconPath]);
 
   // Lazy per-game stats refresh
   useEffect(() => {
@@ -446,7 +363,14 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const displayGame = resolvedGame || selectedGame;
   const currentSession = session.getSession(gameKey);
   const appInfoEntry = displayGame.appId ? (appInfoMap[displayGame.appId] ?? null) : null;
-  const detailTitle = appInfoEntry?.name || displayGame.title || (displayGame.appId ? `Steam App ${displayGame.appId}` : "Unknown Game");
+  const detailTitle = resolveCanonicalDisplayTitle(
+    displayGame.appId ?? "",
+    displayGame,
+    appInfoEntry,
+    canonicalAppInfo,
+  );
+
+  console.log(`[NAME][DISPLAY] appid=${displayGame.appId} title=${detailTitle}`);
 
   return (
     <>

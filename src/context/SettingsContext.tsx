@@ -43,6 +43,11 @@ export const defaultSettings: AppSettings = {
   steamAccountId: "",
   steamAchievementsEnabled: false,
   achievementSchemaPath: "",
+  achievementToastEnabled: true,
+  achievementNativeNotificationsEnabled: false,
+  achievementOverlayNotificationsEnabled: false,
+  achievementAutoSyncEnabled: true,
+  achievementAutoSyncIntervalSeconds: 10,
   libraryCardArtworkMode: "landscape",
   mediaCacheProfile: "playnite-balanced",
   gameScanFolders: [],
@@ -51,7 +56,7 @@ export const defaultSettings: AppSettings = {
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
-function loadSettings(): AppSettings {
+export function loadSettings(): AppSettings {
   try {
     const savedSettings = localStorage.getItem(STORAGE_KEY);
 

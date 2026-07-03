@@ -17,6 +17,8 @@ import {
   readGameMediaDataUrl,
   repairAppinfoMediaPaths,
   repairMediaRoles,
+  writeMediaManifest as writeMediaManifestTauri,
+  getMediaManifestsBatch,
 } from "./tauri";
 import { invalidateCanonicalMediaCache, notifyMediaUpdated } from "./startupSnapshotService";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -33,6 +35,8 @@ import type {
   BackgroundUrls,
   LogoUrls,
   IconUrls,
+  MediaManifest,
+  MediaManifestFiles,
 } from "./tauri";
 
 export type {
@@ -51,6 +55,82 @@ export type {
 
 // Re-export for data URL fallback
 export { readGameMediaDataUrl };
+
+// ---------------------------------------------------------------------------
+// MediaIndex — formal runtime media entry
+// *Path fields are relative (from appinfo)
+// *Url fields are runtime-only (never persisted)
+// has* flags are derived from path existence
+// ---------------------------------------------------------------------------
+
+export type MediaIndexEntry = {
+  provider: string;
+  appId: string;
+  coverPath: string | null;
+  coverUrl: string | null;
+  hasCover: boolean;
+  landscapePath: string | null;
+  landscapeUrl: string | null;
+  hasLandscape: boolean;
+  backgroundPath: string | null;
+  backgroundUrl: string | null;
+  hasBackground: boolean;
+  logoPath: string | null;
+  logoUrl: string | null;
+  hasLogo: boolean;
+  iconPath: string | null;
+  iconUrl: string | null;
+  hasIcon: boolean;
+  updatedAt: number;
+};
+
+const mediaIndexStore = new Map<string, MediaIndexEntry>();
+
+export function getMediaEntry(appId: string, provider = "steam"): MediaIndexEntry | undefined {
+  return mediaIndexStore.get(`${provider}:${appId}`);
+}
+
+export function setMediaEntry(entry: MediaIndexEntry): void {
+  const key = `${entry.provider}:${entry.appId}`;
+  mediaIndexStore.set(key, entry);
+}
+
+export function getAllMediaEntries(): MediaIndexEntry[] {
+  return Array.from(mediaIndexStore.values());
+}
+
+export function seedMediaIndexFromManifests(
+  manifests: Record<string, MediaManifest>,
+  resolved: Record<string, { coverUrl: string | null; landscapeUrl: string | null; backgroundUrl: string | null; logoUrl: string | null; iconUrl: string | null }>,
+): void {
+  let count = 0;
+  for (const [appId, manifest] of Object.entries(manifests)) {
+    const urls = resolved[appId];
+    if (!urls) continue;
+    const entry: MediaIndexEntry = {
+      provider: manifest.provider,
+      appId: manifest.appid,
+      coverPath: manifest.files.cover.exists ? manifest.files.cover.path : null,
+      coverUrl: manifest.files.cover.exists ? (urls.coverUrl ?? null) : null,
+      hasCover: manifest.files.cover.exists,
+      landscapePath: manifest.files.landscape.exists ? manifest.files.landscape.path : null,
+      landscapeUrl: manifest.files.landscape.exists ? (urls.landscapeUrl ?? null) : null,
+      hasLandscape: manifest.files.landscape.exists,
+      backgroundPath: manifest.files.background.exists ? manifest.files.background.path : null,
+      backgroundUrl: manifest.files.background.exists ? (urls.backgroundUrl ?? null) : null,
+      hasBackground: manifest.files.background.exists,
+      logoPath: manifest.files.logo.exists ? manifest.files.logo.path : null,
+      logoUrl: manifest.files.logo.exists ? (urls.logoUrl ?? null) : null,
+      hasLogo: manifest.files.logo.exists,
+      iconPath: manifest.files.icon.exists ? manifest.files.icon.path : null,
+      iconUrl: manifest.files.icon.exists ? (urls.iconUrl ?? null) : null,
+      hasIcon: manifest.files.icon.exists,
+      updatedAt: manifest.updatedAt,
+    };
+    setMediaEntry(entry);
+    count++;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Debug log flags
@@ -77,6 +157,31 @@ function getCachedResolvedMedia(appId: string): GameMediaPaths | null | undefine
   return undefined; // not in cache
 }
 
+// ---------------------------------------------------------------------------
+// Title helpers — resolve display titles with canonical fallback
+// ---------------------------------------------------------------------------
+
+export function isPlaceholderSteamTitle(title: string | null | undefined, _appId: string): boolean {
+  if (!title) return true;
+  return /^Steam App \d+$/.test(title);
+}
+
+export function resolveCanonicalDisplayTitle(
+  appId: string,
+  game?: { title?: string; metadata?: { name?: string } } | null,
+  appInfoEntry?: { name?: string | null } | null,
+  canonicalInfo?: { name?: string | null } | null,
+): string {
+  // All sources are filtered through isPlaceholderSteamTitle so that
+  // fallback metadata names like "Steam App 12345" never leak through.
+  const canonName = canonicalInfo?.name && !isPlaceholderSteamTitle(canonicalInfo.name, appId) ? canonicalInfo.name : null;
+  const appInfoName = appInfoEntry?.name && !isPlaceholderSteamTitle(appInfoEntry.name, appId) ? appInfoEntry.name : null;
+  const metaName = game?.metadata?.name && !isPlaceholderSteamTitle(game.metadata.name, appId) ? game.metadata.name : null;
+  const gameTitle = game?.title && !isPlaceholderSteamTitle(game.title, appId) ? game.title : null;
+  return canonName || appInfoName || metaName || gameTitle || `Steam App ${appId}`;
+}
+
+// ---------------------------------------------------------------------------
 // Seed the session cache from a startup snapshot to avoid disk checks
 // during initial render. Call this once during boot before any component
 // tries to resolve media.
@@ -93,8 +198,10 @@ export function seedResolvedMediaCacheFromSnapshot(
     };
     const hasAny = !!(media.landscapePath || media.coverPath || media.backgroundPath || media.logoPath || media.iconPath);
     resolvedMediaSessionCache.set(g.appId, hasAny ? media : null);
-    // Mark as repaired so loadGameAppInfoWithMediaFallback skips the expensive path
-    markAppInfoRepaired(g.appId);
+    const hasKeyMedia = !!(media.landscapePath) && !!(media.coverPath || media.backgroundPath);
+    if (hasKeyMedia) {
+      markAppInfoRepaired(g.appId);
+    }
   }
 }
 
@@ -111,20 +218,47 @@ export async function loadGameAppInfo(appId: string): Promise<GameAppInfo | null
 // Session-caches the validated paths so repeated calls are instant.
 // Writes corrected appinfo.json when stale paths are detected.
 export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<GameAppInfo | null> {
-  // Session cache hit — return appinfo with validated paths merged
+  // Session cache hit — return appinfo with validated paths merged.
+  // If cache has insufficient media (missing background/logo/icon), fall through to repair.
   const cached = getCachedResolvedMedia(appId);
   if (cached !== undefined) {
-    const appInfo = await getGameAppInfo(appId).catch(() => null);
-    if (appInfo) {
-      if (cached) {
-        appInfo.media = cached;
+    if (cached && !(cached.backgroundPath || cached.logoPath || cached.iconPath)) {
+      resolvedMediaSessionCache.delete(appId);
+    } else {
+      const appInfo = await getGameAppInfo(appId).catch(() => null);
+      if (appInfo) {
+        if (cached) {
+          appInfo.media = cached;
+        }
+        // Resolve relative paths to absolute — cached paths from snapshot seeding
+        // may be "media/landscape.jpg" which consumers cannot use as asset URLs.
+        const hasRelative = cached && Object.values(cached).some(
+          (v) => typeof v === 'string' && (v.startsWith('media/') || v.startsWith('img/'))
+        );
+        if (hasRelative) {
+          const resolved = await resolveMediaPaths(appId, cached);
+          if (resolved) {
+            appInfo.media = resolved;
+            resolvedMediaSessionCache.set(appId, resolved);
+          }
+        }
+        return appInfo;
       }
-      return appInfo;
+      if (cached) {
+        const hasRelative = Object.values(cached).some(
+          (v) => typeof v === 'string' && (v.startsWith('media/') || v.startsWith('img/'))
+        );
+        if (hasRelative) {
+          const resolved = await resolveMediaPaths(appId, cached);
+          if (resolved) {
+            resolvedMediaSessionCache.set(appId, resolved);
+            return { appId, provider: "steam", name: null, updatedAt: null, media: resolved, mediaSources: null, remote: null };
+          }
+        }
+        return { appId, provider: "steam", name: null, updatedAt: null, media: cached, mediaSources: null, remote: null };
+      }
+      return null;
     }
-    if (cached) {
-      return { appId, provider: "steam", name: null, updatedAt: null, media: cached, remote: null };
-    }
-    return null;
   }
 
   // Read appinfo.json from disk
@@ -153,13 +287,23 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
         const hasDiskFiles = !!(diskPaths.landscapePath || diskPaths.coverPath || diskPaths.backgroundPath || diskPaths.logoPath || diskPaths.iconPath);
         const hasAppInfoMedia = !!(appInfo?.media?.landscapePath || appInfo?.media?.coverPath || appInfo?.media?.backgroundPath || appInfo?.media?.logoPath || appInfo?.media?.iconPath);
 
-        // Merge: disk paths override appinfo paths
+        // Convert absolute disk path to relative (media/<filename>)
+        const absToRel = (abs: string | null): string | null => {
+          if (!abs) return null;
+          const parts = abs.replace(/\\/g, '/').split('/');
+          const filename = parts[parts.length - 1];
+          return filename ? `media/${filename}` : null;
+        };
+
+        // Build relative-only validatedMedia: prefer appinfo paths (already relative),
+        // fall back to deriving relative from disk absolute paths.
+        const appinfoMedia = appInfo?.media;
         const validatedMedia: GameMediaPaths = {
-          landscapePath: diskPaths.landscapePath ?? appInfo?.media?.landscapePath ?? null,
-          coverPath: diskPaths.coverPath ?? appInfo?.media?.coverPath ?? null,
-          backgroundPath: diskPaths.backgroundPath ?? appInfo?.media?.backgroundPath ?? null,
-          logoPath: diskPaths.logoPath ?? appInfo?.media?.logoPath ?? null,
-          iconPath: diskPaths.iconPath ?? appInfo?.media?.iconPath ?? null,
+          landscapePath: appinfoMedia?.landscapePath ?? absToRel(diskPaths.landscapePath) ?? null,
+          coverPath: appinfoMedia?.coverPath ?? absToRel(diskPaths.coverPath) ?? null,
+          backgroundPath: appinfoMedia?.backgroundPath ?? absToRel(diskPaths.backgroundPath) ?? null,
+          logoPath: appinfoMedia?.logoPath ?? absToRel(diskPaths.logoPath) ?? null,
+          iconPath: appinfoMedia?.iconPath ?? absToRel(diskPaths.iconPath) ?? null,
         };
 
         if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
@@ -172,20 +316,20 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
           });
         }
 
-        // Detect stale paths in appinfo
+        // Detect stale paths in appinfo (relative path points to file that no longer exists)
         const hasStalePaths = hasAppInfoMedia && (
-          (appInfo?.media?.landscapePath && !diskPaths.landscapePath) ||
-          (appInfo?.media?.coverPath && !diskPaths.coverPath) ||
-          (appInfo?.media?.backgroundPath && !diskPaths.backgroundPath) ||
-          (appInfo?.media?.logoPath && !diskPaths.logoPath) ||
-          (appInfo?.media?.iconPath && !diskPaths.iconPath)
+          (appinfoMedia?.landscapePath && !diskPaths.landscapePath) ||
+          (appinfoMedia?.coverPath && !diskPaths.coverPath) ||
+          (appinfoMedia?.backgroundPath && !diskPaths.backgroundPath) ||
+          (appinfoMedia?.logoPath && !diskPaths.logoPath) ||
+          (appinfoMedia?.iconPath && !diskPaths.iconPath)
         );
 
         // Write corrected appinfo if stale paths detected or new files found
         if (hasDiskFiles && (hasStalePaths || !hasAppInfoMedia)) {
           const name = appInfo?.name ?? null;
           const remote = appInfo?.remote ?? null;
-          const currentMedia = appInfo?.media;
+          const currentMedia = appinfoMedia;
           const needsWrite = !currentMedia ||
             currentMedia.landscapePath !== validatedMedia.landscapePath ||
             currentMedia.coverPath !== validatedMedia.coverPath ||
@@ -196,21 +340,23 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
             if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
               console.log(`[MediaCache] appinfo updated for ${appId}`);
             }
-            updateGameAppinfoMedia(appId, name, validatedMedia, remote).catch(() => {});
-            // Notify snapshot service so it picks up the repaired paths
+            const mediaSources = appInfo?.mediaSources ?? null;
+            updateGameAppinfoMedia(appId, name, validatedMedia, remote, mediaSources).catch(() => {});
             invalidateCanonicalMediaCache(appId);
             notifyMediaUpdated(appId).catch(() => {});
           }
         }
 
-        resolvedMediaSessionCache.set(appId, validatedMedia);
+        // Resolve relative paths to absolute for the session cache (UI uses these)
+        const resolvedForCache = await resolveMediaPaths(appId, validatedMedia);
+        resolvedMediaSessionCache.set(appId, resolvedForCache);
         if (appInfo) {
-          appInfo.media = validatedMedia;
+          appInfo.media = resolvedForCache;
           return appInfo;
         }
         const fallbackName = (appInfo as GameAppInfo | null)?.name ?? null;
         if (hasDiskFiles) {
-          return { appId, provider: "steam", name: fallbackName, updatedAt: null, media: validatedMedia, remote: null };
+          return { appId, provider: "steam", name: fallbackName, updatedAt: null, media: resolvedForCache, mediaSources: null, remote: null };
         }
       }
     } catch {
@@ -218,9 +364,58 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
     }
   }
 
-  // No disk files found — use appinfo as-is (might be stale, but pickers will filter)
-  const fallbackMedia = appInfo?.media ?? null;
-  resolvedMediaSessionCache.set(appId, fallbackMedia);
+  // After repair (or when repair was already done this session), re-check disk
+  // for new background/logo/icon files that the cached appinfo may be missing.
+  // This fixes the case where media files appeared on disk after the last repair.
+  if (appInfo?.media && (!appInfo.media.backgroundPath || !appInfo.media.logoPath || !appInfo.media.iconPath)) {
+    try {
+      const diskPaths = await resolveGameMediaPaths(appId);
+      if (diskPaths) {
+        const absToRel = (abs: string | null): string | null => {
+          if (!abs) return null;
+          const parts = abs.replace(/\\/g, '/').split('/');
+          const filename = parts[parts.length - 1];
+          return filename ? `media/${filename}` : null;
+        };
+
+        const newBackground = !appInfo.media.backgroundPath && !!diskPaths.backgroundPath;
+        const newLogo = !appInfo.media.logoPath && !!diskPaths.logoPath;
+        const newIcon = !appInfo.media.iconPath && !!diskPaths.iconPath;
+        const newLandscape = !appInfo.media.landscapePath && !!diskPaths.landscapePath;
+        const newCover = !appInfo.media.coverPath && !!diskPaths.coverPath;
+
+        if (newBackground || newLogo || newIcon || newLandscape || newCover) {
+          const updatedMedia: GameMediaPaths = {
+            landscapePath: appInfo.media.landscapePath ?? absToRel(diskPaths.landscapePath) ?? null,
+            coverPath: appInfo.media.coverPath ?? absToRel(diskPaths.coverPath) ?? null,
+            backgroundPath: appInfo.media.backgroundPath ?? absToRel(diskPaths.backgroundPath) ?? null,
+            logoPath: appInfo.media.logoPath ?? absToRel(diskPaths.logoPath) ?? null,
+            iconPath: appInfo.media.iconPath ?? absToRel(diskPaths.iconPath) ?? null,
+          };
+
+          await updateGameAppinfoMedia(appId, appInfo.name, updatedMedia, appInfo.remote, appInfo.mediaSources).catch(() => {});
+          invalidateCanonicalMediaCache(appId);
+          notifyMediaUpdated(appId).catch(() => {});
+
+          const resolvedForCache = await resolveMediaPaths(appId, updatedMedia);
+          resolvedMediaSessionCache.set(appId, resolvedForCache);
+          appInfo.media = resolvedForCache;
+          return appInfo;
+        }
+      }
+    } catch {
+      // non-critical
+    }
+  }
+
+  // No disk files found — use appinfo as-is, but resolve any relative paths
+  if (appInfo?.media) {
+    const resolved = await resolveMediaPaths(appId, appInfo.media);
+    if (resolved) {
+      appInfo.media = resolved;
+      resolvedMediaSessionCache.set(appId, resolved);
+    }
+  }
   return appInfo ?? null;
 }
 
@@ -598,34 +793,41 @@ export async function resolveSidebarMedia(
 }
 
 // Fast path: use snapshot/cached paths without any disk I/O
-function resolveSidebarMediaFromPaths(
-  _appId: string,
+// Resolves relative paths (media/...) to absolute before converting to URL.
+async function resolveSidebarMediaFromPaths(
+  appId: string,
   appInfo?: GameAppInfo | null,
   snapshotMedia?: GameMediaPaths | null,
-): ResolvedSidebarMedia {
-  const resolveRole = (
+): Promise<ResolvedSidebarMedia> {
+  const resolveRole = async (
     path: string | null | undefined,
-  ): MediaItemInfo => {
+  ): Promise<MediaItemInfo> => {
     if (path && !isTmpPath(path)) {
-      return { src: localPathToUrl(path), localPath: path, exists: true };
+      const absPath = path.startsWith("media/") || path.startsWith("img/")
+        ? await resolveRelativeMediaPath(appId, path).catch(() => path)
+        : path;
+      if (absPath) {
+        return { src: localPathToUrl(absPath), localPath: absPath, exists: true };
+      }
     }
     return { src: null, localPath: null, exists: false };
   };
 
   const getPath = (role: keyof GameMediaPaths): string | null | undefined => {
-    // Priority: snapshot > appinfo > null
     if (snapshotMedia && snapshotMedia[role]) return snapshotMedia[role];
     if (appInfo?.media && appInfo.media[role]) return appInfo.media[role];
     return null;
   };
 
-  return {
-    landscape: resolveRole(getPath("landscapePath")),
-    cover: resolveRole(getPath("coverPath")),
-    background: resolveRole(getPath("backgroundPath")),
-    logo: resolveRole(getPath("logoPath")),
-    icon: resolveRole(getPath("iconPath")),
-  };
+  const [landscape, cover, background, logo, icon] = await Promise.all([
+    resolveRole(getPath("landscapePath")),
+    resolveRole(getPath("coverPath")),
+    resolveRole(getPath("backgroundPath")),
+    resolveRole(getPath("logoPath")),
+    resolveRole(getPath("iconPath")),
+  ]);
+
+  return { landscape, cover, background, logo, icon };
 }
 
 // Slow path: disk check fallback
@@ -677,6 +879,81 @@ async function resolveSidebarMediaWithDiskCheck(
   return result;
 }
 
+// Path resolver for provider-relative paths stored in JSON.
+// Converts relative paths like "media/landscape.jpg" to absolute paths
+// by prepending the known app data base: <appData>/games/<provider>/<appid>/
+const appDataBaseCache = new Map<string, string>();
+
+async function getAppDataBase(): Promise<string> {
+  const cached = appDataBaseCache.get("base");
+  if (cached) return cached;
+  try {
+    const { appDataDir } = await import("@tauri-apps/api/path");
+    const base = await appDataDir();
+    appDataBaseCache.set("base", base);
+    return base;
+  } catch {
+    return "";
+  }
+}
+
+/** Resolve a provider-relative game media path to an absolute filesystem path.
+ *  If the path is already absolute (starts with drive letter or /), return as-is.
+ *  If the path is a URL (http/https), return as-is.
+ *  Otherwise prepend <appData>/games/<provider>/<appid>/
+ */
+export async function resolveRelativeMediaPath(
+  appId: string,
+  relativePath: string,
+  provider = "steam",
+): Promise<string> {
+  if (!relativePath) return relativePath;
+  if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) return relativePath;
+  if (/^https?:\/\//i.test(relativePath)) return relativePath;
+  if (relativePath.startsWith("data:") || relativePath.startsWith("asset://") || relativePath.startsWith("file://")) return relativePath;
+
+  const base = await getAppDataBase();
+  if (!base) return relativePath;
+  const abs = `${base}\\games\\${provider}\\${appId}\\${relativePath.replace(/\//g, "\\")}`;
+  return abs;
+}
+
+/** Resolve a relative achievement image path to an absolute filesystem path.
+ *  e.g. "img/hash.jpg" → <appData>/achievements/<provider>/<appid>/img/hash.jpg
+ */
+export async function resolveRelativeAchievementImagePath(
+  appId: string,
+  relativePath: string,
+  provider = "steam",
+): Promise<string> {
+  if (!relativePath) return relativePath;
+  if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) return relativePath;
+  if (/^https?:\/\//i.test(relativePath)) return relativePath;
+  if (relativePath.startsWith("data:") || relativePath.startsWith("asset://") || relativePath.startsWith("file://")) return relativePath;
+
+  const base = await getAppDataBase();
+  if (!base) return relativePath;
+  const abs = `${base}\\achievements\\${provider}\\${appId}\\${relativePath.replace(/\//g, "\\")}`;
+  return abs;
+}
+
+/** Resolve all media paths in a GameMediaPaths object from relative to absolute. */
+export async function resolveMediaPaths(
+  appId: string,
+  media: GameMediaPaths | null | undefined,
+  provider = "steam",
+): Promise<GameMediaPaths | null> {
+  if (!media) return null;
+  const [landscape, cover, background, logo, icon] = await Promise.all([
+    media.landscapePath ? resolveRelativeMediaPath(appId, media.landscapePath, provider) : null,
+    media.coverPath ? resolveRelativeMediaPath(appId, media.coverPath, provider) : null,
+    media.backgroundPath ? resolveRelativeMediaPath(appId, media.backgroundPath, provider) : null,
+    media.logoPath ? resolveRelativeMediaPath(appId, media.logoPath, provider) : null,
+    media.iconPath ? resolveRelativeMediaPath(appId, media.iconPath, provider) : null,
+  ]);
+  return { landscapePath: landscape, coverPath: cover, backgroundPath: background, logoPath: logo, iconPath: icon };
+}
+
 export function isLocalPath(path: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/");
 }
@@ -690,6 +967,13 @@ export function localPathToUrl(path: string): string | null {
   if (path.endsWith(".tmp")) {
     if (ENABLE_VERBOSE_GAME_CACHE_LOGS) {
       console.log("[MediaCache] ignored tmp path in localPathToUrl —", path);
+    }
+    return null;
+  }
+  // Handle relative paths — they cannot be converted to asset URLs directly
+  if (path.startsWith("media/") || path.startsWith("img/")) {
+    if (ENABLE_VERBOSE_GAME_CACHE_LOGS) {
+      console.log("[MediaCache] relative path in localPathToUrl (needs resolution) —", path);
     }
     return null;
   }
@@ -709,6 +993,27 @@ export function localPathToUrl(path: string): string | null {
 
 export function clearResolvedSrcCache(): void {
   resolvedSrcCache.clear();
+}
+
+export async function resolveGameMediaUrl(
+  appId: string,
+  path: string | null | undefined,
+  provider = "steam",
+): Promise<string | null> {
+  if (!path) return null;
+  if (isHttpUrl(path)) return path;
+  if (path.startsWith("asset://") || path.startsWith("data:") || path.startsWith("file://")) return path;
+  if (path.endsWith(".tmp")) {
+    if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log("[MEDIA][RESOLVE] ignored .tmp path appId=" + appId + " path=" + path);
+    return null;
+  }
+  if (path.startsWith("media/") || path.startsWith("img/")) {
+    const absPath = await resolveRelativeMediaPath(appId, path, provider);
+    const url = localPathToUrl(absPath);
+    if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log("[MEDIA][RESOLVE] appId=" + appId + " input=" + path + " resolved=" + absPath + " url=" + (!!url));
+    return url;
+  }
+  return localPathToUrl(path);
 }
 
 // ---------------------------------------------------------------------------
@@ -752,4 +1057,172 @@ export async function runMigration(): Promise<void> {
   if (ENABLE_VERBOSE_GAME_CACHE_LOGS) {
     console.log("[GameCache] migration complete:", result);
   }
+  // Run portable path migration for game media
+  try {
+    const { migrateGameMediaToRelative, migrateAchievementsToProviderFolders } = await import("./tauri");
+    const fixed = await migrateGameMediaToRelative();
+    console.log(`[GameCache] game media absolute->relative migration: ${fixed} appinfos fixed`);
+    const achResult = await migrateAchievementsToProviderFolders();
+    console.log(`[GameCache] achievement folder migration: found=${achResult.found} migrated=${achResult.migrated}`);
+  } catch (e) {
+    console.warn("[GameCache] portable path migration error:", e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Media Manifest generation
+// ---------------------------------------------------------------------------
+
+export async function generateMediaManifest(
+  appId: string,
+  media: GameMediaPaths | null,
+  provider = "steam",
+): Promise<void> {
+  if (!media) return;
+  const now = Math.floor(Date.now() / 1000);
+  const { getGameMediaPaths: getPaths } = await import("./tauri");
+  let resolved: GameMediaPathsResult | null = null;
+  try {
+    resolved = await getPaths(appId);
+  } catch {
+    resolved = null;
+  }
+  const entryForRole = (role: string): { path: string; exists: boolean; size: number | null; modifiedAt: number | null } => {
+    const relPath = media[`${role}Path` as keyof typeof media] as string | null;
+    const existsKey = `${role}Exists` as keyof GameMediaPathsResult;
+    const pathKey = `${role}Path` as keyof GameMediaPathsResult;
+    if (!relPath) {
+      return { path: `media/${role}.jpg`, exists: false, size: null, modifiedAt: null };
+    }
+    if (resolved) {
+      const exists = !!(resolved[existsKey] as boolean);
+      const resolvedPath = resolved[pathKey] as string | null;
+      return { path: resolvedPath ?? relPath, exists, size: null, modifiedAt: null };
+    }
+    return { path: relPath, exists: false, size: null, modifiedAt: null };
+  };
+
+  const manifest: MediaManifest = {
+    provider,
+    appid: appId,
+    version: 1,
+    updatedAt: now,
+    files: {
+      cover: entryForRole("cover"),
+      landscape: entryForRole("landscape"),
+      background: entryForRole("background"),
+      logo: entryForRole("logo"),
+      icon: entryForRole("icon"),
+    } as MediaManifestFiles,
+  };
+
+  await writeMediaManifestTauri(appId, manifest);
+  console.log(`[MEDIA][MANIFEST] written appid=${appId} cover=${manifest.files.cover.exists} landscape=${manifest.files.landscape.exists} background=${manifest.files.background.exists}`);
+}
+
+// ---------------------------------------------------------------------------
+// MediaIndex helpers — seed from manifests on startup
+// ---------------------------------------------------------------------------
+
+export async function seedMediaIndexFromStartup(
+  appIds: string[],
+): Promise<void> {
+  if (appIds.length === 0) return;
+  const manifests = await getMediaManifestsBatch(appIds);
+  if (Object.keys(manifests).length === 0) return;
+  const resolved: Record<string, { coverUrl: string | null; landscapeUrl: string | null; backgroundUrl: string | null; logoUrl: string | null; iconUrl: string | null }> = {};
+  for (const [appId, manifest] of Object.entries(manifests)) {
+    const resolvedPaths = await resolveMediaPaths(appId, {
+      coverPath: manifest.files.cover.exists ? manifest.files.cover.path : null,
+      landscapePath: manifest.files.landscape.exists ? manifest.files.landscape.path : null,
+      backgroundPath: manifest.files.background.exists ? manifest.files.background.path : null,
+      logoPath: manifest.files.logo.exists ? manifest.files.logo.path : null,
+      iconPath: manifest.files.icon.exists ? manifest.files.icon.path : null,
+    }, manifest.provider);
+    resolved[appId] = {
+      coverUrl: resolvedPaths?.coverPath ? localPathToUrl(resolvedPaths.coverPath) : null,
+      landscapeUrl: resolvedPaths?.landscapePath ? localPathToUrl(resolvedPaths.landscapePath) : null,
+      backgroundUrl: resolvedPaths?.backgroundPath ? localPathToUrl(resolvedPaths.backgroundPath) : null,
+      logoUrl: resolvedPaths?.logoPath ? localPathToUrl(resolvedPaths.logoPath) : null,
+      iconUrl: resolvedPaths?.iconPath ? localPathToUrl(resolvedPaths.iconPath) : null,
+    };
+  }
+  seedMediaIndexFromManifests(manifests, resolved);
+  console.log(`[MEDIA_INDEX] seeded from manifests count=${Object.keys(manifests).length}`);
+}
+
+// ---------------------------------------------------------------------------
+// Startup media hydration — fill missing appinfo fields from disk files
+// ---------------------------------------------------------------------------
+
+export async function hydrateMediaOnStartup(
+  appIds: string[],
+): Promise<{ updatedAppInfos: number; withBackground: number; withLandscape: number; withIcon: number; withLogo: number }> {
+  if (appIds.length === 0) return { updatedAppInfos: 0, withBackground: 0, withLandscape: 0, withIcon: 0, withLogo: 0 };
+  const { resolveGameMediaPaths, getGameAppInfo, updateGameAppinfoMedia } = await import("./tauri");
+  let updatedAppInfos = 0;
+  let withBackground = 0;
+  let withLandscape = 0;
+  let withIcon = 0;
+  let withLogo = 0;
+  for (const appId of appIds) {
+    try {
+      const diskPaths = await resolveGameMediaPaths(appId);
+      if (!diskPaths) continue;
+      const hasDiskFiles = !!(diskPaths.landscapePath || diskPaths.coverPath || diskPaths.backgroundPath || diskPaths.logoPath || diskPaths.iconPath);
+      if (!hasDiskFiles) continue;
+      const appInfo = await getGameAppInfo(appId);
+      if (!appInfo) continue;
+      const existing = appInfo.media;
+      const absToRel = (abs: string | null): string | null => {
+        if (!abs) return null;
+        const parts = abs.replace(/\\/g, '/').split('/');
+        const filename = parts[parts.length - 1];
+        return filename ? `media/${filename}` : null;
+      };
+      const needsUpdate = (existing?.backgroundPath ? false : true) && !!diskPaths.backgroundPath
+        || (existing?.iconPath ? false : true) && !!diskPaths.iconPath
+        || (existing?.logoPath ? false : true) && !!diskPaths.logoPath;
+      if (!needsUpdate) continue;
+      const merged: Record<string, string | null> = {
+        backgroundPath: existing?.backgroundPath ?? absToRel(diskPaths.backgroundPath) ?? null,
+        iconPath: existing?.iconPath ?? absToRel(diskPaths.iconPath) ?? null,
+        logoPath: existing?.logoPath ?? absToRel(diskPaths.logoPath) ?? null,
+        landscapePath: existing?.landscapePath ?? absToRel(diskPaths.landscapePath) ?? null,
+        coverPath: existing?.coverPath ?? absToRel(diskPaths.coverPath) ?? null,
+      };
+      await updateGameAppinfoMedia(appId, null, merged as any, null).catch(() => {});
+      if (merged.backgroundPath) withBackground++;
+      if (merged.landscapePath) withLandscape++;
+      if (merged.iconPath) withIcon++;
+      if (merged.logoPath) withLogo++;
+      updatedAppInfos++;
+      console.log(`[MEDIA][HYDRATE] appid=${appId} found background=${!!diskPaths.backgroundPath} cover=${!!diskPaths.coverPath} icon=${!!diskPaths.iconPath} landscape=${!!diskPaths.landscapePath} logo=${!!diskPaths.logoPath}`);
+      console.log(`[MEDIA][HYDRATE] appid=${appId} updatedFields=${Object.values(merged).filter(Boolean).length}`);
+      // Update MediaIndex
+      const entry = getMediaEntry(appId);
+      if (entry) {
+        const updated = { ...entry };
+        for (const [field, path] of Object.entries(merged)) {
+          const key = field.replace("Path", "") as keyof typeof updated;
+          const hasKey = `has${key.charAt(0).toUpperCase() + key.slice(1)}` as keyof typeof updated;
+          if (path) {
+            (updated as any)[field] = path;
+            (updated as any)[hasKey] = true;
+          }
+        }
+        updated.updatedAt = Date.now();
+        setMediaEntry(updated);
+      }
+    } catch {
+      // Non-critical — skip failed app
+    }
+  }
+  console.log(`[BOOT][MEDIA_HYDRATE] games=${appIds.length}`);
+  console.log(`[BOOT][MEDIA_HYDRATE] updatedAppInfos=${updatedAppInfos}`);
+  console.log(`[BOOT][MEDIA_HYDRATE] withBackground=${withBackground}`);
+  console.log(`[BOOT][MEDIA_HYDRATE] withLandscape=${withLandscape}`);
+  console.log(`[BOOT][MEDIA_HYDRATE] withIcon=${withIcon}`);
+  console.log(`[BOOT][MEDIA_HYDRATE] withLogo=${withLogo}`);
+  return { updatedAppInfos, withBackground, withLandscape, withIcon, withLogo };
 }

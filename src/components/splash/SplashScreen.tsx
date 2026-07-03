@@ -4,9 +4,10 @@ import { subscribe, getBootStatus, getBootProgress, getBootError } from "../../s
 
 // Simple deterministic status cycle when we don't have per-task tracking
 const STATUS_CYCLE: string[] = [
-  "Preparing library...",
   "Loading settings...",
-  "Loading local cache...",
+  "Migrating game data...",
+  "Loading library...",
+  "Loading achievements...",
   "Starting LumaForge...",
 ];
 

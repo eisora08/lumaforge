@@ -30,7 +30,7 @@ function buildFromSteam(
   return {
     id: stableIdFromString("steam", String(steam.appId)),
     appId: String(steam.appId),
-    title: steam.name || metaName || `Steam App ${steam.appId}`,
+    title: steam.name || metaName || "",
     source: "steam",
     installDir: steam.installPath || steam.installDir || undefined,
     libraryPath: steam.libraryPath,
@@ -73,6 +73,32 @@ function buildFromLocalExe(
     isLuaActive: false,
     isLuaDisabled: false,
     hasLuaSource: false,
+    sources: [],
+  };
+}
+
+function buildFromLua(
+  appId: string,
+  scripts: InstalledLuaScript[],
+  sources: Set<string>,
+  metadata: Record<number, SteamAppMetadata>,
+): LibraryGame {
+  const meta = metadata[Number(appId)];
+  const metaName = meta?.resolved ? meta.name : undefined;
+  return {
+    id: `lua-${appId}`,
+    appId,
+    title: metaName || "",
+    source: "lua",
+    isPlayable: false,
+    isInstallable: true,
+    steamInstalled: false,
+    luaScripts: scripts,
+    hasLua: true,
+    isLuaActive: scripts.some((s) => !s.is_disabled),
+    isLuaDisabled: scripts.every((s) => s.is_disabled),
+    hasLuaSource: sources.has(appId),
+    metadata: meta,
     sources: [],
   };
 }
@@ -121,7 +147,7 @@ export async function resolveLibraryGames(
     }
   }
 
-  // 3. Lua script scan — only for overlay flags, NOT for building game list
+  // 3. Lua script scan
   let luaScripts: InstalledLuaScript[] = [];
   if (settings.luaPath) {
     try {
@@ -131,16 +157,21 @@ export async function resolveLibraryGames(
     }
   }
 
-  // 4. Collect all Steam appIds for metadata
-  const steamAppIds = new Set<number>();
+  // 4. Collect ALL appIds (Steam + Lua-only) for metadata resolution.
+  //    This ensures Lua-only games get real names from metadata resolvers
+  //    instead of showing placeholder "Steam App <appid>" titles.
+  const allAppIds = new Set<number>();
   for (const g of steamGames) {
-    steamAppIds.add(g.appId);
+    allAppIds.add(g.appId);
+  }
+  for (const script of luaScripts) {
+    allAppIds.add(script.app_id);
   }
 
   let metadata: Record<number, SteamAppMetadata> = {};
-  if (steamAppIds.size > 0) {
+  if (allAppIds.size > 0) {
     try {
-      metadata = await resolveGameMetadata(Array.from(steamAppIds));
+      metadata = await resolveGameMetadata(Array.from(allAppIds));
     } catch (error) {
       warnings.push(`Metadata resolve failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -191,14 +222,18 @@ export async function resolveLibraryGames(
     if (existingGame) {
       // Merge Lua into existing Steam game
       mergeLuaIntoGame(existingGame, true, scripts, sourceAppIds);
+    } else {
+      // Add Lua-only game (has Lua script but no Steam manifest)
+      const game = buildFromLua(appIdStr, scripts, sourceAppIds, metadata);
+      gamesMap.set(game.id, game);
     }
-    // Games that are ONLY in Lua (no Steam manifest) are NOT added to the main list.
-    // They appear in the Store "Lua Ready" tab for download.
   }
 
-  const games = Array.from(gamesMap.values()).sort((a, b) =>
-    a.title.localeCompare(b.title),
-  );
+  const games = Array.from(gamesMap.values()).sort((a, b) => {
+    const ta = a.title || a.appId || "";
+    const tb = b.title || b.appId || "";
+    return ta.localeCompare(tb);
+  });
 
   return { games, warnings };
 }

@@ -6,7 +6,9 @@ import {
 } from "lucide-react";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import AchievementIcon from "../common/AchievementIcon";
-import { achievementImageQueue, resolveImageSource, isResolvedUrl } from "../../services/achievementImageQueue";
+import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId } from "../../services/achievementImageQueue";
+import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
+import { achievementStore } from "../../services/achievementStore";
 import { cleanupAchievementOrphanImages } from "../../services/tauri";
 
 type Props = {
@@ -141,8 +143,9 @@ function sortGlobalAchievements(list: GameAchievement[]): GameAchievement[] {
 }
 
 export default function AchievementsModal({
-  summary, appIdStr, gameTitle, gameIconUrl, onClose, onRefresh, refreshing,
+  summary: propSummary, appIdStr, gameTitle, gameIconUrl, onClose, onRefresh, refreshing,
 }: Props) {
+  const [summary, setSummary] = useState(propSummary);
   const [activeTab, setActiveTab] = useState<TabId>("my-achievements");
   const [filter, setFilter] = useState<FilterMode>("all");
   const [sort, setSort] = useState<SortMode>("default");
@@ -177,18 +180,28 @@ export default function AchievementsModal({
     };
   }, [onClose]);
 
-  // Enqueue images
+  // Sync prop into local state
+  useEffect(() => {
+    setSummary(propSummary);
+  }, [propSummary]);
+
+  // Enqueue images with generation token (Part B3)
+  const modalGenRef = useRef<string>("");
   useEffect(() => {
     if (!summary.achievements?.length || !appIdStr) return;
+
+    const generationId = nextGenerationId(appIdStr, "achievements-modal");
+    modalGenRef.current = generationId;
+
     const items: import("../../services/achievementImageQueue").ImageQueueItem[] = [];
     for (const a of summary.achievements) {
       if (a.iconUrl && !isResolvedUrl(a.iconUrl)) {
         const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "high" });
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "normal", caller: "achievements-modal", createdAt: Date.now(), generationId });
       }
       if (a.iconGrayUrl && !isResolvedUrl(a.iconGrayUrl)) {
         const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high" });
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "normal", caller: "achievements-modal", createdAt: Date.now(), generationId });
       }
     }
     if (items.length > 0) {
@@ -196,6 +209,28 @@ export default function AchievementsModal({
       achievementImageQueue.enqueue(items);
     }
   }, [summary.achievements, appIdStr]);
+
+  // Auto-sync: when modal is open, watch appId and call onRefresh on changes
+  useEffect(() => {
+    if (!appIdStr) return;
+    const unsub = achievementAutoSyncService.subscribe((event) => {
+      if (event.appId === appIdStr) {
+        console.debug(`[ACH][AUTO_SYNC] modal detected change appid=${appIdStr}`);
+        onRefresh();
+      }
+    });
+    return unsub;
+  }, [appIdStr, onRefresh]);
+
+  // Store: fast-patch summary when store updates
+  useEffect(() => {
+    if (!appIdStr) return;
+    const unsub = achievementStore.subscribe((appId, patched) => {
+      if (appId !== appIdStr) return;
+      setSummary(patched);
+    });
+    return unsub;
+  }, [appIdStr]);
 
   const toggleGroup = useCallback((title: string) => {
     setExpandedGroups((prev) => {
@@ -560,12 +595,13 @@ export default function AchievementsModal({
                 totalUnlocked={summary.achievements.filter((a) => a.unlocked).length}
                 progressAvailable={summary.progressAvailable}
                 search={search}
+                appIdStr={appIdStr}
               />
             </div>
           )}
           {activeTab === "global-achievements" && (
             <div className="lf-tab-panel-in">
-              <GlobalAchievementsTab achievements={summary.achievements} />
+              <GlobalAchievementsTab achievements={summary.achievements} appIdStr={appIdStr} />
             </div>
           )}
           {activeTab === "achievement-groups" && (
@@ -577,6 +613,7 @@ export default function AchievementsModal({
                 expandedGroups={expandedGroups}
                 onToggleGroup={toggleGroup}
                 progressAvailable={summary.progressAvailable}
+                appIdStr={appIdStr}
                 search={search}
               />
             </div>
@@ -639,13 +676,14 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 /* ------------------------------------------------------------------ */
 
 function MyAchievementsTab({
-  unlockedList, lockedList, totalUnlocked, progressAvailable, search,
+  unlockedList, lockedList, totalUnlocked, progressAvailable, search, appIdStr,
 }: {
   unlockedList: GameAchievement[];
   lockedList: GameAchievement[];
   totalUnlocked: number;
   progressAvailable: boolean;
   search: string;
+  appIdStr?: string;
 }) {
   const showUnlocked = unlockedList.length > 0;
   const showLocked = lockedList.length > 0;
@@ -674,7 +712,7 @@ function MyAchievementsTab({
           />
           <div className="space-y-0.5">
             {unlockedList.map((ach) => (
-              <AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />
+              <AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} appId={appIdStr} />
             ))}
           </div>
         </>
@@ -688,7 +726,7 @@ function MyAchievementsTab({
           />
           <div className="space-y-0.5">
             {lockedList.map((ach) => (
-              <AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />
+              <AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} appId={appIdStr} />
             ))}
           </div>
         </>
@@ -729,9 +767,10 @@ function formatRarityPercent(pct: number | undefined | null): string | null {
 }
 
 function GlobalAchievementsTab({
-  achievements,
+  achievements, appIdStr,
 }: {
   achievements: GameAchievement[];
+  appIdStr?: string;
 }) {
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalFilter, setGlobalFilter] = useState<GlobalFilterMode>("all");
@@ -857,7 +896,7 @@ function GlobalAchievementsTab({
       ) : (
         <div className="space-y-0.5">
           {filteredSorted.map((ach) => (
-            <GlobalAchievementRow key={ach.id} achievement={ach} />
+            <GlobalAchievementRow key={ach.id} achievement={ach} appId={appIdStr} />
           ))}
         </div>
       )}
@@ -865,7 +904,7 @@ function GlobalAchievementsTab({
   );
 }
 
-function GlobalAchievementRow({ achievement }: { achievement: GameAchievement }) {
+function GlobalAchievementRow({ achievement, appId }: { achievement: GameAchievement; appId?: string }) {
   const isUnlocked = achievement.unlocked;
   const displayPct = formatRarityPercent(achievement.rarityPercent);
   const tierLabel = getRarityLabel(achievement.rarityPercent);
@@ -881,6 +920,7 @@ function GlobalAchievementRow({ achievement }: { achievement: GameAchievement })
         iconUrl={achievement.iconUrl}
         iconGrayUrl={achievement.iconGrayUrl}
         unlocked={isUnlocked}
+        appId={appId}
       />
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-3">
@@ -935,7 +975,7 @@ function GlobalAchievementRow({ achievement }: { achievement: GameAchievement })
 /* ------------------------------------------------------------------ */
 
 function AchievementGroupsTab({
-  groups, groupMode, onGroupModeChange, expandedGroups, onToggleGroup, progressAvailable, search,
+  groups, groupMode, onGroupModeChange, expandedGroups, onToggleGroup, progressAvailable, search, appIdStr,
 }: {
   groups: GroupInfo[];
   groupMode: GroupMode;
@@ -944,6 +984,7 @@ function AchievementGroupsTab({
   onToggleGroup: (title: string) => void;
   progressAvailable: boolean;
   search: string;
+  appIdStr?: string;
 }) {
   if (import.meta.env.DEV && groups.length > 0) {
     const total = groups.reduce((s, g) => s + g.totalCount, 0);
@@ -1052,7 +1093,7 @@ function AchievementGroupsTab({
                 <div className="min-h-0 overflow-hidden">
                   {isExpanded && (
                     <div className="border-t border-(--surface-active-border) p-2 space-y-0.5">
-                      {renderGroupAchievements(group.achievements, groupMode, progressAvailable)}
+                      {renderGroupAchievements(group.achievements, groupMode, progressAvailable, appIdStr)}
                     </div>
                   )}
                 </div>
@@ -1065,7 +1106,7 @@ function AchievementGroupsTab({
   );
 }
 
-function renderGroupAchievements(list: GameAchievement[], groupMode: GroupMode, progressAvailable: boolean) {
+function renderGroupAchievements(list: GameAchievement[], groupMode: GroupMode, progressAvailable: boolean, appIdStr?: string) {
   const result: React.ReactNode[] = [];
 
   // Rarity groups: sort by rarity ascending inside the tier
@@ -1077,7 +1118,7 @@ function renderGroupAchievements(list: GameAchievement[], groupMode: GroupMode, 
       return a.name.localeCompare(b.name);
     });
     for (const ach of sorted) {
-      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />);
+      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} appId={appIdStr} />);
     }
     return result;
   }
@@ -1088,12 +1129,12 @@ function renderGroupAchievements(list: GameAchievement[], groupMode: GroupMode, 
 
   if (unlocked.length > 0) {
     for (const ach of buildSortedUnlocked(unlocked)) {
-      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />);
+      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} appId={appIdStr} />);
     }
   }
   if (locked.length > 0) {
     for (const ach of buildSortedLocked(locked)) {
-      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} />);
+      result.push(<AchievementRow key={ach.id} achievement={ach} progressAvailable={progressAvailable} appId={appIdStr} />);
     }
   }
 
@@ -1126,7 +1167,7 @@ function SectionHeader({
   );
 }
 
-function AchievementRow({ achievement, progressAvailable }: { achievement: GameAchievement; progressAvailable: boolean }) {
+function AchievementRow({ achievement, progressAvailable, appId }: { achievement: GameAchievement; progressAvailable: boolean; appId?: string }) {
   const unlockTime = normalizeUnlockTime(achievement.unlockTime);
   const isUnlocked = achievement.unlocked;
 
@@ -1140,6 +1181,7 @@ function AchievementRow({ achievement, progressAvailable }: { achievement: GameA
         iconUrl={achievement.iconUrl}
         iconGrayUrl={achievement.iconGrayUrl}
         unlocked={isUnlocked}
+        appId={appId}
       />
 
       <div className="min-w-0 flex-1">

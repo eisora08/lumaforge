@@ -4,7 +4,7 @@ import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
-import { localPathToUrl } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showWarning } from "../toast/GameToast";
 import AsyncImage from "../common/AsyncImage";
@@ -160,11 +160,22 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     return libraryGames.find((game) => game.appId === heroAppId);
   }, [libraryGames, heroAppId]);
 
-  const bgUrl = useMemo(() => {
-    const bgPath =
-      heroGame?.media?.backgroundPath || heroGame?.media?.landscapePath;
-    return bgPath ? localPathToUrl(bgPath) : null;
-  }, [heroGame]);
+  const [bgUrl, setBgUrl] = useState<string | null>(null);
+  const [heroTitle, setHeroTitle] = useState<string>("");
+  useEffect(() => {
+    const bgPath = heroGame?.media?.backgroundPath || heroGame?.media?.landscapePath;
+    if (!bgPath || !heroAppId) { setBgUrl(null); return; }
+    let cancelled = false;
+    resolveGameMediaUrl(heroAppId, bgPath).then((url) => {
+      if (!cancelled) setBgUrl(url);
+    });
+    if (heroAppId && heroGame) {
+      setHeroTitle(resolveCanonicalDisplayTitle(heroAppId, heroGame));
+    }
+    const selection = heroGame?.media?.backgroundPath ? "background" : "landscape";
+    console.log(`[MEDIA][HERO] appid=${heroAppId} selected=${selection} bgExists=${!!bgPath} title=${heroTitle || heroGame?.title}`);
+    return () => { cancelled = true; };
+  }, [heroGame, heroAppId]);
 
   const lastPlayedStr = useMemo(() => {
     return formatLastPlayed(heroGame?.lastPlayed);
@@ -335,7 +346,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           </div>
 
           <h1 className="text-2xl font-bold tracking-tight text-white drop-shadow-lg sm:text-3xl">
-            {heroGame.title}
+            {heroTitle || heroGame.title}
           </h1>
 
           <div className="mt-5 flex flex-wrap gap-3">

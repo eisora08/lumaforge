@@ -1,6 +1,9 @@
 import { loadStartupSnapshot } from "./startupSnapshotService";
 import type { StartupSnapshot } from "./startupSnapshotService";
 import { invoke } from "@tauri-apps/api/core";
+import { backgroundJobQueue } from "./backgroundJobQueue";
+import { loadSettings } from "../context/SettingsContext";
+import type { AppSettings } from "../types/settings";
 
 export type BootStatus =
   | "booting"
@@ -10,13 +13,15 @@ export type BootStatus =
 
 export type BootTaskId =
   | "load-settings"
+  | "migrate-portable-paths"
   | "load-startup-snapshot"
-  | "hydrate-snapshot-media"
-  | "load-library-cache"
-  | "load-appinfo-index"
-  | "hydrate-sessions"
-  | "init-store-cache"
-  | "init-image-caches"
+  | "load-local-game-index"
+  | "reconcile-lua-games"
+  | "load-achievement-summaries"
+  | "load-cached-media-index"
+  | "start-achievement-watcher"
+  | "start-background-job-queue"
+  | "schedule-background-repair"
   | "confirm-mounted";
 
 export type BootLogEntry = {
@@ -26,7 +31,7 @@ export type BootLogEntry = {
   elapsedMs: number;
 };
 
-const MAX_SPLASH_TIMEOUT_MS = 8_000;
+const MAX_SPLASH_TIMEOUT_MS = 10_000;
 
 let _bootStatus: BootStatus = "booting";
 let _bootProgress = 0;
@@ -40,6 +45,7 @@ let _snapshotReady: Promise<void> = new Promise((resolve) => {
   _snapshotResolve = resolve;
 });
 let _splashClosed = false;
+let _cachedSettings: AppSettings | null = null;
 
 export function getBootSnapshot(): StartupSnapshot | null {
   return _snapshotLoaded;
@@ -57,20 +63,18 @@ function notify(): void {
 }
 
 function logBoot(msg: string): void {
-  console.log(`[Boot] ${msg}`);
+  console.log(`[BOOT] ${msg}`);
 }
 
 async function closeSplashscreenAndShowMainOnce(): Promise<void> {
   if (_splashClosed) return;
   _splashClosed = true;
-
   logBoot("showing main window");
-
   try {
     await invoke("close_splashscreen_and_show_main");
     logBoot("splash closed");
   } catch (err) {
-    console.warn("[Boot] close splash command failed:", String(err));
+    console.warn("[BOOT] close splash command failed:", String(err));
   }
 }
 
@@ -84,16 +88,15 @@ function track(taskId: BootTaskId, fn: () => Promise<void>): Promise<void> {
   return fn()
     .then(() => {
       log("done");
-      _bootProgress = Math.min(100, _bootProgress + 15);
+      _bootProgress = Math.min(100, _bootProgress + 10);
       notify();
     })
     .catch((err) => {
       const msg = String(err);
-      console.warn("[Boot] task error:", taskId, msg);
+      console.warn("[BOOT] task error:", taskId, msg);
       log("error", msg);
       _bootError = msg;
-      _bootProgress = Math.min(100, _bootProgress + 10);
-      void err;
+      _bootProgress = Math.min(100, _bootProgress + 5);
       notify();
     });
 }
@@ -116,6 +119,10 @@ export function getBootLog(): BootLogEntry[] {
 
 export function isBootReady(): boolean {
   return _bootStatus === "ready";
+}
+
+export function getCachedSettings(): AppSettings | null {
+  return _cachedSettings;
 }
 
 export function subscribe(fn: () => void): () => void {
@@ -141,12 +148,38 @@ export async function runBootTasks(): Promise<void> {
     try {
       await Promise.race([
         (async () => {
+          // Stage 1: Load settings
           await track("load-settings", async () => {
             logBoot("load settings start");
-            await Promise.resolve();
+            try {
+              _cachedSettings = await loadSettings() as unknown as AppSettings;
+              logBoot("settings loaded");
+            } catch (err) {
+              console.warn("[BOOT] settings load failed:", String(err));
+            }
             logBoot("load settings end");
           });
 
+          // Stage 2: Migrate portable paths (safe, non-blocking)
+          await track("migrate-portable-paths", async () => {
+            logBoot("running portable path migration");
+            try {
+              const { migrateAchievementsToProviderFolders } = await import("./tauri");
+              const result = await migrateAchievementsToProviderFolders();
+              if (result.migrated > 0) {
+                logBoot(`migrated ${result.migrated} achievement folders`);
+              }
+              if (result.errors && result.errors.length > 0) {
+                console.warn("[BOOT] migration errors:", result.errors);
+              }
+            } catch (err) {
+              // Migration is optional — log but don't block
+              console.warn("[BOOT] migration skipped:", String(err));
+            }
+            logBoot("portable path migration done");
+          });
+
+          // Stage 3: Load startup snapshot (instant from file)
           await track("load-startup-snapshot", async () => {
             logBoot("load snapshot start");
             try {
@@ -154,7 +187,38 @@ export async function runBootTasks(): Promise<void> {
               if (_snapshotLoaded) {
                 const gameCount = _snapshotLoaded.library.games.length;
                 const sidebarCount = _snapshotLoaded.sidebar.items.length;
+                const snapshotAge = Date.now() - _snapshotLoaded.updatedAt;
+                const isFresh = snapshotAge < 24 * 60 * 60 * 1000;
                 logBoot(`snapshot hydrated from file — games: ${gameCount}, sidebar items: ${sidebarCount}`);
+                console.log(`[BOOT][CACHE] snapshotFresh=${!!isFresh}`);
+                console.log(`[BOOT][CACHE] rebuildNeeded=${!isFresh}`);
+                // Hydrate media stats
+                let withLandscape = 0, withCover = 0, withIcon = 0, missingMedia = 0;
+                for (const g of _snapshotLoaded.library.games) {
+                  if (g.media?.landscapePath) withLandscape++;
+                  if (g.media?.coverPath) withCover++;
+                  if (g.media?.iconPath) withIcon++;
+                  if (!g.media?.landscapePath && !g.media?.coverPath && !g.media?.backgroundPath && !g.media?.iconPath) missingMedia++;
+                }
+                console.log(`[BOOT][MEDIA] hydrated games=${gameCount}`);
+                console.log(`[BOOT][MEDIA] withLandscape=${withLandscape}`);
+                console.log(`[BOOT][MEDIA] withCover=${withCover}`);
+                console.log(`[BOOT][MEDIA] withIcon=${withIcon}`);
+                console.log(`[BOOT][MEDIA] missingMedia=${missingMedia}`);
+                // Hydrate: repair missing media paths from canonical appinfo
+                const { hydrateStartupSnapshotMedia } = await import("./startupSnapshotService");
+                const hydrateResult = await hydrateStartupSnapshotMedia(_snapshotLoaded);
+                console.log(`[BOOT][CACHE] hydrateResult: changed=${hydrateResult.changed} repaired=${hydrateResult.repairedCount} ready=${hydrateResult.readyCount} partial=${hydrateResult.partialCount} missing=${hydrateResult.missingCount} stale=${hydrateResult.staleCount}`);
+                // Fingerprint checks (Phase 5)
+                const indexes = _snapshotLoaded.indexes;
+                const hasFingerprints = !!(indexes as any).luaFingerprint || !!(indexes as any).appinfoFingerprint;
+                console.log(`[BOOT][CACHE] luaFingerprintChanged=unknown (no baseline)`);
+                console.log(`[BOOT][CACHE] mediaFingerprintChanged=unknown (no baseline)`);
+                if (!hasFingerprints) {
+                  console.log(`[BOOT][CACHE] fingerprintBaseline=missing (first boot or old snapshot)`);
+                }
+              } else {
+                console.log(`[BOOT][CACHE] snapshotFresh=false (no snapshot file)`);
               }
             } catch {
               _snapshotLoaded = null;
@@ -162,39 +226,298 @@ export async function runBootTasks(): Promise<void> {
             logBoot("load snapshot end");
           });
 
-          await track("hydrate-snapshot-media", async () => {
-            // Skipped — SQLite library_cache is the primary source.
-            // No media validation needed at boot; resolution is lazy per-game.
-            logBoot("snapshot hydration skipped (trusting SQLite cache)");
-          });
-
           if (_snapshotResolve) _snapshotResolve();
 
-          await track("load-library-cache", async () => {
-            return new Promise((resolve) => setTimeout(resolve, 50));
+          // Stage 4: Load local game index (SQLite, instant)
+          await track("load-local-game-index", async () => {
+            logBoot("load game index start");
+            try {
+              const { loadSteamGameIndex } = await import("./fullSteamGameIndex");
+              const index = await loadSteamGameIndex();
+              if (index && index.length > 0) {
+                logBoot(`game index loaded: ${index.length} games`);
+              } else {
+                logBoot("game index empty (first run or no games scanned)");
+              }
+            } catch (err) {
+              console.warn("[BOOT] game index load failed:", String(err));
+            }
+            logBoot("load game index end");
           });
 
-          await track("load-appinfo-index", async () => {
-            return Promise.resolve();
+          // Stage 4.5: Reconcile local index with config/lua definitions
+          await track("reconcile-lua-games", async () => {
+            logBoot("reconcile lua games start");
+            try {
+              const settings = _cachedSettings;
+              if (settings) {
+                const { setReconciledGames, clearReconciledGames } = await import("./gameStore");
+                const { scanInstalledLuaScripts, scanSteamInstalledGames } = await import("./tauri");
+                const { loadCachedGames } = await import("./gameDetectionCache");
+
+                const [luaScripts, steamGames, sqliteCache] = await Promise.all([
+                  settings.luaPath ? scanInstalledLuaScripts(settings.luaPath).catch(() => []) : Promise.resolve([]),
+                  scanSteamInstalledGames({
+                    steamPath: settings.steamRoot || undefined,
+                    luaPath: settings.luaPath || undefined,
+                    depotcachePath: settings.depotcachePath || undefined,
+                    gameScanFolders: settings.gameScanFolders.length > 0 ? settings.gameScanFolders : undefined,
+                  }).catch(() => []),
+                  loadCachedGames().catch(() => null),
+                ]);
+
+                const sqliteAppIds = new Set<string>();
+                if (sqliteCache) {
+                  for (const g of sqliteCache.games) {
+                    if (g.appId) sqliteAppIds.add(g.appId);
+                  }
+                }
+
+                const luaAppIds = new Set(luaScripts.map((s) => String(s.app_id)));
+                const steamAppIds = new Set(steamGames.map((g) => String(g.appId)));
+
+                // Configured games = Steam games + Lua-only games
+                const allConfiguredAppIds = new Set([...steamAppIds, ...luaAppIds]);
+                const missingFromSqlite: string[] = [];
+                const luaOnly: string[] = [];
+
+                for (const appId of allConfiguredAppIds) {
+                  if (!sqliteAppIds.has(appId)) {
+                    missingFromSqlite.push(appId);
+                    if (!steamAppIds.has(appId)) {
+                      luaOnly.push(appId);
+                    }
+                  }
+                }
+
+                const staleSqliteOnly = [...sqliteAppIds].filter((id) => !allConfiguredAppIds.has(id));
+
+                logBoot(`sqliteGames=${sqliteAppIds.size}`);
+                logBoot(`luaGames=${luaAppIds.size}`);
+                logBoot(`steamGames=${steamAppIds.size}`);
+                logBoot(`allConfigured=${allConfiguredAppIds.size}`);
+                logBoot(`missingFromSQLite=${missingFromSqlite.length}`);
+                logBoot(`luaOnly=${luaOnly.length}`);
+                logBoot(`staleSqliteOnly=${staleSqliteOnly.length}`);
+
+                if (missingFromSqlite.length > 0) {
+                  // Build LibraryGames for missing entries by running the resolver
+                  const { resolveLibraryGames } = await import("./libraryGameResolver");
+                  const result = await resolveLibraryGames(settings);
+                  setReconciledGames(result.games);
+                  logBoot(`reconciled games count=${result.games.length}`);
+
+                  // Persist reconciled list to SQLite cache so next boot is instant
+                  if (result.games.length > 0) {
+                    const { saveCachedGames } = await import("./gameDetectionCache");
+                    await saveCachedGames(result.games, result.warnings).catch(() => {});
+                    logBoot(`saved reconciled games to cache`);
+
+                    // Resolve names for games with placeholder/empty titles and
+                    // persist to canonical appinfo so snapshot hydration can use them.
+                    const { isPlaceholderSteamTitle } = await import("./gameCacheService");
+                    const { updateGameAppinfoMedia, readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
+                    const emptyTitleGames = result.games.filter(
+                      (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
+                    );
+                    if (emptyTitleGames.length > 0) {
+                      const appIds = emptyTitleGames.map((g) => g.appId!);
+                      const appinfos = await readCanonicalAppinfos(appIds).catch(() => ({} as Record<string, any>));
+                      for (const game of emptyTitleGames) {
+                        if (!game.appId) continue;
+                        const appinfo = appinfos[game.appId];
+                        let resolvedName: string | null = null;
+                        let source = "";
+                        if (appinfo?.name && !isPlaceholderSteamTitle(appinfo.name, game.appId)) {
+                          resolvedName = appinfo.name;
+                          source = "appinfo";
+                        }
+                        if (!resolvedName) {
+                          try {
+                            const sd = await getStoreDetails(game.appId).catch(() => null);
+                            const sdData = sd?.data as { name?: string } | null;
+                            if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
+                              resolvedName = sdData.name;
+                              source = "store-details";
+                            }
+                          } catch { /* ignore */ }
+                        }
+                        if (resolvedName) {
+                          console.log(`[NAME][CANONICAL_WRITE] appid=${game.appId} name=${resolvedName} source=${source}`);
+                          game.title = resolvedName;
+                          updateGameAppinfoMedia(
+                            game.appId, resolvedName,
+                            { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
+                            null,
+                          ).catch(() => {});
+                        } else {
+                          console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
+                        }
+                      }
+                      setReconciledGames(result.games);
+                    }
+                  }
+                } else {
+                  clearReconciledGames();
+                }
+
+                logBoot(`finalGames=${allConfiguredAppIds.size}`);
+              }
+            } catch (err) {
+              console.warn("[BOOT] reconcile lua games failed:", String(err));
+            }
+            logBoot("reconcile lua games end");
           });
 
-          await track("hydrate-sessions", async () => {
-            return new Promise((resolve) => setTimeout(resolve, 30));
+          // Stage 5: Load cached achievement summaries into store
+          await track("load-achievement-summaries", async () => {
+            logBoot("load achievement summaries start");
+            try {
+              const { achievementStore } = await import("./achievementStore");
+              const { readAchievementCache } = await import("./tauri");
+              if (_snapshotLoaded) {
+                const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
+                let loaded = 0;
+                // Load up to 20 summaries during splash — enough for instant UI
+                const batch = appIds.slice(0, 20);
+                for (const appId of batch) {
+                  try {
+                    const cache = await readAchievementCache(Number(appId));
+                    if (cache) {
+                      // Convert AppAchievementCache to GameAchievementsSummary
+                      const summary = {
+                        appId,
+                        total: cache.achievements.length,
+                        unlocked: cache.achievements.filter((a: { unlocked: boolean }) => a.unlocked).length,
+                        progressAvailable: cache.summary.progress_available,
+                        achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; rarity_level?: string | null }) => ({
+                          apiName: a.api_name,
+                          name: a.name,
+                          description: a.description ?? "",
+                          iconUrl: a.icon ?? a.icon_url ?? null,
+                          iconGrayUrl: a.icon_gray ?? a.icon_gray_url ?? null,
+                          unlocked: a.unlocked,
+                          unlockTime: a.unlock_time ?? null,
+                          rarityPercent: a.rarity_percent ?? null,
+                          rarityLevel: a.rarity_level ?? null,
+                        })),
+                        newlyUnlocked: [],
+                      };
+                      achievementStore.setSummary(appId, summary as any);
+                      loaded++;
+                    }
+                  } catch { /* skip games without achievement cache */ }
+                }
+                if (loaded > 0) {
+                  logBoot(`loaded ${loaded} achievement summaries into store`);
+                }
+              }
+            } catch (err) {
+              console.warn("[BOOT] achievement summaries load failed:", String(err));
+            }
+            logBoot("load achievement summaries end");
           });
 
-          await track("init-store-cache", async () => {
-            return Promise.resolve();
+          // Stage 6: Load cached media index (from snapshot + manifests)
+          await track("load-cached-media-index", async () => {
+            logBoot("seed media cache from snapshot");
+            try {
+              if (_snapshotLoaded) {
+                const { seedResolvedMediaCacheFromSnapshot, seedMediaIndexFromStartup, getAllMediaEntries } = await import("./gameCacheService");
+                seedResolvedMediaCacheFromSnapshot(_snapshotLoaded.library.games);
+                // Seed MediaIndex from per-game manifests for instant runtime URLs
+                const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean) as string[];
+                await seedMediaIndexFromStartup(appIds);
+                const entries = getAllMediaEntries();
+                if (entries.length > 0) {
+                  const withLandscape = entries.filter((e) => e.hasLandscape).length;
+                  const withCover = entries.filter((e) => e.hasCover).length;
+                  const withIcon = entries.filter((e) => e.hasIcon).length;
+                  const missing = entries.filter((e) => !e.hasLandscape && !e.hasCover && !e.hasBackground && !e.hasIcon).length;
+                  console.log(`[MEDIA_INDEX] initialized games=${entries.length}`);
+                  console.log(`[MEDIA_INDEX] withLandscape=${withLandscape}`);
+                  console.log(`[MEDIA_INDEX] withCover=${withCover}`);
+                  console.log(`[MEDIA_INDEX] withIcon=${withIcon}`);
+                  console.log(`[MEDIA_INDEX] missing=${missing}`);
+                }
+                logBoot("media cache seeded from snapshot");
+              }
+            } catch (err) {
+              console.warn("[BOOT] media cache seed failed:", String(err));
+            }
+            logBoot("cached media index done");
           });
 
-          await track("init-image-caches", async () => {
-            return Promise.resolve();
+          // Stage 7: Start background job queue idle processing
+          await track("start-background-job-queue", async () => {
+            logBoot("background job queue ready");
+            // The queue was imported at module level; it's ready to accept jobs.
+            // Actual processing starts when jobs are enqueued.
+            logBoot("background job queue initialized");
           });
 
+          // Stage 8: Schedule background repair jobs (after main UI opens)
+          await track("schedule-background-repair", async () => {
+            logBoot("scheduling background repair");
+            try {
+              // Use the already-defined scheduleAfterMain
+              scheduleAfterMain(async () => {
+                // Enqueue low-priority validation
+                backgroundJobQueue.enqueue("validate-portable-paths", "steam", { priority: "low" });
+
+                // Enqueue achievement schema generation for games that have achievements
+                if (_snapshotLoaded) {
+                  const { achievementStore } = await import("./achievementStore");
+                  const appIds = _snapshotLoaded.library.games
+                    .filter((g) => g.appId && g.source === "steam")
+                    .map((g) => g.appId!);
+                  // Only enqueue for games not already in store
+                  const missing: string[] = [];
+                  for (const appId of appIds) {
+                    if (!achievementStore.getSummary(appId)) {
+                      missing.push(appId);
+                    }
+                  }
+                  // Batch to avoid overwhelming the queue
+                  const batch = missing.slice(0, 10);
+                  if (batch.length > 0) {
+                    const { enqueueAchievementSchemaJobs, enqueueAchievementImageJobs } = await import("./backgroundJobQueue");
+                    enqueueAchievementSchemaJobs(batch, "low");
+                    enqueueAchievementImageJobs(batch, "low");
+                    logBoot(`scheduled background achievement jobs for ${batch.length} games`);
+                  }
+                }
+                // Startup media hydration — fill missing appinfo fields
+                try {
+                  const { hydrateMediaOnStartup } = await import("./gameCacheService");
+                  if (_snapshotLoaded) {
+                    const appIds = _snapshotLoaded.library.games
+                      .filter((g) => g.appId)
+                      .map((g) => g.appId!);
+                    await hydrateMediaOnStartup(appIds);
+                  }
+                } catch (err) {
+                  console.warn("[BOOT] media hydration failed:", String(err));
+                }
+                // Validate startup cache health
+                try {
+                  const { validateStartupCacheHealth } = await import("./gameStore");
+                  await validateStartupCacheHealth();
+                } catch (err) {
+                  console.warn("[BOOT] cache health validation failed:", String(err));
+                }
+              }, 2000);
+            } catch (err) {
+              console.warn("[BOOT] background repair scheduling failed:", String(err));
+            }
+            logBoot("background repair scheduled");
+          });
+
+          // Stage 9: Confirm main window is mounted
           await track("confirm-mounted", async () => {
-            return Promise.resolve();
+            logBoot("route shell ready");
           });
 
-          logBoot("route shell ready");
           _bootStatus = "ready";
           _bootProgress = 100;
           notify();
@@ -206,7 +529,7 @@ export async function runBootTasks(): Promise<void> {
       if (isTimeout) {
         logBoot("timeout reached, showing main anyway");
       } else {
-        console.warn("[Boot] error:", (err as Error).message);
+        console.warn("[BOOT] error:", (err as Error).message);
       }
       _bootStatus = isTimeout ? "timeout" : "error";
       _bootError = (err as Error).message ?? "Boot failed";
@@ -223,9 +546,15 @@ export async function runBootTasks(): Promise<void> {
   return _bootPromise;
 }
 
-export function scheduleAfterMain(fn: () => void, delayMs: number = 3000): void {
-  const run = () => {
-    setTimeout(fn, delayMs);
+export function scheduleAfterMain(fn: () => void | Promise<void>, delayMs: number = 3000): void {
+  const run = async () => {
+    setTimeout(async () => {
+      try {
+        await fn();
+      } catch (err) {
+        console.warn("[BOOT] afterMain task failed:", String(err));
+      }
+    }, delayMs);
   };
 
   if (_bootStatus === "ready" || _bootStatus === "timeout") {

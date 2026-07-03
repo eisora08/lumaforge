@@ -23,6 +23,7 @@ import { SkeletonBox } from "../common/Skeleton";
 import { batchLoadGameMedia, resolveSidebarMedia } from "../../services/gameCacheService";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
+import { backgroundJobQueue } from "../../services/backgroundJobQueue";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import { showSuccess, showError } from "../toast/GameToast";
 
@@ -34,31 +35,49 @@ type Props = {
   collapsed?: boolean;
 };
 
-function pickSidebarSrc(resolved: ResolvedSidebarMedia | null): string | null {
+function pickSidebarSrc(resolved: ResolvedSidebarMedia | null, appId?: string): string | null {
   if (!resolved) return null;
-  if (resolved.landscape.exists && resolved.landscape.src) {
-    return resolved.landscape.src;
+  const priorities: Array<{ key: keyof ResolvedSidebarMedia; label: string }> = [
+    { key: "icon", label: "icon" },
+    { key: "cover", label: "cover" },
+    { key: "landscape", label: "landscape" },
+    { key: "background", label: "background" },
+  ];
+  for (const { key, label } of priorities) {
+    const item = resolved[key];
+    if (item?.exists && item.src) {
+      if (appId) console.log(`[MEDIA][SIDEBAR] appid=${appId} selected=${label} path=${item.localPath} exists=true`);
+      return item.src;
+    }
   }
-  if (resolved.cover.exists && resolved.cover.src) {
-    return resolved.cover.src;
+  if (appId) {
+    const allFields = resolved.icon?.exists || resolved.cover?.exists || resolved.landscape?.exists || resolved.background?.exists;
+    const reason = !resolved ? "no-resolved-object" : !allFields ? "no-media-fields" : "files-missing";
+    console.log(`[MEDIA][SIDEBAR] appid=${appId} selected=placeholder path=null exists=false placeholderReason=${reason}`);
   }
   return null;
 }
 
 function pickSidebarFallbackPath(resolved: ResolvedSidebarMedia | null): string | null {
   if (!resolved) return null;
-  if (resolved.landscape.exists && resolved.landscape.localPath) {
-    return resolved.landscape.localPath;
-  }
-  if (resolved.cover.exists && resolved.cover.localPath) {
-    return resolved.cover.localPath;
+  const priorities: Array<keyof ResolvedSidebarMedia> = ["icon", "cover", "landscape", "background"];
+  for (const key of priorities) {
+    const item = resolved[key];
+    if (item?.exists && item.localPath) {
+      return item.localPath;
+    }
   }
   return null;
 }
 
 function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry | null): string {
   if (appInfoEntry?.name) return appInfoEntry.name;
-  return game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+  if (game.title && !game.title.startsWith("Steam App ")) return game.title;
+  if (game.appId) {
+    console.log(`[MEDIA][SIDEBAR] appid=${game.appId} placeholderReason=no-name-fallback title="Steam App ${game.appId}"`);
+    return `Steam App ${game.appId}`;
+  }
+  return "Unknown Game";
 }
 
 function getSnapshotMedia(appId: string): GameMediaPaths | null {
@@ -91,6 +110,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
+  const sidebarRepairEnqueued = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
 
   // Defer all batch processing by 5s so initial mount stays zero-work
@@ -138,12 +158,21 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
   }, [filtered]);
 
   // Resolve sidebar media for visible games — use snapshot paths first
+  // Retries when canonicalInfoMap becomes available for IDs that resolved with no usable media
+  const [sidebarRetryKey, setSidebarRetryKey] = useState(0);
   useEffect(() => {
     const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
     const uniqueIds = [...new Set(ids)];
-    const unloadedIds = uniqueIds.filter(
-      (id) => !sidebarMediaLoading.current.has(id) && sidebarMediaMap[id] === undefined
-    );
+    const hasUsableMedia = (id: string) => {
+      const r = sidebarMediaMap[id];
+      return r ? (r.landscape.exists || r.cover.exists || r.icon.exists || r.background.exists) : false;
+    };
+    const unloadedIds = uniqueIds.filter((id) => {
+      if (sidebarMediaLoading.current.has(id)) return false;
+      if (sidebarMediaMap[id] === undefined) return true;
+      if (!hasUsableMedia(id) && canonicalInfoMap[id]) return true;
+      return false;
+    });
     if (unloadedIds.length === 0) return;
 
     const batchSize = 10;
@@ -153,7 +182,6 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
         for (const id of batch) sidebarMediaLoading.current.add(id);
         const results = await Promise.all(
           batch.map(async (id) => {
-            // Try snapshot first (no disk I/O)
             const snapshotMedia = getSnapshotMedia(id);
             const appInfo = canonicalInfoMap[id] ?? null;
             const resolved = await resolveSidebarMedia(id, appInfo, snapshotMedia);
@@ -176,10 +204,44 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
           }
           return next;
         });
+        for (const id of batch) {
+          sidebarMediaLoading.current.delete(id);
+        }
       }
     };
     loadBatch();
-  }, [filtered, canonicalInfoMap]);
+  }, [filtered, canonicalInfoMap, sidebarRetryKey]);
+
+  // Trigger retry when canonicalInfoMap gains entries for IDs with incomplete media
+  useEffect(() => {
+    const ids = Object.keys(canonicalInfoMap);
+    const needsRetry = ids.some((id) => {
+      const r = sidebarMediaMap[id];
+      return r !== undefined && !r?.landscape?.exists && !r?.cover?.exists && !r?.icon?.exists;
+    });
+    if (needsRetry) setSidebarRetryKey((k) => k + 1);
+  }, [canonicalInfoMap]);
+
+  // High-priority media repair for visible games with missing thumbnails
+  useEffect(() => {
+    const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
+    const uniqueIds = [...new Set(ids)];
+    const missingIds = uniqueIds.filter((id) => {
+      const resolved = sidebarMediaMap[id];
+      if (!resolved) return false; // still loading
+      return !resolved.landscape.exists && !resolved.cover.exists;
+    });
+
+    if (missingIds.length === 0) return;
+
+    for (const id of missingIds) {
+      if (sidebarRepairEnqueued.current.has(id)) continue;
+      sidebarRepairEnqueued.current.add(id);
+      const key = backgroundJobQueue.enqueue("repair-game-media", "steam", { appId: id, priority: "high" });
+      console.log(`[MEDIA][SIDEBAR] visible=${uniqueIds.length} missing=${missingIds.length}`);
+      console.log(`[JOB] queued key=${key} priority=high`);
+    }
+  }, [filtered, sidebarMediaMap]);
 
   function handleContextMenu(e: React.MouseEvent<HTMLButtonElement>, game: LibraryGame) {
     e.preventDefault();
@@ -274,7 +336,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
             const isSelected = selectedGame?.id === game.id;
             const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
             const resolved = game.appId ? (sidebarMediaMap[game.appId] ?? null) : null;
-            const resolvedThumb = pickSidebarSrc(resolved);
+            const resolvedThumb = pickSidebarSrc(resolved, game.appId ?? undefined);
             const sidebarFallbackPath = pickSidebarFallbackPath(resolved);
             const displayTitle = getSidebarTitle(game, appInfoEntry);
             const gk = computeGameKey(game);

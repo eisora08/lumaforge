@@ -15,7 +15,6 @@ type AsyncImageProps = {
   fallbackLocalPath?: string | null;
 };
 
-const ENABLE_VERBOSE_ASYNCIMAGE_LOGS = false;
 const failedAssetSrcSet = new Set<string>();
 const failedLocalPathSet = new Set<string>();
 const successfulDataUrlCache = new Map<string, string>();
@@ -67,9 +66,6 @@ export default function AsyncImage({
         setDisplaySrc(cached);
         return;
       }
-      if (failedLocalPathSet.has(fallbackLocalPath)) {
-        return;
-      }
       if (isAssetUrl(src) && failedAssetSrcSet.has(src)) {
         triggerDataUrlFallback(src, fallbackLocalPath);
         return;
@@ -78,29 +74,6 @@ export default function AsyncImage({
 
     setDisplaySrc(src);
   }, [src, fallbackLocalPath]);
-
-  useEffect(() => {
-    if (displaySrc === null && !dataUrlAttemptedRef.current) {
-      if (!src) return;
-
-      if (fallbackLocalPath && !fallbackLocalPath.endsWith(".tmp")) {
-        const cached = successfulDataUrlCache.get(fallbackLocalPath);
-        if (cached) {
-          setDisplaySrc(cached);
-          return;
-        }
-        if (failedLocalPathSet.has(fallbackLocalPath)) {
-          return;
-        }
-        if (isAssetUrl(src) && failedAssetSrcSet.has(src)) {
-          triggerDataUrlFallback(src, fallbackLocalPath);
-          return;
-        }
-      }
-
-      setDisplaySrc(src);
-    }
-  }, []);
 
   function triggerDataUrlFallback(originalSrc: string, localPath: string) {
     if (dataUrlAttemptedRef.current) return;
@@ -151,17 +124,13 @@ export default function AsyncImage({
   function handleLoad() {
     if (!mountedRef.current) return;
     setLoaded(true);
-    if (ENABLE_VERBOSE_ASYNCIMAGE_LOGS) {
-      const cur = displaySrc;
-      console.debug("[AsyncImage] image loaded", {
-        currentSrcPrefix: cur ? cur.slice(0, 40) : null,
-      });
-    }
+    console.log(`[MEDIA][ASYNC_IMAGE] status=loaded displaySrcPrefix=${displaySrc ? displaySrc.slice(0, 60) : "null"}`);
     onLoadRef.current?.();
   }
 
-  function handleError() {
+  function handleError(event: React.SyntheticEvent<HTMLImageElement, Event>) {
     if (!mountedRef.current) return;
+    console.log(`[MEDIA][ASYNC_IMAGE_ERROR] displaySrcPrefix=${displaySrc ? displaySrc.slice(0, 60) : "null"} dataUrlAttempted=${dataUrlAttemptedRef.current} hasFallbackPath=${!!fallbackLocalPathRef.current} event=${event.type}`);
     if (
       !dataUrlAttemptedRef.current &&
       fallbackLocalPathRef.current &&

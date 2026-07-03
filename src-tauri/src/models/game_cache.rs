@@ -9,7 +9,21 @@ pub struct GameAppInfo {
     #[serde(rename = "updatedAt", alias = "updated_at")]
     pub updated_at: Option<u64>,
     pub media: Option<GameMediaPaths>,
+    /// Stores remote URLs that served as sources for each media role.
+    /// e.g. { "landscape": "https://remote-source/landscape.jpg" }
+    /// UI must use media.*, not mediaSources.
+    #[serde(rename = "mediaSources", alias = "media_sources")]
+    pub media_sources: Option<GameMediaSources>,
     pub remote: Option<GameRemoteRefs>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameMediaSources {
+    pub landscape: Option<String>,
+    pub cover: Option<String>,
+    pub background: Option<String>,
+    pub logo: Option<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,4 +136,42 @@ pub struct MigrationSummary {
     pub details_copied: usize,
     pub media_folders_moved: usize,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaManifestFile {
+    pub provider: String,
+    pub appid: String,
+    pub version: u32,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: u64,
+    pub files: MediaManifestFiles,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprints: Option<FileFingerprints>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaManifestFiles {
+    pub cover: MediaManifestEntry,
+    pub landscape: MediaManifestEntry,
+    pub background: MediaManifestEntry,
+    pub logo: MediaManifestEntry,
+    pub icon: MediaManifestEntry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaManifestEntry {
+    pub path: String,
+    pub exists: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "modifiedAt")]
+    pub modified_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileFingerprints {
+    pub lua: Option<String>,
+    pub appinfo: Option<String>,
+    pub dashboard: Option<String>,
 }

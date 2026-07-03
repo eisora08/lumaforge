@@ -29,3 +29,4 @@ pub mod installed_games_registry;
 pub mod desktop;
 pub mod toast;
 pub mod steam_index;
+pub mod achievement_watcher;

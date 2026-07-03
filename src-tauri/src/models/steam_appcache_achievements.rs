@@ -91,7 +91,11 @@ pub struct AppAchievementCacheEntry {
   pub api_name: String,
   pub name: String,
   pub description: Option<String>,
+  /// Canonical icon field: serialized as "icon", accepts "icon_url" on read for backward compat.
+  #[serde(rename = "icon", alias = "icon_url")]
   pub icon_url: Option<String>,
+  /// Canonical gray icon field: serialized as "icon_gray", accepts "icon_gray_url" on read.
+  #[serde(rename = "icon_gray", alias = "icon_gray_url")]
   pub icon_gray_url: Option<String>,
   pub unlocked: bool,
   pub unlock_time: Option<u64>,
@@ -340,4 +344,17 @@ pub struct OrphanCleanupResult {
   pub actual_files: usize,
   pub orphaned_files: Vec<String>,
   pub orphaned_count: usize,
+}
+
+// ---------------------------------------------------------------------------
+// LibraryCache file metadata — lightweight check without parsing full JSON
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryCacheFileMetadata {
+  pub file_found: bool,
+  pub file_path: String,
+  pub file_size: Option<u64>,
+  pub modified_at: Option<u64>,
+  pub error_reason: Option<String>,
 }

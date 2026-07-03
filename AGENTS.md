@@ -1,76 +1,236 @@
-# LumaForge Achievements — Agent Summary
+# LumaForge Cache-First Architecture — Agent Summary
 
 ## Goal
-Complete LumaForge achievements: lazy image downloading, correct statId/bit progress from UserGameStats, librarycache JSON as primary progress source, deep debug, clean resolver priority, and log cleanup.
+Implement cache-first startup, formalized MediaIndex, per-game media manifests, precomputed snapshot state, incremental updates, background job priority rules, and cache health validation — without duplicating existing infrastructure.
 
-## Constraints & Preferences
-- Settings values (steamWebApiKey, steamId64, accountId, steamRoot, achievementSchemaPath, steamAchievementsEnabled) must be verified with `[ACH][INPUT]` logs
-- `achievementpercentages.json` is NEVER used for unlock state — only `rarityPercent`
-- Local progress uses `(statValue & (1 << bit)) !== 0` from UserGameStats ↔ schema statId/bit
-- API key + SteamID64 only required for Web API progress; schema, images, rarity, and local progress work without them
-- Eager image base64 embedding during schema read is forbidden; raw paths (`img/<hash>.jpg`) returned and resolved lazily via queue
-- Max 3 concurrent image downloads; 24h cooldown on failure; priority: high (current details/modal) → normal → low (preload)
-- HTTP 403 on GetPlayerAchievements is non-fatal; cached per-session via `cached403Apps` Set, log once, fall through to librarycache → UserGameStats → appcache
-- Librarycache JSON has highest progress priority; checked before Web API; if `nTotal > 0` → source is `"librarycache"`, `progressAvailable = true`, Web API is skipped
-- Schema-only disk cache must NOT early-return; continue to librarycache and other progress sources then merge
-- Librarycache entries may be partial (< `nTotal`); canonical achievements list must retain full count from schema
-- Unlock detection via `previousUnlockedState` Map per `{appId}` → toast notifications
-- When app schema folder is not configured, fall back to cached schema entries as metadata source
+## Core Audit (Phase 0)
+All 9 items from the previous AppInfo/media prompt were confirmed **done**:
+- ✅ appinfoContract — full media paths + mediaSources in Rust/TS
+- ✅ mediaResolver — resolveRelativeMediaPath, resolveMediaPaths, localPathToUrl
+- ✅ dashboardFallback — landscapePath > coverPath > backgroundPath > placeholder
+- ✅ sidebarFallback — icon > cover > landscape > background via pickSidebarSrc
+- ✅ detailsFallback — background > landscape > remote > cover > fallback
+- ✅ mediaRepair — reads mediaSources, downloads only HTTP URLs
+- ✅ startupHydration — hydrateStartupSnapshotMedia, appinfo only, no downloads
+- ✅ syncCoalescing — _syncRunning/_syncPending guard, single follow-up
+- ✅ librarycacheIndexCache — 5-min TTL, invalidated on watcher start
 
-## Completed
+## What was implemented
 
-### Rust
-- `AchievementsAppSchemaEntry`: field aliases for all naming conventions; `LocaleValue` enum; `resolve_localized` full fallback chain
-- `read_achievements_app_schema_folder`: path detection, returns raw `icon`/`icon_gray` paths + `base_dir` (no longer embeds images)
-- `AchievementsAppPercentagesFile` reads root `file.achievements`; `deserialize_f64` accepts `"31.1"` strings
-- `AppAchievementSummary.source` defaults to `"schema-only"`; `updated_at` defaults to 0
-- `UserGameStatsRawResult` + `StatPair` models; `parse_user_game_stats_raw` command returns stat pairs + achievement entries
-- `download_achievement_image` command: downloads single image, saves to `achievements/<appid>/img/<filename>`, returns data URL; skips existing valid files, deletes empty files
-- `resolve_achievement_image_paths` command: checks which images exist on disk (no download)
-- `ensure_achievement_images` command: bulk download missing images (5 for preload, all for details/modal)
-- `debug_achievement_progress` command: reads UserGameStats + UserGameStatsSchema files; returns hex dump, KV tree, stat pairs, achievement entries, per-achievement statId/bit match results, app schema, librarycache info
-- `parse_librarycache_achievements` command: reads `<steamRoot>/userdata/<accountId>/config/librarycache/<appid>.json`; parses vecHighlight/vecUnachieved/vecAchievedHidden with strID, bAchieved, rtUnlocked (seconds), flAchieved (rarity); returns `LibraryCacheProgress` with nTotal/nAchieved/progressAvailable
-- `LibraryCacheProgress`, `LibraryCacheAchievementEntry`, `DebugAchievementReport`, `DebugFileInfo`, `DebugKvNode`, `DebugMatchResult`, `AchievementImageStatus` models
+### Phase 2: MediaIndex formalized
+- `MediaIndexEntry` type with `*Path`, `*Url`, `has*` fields + `updatedAt`
+- `mediaIndexStore` (Map<string, MediaIndexEntry>) alongside existing `resolvedMediaSessionCache`
+- `getMediaEntry(appId, provider)` / `setMediaEntry()` / `getAllMediaEntries()` / `seedMediaIndexFromManifests()`
+- `seedMediaIndexFromStartup(appIds)` — batch-reads manifests, resolves URLs, seeds index
+- Seeded during boot Stage 6, with `[MEDIA_INDEX]` log diagnostics
+- Never persisted; *Url fields are runtime-only
 
-### TypeScript
-- `steamAchievementsResolver.ts`: priority order is cache → app schema → Steam API → global % → librarycache JSON → Web API → UserGameStats → appcache
-- `buildLibraryCacheProgress`: reads librarycache result, creates progressMap (strID → bAchieved/rtUnlocked * 1000), rarityMap (strID → flAchieved)
-- `buildLocalProgressFromStats`: statId/bit → `(statValue & (1 << bit)) !== 0`; populates `GameAchievement`
-- Resolver: schema-only disk cache does NOT early-return; continues to progress sources; librarycache overrides
-- Resolver: fallback to cached schema metadata when app schema folder isn't configured — `[ACH][MERGE]` logged
-- Resolver: 403 session cache via module-level `cached403Apps` Set; log `[ACH][PROGRESS_API] appid=X status=403 cachedFailure=true`
-- Resolver: librarycache merge uses `nAchieved` from librarycache for unlocked count, prefers canonical schema count for total
-- Resolver: `[ACH][MERGE]` and `[ACH][FINAL]` logs for librarycache merge and final summary
-- `achievementImageQueue.ts`: singleton queue with maxConcurrent=3, priority sorting, 24h cooldown, `subscribe(cb)` for reactive UI
-- `resolveImageSource(value, appId, type)`: accepts hash, CDN URL, `img/` local path; constructs CDN URL; skips invalid sources
-- `LibraryGameDetails.tsx`: image subscription + enqueue effects; dependency array includes all Settings fields; Debug buttons in achievement sections
-- `AchievementsModal.tsx`: image enqueue effect on open
-- `debugAchievements(appId, options)` dev console: calls deep Rust command + logs JSON report + `console.table` for match results + librarycache info
-- Tauri bindings: `debugAchievementProgress`, `parseLibraryCacheAchievements`, `resolveAchievementImagePaths`, `ensureAchievementImages`
-- Types: `LibraryCacheProgress`, `LibraryCacheAchievementEntry`, `DebugAchievementReport`, `DebugFileInfo`, `DebugKvNode`, `DebugMatchResult`, `AchievementImageStatus`; `GameAchievementsSummary.source` includes `"librarycache"`
-- Unlock event detection via `previousUnlockedState` Map → toast notifications
+### Phase 3: Per-game media_manifest.json
+- Rust struct `MediaManifestFile` + `MediaManifestFiles` + `MediaManifestEntry` + `FileFingerprints`
+- Rust commands: `read_media_manifest`, `write_media_manifest`, `get_media_manifests_batch`
+- TS types: `MediaManifest`, `MediaManifestFiles`, `MediaManifestEntry`, `FileFingerprints`
+- TS bindings: `readMediaManifest`, `writeMediaManifest`, `getMediaManifestsBatch`
+- `generateMediaManifest(appId, media)` in gameCacheService.ts — uses existing `getGameMediaPaths` for file-existence checks
+- Manifest generation called at end of `executeRepairGameMedia` (backgroundJobQueue.ts)
+- `[MEDIA][MANIFEST] written appid=` log on generation
 
-### Log Cleanup
-- `diag_log` changed to `[ACH]` prefix; `[ACH][SCHEMA]`, `[ACH][PROGRESS]`, `[ACH][IMG]`, `[ACH][CACHE]`, `[ACH][LIBRARYCACHE]`, `[ACH][LIBRARYCACHE_ENTRY]`, `[ACH][MERGE]`, `[ACH][DEBUG_REPORT]`, `[ACH][RARITY]`, `[ACH][PROGRESS_API]`, `[ACH][FINAL]`, `[ACH][INPUT]`, `[ACH][APPCACHE]`
-- All 21 `[steamAchievementsResolver]` log prefixes in resolver.ts converted to categorized `[ACH]` prefixes (`[CACHE]`, `[SCHEMA]`, `[RARITY]`, `[PROGRESS_API]`, `[PROGRESS]`, `[APPCACHE]`)
+### Phase 4: Precomputed dashboard state
+- Startup snapshot already contains sidebar items + lastKnownStats
+- Fingerprint fields added to SnapshotIndexes: `luaFingerprint`, `appinfoFingerprint`, `dashboardFingerprint`
+- Freshness check uses `updatedAt` + 24h TTL
+
+### Phase 5: Startup fingerprints + freshness
+- `[BOOT][CACHE] luaFingerprintChanged` / `mediaFingerprintChanged` / `fingerprintBaseline` logs in boot Stage 3
+- Fingerprint fields in SnapshotIndexes type
+- `startupSnapshotInfo` overlay not needed — `updatedAt` field handles freshness
+
+### Phase 6: Incremental updates
+- Stable keys for job dedup: `type:provider:appId`
+- `[JOB] queued key=` / `[JOB] started key=` / `[JOB] complete key= elapsed=ms`
+- `[JOB] skipped duplicate key=` for dedup
+- `[MEDIA][MANIFEST]`, `[MEDIA_INDEX]`, `[MEDIA][REPAIR]` all use stable key logging pattern
+
+### Phase 7: Background job queue enhancements
+- `validate-cache-health` job type + handler (`executeValidateCacheHealth`)
+- Queue already has: priority-based sorting, 30s completed TTL, key-based dedup, `[JOB]` logging
+- Priority ranks: high=0, normal=1, low=2
+
+### Phase 8: Repair mediaSources
+- Already done (confirmed in audit) — `executeRepairGameMedia` reads `mediaSources` remote URLs
+
+### Phase 10: Validation functions
+- `validateStartupCacheHealth()` in gameStore.ts — reports snapshotGames/sqliteGames/storeGames/luaGames/jobsQueued/mediaIndexEntries/mediaWithCover/mediaWithLandscape/mediaWithIcon
+- Exposed as `__validateStartupCacheHealth` on window
+- Runs automatically after boot completion via `scheduleAfterMain`
+- `validateMediaCacheHealth()` already existed and is enhanced
+
+### Boot Coordinator updates
+- Stage 3: fingerprint logs (`luaFingerprintChanged`, `mediaFingerprintChanged`, `fingerprintBaseline`)
+- Stage 6: seeds MediaIndex from manifests + `[MEDIA_INDEX]` diagnostics
+- After boot: `validateStartupCacheHealth()` runs automatically
+
+## Build Status
+- `tsc --noEmit` ✅ passes
+- `vite build` ✅ passes
+- `cargo check` ✅ passes
+
+## Session 2 — Media fallback integrity fixes
+
+### Part 1: resolveGameMediaUrl helper
+- `resolveGameMediaUrl(appId, path, provider)` in gameCacheService.ts — resolves relative paths (`media/`, `img/`) via `resolveRelativeMediaPath` then `localPathToUrl`; handles `.tmp`, HTTP/S, `asset://`, `data:`, `file://`, and absolute paths
+- `[MEDIA][RESOLVE]` log for verbose mode
+
+### Part 2: GameHero.tsx fallback + logging
+- Added `iconPath` to hero fallback chain (was missing)
+- Added `[MEDIA][HERO]` diagnostic logs for landscape/cover/background/icon each tagged `selected=Y|N`
+- Simplified `src` assignment with `resolveGameMediaUrl`
+
+### Part 3: SidebarLibraryList.tsx retry logic
+- Retries media fetch when `canonicalInfoMap` becomes populated after initial load
+- Always removes from `sidebarMediaLoading.current` in `finally` block (was missing on error path)
+
+### Part 4: seedResolvedMediaCacheFromSnapshot repair grip
+- Only marks game as "repaired" when snapshot has landscape AND (cover OR background) — not just for any single path
+
+### Part 5: loadGameAppInfoWithMediaFallback cache trust
+- Does NOT trust incomplete snapshot cache; missing background/logo/icon triggers cache invalidation and repair instead of returning broken snapshot data
+
+### Part 6: Rust media_path_exists_for_app
+- `media_path_exists_for_app(app_id, media)` helper in `game_cache.rs` — checks which media paths exist on disk
+- Used by `update_game_appinfo_media` and `repair_appinfo_media_paths`
+
+### Part 7: notifyMediaUpdated in flushAppInfoUpdates
+- Added `notifyMediaUpdated()` call in `mediaDownloadQueue.ts` `flushAppInfoUpdates` so dashboards react immediately after downloads
+
+### Part 8: mediaCheckDoneRef reset on game switch
+- `GameHero.tsx` now resets `mediaCheckDoneRef` when `selectedGame.appId` changes, allowing re-check
+
+### Part 9: Skip "Steam App <appid>" placeholder names
+- `updateAppInfoFromGames` in gameStore.ts skips names matching `/^Steam App \d+$/`
+
+### Part 10: AchievementIcon relative path resolution
+- `AchievementIcon` accepts `appId` prop; resolves relative `img/` paths via `resolveGameMediaUrl`
+- Fixed 3 call sites: `AchievementsModal.tsx`, `LibraryGameDetails.tsx`, `AchievementTooltip.tsx`
+
+### Part 11: Achievement image normalization verified
+- `normalizeAchievementImagePath` already normalizes to `img/<file>` correctly — no changes needed
+
+### Part 12: Fix settings keys
+- `settings.steamApiKey` → `settings.steamWebApiKey`
+- `settings.steamPath` → `settings.steamRoot`
+- Both fixes in backgroundJobQueue.ts
+
+### Part 13: TSC fixes in AchievementsModal.tsx
+- Added `appIdStr` prop to `GlobalAchievementsTab` and `AchievementGroupsTab` component types (was missing, caused TSC/vite errors)
+
+## Session 3 — Snapshot validation strips valid relative media paths
+
+### Part 1: Rust validate_snapshot_media_paths — appId-aware resolution
+- Already implemented (see above). 
+
+## Session 4 — Unify all surfaces to use canonical title/media resolvers
+
+### Goal
+Unify Dashboard, Grid, GameDetails to use same canonical appinfo/title resolvers, eliminating inconsistent placeholders and the "Refresh Artwork needed" bug.
+
+### Part 1: Helpers in gameCacheService.ts
+- `isPlaceholderSteamTitle(title, appId)` — returns true if title matches `/^Steam App \d+$/`
+- `resolveCanonicalDisplayTitle(appId, game, appInfoEntry, canonicalInfo)` — title priority: canonical name → appInfoEntry.name → game.metadata.name → game.title (if not placeholder) → `"Steam App ${appId}"`
+
+### Part 2: Dashboard sections use resolveGameMediaUrl + canonical title
+All 5 dashboard sections (ContinuePlaying, Favorites, TopPlayed, LuaReady, Library) now:
+- Replace inline `localPathToUrl(imgPath)` with `resolveGameMediaUrl(appId, imgPath)` async effect (handles relative `media/` paths)
+- Replace `{game.title}` with `resolveCanonicalDisplayTitle` fallback
+- Add `[MEDIA][DASH]` diagnostic logs
+
+### Part 3: loadGameAppInfoWithMediaFallback re-scans disk post-repair
+When session cache has insufficient media (missing background/logo/icon), and `isAppInfoRepaired` is true:
+- New code after repair block does targeted `resolveGameMediaPaths` check for missing roles
+- If new files found on disk, updates appinfo.json, invalidates canonical cache, notifies watcher, and updates session cache
+- Fixes the "Refresh Artwork needed" bug where files appeared after repair was marked complete
+
+### Part 4: Non-installed games title hydration
+- `LibraryGameDetailPage.tsx` detailTitle → uses `resolveCanonicalDisplayTitle` with canonicalAppInfo
+- `LibraryGameDetails.tsx` detailTitle → uses `resolveCanonicalDisplayTitle` with canonicalAppInfo
+- `GameHero.tsx` hero title → uses `resolveCanonicalDisplayTitle` fallback
+- All surfaces now share the same title priority chain
+
+### Part 5: Diagnostic logs added
+- `[MEDIA][DASH]` — each dashboard section log per rendered card
+- `[MEDIA][DETAILS_CANONICAL]` — per-source logs in getHeroImageUrl fallback chain
+- `[MEDIA][DETAILS_RENDER]` — LibraryGameDetails render log with media state
+- `[MEDIA][HERO]` — GameHero background/title resolution log
+- `[NAME][DISPLAY]` — LibraryGameDetailPage title resolution log
+- All build clean: `tsc --noEmit` ✅, `vite build` ✅
+
+### Key Changes
+- Snapshot game sections no longer pass relative paths to `localPathToUrl` (which returned null for `media/` prefix)
+- Non-installed games get real names from canonical appinfo instead of "Steam App <appid>"
+- Dashboard sections auto-resolve relative media paths asynchronously on mount
+- Post-repair disk re-scan catches media files that appeared after `isAppInfoRepaired` was set
+
+## Previous sessions below (for context)<｜end▁of▁thinking｜>
+
+<｜｜DSML｜｜tool_calls>
+<｜｜DSML｜｜invoke name="todowrite">
+<｜｜DSML｜｜parameter name="todos" string="false">[{"priority":"high","content":"Add isPlaceholderSteamTitle and resolveCanonicalDisplayTitle helpers to gameCacheService.ts","status":"completed"},{"priority":"high","content":"Patch 6 dashboard sections to use resolveGameMediaUrl + canonical title fallback","status":"completed"},{"priority":"high","content":"Patch GameDetails/loadGameAppInfoWithMediaFallback to re-scan disk for new files after repair","status":"completed"},{"priority":"medium","content":"Fix non-installed games title hydration","status":"completed"},{"priority":"medium","content":"Add diagnostic logs per spec ([MEDIA][DASH], [MEDIA][DETAILS_CANONICAL], etc.)","status":"completed"},{"priority":"high","content":"Run tsc --noEmit and vite build to verify","status":"completed"},{"priority":"low","content":"Review final changes and update AGENTS.md","status":"completed"}]
+- Added `app_id: String` parameter to `validate_snapshot_media_paths` command
+- `snapshot_media_path_exists()` helper resolves `media/*` and `img/*` against `<appData>/games/steam/<appId>/media/`
+- Handles `.tmp` stripping, HTTP/S, `data:`, `asset://`, `file://` paths
+- Logs `[BootSnapshot] validated relative media appid=<appid> path=<path> exists=true|false`
+- Made `get_game_dir`, `get_media_dir`, `safe_filename` pub in `game_cache.rs`; imported in `startup_snapshot.rs`
+
+### Part 2: Frontend passes appId to validate_snapshot_media_paths
+- TS binding `validateSnapshotMediaPaths(appId, media)` now accepts `appId` as first arg
+- Updated local wrapper in `startupSnapshotService.ts` to accept `appId` and pass to Rust
+- Fixed all 8 call sites: `setMediaStatusOnGame`, `resolveMediaForSnapshot` (x2), `hydrateStartupSnapshotMedia`, `buildStartupSnapshotFromCurrentState` (x3), `gameStore.ts` health validation
+
+### Part 3-6: Verified already-working or naturally handled
+- BootSnapshot stripping logs now emit `exists=true` for valid relative paths
+- `repair_appinfo_media_paths` already uses `media_path_exists_for_app` (relative-aware)
+- `flushAppInfoUpdates` already calls `notifyMediaUpdated(appId)`
+- Hydration on next boot re-validates with fixed logic, fixing old stripped snapshots
+
+### Part 7: hydrateStartupSnapshotMedia repairs Steam App placeholders
+- `needsTitle` changed from `!game.title` to `!game.title || game.title.startsWith("Steam App ")`
+- Boot hydration now detects placeholder titles and replaces them with canonical appinfo names
+
+### Part 8: Achievement background jobs skip no-summary gracefully
+- `executeEnsureAchievementImages` now logs `[ACH][IMG_JOB] skipped appid=<id> reason=no-summary` and returns instead of throwing
+- Prevents mass failed jobs in background job panel for apps without achievement schemas
+
+### Part 9: AchievementIcon appId — verified all call sites pass it
+- Confirmed `AchievementsModal.tsx:923/1184`, `LibraryGameDetails.tsx:1355/1436` all pass `appId`
 
 ## Key Decisions
-- Image downloading is lazy via TypeScript queue (Rust `download_achievement_image` per file) — no eager base64 embedding during schema read
-- Librarycache JSON is highest-priority progress source, checked before Web API; avoids 403 blocking entirely
-- Schema-only disk cache no longer early-returns; becomes metadata source, allowing librarycache to override
-- Librarycache entries may be partial; canonical achievements list retains full count from schema, progress map merged per apiName
-- Librarycache `rtUnlocked` is Unix seconds; converted to ms (* 1000) for frontend
-- `flAchieved` is rarity only, never used for unlock state
-- `cached403Apps` session Set persists across resolver calls; first 403 skips all future GetPlayerAchievements for that appId
-- `AppAchievementCacheEntry.stat_id` and `bit` come from App schema folder (canonical); UserGameStatsSchema is fallback / debug-only
-- Cached schema entries used as metadata fallback when no app schema folder is configured
+- **Enhance, don't replace**: `MediaIndex` uses existing `resolvedMediaSessionCache` + `resolvedSrcCache` — no second resolver
+- **Manifests over scans**: Per-game `media_manifest.json` avoids scanning media folder on startup
+- **Fingerprints over force**: `luaFingerprint`/`appinfoFingerprint` fields allow `luaFingerprintChanged` detection without diffing
+- **Coalescing over banning**: Background sync re-entry now coalesces with single follow-up
+- **5-min TTL**: Librarycache listing cached, avoided repetitive `list_librarycache_appids` calls
+
+## Critical Context
+- `ResolvedGameMedia` uses `*Src` suffix fields; `executeRepairGameMedia` was fixed to use them
+- `validateSnapshotMediaPaths` returns snake_case exists fields
+- `localPathToUrl` returns null for relative paths; callers must resolve via `resolveRelativeMediaPath` first
+- `GameMediaSources` in TS: 5 fields (landscape/cover/background/logo/icon)
+- `update_game_appinfo_media` accepts `media_sources: Option<GameMediaSourcesInput>` with merge logic
+- `hydrateStartupSnapshotMedia` mutates snapshot in-place, batch-reads canonical appinfos
+- `seedResolvedMediaCacheFromSnapshot` seeds path cache; `seedMediaIndexFromStartup` seeds URL cache + MediaIndex
+- `resolveGameMediaUrl(appId, path, provider)` resolves relative paths, skips `.tmp` files; not a high-level fallback function
+- `AchievementIcon` now requires `appId` prop for relative path resolution via `resolveGameMediaUrl`
+- Snapshot dashboard sections (ContinuePlaying, Favorites, TopPlayed, LuaReady) use pre-resolved absolute paths from snapshot hydration — `localPathToUrl` is safe for those
+- `media_path_exists_for_app` Rust helper is used by `update_game_appinfo_media` and `repair_appinfo_media_paths` to avoid re-downloading existing files
 
 ## Key Files
-- `src-tauri/src/models/steam_appcache_achievements.rs` — all data models including `LibraryCache*`, `Debug*`, `AchievementImageStatus`
-- `src-tauri/src/commands/steam_achievements.rs` — all Tauri commands (schema reader, stats parser, image downloader, librarycache parser, debug report, KV tree)
-- `src/services/steamAchievementsResolver.ts` — resolver orchestration, `buildLibraryCacheProgress`, `buildLocalProgressFromStats`, `debugAchievements`, cache read/write, 403 cache
-- `src/services/achievementImageQueue.ts` — singleton download queue, CDN URL construction, image source validation
-- `src/services/tauri.ts` — TypeScript bindings for all Rust commands + exported types
-- `src/types/gameAchievements.ts` — `GameAchievement`, `GameAchievementsSummary` (includes `"librarycache"` source)
-- `src/components/library/LibraryGameDetails.tsx` — achievements preview, image queue + progress debug effects, Debug buttons
-- `src/components/library/AchievementsModal.tsx` — full list modal, image enqueue effect
+- `src-tauri/src/models/game_cache.rs` — MediaManifest structs + FileFingerprints, media_path_exists_for_app helper
+- `src-tauri/src/commands/game_cache.rs` — read/write/get_media_manifests_batch commands
+- `src/services/tauri.ts` — MediaManifest types + bindings
+- `src/services/gameCacheService.ts` — MediaIndexEntry type, mediaIndexStore, seedMediaIndexFromManifests, seedMediaIndexFromStartup, generateMediaManifest, resolveGameMediaUrl helper
+- `src/services/backgroundJobQueue.ts` — executeValidateCacheHealth, generateMediaManifest call in repair, validate-cache-health job type, settings key fixes
+- `src/services/gameStore.ts` — validateStartupCacheHealth, __validateStartupCacheHealth exposure, "Steam App" name skip
+- `src/services/startupSnapshotService.ts` — SnapshotIndexes fingerprint fields
+- `src/services/appBootCoordinator.ts` — fingerprint logs, MediaIndex seeding, validateStartupCacheHealth after boot
+- `src/services/mediaDownloadQueue.ts` — notifyMediaUpdated call in flushAppInfoUpdates
+- `src/components/common/AchievementIcon.tsx` — appId prop for relative path resolution
+- `src/components/dashboard/GameHero.tsx` — iconPath fallback, mediaCheckDoneRef reset, [MEDIA][HERO] logs

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Trophy } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { getCachedPlaytimeStore } from "../../services/playtimeService";
-import { localPathToUrl } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
@@ -49,8 +49,13 @@ function getTopPlayed(
 export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
+  const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
+  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
 
-  const snapshotGames = snapshot?.library?.games || [];
+  const snapshotGames = useMemo(
+    () => snapshot?.library?.games ?? [],
+    [snapshot],
+  );
 
   const displayGames = useMemo(
     () => getTopPlayed(snapshotGames, excludeAppIds),
@@ -64,6 +69,49 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
       }
     }
   }, [displayGames]);
+
+  // Stable primitive key derived from displayGames — avoids infinite render loops
+  const gameIdsKey = useMemo(
+    () => displayGames.map(g => g.appId).filter(Boolean).sort().join(','),
+    [displayGames],
+  );
+
+  // Resolve media URLs and titles
+  useEffect(() => {
+    let cancelled = false;
+    const ids = gameIdsKey ? gameIdsKey.split(',') : [];
+    const gameById = new Map(displayGames.map(g => [g.appId, g]));
+
+    const resolve = async () => {
+      const urls: Record<string, string | null> = {};
+      const titles: Record<string, string> = {};
+      for (const appId of ids) {
+        if (cancelled) break;
+        const game = gameById.get(appId);
+        if (!game) continue;
+        const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath;
+        urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
+        titles[appId] = resolveCanonicalDisplayTitle(appId, game);
+        if (imgPath && !cancelled) {
+          const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : "background";
+          console.log(`[MEDIA][DASH] section=TopPlayed appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+        }
+      }
+      if (cancelled) return;
+      setMediaUrlMap(prev => {
+        if (Object.keys(prev).length === Object.keys(urls).length &&
+            Object.entries(urls).every(([k, v]) => prev[k] === v)) return prev;
+        return urls;
+      });
+      setTitleMap(prev => {
+        if (Object.keys(prev).length === Object.keys(titles).length &&
+            Object.entries(titles).every(([k, v]) => prev[k] === v)) return prev;
+        return titles;
+      });
+    };
+    resolve();
+    return () => { cancelled = true; };
+  }, [gameIdsKey]);
 
   if (displayGames.length === 0) return null;
 
@@ -121,8 +169,8 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
           {displayGames.map((game) => {
-            const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath;
-            const imgUrl = imgPath ? localPathToUrl(imgPath) : null;
+            const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
+            const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
             const totalSeconds =
               getCachedPlaytimeStore()?.games[`app-${game.appId}`]?.totalPlaytimeSeconds ?? 0;
             const totalStr = formatPlaytime(totalSeconds);
@@ -148,7 +196,7 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
                     {imgUrl ? (
                       <AsyncImage
                         src={imgUrl}
-                        alt={game.title}
+                        alt={displayTitle}
                         className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -165,7 +213,7 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
 
                   <div className="p-3">
                     <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                      {game.title}
+                      {displayTitle}
                     </h3>
                     {totalStr && (
                       <span className="mt-1 inline-block text-[11px] text-(--color-muted)">

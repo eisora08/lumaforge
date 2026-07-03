@@ -590,6 +590,41 @@ export default function Settings() {
             </SettingsSection>
 
             <SettingsSection
+              title="Achievement Notifications"
+              description="Control how achievement unlock notifications are delivered."
+            >
+              <div className="space-y-4">
+                <ToggleOption
+                  label="Show in-app toast"
+                  description="Show a premium toast card in the app when an achievement unlocks."
+                  enabled={settings.achievementToastEnabled}
+                  onChange={(enabled) => updateSetting("achievementToastEnabled", enabled)}
+                />
+
+                <ToggleOption
+                  label="Send native OS notification"
+                  description="Also send a system notification when an achievement unlocks. Requires notification permission."
+                  enabled={settings.achievementNativeNotificationsEnabled}
+                  onChange={(enabled) => updateSetting("achievementNativeNotificationsEnabled", enabled)}
+                />
+
+                <ToggleOption
+                  label="Overlay notification (experimental)"
+                  description="Use a transparent always-on-top overlay window for achievement notifications. Currently in development."
+                  enabled={settings.achievementOverlayNotificationsEnabled}
+                  onChange={(enabled) => updateSetting("achievementOverlayNotificationsEnabled", enabled)}
+                />
+
+                <ToggleOption
+                  label="Auto-sync progress"
+                  description="Automatically refresh achievements when Steam writes new progress to disk (librarycache change, game exit, or window focus)."
+                  enabled={settings.achievementAutoSyncEnabled}
+                  onChange={(enabled) => updateSetting("achievementAutoSyncEnabled", enabled)}
+                />
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
               title="Importar / Exportar"
               description="Guarda o restaura tu configuración local de LumaForge."
             >
@@ -637,6 +672,60 @@ export default function Settings() {
                   enabled={settings.compactMode}
                   onChange={(enabled) => updateSetting("compactMode", enabled)}
                 />
+              </div>
+
+              <div className="mt-6 border-t border-(--surface-active-border) pt-4">
+                <div className="mb-3 flex items-center gap-2 text-sm text-(--color-accent)">
+                  <SlidersHorizontal className="h-4 w-4" />
+                  Mantenimiento de la biblioteca
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { rebuildLibraryIndex } = await import("../services/gameStore");
+                        const { getCachedSettings } = await import("../services/appBootCoordinator");
+                        const s = getCachedSettings() ?? settings;
+                        await rebuildLibraryIndex(s);
+                        showSuccess("Library index rebuilt from config/lua definitions");
+                      } catch (err) {
+                        showError(`Rebuild failed: ${err}`);
+                      }
+                    }}
+                    className="lf-btn lf-btn-primary text-xs"
+                  >
+                    Reconstruir índice de biblioteca
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { validateLibraryIndexHealth } = await import("../services/gameStore");
+                        const { games: storeGames } = { games: [] };
+                        // We need games from context — use refresh approach
+                        const report = await validateLibraryIndexHealth(storeGames);
+                        const lines = [
+                          `Lua games: ${report.luaGames}`,
+                          `SQLite games: ${report.sqliteGames}`,
+                          `Store games: ${report.storeGames}`,
+                          `Missing from SQLite: ${report.missingFromSQLite}`,
+                          `Missing from Store: ${report.missingFromStore}`,
+                          `Stale SQLite-only: ${report.staleSqliteOnly}`,
+                          `Missing media: ${report.missingMedia}`,
+                          `Invalid paths: ${report.invalidPaths}`,
+                        ];
+                        showSuccess(lines.join("\n"), { duration: 8000 });
+                        console.log("[LIBRARY][HEALTH]", report);
+                      } catch (err) {
+                        showError(`Validation failed: ${err}`);
+                      }
+                    }}
+                    className="lf-btn lf-btn-secondary text-xs"
+                  >
+                    Validar salud de la biblioteca
+                  </button>
+                </div>
               </div>
             </SettingsSection>
           </div>

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Play, Clock } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { localPathToUrl } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
 import { getCachedPlaytimeStore } from "../../services/playtimeService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
@@ -83,6 +83,8 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
   const scrollRef = useRef<HTMLDivElement>(null);
   const { sessions } = useGameSession();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
+  const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
+  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
 
   const games = useMemo(
     () => getContinueGames(snapshot?.library?.games || [], sessions, excludeAppId),
@@ -96,6 +98,50 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
       }
     }
   }, [games]);
+
+  // Stable primitive key derived from games — avoids infinite render loops
+  // caused by unstable array references in the useMemo above.
+  const gameIdsKey = useMemo(
+    () => games.map(g => g.appId).filter(Boolean).sort().join(','),
+    [games],
+  );
+
+  // Resolve media URLs and titles
+  useEffect(() => {
+    let cancelled = false;
+    const ids = gameIdsKey ? gameIdsKey.split(',') : [];
+    const gameById = new Map(games.map(g => [g.appId, g]));
+
+    const resolve = async () => {
+      const urls: Record<string, string | null> = {};
+      const titles: Record<string, string> = {};
+      for (const appId of ids) {
+        if (cancelled) break;
+        const game = gameById.get(appId);
+        if (!game) continue;
+        const imgPath = game.media?.landscapePath || game.media?.backgroundPath;
+        urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
+        titles[appId] = resolveCanonicalDisplayTitle(appId, game);
+        if (imgPath && !cancelled) {
+          const selection = game.media?.landscapePath ? "landscape" : "background";
+          console.log(`[MEDIA][DASH] section=ContinuePlaying appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+        }
+      }
+      if (cancelled) return;
+      setMediaUrlMap(prev => {
+        if (Object.keys(prev).length === Object.keys(urls).length &&
+            Object.entries(urls).every(([k, v]) => prev[k] === v)) return prev;
+        return urls;
+      });
+      setTitleMap(prev => {
+        if (Object.keys(prev).length === Object.keys(titles).length &&
+            Object.entries(titles).every(([k, v]) => prev[k] === v)) return prev;
+        return titles;
+      });
+    };
+    resolve();
+    return () => { cancelled = true; };
+  }, [gameIdsKey]);
 
   if (games.length === 0) return null;
 
@@ -143,8 +189,8 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
           {games.map((game) => {
-            const imgPath = game.media?.landscapePath || game.media?.backgroundPath;
-            const imgUrl = imgPath ? localPathToUrl(imgPath) : null;
+            const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
+            const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
             const lastPlayedStr = formatLastPlayed(game.lastPlayed);
             const isRunning = Object.values(sessions).some(
               (s) => s.state === "running" && s.appId === game.appId,
@@ -160,7 +206,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                     {imgUrl ? (
                       <AsyncImage
                         src={imgUrl}
-                        alt={game.title}
+                        alt={displayTitle}
                         className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -182,7 +228,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
 
                   <div className="p-3">
                     <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                      {game.title}
+                      {displayTitle}
                     </h3>
                     <div className="mt-1.5 flex items-center gap-2">
                       {lastPlayedStr && (

@@ -134,7 +134,7 @@ export function indexEntryToLibraryGame(
   return {
     id: `steam-${appIdStr}`,
     appId: appIdStr,
-    title: entry.title || `Steam App ${appIdStr}`,
+    title: entry.title || "",
     source: "steam",
     metadata: entry.metadata ?? undefined,
     imageUrl: entry.metadata?.header_image || entry.metadata?.capsule_image || entry.metadata?.capsule_image_v5 || undefined,

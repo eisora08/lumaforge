@@ -1,6 +1,7 @@
 import { Toast, toast } from "react-hot-toast";
 import { Trophy, X } from "lucide-react";
 import type { UnlockEvent } from "../../types/gameAchievements";
+import { resolveImageSource } from "../../services/achievementImageQueue";
 
 export const ACHIEVEMENT_TOAST_DURATION = 4500;
 export const ACHIEVEMENT_TOAST_EXIT_DURATION = 180;
@@ -26,7 +27,12 @@ export function showAchievementToast(event: UnlockEvent, appId?: string, gameTit
     { duration: ACHIEVEMENT_TOAST_DURATION, position: "bottom-right" },
   );
   if (import.meta.env.DEV) {
-    console.debug(`[ACH][TOAST] show apiName=${event.apiName}`);
+    const hasIcon = !!event.iconUrl;
+    const hasGrayIcon = !!event.iconGrayUrl;
+    console.debug(`[ACH][TOAST] show apiName=${event.apiName} hasIconUrl=${hasIcon} hasIconGrayUrl=${hasGrayIcon}`);
+    if (!hasIcon && !hasGrayIcon) {
+      console.debug(`[ACH][TOAST] missing icon apiName=${event.apiName}`);
+    }
   }
 }
 
@@ -45,6 +51,10 @@ function resolveIconSrc(value: string | undefined, appId?: string): string | und
   if (value.startsWith("data:") || value.startsWith("file://") || value.startsWith("asset://")) return value;
   if (/^[a-f0-9]{40}$/i.test(value) && appId) return `${STEAM_CDN}/${appId}/${value}.jpg`;
   if (value.startsWith("http://") || value.startsWith("https://")) return value;
+  if (value.startsWith("img/") && appId) {
+    const resolved = resolveImageSource(value, appId, "icon");
+    if (resolved) return resolved.sourceUrl;
+  }
   return undefined;
 }
 

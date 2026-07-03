@@ -28,6 +28,7 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
+import { resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -57,9 +58,14 @@ import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
 import { showAchievementToast, showGroupedAchievementToast, showTestAchievementToast } from "./AchievementToast";
-import { achievementImageQueue, resolveImageSource, isResolvedUrl } from "../../services/achievementImageQueue";
+import { sendAchievementNativeNotification } from "../../services/achievementNotificationService";
+import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration } from "../../services/achievementImageQueue";
+import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
+import { achievementStore } from "../../services/achievementStore";
+import { achievementWatcherService } from "../../services/achievementWatcherService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import { useGameSession } from "../../context/GameSessionContext";
 import AchievementsModal from "./AchievementsModal";
 import type { AppPage } from "../../types/navigation";
 
@@ -91,20 +97,24 @@ type LibraryGameDetailsProps = {
 const ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS = false;
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
-  // Hero priority: background.jpg > landscape.jpg > remote background/header > cover.jpg as last local fallback > placeholder
+  // Hero priority: backgroundPath > landscapePath > coverPath > remote metadata > placeholder
   if (canonicalAppInfo?.media?.backgroundPath) {
-    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: backgroundPath");
+    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`);
     return canonicalAppInfo.media.backgroundPath;
   }
   if (canonicalAppInfo?.media?.landscapePath) {
-    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: landscapePath");
+    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`);
     return canonicalAppInfo.media.landscapePath;
   }
-  if (mediaEntry?.hero_path) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: mediaEntry.hero_path"); return mediaEntry.hero_path; }
-  if (mediaEntry?.grid_path) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: mediaEntry.grid_path"); return mediaEntry.grid_path; }
-  if (appInfoEntry?.header_image) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: appInfoEntry.header_image"); return appInfoEntry.header_image; }
-  if (artwork?.sgdbHeroUrl) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: sgdbHeroUrl"); return artwork.sgdbHeroUrl; }
-  if (artwork?.sgdbGridUrl) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: sgdbGridUrl"); return artwork.sgdbGridUrl; }
+  if (canonicalAppInfo?.media?.coverPath) {
+    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=cover path=${canonicalAppInfo.media.coverPath}`);
+    return canonicalAppInfo.media.coverPath;
+  }
+  if (mediaEntry?.hero_path) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=mediaEntry.hero_path path=${mediaEntry.hero_path}`); return mediaEntry.hero_path; }
+  if (mediaEntry?.grid_path) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=mediaEntry.grid_path path=${mediaEntry.grid_path}`); return mediaEntry.grid_path; }
+  if (appInfoEntry?.header_image) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=appInfoEntry.header_image path=${appInfoEntry.header_image}`); return appInfoEntry.header_image; }
+  if (artwork?.sgdbHeroUrl) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
+  if (artwork?.sgdbGridUrl) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
   const remoteSrc = game.metadata?.library_hero_image
     || game.metadata?.background_image
     || game.metadata?.hero_image
@@ -115,16 +125,12 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.capsule_image_v5
     || game.imageUrl;
   if (remoteSrc) {
-    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: remote metadata");
+    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=remoteMetadata`);
     return remoteSrc;
   }
-  if (canonicalAppInfo?.media?.coverPath) {
-    if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: coverPath (fallback)");
-    return canonicalAppInfo.media.coverPath;
-  }
-  if (mediaEntry?.cover_path) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: mediaEntry.cover_path"); return mediaEntry.cover_path; }
-  if (canonicalDiskFallback) { if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: canonicalDiskFallback"); return canonicalDiskFallback; }
-  if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log("[LibraryDetails] selected hero source: none (placeholder)");
+  if (mediaEntry?.cover_path) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=mediaEntry.cover_path path=${mediaEntry.cover_path}`); return mediaEntry.cover_path; }
+  if (canonicalDiskFallback) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=canonicalDiskFallback path=${canonicalDiskFallback}`); return canonicalDiskFallback; }
+  console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=placeholder path=null exists=false`);
   return undefined;
 }
 
@@ -211,7 +217,12 @@ export default function LibraryGameDetails({
   const favorite = game.appId ? isFavorite(game.appId) : false;
   const actionsRef = useRef<HTMLDivElement>(null);
 
-  const detailTitle = appInfoEntry?.name || game.title || (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+  const detailTitle = resolveCanonicalDisplayTitle(
+    game.appId ?? "",
+    game,
+    appInfoEntry,
+    canonicalAppInfo,
+  );
 
   console.debug("[LaunchButton] render", {
     gameId: game.id,
@@ -221,17 +232,45 @@ export default function LibraryGameDetails({
   });
 
   const { settings } = useSettings();
+  const { sessions: gameSessions } = useGameSession();
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(null);
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [achievementsRefreshing, setAchievementsRefreshing] = useState(false);
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
 
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
-  const rawImageIsLocal = !!rawImageUrl && isLocalPath(rawImageUrl);
-  const imageUrl = rawImageIsLocal
-    ? (localPathToUrl(rawImageUrl) ?? undefined)
-    : rawImageUrl;
-  const heroFallbackPath = rawImageIsLocal ? rawImageUrl : null;
+  const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
+  const [heroFallbackPath, setHeroFallbackPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!rawImageUrl) {
+      setImageUrl(undefined);
+      setHeroFallbackPath(null);
+      return;
+    }
+    const resolve = async () => {
+      let resolved = rawImageUrl;
+      if (rawImageUrl.startsWith("media/") || rawImageUrl.startsWith("img/")) {
+        const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
+        resolved = await resolveRelativeMediaPath(game.appId ?? "", rawImageUrl).catch(() => rawImageUrl);
+      }
+      // Block cross-appid paths
+      if (isLocalPath(resolved) && game.appId) {
+        const pathAppIdMatch = resolved.match(/games[/\\]steam[/\\](\d+)[/\\]media/);
+        if (pathAppIdMatch && pathAppIdMatch[1] !== game.appId) {
+          console.log(`[MEDIA][BLOCKED] reason=cross-appid-media currentAppid=${game.appId} pathAppid=${pathAppIdMatch[1]} path=${resolved}`);
+          setImageUrl(undefined);
+          setHeroFallbackPath(null);
+          return;
+        }
+      }
+      const isLocal = isLocalPath(resolved);
+      const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
+      setImageUrl(url);
+      setHeroFallbackPath(isLocal ? resolved : null);
+    };
+    resolve();
+  }, [rawImageUrl, game.appId]);
 
   const rawLogoUrl = (() => {
     const src = canonicalAppInfo?.media?.logoPath
@@ -450,6 +489,7 @@ export default function LibraryGameDetails({
       .then((summary) => {
         if (!cancelled) {
           setAchievementsSummary(summary);
+          achievementStore.setSummary(appIdStr, summary);
           setAchievementsLoading(false);
           console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
           console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
@@ -465,10 +505,87 @@ export default function LibraryGameDetails({
     return () => { cancelled = true; };
   }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
+  // Auto-sync: subscribe to auto-sync events to update achievements state
+  useEffect(() => {
+    const unsub = achievementAutoSyncService.subscribe((event) => {
+      if (event.appId !== appIdStr) return;
+      setAchievementsSummary(event.summary);
+      achievementStore.setSummary(event.appId, event.summary);
+    });
+    return unsub;
+  }, [appIdStr]);
+
+  // Store: subscribe to central store for fast patches from watcher
+  useEffect(() => {
+    const unsub = achievementStore.subscribe((appId, summary) => {
+      if (appId !== appIdStr) return;
+      setAchievementsSummary(summary);
+    });
+    return unsub;
+  }, [appIdStr]);
+
+  // Auto-sync: start/stop watching based on appId + settings
+  useEffect(() => {
+    if (!appIdStr || !settings.achievementAutoSyncEnabled) {
+      if (appIdStr) achievementAutoSyncService.stopWatching(appIdStr);
+      return;
+    }
+    achievementAutoSyncService.setEnabled(settings.achievementAutoSyncEnabled);
+    achievementAutoSyncService.setIntervalSeconds(settings.achievementAutoSyncIntervalSeconds);
+    achievementAutoSyncService.startWatching({
+      appId: appIdStr,
+      steamWebApiKey: settings.steamWebApiKey || undefined,
+      steamId64: settings.steamId64 || undefined,
+      accountId: settings.steamAccountId || undefined,
+      steamPath: settings.steamRoot || undefined,
+      steamAchievementsEnabled: settings.steamAchievementsEnabled,
+      achievementSchemaPath: settings.achievementSchemaPath || undefined,
+    });
+    return () => {
+      achievementAutoSyncService.stopWatching(appIdStr);
+    };
+  }, [appIdStr, settings.achievementAutoSyncEnabled, settings.achievementAutoSyncIntervalSeconds,
+      settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot,
+      settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
+
+  // Auto-sync: game stop detection — when a session for our appId is removed
+  const prevSessionsRef = useRef(gameSessions);
+  useEffect(() => {
+    const prev = prevSessionsRef.current;
+    const current = gameSessions;
+    prevSessionsRef.current = current;
+
+    if (!appIdStr) return;
+    if (!settings.achievementAutoSyncEnabled) return;
+
+    // Check if any session with our appId was removed (game stopped)
+    for (const [key, prevSession] of Object.entries(prev)) {
+      if (prevSession.appId === appIdStr && !current[key]) {
+        console.debug(`[ACH][AUTO_SYNC] game stopped appid=${appIdStr}, checking progress`);
+        // Wait 1-2 seconds for Steam to write cache after game exit
+        const timeoutId = setTimeout(() => {
+          achievementAutoSyncService.triggerRefresh(appIdStr, "game-stopped");
+        }, 1500);
+        // Note: this timeout is not cleaned up on unmount because we want it to fire
+        // even if the component re-renders. It's a best-effort cleanup.
+        // The timeout is stored so we can clean it up if needed.
+        if (typeof (window as any).__achAutoSyncTimeouts === "undefined") {
+          (window as any).__achAutoSyncTimeouts = [];
+        }
+        (window as any).__achAutoSyncTimeouts.push(timeoutId);
+      }
+    }
+  }, [gameSessions, appIdStr, settings.achievementAutoSyncEnabled]);
+
   // PART 3-4: Premium achievement toast notifications — max 3, then group
+  // If the background watcher is running, it already showed the toasts globally.
   const lastUnlockKey = useRef<string | null>(null);
   useEffect(() => {
     if (!achievementsSummary?.newlyUnlocked?.length) return;
+    if (achievementWatcherService.started) {
+      console.debug(`[ACH][UNLOCK][LIBRARY] skipped reason=watcher-handles-toasts appId=${appIdStr}`);
+      return;
+    }
     const key = JSON.stringify(achievementsSummary.newlyUnlocked.map((e) => e.apiName));
     if (lastUnlockKey.current === key) return;
     lastUnlockKey.current = key;
@@ -480,12 +597,18 @@ export default function LibraryGameDetails({
     if (events.length > maxShow) {
       showGroupedAchievementToast(events.length - maxShow);
     }
-    console.debug(`[ACH][UNLOCK] toasts=${Math.min(events.length, maxShow)} extra=${Math.max(0, events.length - maxShow)}`);
-  }, [achievementsSummary?.newlyUnlocked, appIdStr]);
+    if (settings.achievementNativeNotificationsEnabled) {
+      for (const ev of events) {
+        sendAchievementNativeNotification(ev.name, detailTitle);
+      }
+    }
+    console.debug(`[ACH][UNLOCK] toasts=${Math.min(events.length, maxShow)} extra=${Math.max(0, events.length - maxShow)} native=${settings.achievementNativeNotificationsEnabled}`);
+  }, [achievementsSummary?.newlyUnlocked, appIdStr, settings.achievementNativeNotificationsEnabled, detailTitle]);
 
-  // Subscribe to image download updates — replaces iconUrl/iconGrayUrl when downloaded
+  // Subscribe to image download updates — filter by appId to avoid cross-AppID contamination
   useEffect(() => {
-    const unsub = achievementImageQueue.subscribe((apiName, type, dataUrl) => {
+    const unsub = achievementImageQueue.subscribe((appId, apiName, type, dataUrl) => {
+      if (appId !== appIdStr) return;
       setAchievementsSummary((prev) => {
         if (!prev) return prev;
         return {
@@ -499,12 +622,29 @@ export default function LibraryGameDetails({
       });
     });
     return unsub;
-  }, []);
+  }, [appIdStr]);
 
   // Enqueue missing achievement images when summary loads — once per loadKey change
+  // Uses generation tokens to prevent cross-AppID contamination (Part B3)
   const lastEnqueueKey = useRef<string>("");
+  const prevAppIdRef = useRef<string>("");
+  const lastGenerationRef = useRef<string>("");
   useEffect(() => {
     if (!achievementsSummary?.achievements?.length || !appIdStr) return;
+
+    // Cancel previous generation when appId changes
+    if (prevAppIdRef.current && prevAppIdRef.current !== appIdStr) {
+      if (lastGenerationRef.current) {
+        cancelGeneration(lastGenerationRef.current);
+        achievementImageQueue.cancelJobsForApp(prevAppIdRef.current, "appid-changed");
+        console.debug(`[ACH][IMG] cancelled generation for previous appid=${prevAppIdRef.current}`);
+      }
+    }
+    prevAppIdRef.current = appIdStr;
+
+    const generationId = nextGenerationId(appIdStr, "game-details");
+    lastGenerationRef.current = generationId;
+
     const currentKey = `${appIdStr}:${achievementsSummary.source}:${achievementsSummary.total}:${achievementsSummary.updatedAt ?? 0}`;
     if (lastEnqueueKey.current === currentKey) {
       console.debug(`[ACH][IMG_QUEUE] ensure skipped reason=already-ensured appid=${appIdStr}`);
@@ -515,11 +655,11 @@ export default function LibraryGameDetails({
     for (const a of achievementsSummary.achievements) {
       if (a.iconUrl && !isResolvedUrl(a.iconUrl)) {
         const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "high" });
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "high", caller: "game-details", createdAt: Date.now(), generationId });
       }
       if (a.iconGrayUrl && !isResolvedUrl(a.iconGrayUrl)) {
         const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high" });
+        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high", caller: "game-details", createdAt: Date.now(), generationId });
       }
     }
     if (items.length > 0) {
@@ -595,6 +735,8 @@ export default function LibraryGameDetails({
     </div>
   );
 }
+
+  console.log(`[MEDIA][DETAILS_RENDER] appid=${game.appId} title=${detailTitle} imageUrl=${imageUrl ? "set" : "null"} logoUrl=${logoUrl ? "set" : "null"} canonicalMedia=${canonicalAppInfo?.media ? "set" : "null"}`);
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -1212,12 +1354,13 @@ export default function LibraryGameDetails({
                           className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
                           aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
                         >
-                          <AchievementTooltip achievement={ach}>
+                          <AchievementTooltip achievement={ach} appId={game.appId}>
                             <AchievementIcon
                               iconUrl={ach.iconUrl}
                               iconGrayUrl={ach.iconGrayUrl}
                               unlocked={ach.unlocked}
                               size="sm"
+                              appId={game.appId}
                             />
                           </AchievementTooltip>
                           <div className="min-w-0 flex-1">
@@ -1292,12 +1435,13 @@ export default function LibraryGameDetails({
                           className="flex items-center  gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2 transition hover:bg-white/[0.06]"
                           aria-label={`${ach.name} — ${ach.unlocked ? "Unlocked" : "Locked"}${ach.rarityPercent != null ? `, ${ach.rarityPercent.toFixed(1)}% rarity` : ""}`}
                         >
-                          <AchievementTooltip achievement={ach}>
+                          <AchievementTooltip achievement={ach} appId={game.appId}>
                             <AchievementIcon
                               iconUrl={ach.iconUrl}
                               iconGrayUrl={ach.iconGrayUrl}
                               unlocked={ach.unlocked}
                               size="sm"
+                              appId={game.appId}
                             />
                           </AchievementTooltip>
                           <div className="min-w-0 flex-1">
@@ -1467,7 +1611,7 @@ export default function LibraryGameDetails({
                       rarityPercent: a.rarityPercent ?? prev?.rarityPercent,
                     };
                   });
-                  setAchievementsSummary({
+                  const staleSummary: GameAchievementsSummary = {
                     appId: previousSummary.appId,
                     achievements: merged,
                     total: s.achievements.length || previousSummary.total,
@@ -1477,10 +1621,13 @@ export default function LibraryGameDetails({
                     source: (previousSummary.source === "librarycache" ? "librarycache-stale" : (previousSummary.source + "-stale")) as GameAchievementsSummary["source"],
                     updatedAt: Date.now(),
                     errorReason: "showing-last-known-progress",
-                  });
+                  };
+                  setAchievementsSummary(staleSummary);
+                  if (appIdStr) achievementStore.setSummary(appIdStr, staleSummary);
                   toast("Showing last known achievement progress.", { duration: 4000, icon: "🔄" });
                 } else {
                   setAchievementsSummary(s);
+                  if (appIdStr) achievementStore.setSummary(appIdStr, s);
                 }
                 console.debug(`[ACH][REFRESH] done`);
                 setAchievementsRefreshing(false);

@@ -2,13 +2,26 @@ mod commands;
 mod models;
 mod utils;
 
+use commands::achievement_watcher::{AchievementWatcher, AchievementWatcherState};
+use std::sync::Mutex;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            // Future: Achievement overlay notification window
+            // - create transparent always-on-top window
+            // - decorations: false
+            // - click-through via set_ignore_cursor_events(true)
+            // - render achievement toast there
+            // See commands::toast::show_toast_notification for reference
+
+            // Initialize achievement file watcher state
+            app.manage(AchievementWatcherState(Mutex::new(AchievementWatcher::new())));
+
             // Initialize SQLite cache database
             let sqlite_db = commands::sqlite_cache::initialize_sqlite(app.handle());
             app.manage(sqlite_db);
@@ -73,7 +86,17 @@ pub fn run() {
             commands::steam_achievements::ensure_achievement_images,
             commands::steam_achievements::debug_achievement_progress,
             commands::steam_achievements::parse_librarycache_achievements,
+            commands::steam_achievements::check_achievement_librarycache_metadata,
             commands::steam_achievements::cleanup_achievement_orphan_images,
+            commands::steam_achievements::migrate_achievements_to_provider_folders,
+            commands::steam_achievements::validate_portable_paths,
+            commands::steam_achievements::validate_generated_achievement_schema,
+            commands::steam_achievements::resolve_achievement_path,
+            commands::steam_achievements::resolve_achievement_image_path,
+            commands::achievement_watcher::start_achievement_watcher,
+            commands::achievement_watcher::stop_achievement_watcher,
+            commands::achievement_watcher::get_achievement_watcher_status,
+            commands::achievement_watcher::list_librarycache_appids,
             commands::game::scan_local_games,
             commands::game::scan_local_game_folders,
             commands::process::launch_executable,
@@ -134,6 +157,13 @@ pub fn run() {
             commands::game_cache::repair_appinfo_media_paths,
             commands::game_cache::repair_media_roles,
             commands::game_cache::read_game_media_data_url,
+            commands::game_cache::resolve_provider_game_path,
+            commands::game_cache::resolve_game_media_path,
+            commands::game_cache::resolve_to_tauri_asset_url,
+            commands::game_cache::migrate_game_media_to_relative,
+            commands::game_cache::read_media_manifest,
+            commands::game_cache::write_media_manifest,
+            commands::game_cache::get_media_manifests_batch,
             commands::media_cache::get_media_cache_stats,
             commands::media_cache::compact_media_cache,
             commands::startup_snapshot::read_startup_snapshot,

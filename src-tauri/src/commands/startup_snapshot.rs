@@ -1,10 +1,11 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri::Manager;
 
+use crate::commands::game_cache::get_game_dir;
 use crate::models::startup_snapshot::{StartupSnapshot, STARTUP_SNAPSHOT_VERSION};
 
 fn get_cache_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
@@ -113,7 +114,11 @@ pub fn clear_startup_snapshot(app_handle: AppHandle) -> Result<(), String> {
 
 // ---------------------------------------------------------------------------
 // validate_snapshot_media_paths — check which local media file paths exist.
-// Remote URLs are returned as-is. Returns the same keys with exists flags.
+// Remote URLs, data: URIs, and asset:// URLs are returned as-is.
+// Provider-relative paths (media/*, img/*) are resolved against the
+// game directory: <appData>/games/<provider>/<appId>/media/<file>
+// Absolute paths are checked directly.
+// Returns the same keys with exists flags.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
@@ -140,24 +145,61 @@ pub struct ValidatedMediaPaths {
     pub icon_exists: bool,
 }
 
+/// Resolve a media path to an absolute filesystem path for existence checking.
+/// Relative paths like "media/landscape.jpg" are resolved against the game dir:
+/// `<appData>/games/<provider>/<appId>/media/landscape.jpg`.
+/// Absolute paths are returned as-is. Remote URLs should be handled by caller.
+fn resolve_snapshot_media_path(app_handle: &AppHandle, app_id: &str, path: &str) -> std::path::PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else if let Ok(dir) = get_game_dir(app_handle, app_id) {
+        dir.join(path)
+    } else {
+        p.to_path_buf()
+    }
+}
+
 #[tauri::command]
 pub fn validate_snapshot_media_paths(
-    _app_handle: AppHandle,
+    app_handle: AppHandle,
+    app_id: String,
     media: crate::models::startup_snapshot::SnapshotGameMedia,
 ) -> Result<ValidatedMediaPaths, String> {
-    let check_path = |path: &Option<String>| -> (Option<String>, bool) {
+    let provider = "steam";
+    let check_path = |role: &str, path: &Option<String>| -> (Option<String>, bool) {
         match path {
             Some(p) => {
-                // Remote URLs are kept as-is
-                if p.starts_with("http://") || p.starts_with("https://") {
+                // Remote URLs, data: URIs, and asset:// URLs are kept as-is
+                if p.starts_with("http://") || p.starts_with("https://")
+                    || p.starts_with("data:") || p.starts_with("asset://")
+                    || p.starts_with("file://")
+                {
                     return (Some(p.clone()), true);
                 }
-                // Local paths must exist
-                let exists = std::path::Path::new(p).exists();
+                // .tmp paths are always stripped (stale download artifacts)
+                if p.ends_with(".tmp") {
+                    println!("[BootSnapshot] stripping .tmp path: {}", p);
+                    return (None, false);
+                }
+                // Resolve provider-relative paths against game directory
+                // For paths like "media/landscape.jpg", resolve against
+                // <appData>/games/steam/<appId>/media/landscape.jpg
+                // This matches the layout used by update_game_appinfo_media
+                // and media_path_exists_for_app in game_cache.rs.
+                let resolved = resolve_snapshot_media_path(&app_handle, &app_id, p);
+                let exists = resolved.exists();
+                println!(
+                    "[BootSnapshot][VALIDATE_PATH] appid={} provider={} role={} input={} resolved={} exists={}",
+                    app_id, provider, role, p, resolved.display(), exists
+                );
                 if exists {
                     (Some(p.clone()), true)
                 } else {
-                    println!("[BootSnapshot] path not found, stripping: {}", p);
+                    println!(
+                        "[BootSnapshot][VALIDATE_PATH_MISSING] appid={} role={} resolved={}",
+                        app_id, role, resolved.display()
+                    );
                     (None, false)
                 }
             }
@@ -165,11 +207,11 @@ pub fn validate_snapshot_media_paths(
         }
     };
 
-    let (cover_path, cover_exists) = check_path(&media.cover_path);
-    let (landscape_path, landscape_exists) = check_path(&media.landscape_path);
-    let (background_path, background_exists) = check_path(&media.background_path);
-    let (logo_path, logo_exists) = check_path(&media.logo_path);
-    let (icon_path, icon_exists) = check_path(&media.icon_path);
+    let (cover_path, cover_exists) = check_path("cover", &media.cover_path);
+    let (landscape_path, landscape_exists) = check_path("landscape", &media.landscape_path);
+    let (background_path, background_exists) = check_path("background", &media.background_path);
+    let (logo_path, logo_exists) = check_path("logo", &media.logo_path);
+    let (icon_path, icon_exists) = check_path("icon", &media.icon_path);
 
     Ok(ValidatedMediaPaths {
         cover_path,

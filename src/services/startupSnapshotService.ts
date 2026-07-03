@@ -159,7 +159,8 @@ async function setMediaStatusOnGame(
   game: SnapshotGame,
   originalMedia?: SnapshotGameMedia,
 ): Promise<void> {
-  const validated = await validateSnapshotMediaPaths(game.media);
+  const appId = game.appId || "";
+  const validated = await validateSnapshotMediaPaths(appId, game.media);
   const { mediaStatus, missingMedia } = computeMediaStatus(
     originalMedia || game.media,
     validated,
@@ -172,9 +173,11 @@ async function setMediaStatusOnGame(
 // ---------------------------------------------------------------------------
 // validateSnapshotMediaPaths — check that local file paths actually exist.
 // Remote URLs are kept as-is. Local paths that don't exist are set to null.
+// Requires appId so relative media paths (media/*, img/*) can be resolved
+// against the correct provider game directory.
 // ---------------------------------------------------------------------------
 
-async function validateSnapshotMediaPaths(media: SnapshotGameMedia): Promise<ValidatedMediaPaths> {
+async function validateSnapshotMediaPaths(appId: string, media: SnapshotGameMedia): Promise<ValidatedMediaPaths> {
   try {
     const validationMedia: SnapshotGameMediaForValidation = {
       landscapePath: media.landscapePath,
@@ -183,7 +186,7 @@ async function validateSnapshotMediaPaths(media: SnapshotGameMedia): Promise<Val
       logoPath: media.logoPath,
       iconPath: media.iconPath,
     };
-    return await validatePathsRust(validationMedia);
+    return await validatePathsRust(appId, validationMedia);
   } catch {
     // If validation fails, return paths as-is with existence by presence
     return {
@@ -304,7 +307,7 @@ async function resolveMediaForSnapshot(
       const normalized = normalizeAppInfoMedia(appInfo);
       if (normalized) {
         debugAppLog(appId, `normalized media: cover=${!!normalized.coverPath} landscape=${!!normalized.landscapePath} bg=${!!normalized.backgroundPath} logo=${!!normalized.logoPath} icon=${!!normalized.iconPath}`);
-        const validated = await validateSnapshotMediaPaths(normalized);
+        const validated = await validateSnapshotMediaPaths(appId, normalized);
         const hasMedia = !!(validated.landscapePath || validated.coverPath || validated.backgroundPath || validated.logoPath || validated.iconPath);
         const cacheEntry: GameMediaPaths = {
           landscapePath: validated.landscapePath ?? null,
@@ -340,7 +343,7 @@ async function resolveMediaForSnapshot(
         logoPath: diskPaths.logoPath ?? null,
         iconPath: diskPaths.iconPath ?? null,
       };
-      const validated = await validateSnapshotMediaPaths(media);
+      const validated = await validateSnapshotMediaPaths(appId, media);
       const hasMedia = !!(validated.landscapePath || validated.coverPath || validated.backgroundPath || validated.logoPath || validated.iconPath);
       canonicalMediaCache.set(appId, hasMedia ? {
         landscapePath: validated.landscapePath ?? null,
@@ -533,6 +536,9 @@ export type SnapshotSidebarMedia = {
 export type SnapshotIndexes = {
   appIds: string[];
   mediaReadyAppIds: string[];
+  luaFingerprint?: string | null;
+  appinfoFingerprint?: string | null;
+  dashboardFingerprint?: string | null;
 };
 
 export type SnapshotStats = {
@@ -609,7 +615,7 @@ export async function hydrateStartupSnapshotMedia(
     // Get normalized media from canonical appinfo
     const normalizedMedia = hasCanonical ? normalizeAppInfoMedia(canonicalInfo) : null;
 
-    const needsTitle = !game.title;
+    const needsTitle = !game.title || game.title.startsWith("Steam App ");
     const canRepairTitle = needsTitle && hasCanonical && !!canonicalInfo.name;
 
     let gameChanged = false;
@@ -617,7 +623,7 @@ export async function hydrateStartupSnapshotMedia(
     // Copy full validated media object from canonical appinfo into snapshot.
     // This ensures snapshot always reflects the latest canonical paths on boot.
     if (normalizedMedia) {
-      const validated = await validateSnapshotMediaPaths(normalizedMedia);
+      const validated = await validateSnapshotMediaPaths(game.appId, normalizedMedia);
 
       // Apply all paths from appinfo — replace snapshot values with canonically
       // validated paths. Only count as repair if at least one path changed.
@@ -811,7 +817,7 @@ export async function buildStartupSnapshotFromCurrentState(
       const normalized = normalizeAppInfoMedia(canonicalInfo);
       if (normalized) {
         debugAppLog(game.appId, `canonical media: cover=${!!normalized.coverPath} landscape=${!!normalized.landscapePath} bg=${!!normalized.backgroundPath} logo=${!!normalized.logoPath} icon=${!!normalized.iconPath}`);
-        const validated = await validateSnapshotMediaPaths(normalized);
+        const validated = await validateSnapshotMediaPaths(game.appId, normalized);
         hasMedia = !!(validated.landscapePath || validated.coverPath || validated.backgroundPath || validated.logoPath || validated.iconPath);
         debugAppLog(game.appId, `validated media: hasMedia=${hasMedia} cover=${!!validated.coverPath} landscape=${!!validated.landscapePath}`);
         media = validated;
@@ -832,7 +838,7 @@ export async function buildStartupSnapshotFromCurrentState(
             logoPath: diskPaths.logoPath ?? null,
             iconPath: diskPaths.iconPath ?? null,
           };
-          const validated = await validateSnapshotMediaPaths(rawMedia);
+          const validated = await validateSnapshotMediaPaths(game.appId, rawMedia);
           hasMedia = !!(validated.landscapePath || validated.coverPath || validated.backgroundPath || validated.logoPath || validated.iconPath);
           media = validated;
         } else {
@@ -851,7 +857,7 @@ export async function buildStartupSnapshotFromCurrentState(
       iconPath: media.iconPath,
     };
     // Compute media status from validated paths
-    const validatedForStatus = await validateSnapshotMediaPaths(gameMedia);
+    const validatedForStatus = await validateSnapshotMediaPaths(game.appId, gameMedia);
     const { mediaStatus, missingMedia } = computeMediaStatus(gameMedia, validatedForStatus);
 
     snapshotGames.push({

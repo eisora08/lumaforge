@@ -25,12 +25,13 @@ import Tooltip from "../common/Tooltip";
 import CardActionMenu, { MenuItem } from "./CardActionMenu";
 import { SkeletonBox } from "../common/Skeleton";
 import {
-  localPathToUrl,
   isHttpUrl,
   isLocalPath,
 } from "../../services/libraryLocalCacheService";
 import {
   loadGameAppInfoWithMediaFallback,
+  resolveGameMediaUrl,
+  resolveCanonicalDisplayTitle,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -64,13 +65,6 @@ function getCardImage(
     canonicalAppInfo?.media?.coverPath ||
     undefined
   );
-}
-
-function resolveImageSrc(src: string | undefined): string | undefined {
-  if (!src) return undefined;
-  if (isHttpUrl(src)) return src;
-  if (isLocalPath(src)) return localPathToUrl(src) ?? undefined;
-  return src;
 }
 
 export default function GameLauncherTile({
@@ -126,22 +120,48 @@ export default function GameLauncherTile({
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
 
-  // Title priority: customTitle > appinfo name > game.title > metadata name > fallback
-  const displayTitle =
-    game.customTitle ||
-    appInfoEntry?.name ||
-    game.title ||
-    game.metadata?.name ||
-    (game.appId ? `Steam App ${game.appId}` : "Unknown Game");
+  const displayTitle = game.customTitle || resolveCanonicalDisplayTitle(
+    game.appId ?? "",
+    game,
+    appInfoEntry,
+    canonicalInfo,
+  );
 
   const displayImage = useMemo(
     () => getCardImage(artworkMode, canonicalInfo),
     [artworkMode, canonicalInfo]
   );
 
-  const resolvedSrc = useMemo(() => resolveImageSrc(displayImage), [displayImage]);
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(undefined);
 
-  // Raw local path for data URL fallback (only if it's a local file, not remote URL)
+  useEffect(() => {
+    if (!game.appId || !displayImage) {
+      setResolvedSrc(undefined);
+      return;
+    }
+    let cancelled = false;
+    const logId = game.appId;
+    resolveGameMediaUrl(logId, displayImage)
+      .then((url) => {
+        if (cancelled) return;
+        if (url) {
+          console.log(`[MEDIA][GRID] appid=${logId} selected=${artworkMode === "poster" ? "cover" : "landscape"} source=canonical url=true displayTitle=${displayTitle}`);
+          setResolvedSrc(url);
+        } else {
+          console.log(`[MEDIA][GRID] appid=${logId} selected=placeholder reason=resolve-failed path=${displayImage}`);
+          setResolvedSrc(undefined);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedSrc(undefined);
+      });
+    return () => { cancelled = true; };
+  }, [game.appId, displayImage, artworkMode]);
+
+  // Render-time diagnostics — log actual state sent to AsyncImage
+  console.log(`[MEDIA][GRID_RENDER] appid=${game.appId} mediaLoading=${mediaLoading} hasResolvedSrc=${!!resolvedSrc} hasDisplayImage=${!!displayImage}`);
+
+  // Raw local path for data URL fallback (only if it's an absolute local file path)
   const fallbackLocalPath = useMemo(() => {
     if (!displayImage) return null;
     if (isHttpUrl(displayImage)) return null;

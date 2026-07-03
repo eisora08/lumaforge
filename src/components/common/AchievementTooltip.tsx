@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Lock, Trophy } from "lucide-react";
 import type { GameAchievement } from "../../types/gameAchievements";
@@ -6,6 +6,7 @@ import type { GameAchievement } from "../../types/gameAchievements";
 type Props = {
   achievement: GameAchievement;
   children: React.ReactNode;
+  appId?: string;
 };
 
 function formatRarityPercent(pct: number | undefined | null): string | null {
@@ -23,11 +24,36 @@ function formatAchievementDate(ts: number | undefined): string | null {
   });
 }
 
-export default function AchievementTooltip({ achievement, children }: Props) {
+function useResolvedUrl(url: string | null | undefined, appId?: string): string | null | undefined {
+  const [resolved, setResolved] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!url || !appId || (!url.startsWith("img/") && !url.startsWith("media/"))) {
+      setResolved(url);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { resolveRelativeAchievementImagePath, localPathToUrl } = await import("../../services/gameCacheService");
+        const absPath = await resolveRelativeAchievementImagePath(appId, url);
+        const finalUrl = localPathToUrl(absPath);
+        if (!cancelled) setResolved(finalUrl ?? url);
+      } catch {
+        if (!cancelled) setResolved(url);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [url, appId]);
+  return resolved;
+}
+
+export default function AchievementTooltip({ achievement, children, appId }: Props) {
   const [visible, setVisible] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const [side, setSide] = useState<"right" | "left">("right");
+  const tooltipIconUrl = useResolvedUrl(achievement.iconUrl, appId);
+  const tooltipIconGrayUrl = useResolvedUrl(achievement.iconGrayUrl, appId);
 
   const TOOLTIP_WIDTH = 280;
   const SPACING = 10;
@@ -91,12 +117,12 @@ export default function AchievementTooltip({ achievement, children }: Props) {
             <div className="w-[280px] rounded-xl border border-(--surface-active-border) bg-(--color-surface) p-3 shadow-xl">
               <div className="flex items-start gap-2.5">
                 <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-white/5">
-                  {achievement.unlocked && achievement.iconUrl ? (
-                    <img src={achievement.iconUrl} alt="" className="h-full w-full" />
-                  ) : achievement.iconGrayUrl ? (
-                    <img src={achievement.iconGrayUrl} alt="" className="h-full w-full opacity-50" />
-                  ) : achievement.iconUrl ? (
-                    <img src={achievement.iconUrl} alt="" className="h-full w-full object-cover opacity-40 grayscale" />
+                  {achievement.unlocked && tooltipIconUrl ? (
+                    <img src={tooltipIconUrl} alt="" className="h-full w-full" />
+                  ) : tooltipIconGrayUrl ? (
+                    <img src={tooltipIconGrayUrl} alt="" className="h-full w-full opacity-50" />
+                  ) : tooltipIconUrl ? (
+                    <img src={tooltipIconUrl} alt="" className="h-full w-full object-cover opacity-40 grayscale" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-(--color-muted)">
                       {achievement.unlocked ? <Trophy className="h-5 w-5 text-emerald-400" /> : <Lock className="h-5 w-5" />}

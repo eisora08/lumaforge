@@ -23,6 +23,8 @@ import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
+import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
+import BackgroundJobDebugPanel from "./components/common/BackgroundJobDebugPanel";
 import { runBootTasks } from "./services/appBootCoordinator";
 import AppRouteTransition from "./components/common/AppRouteTransition";
 import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
@@ -139,6 +141,7 @@ function App() {
     <>
       <GameSessionProvider>
       <SessionOverlayWrapper />
+      <AchievementWatcherInit />
       <GameDetailsProvider>
         <GameSessionHUD onNavigate={handleNavigate} />
         <AppLayout activePage={activePage} onNavigate={handleNavigate}>
@@ -150,6 +153,7 @@ function App() {
       </GameSessionProvider>
       <InstallerProgressListener />
       <GameToastViewport />
+      {import.meta.env.DEV && <BackgroundJobDebugPanel />}
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
     </>

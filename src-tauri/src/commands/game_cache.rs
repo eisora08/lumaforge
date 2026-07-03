@@ -86,14 +86,14 @@ fn get_games_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(games_dir)
 }
 
-fn get_game_dir(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, String> {
+pub fn get_game_dir(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, String> {
     let dir = get_games_dir(app_handle)?.join(safe_filename(app_id));
     fs::create_dir_all(&dir)
         .map_err(|e| format!("Failed to create game dir: {}", e))?;
     Ok(dir)
 }
 
-fn get_media_dir(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, String> {
+pub fn get_media_dir(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, String> {
     let dir = get_game_dir(app_handle, app_id)?.join("media");
     fs::create_dir_all(&dir)
         .map_err(|e| format!("Failed to create media dir: {}", e))?;
@@ -112,7 +112,55 @@ fn get_artwork_path(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, Str
     Ok(get_game_dir(app_handle, app_id)?.join("artwork.json"))
 }
 
-fn safe_filename(input: &str) -> String {
+/// Normalize an absolute media path to a provider-relative path.
+/// If the path points inside `<appData>/games/<provider>/<appid>/media/`,
+/// return `media/<filename>`. Otherwise return the path as-is.
+fn media_path_exists_for_app(app_handle: &AppHandle, app_id: &str, path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        p.exists()
+    } else if let Ok(dir) = get_game_dir(app_handle, app_id) {
+        dir.join(path).exists()
+    } else {
+        p.exists()
+    }
+}
+
+fn normalize_media_to_relative(app_handle: &AppHandle, app_id: &str, abs_path: &str) -> String {
+    if let Ok(media_dir) = get_media_dir(app_handle, app_id) {
+        let path = std::path::Path::new(abs_path);
+        if let Some(media_parent) = media_dir.parent() {
+            if let Ok(canonical) = path.canonicalize() {
+                if canonical.starts_with(&media_dir) {
+                    if let Ok(rel) = canonical.strip_prefix(&media_dir) {
+                        let rel_str = format!("media/{}", rel.to_string_lossy().replace('\\', "/"));
+                        media_log(&format!("[PATH] normalized absolute->relative {} -> {}", abs_path, rel_str));
+                        return rel_str;
+                    }
+                } else if canonical.starts_with(media_parent) {
+                    // e.g., games/steam/<appid>/media/landscape.jpg -> media/landscape.jpg
+                    if let Ok(rel) = canonical.strip_prefix(media_parent) {
+                        let rel_str = rel.to_string_lossy().replace('\\', "/");
+                        media_log(&format!("[PATH] normalized absolute->relative {} -> {}", abs_path, rel_str));
+                        return rel_str;
+                    }
+                }
+            }
+            // Non-canonicalized fallback: check if path contains the expected segment
+            let path_str = path.to_string_lossy().replace('\\', "/");
+            let media_str = media_dir.to_string_lossy().replace('\\', "/");
+            if path_str.starts_with(&media_str) {
+                let suffix = path_str[media_str.len()..].trim_start_matches('/');
+                let rel_str = format!("media/{}", suffix);
+                media_log(&format!("[PATH] normalized (non-canonical) {} -> {}", abs_path, rel_str));
+                return rel_str;
+            }
+        }
+    }
+    abs_path.to_string()
+}
+
+pub fn safe_filename(input: &str) -> String {
     let sanitized: String = input
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
@@ -506,6 +554,7 @@ pub fn update_game_appinfo_media(
     name: Option<String>,
     media: GameMediaPaths,
     remote: Option<GameRemoteRefsInput>,
+    media_sources: Option<GameMediaSourcesInput>,
 ) -> Result<(), String> {
     let path = get_appinfo_path(&app_handle, &app_id)?;
 
@@ -517,6 +566,7 @@ pub fn update_game_appinfo_media(
             name: name.clone(),
             updated_at: None,
             media: None,
+            media_sources: None,
             remote: None,
         })
     } else {
@@ -526,6 +576,7 @@ pub fn update_game_appinfo_media(
             name: name.clone(),
             updated_at: None,
             media: None,
+            media_sources: None,
             remote: None,
         }
     };
@@ -555,33 +606,51 @@ pub fn update_game_appinfo_media(
     // Merge incoming paths with existing paths: incoming non-null values
     // override, null values fall through to existing (preserving paths that
     // were set by previous calls). Each path is validated against disk.
+    // Paths are then normalized to provider-relative format.
     let existing = entry.media.as_ref();
 
-    let merge_path = |incoming: &Option<String>, existing: Option<&String>| -> Option<String> {
-        // If incoming is Some(path) and file exists, use it
-        if let Some(p) = incoming {
-            if std::path::Path::new(p).exists() {
-                media_log(&format!("[AppInfoUpdate] {} path set: {}", app_id, p));
-                return Some(p.clone());
+    let resolve_media_path = |path: &str| -> String {
+        let p = std::path::Path::new(path);
+        if p.is_relative() {
+            if let Ok(dir) = get_game_dir(&app_handle, &app_id) {
+                dir.join(path).to_string_lossy().to_string()
+            } else {
+                path.to_string()
             }
-            media_log(&format!("[AppInfoUpdate] incoming path missing, checking existing: {}", p));
+        } else {
+            path.to_string()
         }
-        // Fall through to existing if it exists on disk
-        if let Some(ep) = existing {
-            if std::path::Path::new(ep).exists() {
-                return Some(ep.clone());
+    };
+
+    let merge_path = |field: &str, incoming: &Option<String>, existing: Option<&String>| -> Option<String> {
+        if let Some(p) = incoming {
+            let resolved = resolve_media_path(p);
+            if media_path_exists_for_app(&app_handle, &app_id, &resolved) {
+                let rel = normalize_media_to_relative(&app_handle, &app_id, &resolved);
+                if resolved != rel {
+                    media_log(&format!("[MEDIA][PATH] normalized before write appid={} input={} relative={}", app_id, resolved, rel));
+                }
+                media_log(&format!("[MEDIA][APPINFO_WRITE] appid={} field={} relative={}", app_id, field, rel));
+                return Some(rel);
             }
-            media_log(&format!("[AppInfoUpdate] stripping stale existing path: {}", ep));
+            media_log(&format!("[AppInfoUpdate] incoming path missing {}, checking existing: {}", field, p));
+        }
+        if let Some(ep) = existing {
+            if media_path_exists_for_app(&app_handle, &app_id, ep) {
+                let rel = normalize_media_to_relative(&app_handle, &app_id, ep);
+                return Some(rel);
+            }
+            media_log(&format!("[AppInfoUpdate] stripping stale existing {} path: {}", field, ep));
         }
         None
     };
 
     let validated_media = GameMediaPaths {
-        cover_path: merge_path(&media.cover_path, existing.and_then(|m| m.cover_path.as_ref())),
-        landscape_path: merge_path(&media.landscape_path, existing.and_then(|m| m.landscape_path.as_ref())),
-        background_path: merge_path(&media.background_path, existing.and_then(|m| m.background_path.as_ref())),
-        logo_path: merge_path(&media.logo_path, existing.and_then(|m| m.logo_path.as_ref())),
-        icon_path: merge_path(&media.icon_path, existing.and_then(|m| m.icon_path.as_ref())),
+        cover_path: merge_path("cover", &media.cover_path, existing.and_then(|m| m.cover_path.as_ref())),
+        landscape_path: merge_path("landscape", &media.landscape_path, existing.and_then(|m| m.landscape_path.as_ref())),
+        background_path: merge_path("background", &media.background_path, existing.and_then(|m| m.background_path.as_ref())),
+        logo_path: merge_path("logo", &media.logo_path, existing.and_then(|m| m.logo_path.as_ref())),
+        icon_path: merge_path("icon", &media.icon_path, existing.and_then(|m| m.icon_path.as_ref())),
     };
 
     entry.media = Some(validated_media);
@@ -590,6 +659,20 @@ pub fn update_game_appinfo_media(
             header_image: r.header_image,
             capsule_image: r.capsule_image,
             background_image: r.background_image,
+        });
+    }
+    // Merge mediaSources: incoming non-null values override, null falls through to existing
+    if let Some(sources) = media_sources {
+        let existing = entry.media_sources.as_ref();
+        let merge_src = |incoming: &Option<String>, existing: Option<&String>| -> Option<String> {
+            incoming.clone().or_else(|| existing.cloned())
+        };
+        entry.media_sources = Some(crate::models::game_cache::GameMediaSources {
+            landscape: merge_src(&sources.landscape, existing.and_then(|m| m.landscape.as_ref())),
+            cover: merge_src(&sources.cover, existing.and_then(|m| m.cover.as_ref())),
+            background: merge_src(&sources.background, existing.and_then(|m| m.background.as_ref())),
+            logo: merge_src(&sources.logo, existing.and_then(|m| m.logo.as_ref())),
+            icon: merge_src(&sources.icon, existing.and_then(|m| m.icon.as_ref())),
         });
     }
     entry.updated_at = Some(
@@ -613,6 +696,76 @@ pub struct GameRemoteRefsInput {
     pub header_image: Option<String>,
     pub capsule_image: Option<String>,
     pub background_image: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GameMediaSourcesInput {
+    pub landscape: Option<String>,
+    pub cover: Option<String>,
+    pub background: Option<String>,
+    pub logo: Option<String>,
+    pub icon: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Media manifest — per-game fast media index
+// ---------------------------------------------------------------------------
+
+fn get_media_manifest_path(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, String> {
+    Ok(get_game_dir(app_handle, app_id)?.join("media_manifest.json"))
+}
+
+#[tauri::command]
+pub fn read_media_manifest(
+    app_handle: AppHandle,
+    app_id: String,
+) -> Result<Option<crate::models::game_cache::MediaManifestFile>, String> {
+    let path = get_media_manifest_path(&app_handle, &app_id)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read media_manifest: {}", e))?;
+    serde_json::from_str(&content)
+        .map(Some)
+        .map_err(|e| format!("Failed to parse media_manifest: {}", e))
+}
+
+#[tauri::command]
+pub fn write_media_manifest(
+    app_handle: AppHandle,
+    app_id: String,
+    manifest: crate::models::game_cache::MediaManifestFile,
+) -> Result<(), String> {
+    let path = get_media_manifest_path(&app_handle, &app_id)?;
+    let content = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("Failed to serialize media_manifest: {}", e))?;
+    fs::write(&path, &content)
+        .map_err(|e| format!("Failed to write media_manifest: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_media_manifests_batch(
+    app_handle: AppHandle,
+    app_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, crate::models::game_cache::MediaManifestFile>, String> {
+    let mut result = std::collections::HashMap::new();
+    for app_id in &app_ids {
+        let path = match get_media_manifest_path(&app_handle, app_id) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if !path.exists() {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(manifest) = serde_json::from_str::<crate::models::game_cache::MediaManifestFile>(&content) {
+                result.insert(app_id.clone(), manifest);
+            }
+        }
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -685,6 +838,7 @@ pub fn migrate_to_canonical_cache(app_handle: AppHandle) -> Result<MigrationSumm
                             name: entry.name.clone(),
                             updated_at: entry.updated_at,
                             media: None,
+                            media_sources: None,
                             remote: None,
                         };
                         if let Ok(content) = serde_json::to_string_pretty(&game_info) {
@@ -1023,27 +1177,32 @@ pub fn resolve_game_media_paths(
 
     let cover_path = {
         let p = media_dir.join("cover.jpg");
-        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("cover.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
     };
 
     let background_path = {
         let p = media_dir.join("background.jpg");
-        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("background.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
     };
 
     let logo_path = {
         let p = media_dir.join("logo.png");
-        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("logo.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
     };
 
     let icon_path = {
         let p = media_dir.join("icon.png");
-        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("icon.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
     };
 
     let landscape_path = {
         let p = media_dir.join("landscape.jpg");
-        if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
+        if p.exists() { Some(p.to_string_lossy().to_string()) }
+        else { let p2 = media_dir.join("landscape.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
     };
 
     media_log(&format!(
@@ -1079,20 +1238,21 @@ pub fn get_game_media_paths(
     let media_dir = app_dir.join("games").join("steam")
         .join(safe_filename(&app_id)).join("media");
 
-    let cover_path = media_dir.join("cover.jpg");
-    let cover_exists = cover_path.exists();
+    fn first_existing(dir: &std::path::Path, names: &[&str]) -> (Option<String>, bool) {
+        for name in names {
+            let p = dir.join(name);
+            if p.exists() {
+                return (Some(p.to_string_lossy().to_string()), true);
+            }
+        }
+        (None, false)
+    }
 
-    let landscape_path = media_dir.join("landscape.jpg");
-    let landscape_exists = landscape_path.exists();
-
-    let background_path = media_dir.join("background.jpg");
-    let background_exists = background_path.exists();
-
-    let logo_path = media_dir.join("logo.png");
-    let logo_exists = logo_path.exists();
-
-    let icon_path = media_dir.join("icon.png");
-    let icon_exists = icon_path.exists();
+    let (cover_path, cover_exists) = first_existing(&media_dir, &["cover.jpg", "cover.png"]);
+    let (landscape_path, landscape_exists) = first_existing(&media_dir, &["landscape.jpg", "landscape.png"]);
+    let (background_path, background_exists) = first_existing(&media_dir, &["background.jpg", "background.png"]);
+    let (logo_path, logo_exists) = first_existing(&media_dir, &["logo.png", "logo.jpg"]);
+    let (icon_path, icon_exists) = first_existing(&media_dir, &["icon.png", "icon.jpg"]);
 
     media_log(&format!(
         "get_game_media_paths: app={} cover={} landscape={} background={} logo={} icon={}",
@@ -1100,15 +1260,15 @@ pub fn get_game_media_paths(
     ));
 
     Ok(crate::models::game_cache::GameMediaPathsResult {
-        cover_path: if cover_exists { Some(cover_path.to_string_lossy().to_string()) } else { None },
+        cover_path,
         cover_exists,
-        landscape_path: if landscape_exists { Some(landscape_path.to_string_lossy().to_string()) } else { None },
+        landscape_path,
         landscape_exists,
-        background_path: if background_exists { Some(background_path.to_string_lossy().to_string()) } else { None },
+        background_path,
         background_exists,
-        logo_path: if logo_exists { Some(logo_path.to_string_lossy().to_string()) } else { None },
+        logo_path,
         logo_exists,
-        icon_path: if icon_exists { Some(icon_path.to_string_lossy().to_string()) } else { None },
+        icon_path,
         icon_exists,
     })
 }
@@ -1151,11 +1311,11 @@ pub fn repair_appinfo_media_paths(
         if p.exists() { Some(p.to_string_lossy().to_string()) } else { None }
     };
 
-    let disk_cover = disk_check("cover.jpg");
-    let disk_landscape = disk_check("landscape.jpg");
-    let disk_background = disk_check("background.jpg");
-    let disk_logo = disk_check("logo.png");
-    let disk_icon = disk_check("icon.png");
+    let disk_cover = disk_check("cover.jpg").or_else(|| disk_check("cover.png"));
+    let disk_landscape = disk_check("landscape.jpg").or_else(|| disk_check("landscape.png"));
+    let disk_background = disk_check("background.jpg").or_else(|| disk_check("background.png"));
+    let disk_logo = disk_check("logo.png").or_else(|| disk_check("logo.jpg"));
+    let disk_icon = disk_check("icon.png").or_else(|| disk_check("icon.jpg"));
 
     media_log(&format!("[AppInfoRepair] {} existing files {{ cover={}, landscape={}, background={}, logo={}, icon={} }}",
         app_id, disk_cover.is_some(), disk_landscape.is_some(), disk_background.is_some(), disk_logo.is_some(), disk_icon.is_some()));
@@ -1170,8 +1330,12 @@ pub fn repair_appinfo_media_paths(
     ));
 
     // For each role: validate existing path, fall through to disk file
+    let normalize = |path: String| -> String {
+        normalize_media_to_relative(&app_handle, &app_id, &path)
+    };
+
     let cover_path = existing_media.as_ref().and_then(|m| m.cover_path.as_ref())
-        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
+        .and_then(|p| if media_path_exists_for_app(&app_handle, &app_id, p) { Some(normalize(p.clone())) } else {
             media_log(&format!("repair: stripping missing cover_path for {}: {}", app_id, p));
             changed = true;
             None
@@ -1180,12 +1344,12 @@ pub fn repair_appinfo_media_paths(
             if let Some(dp) = disk_cover.clone() {
                 media_log(&format!("repair: adding cover_path from disk for {}", app_id));
                 changed = true;
-                Some(dp)
+                Some(normalize(dp.clone()))
             } else { None }
         });
 
     let landscape_path = existing_media.as_ref().and_then(|m| m.landscape_path.as_ref())
-        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
+        .and_then(|p| if media_path_exists_for_app(&app_handle, &app_id, p) { Some(normalize(p.clone())) } else {
             media_log(&format!("repair: stripping missing landscape_path for {}: {}", app_id, p));
             changed = true;
             None
@@ -1194,12 +1358,12 @@ pub fn repair_appinfo_media_paths(
             if let Some(dp) = disk_landscape.clone() {
                 media_log(&format!("repair: adding landscape_path from disk for {}", app_id));
                 changed = true;
-                Some(dp)
+                Some(normalize(dp))
             } else { None }
         });
 
     let background_path = existing_media.as_ref().and_then(|m| m.background_path.as_ref())
-        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
+        .and_then(|p| if media_path_exists_for_app(&app_handle, &app_id, p) { Some(normalize(p.clone())) } else {
             media_log(&format!("repair: stripping missing background_path for {}: {}", app_id, p));
             changed = true;
             None
@@ -1208,12 +1372,12 @@ pub fn repair_appinfo_media_paths(
             if let Some(dp) = disk_background.clone() {
                 media_log(&format!("repair: adding background_path from disk for {}", app_id));
                 changed = true;
-                Some(dp)
+                Some(normalize(dp))
             } else { None }
         });
 
     let logo_path = existing_media.as_ref().and_then(|m| m.logo_path.as_ref())
-        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
+        .and_then(|p| if media_path_exists_for_app(&app_handle, &app_id, p) { Some(normalize(p.clone())) } else {
             media_log(&format!("repair: stripping missing logo_path for {}: {}", app_id, p));
             changed = true;
             None
@@ -1222,12 +1386,12 @@ pub fn repair_appinfo_media_paths(
             if let Some(dp) = disk_logo.clone() {
                 media_log(&format!("repair: adding logo_path from disk for {}", app_id));
                 changed = true;
-                Some(dp)
+                Some(normalize(dp))
             } else { None }
         });
 
     let icon_path = existing_media.as_ref().and_then(|m| m.icon_path.as_ref())
-        .and_then(|p| if std::path::Path::new(p).exists() { Some(p.clone()) } else {
+        .and_then(|p| if media_path_exists_for_app(&app_handle, &app_id, p) { Some(normalize(p.clone())) } else {
             media_log(&format!("repair: stripping missing icon_path for {}: {}", app_id, p));
             changed = true;
             None
@@ -1236,7 +1400,7 @@ pub fn repair_appinfo_media_paths(
             if let Some(dp) = disk_icon.clone() {
                 media_log(&format!("repair: adding icon_path from disk for {}", app_id));
                 changed = true;
-                Some(dp)
+                Some(normalize(dp))
             } else { None }
         });
 
@@ -1394,11 +1558,11 @@ pub fn repair_media_roles(
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(mut entry) = serde_json::from_str::<GameAppInfo>(&content) {
-                    let disk_cover = { let p = media_dir.join("cover.jpg"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
-                    let disk_landscape = { let p = media_dir.join("landscape.jpg"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
-                    let disk_background = { let p = media_dir.join("background.jpg"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
-                    let disk_logo = { let p = media_dir.join("logo.png"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
-                    let disk_icon = { let p = media_dir.join("icon.png"); if p.exists() { Some(p.to_string_lossy().to_string()) } else { None } };
+                    let disk_cover = { let p = media_dir.join("cover.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
+                    let disk_landscape = { let p = media_dir.join("landscape.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
+                    let disk_background = { let p = media_dir.join("background.jpg"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
+                    let disk_logo = { let p = media_dir.join("logo.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
+                    let disk_icon = { let p = media_dir.join("icon.png"); if p.exists() { Some(normalize_media_to_relative(&app_handle, &app_id, &p.to_string_lossy())) } else { None } };
 
                     entry.media = Some(GameMediaPaths {
                         cover_path: disk_cover,
@@ -1478,6 +1642,166 @@ pub fn read_game_media_data_url(
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+// ---------------------------------------------------------------------------
+// Runtime path resolvers — convert provider-relative paths to absolute paths
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// migrate_game_media_to_relative — scan all appinfo.json files and convert
+// any remaining absolute paths to provider-relative paths (Part 6).
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn migrate_game_media_to_relative(app_handle: AppHandle) -> Result<u32, String> {
+    let games_dir = get_games_dir(&app_handle)?;
+    let mut total_fixed = 0u32;
+
+    if !games_dir.exists() {
+        return Ok(0);
+    }
+
+    for entry in fs::read_dir(&games_dir).map_err(|e| format!("Failed to read games dir: {}", e))? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let app_id = match path.file_name().and_then(|n| n.to_str()) {
+            Some(id) => id.to_string(),
+            None => continue,
+        };
+
+        let appinfo_path = path.join("appinfo.json");
+        if !appinfo_path.exists() {
+            continue;
+        }
+
+        let content = match fs::read_to_string(&appinfo_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let mut entry: GameAppInfo = match serde_json::from_str(&content) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let media = match entry.media.as_mut() {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let mut changed = false;
+
+        let fix_field = |field: &mut Option<String>, field_name: &str| -> bool {
+            let val = match field {
+                Some(v) if !v.is_empty() => v.clone(),
+                _ => return false,
+            };
+            // Check if it looks like an absolute Windows path
+            let is_abs = std::path::Path::new(&val).is_absolute();
+            if !is_abs {
+                return false;
+            }
+            let rel = normalize_media_to_relative(&app_handle, &app_id, &val);
+            if rel != val {
+                eprintln!("[PATH][MIGRATE] game appid={} field={} absolute->relative {}", app_id, field_name, rel);
+                *field = Some(rel);
+                true
+            } else {
+                // Path is absolute but outside appdata media folder — log warning
+                eprintln!("[PATH][MIGRATE] game appid={} field={} absolute path outside media folder, skipping: {}", app_id, field_name, val);
+                false
+            }
+        };
+
+        if fix_field(&mut media.cover_path, "cover") { changed = true; }
+        if fix_field(&mut media.landscape_path, "landscape") { changed = true; }
+        if fix_field(&mut media.background_path, "background") { changed = true; }
+        if fix_field(&mut media.logo_path, "logo") { changed = true; }
+        if fix_field(&mut media.icon_path, "icon") { changed = true; }
+
+        if changed {
+            if let Ok(json) = serde_json::to_string_pretty(&entry) {
+                if fs::write(&appinfo_path, &json).is_ok() {
+                    total_fixed += 1;
+                    media_log(&format!("[PATH][MIGRATE] appinfo rewritten for appid={}", app_id));
+                }
+            }
+        }
+    }
+
+    if total_fixed > 0 {
+        eprintln!("[PATH][MIGRATE] complete fixed={} game appinfos", total_fixed);
+    } else {
+        eprintln!("[PATH][MIGRATE] no absolute paths found");
+    }
+
+    Ok(total_fixed)
+}
+
+// ---------------------------------------------------------------------------
+// Runtime path resolver Tauri commands (Part 4)
+// ---------------------------------------------------------------------------
+
+/// Resolve the absolute path to a provider game directory.
+/// e.g. resolveProviderGamePath("steam", "2605790")
+///   → <appData>/games/steam/2605790/
+#[tauri::command]
+pub fn resolve_provider_game_path(
+    app_handle: AppHandle,
+    provider: String,
+    app_id: String,
+) -> Result<String, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let dir = app_dir.join("games").join(&provider).join(&app_id);
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Resolve an absolute path for a game media file from a relative path.
+/// e.g. resolveGameMediaPath("steam", "2605790", "media/landscape.jpg")
+///   → <appData>/games/steam/2605790/media/landscape.jpg
+#[tauri::command]
+pub fn resolve_game_media_path(
+    app_handle: AppHandle,
+    provider: String,
+    app_id: String,
+    relative_path: String,
+) -> Result<String, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let abs = app_dir.join("games").join(&provider).join(&app_id).join(&relative_path);
+    Ok(abs.to_string_lossy().to_string())
+}
+
+/// Convert an absolute filesystem path to a Tauri-compatible URL.
+/// Note: The TS-side localPathToUrl() using convertFileSrc() is preferred
+/// for actual asset:// protocol URLs. This returns a file:// URL for reference.
+#[tauri::command]
+pub fn resolve_to_tauri_asset_url(abs_path: String) -> Result<String, String> {
+    let path = std::path::Path::new(&abs_path);
+    if !path.exists() {
+        return Ok(abs_path);
+    }
+    // Construct file:// URL manually to avoid url crate dependency
+    let lossy = path.to_string_lossy();
+    let normalized = lossy.replace('\\', "/");
+    let url = if normalized.starts_with('/') {
+        format!("file://{}", normalized)
+    } else {
+        format!("file:///{}", normalized)
+    };
+    Ok(url)
 }
 
 fn try_move_media_file(

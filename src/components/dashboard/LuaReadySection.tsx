@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, FileCode2, Package, Download } from "lucide-react";
 import { getCachedSourceAvailabilityIndex } from "../../services/sourceAvailabilityCacheService";
 import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabilityCacheService";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
-import { localPathToUrl } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -24,6 +24,8 @@ export default function LuaReadySection({ onNavigate }: Props) {
   const sourceIndex = getCachedSourceAvailabilityIndex();
   const snapshot = getCachedSnapshot();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
+  const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
+  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
 
   const luaEntries = useMemo(() => {
     if (!sourceIndex || !snapshot) return [];
@@ -49,6 +51,50 @@ export default function LuaReadySection({ onNavigate }: Props) {
       }
     }
   }, [luaEntries]);
+
+  // Stable primitive key derived from luaEntries — avoids infinite render loops
+  const gameIdsKey = useMemo(
+    () => luaEntries.map(e => e.game.appId).filter(Boolean).sort().join(','),
+    [luaEntries],
+  );
+
+  // Resolve media URLs and titles
+  useEffect(() => {
+    let cancelled = false;
+    const ids = gameIdsKey ? gameIdsKey.split(',') : [];
+    const entryById = new Map(luaEntries.map(e => [e.game.appId, e]));
+
+    const resolve = async () => {
+      const urls: Record<string, string | null> = {};
+      const titles: Record<string, string> = {};
+      for (const appId of ids) {
+        if (cancelled) break;
+        const entry = entryById.get(appId);
+        if (!entry) continue;
+        const { game } = entry;
+        const imgPath = game.media?.landscapePath || game.media?.coverPath;
+        urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
+        titles[appId] = resolveCanonicalDisplayTitle(appId, game);
+        if (imgPath && !cancelled) {
+          const selection = game.media?.landscapePath ? "landscape" : "cover";
+          console.log(`[MEDIA][DASH] section=LuaReady appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+        }
+      }
+      if (cancelled) return;
+      setMediaUrlMap(prev => {
+        if (Object.keys(prev).length === Object.keys(urls).length &&
+            Object.entries(urls).every(([k, v]) => prev[k] === v)) return prev;
+        return urls;
+      });
+      setTitleMap(prev => {
+        if (Object.keys(prev).length === Object.keys(titles).length &&
+            Object.entries(titles).every(([k, v]) => prev[k] === v)) return prev;
+        return titles;
+      });
+    };
+    resolve();
+    return () => { cancelled = true; };
+  }, [gameIdsKey]);
 
   if (luaEntries.length === 0) return null;
 
@@ -104,8 +150,8 @@ export default function LuaReadySection({ onNavigate }: Props) {
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
           {luaEntries.map(({ game, srcEntry }) => {
-            const imgPath = game.media?.landscapePath || game.media?.coverPath;
-            const imgUrl = imgPath ? localPathToUrl(imgPath) : null;
+            const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
+            const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
             const srcCount = srcEntry.sourceCount;
             const providerName =
               srcEntry.availableSources?.[0]?.name || "HubcapDB";
@@ -132,7 +178,7 @@ export default function LuaReadySection({ onNavigate }: Props) {
                     {imgUrl ? (
                       <AsyncImage
                         src={imgUrl}
-                        alt={game.title}
+                        alt={displayTitle}
                         className="h-full w-full object-cover transition duration-300 group-hover/card:scale-105"
                         fallback={
                           <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -149,7 +195,7 @@ export default function LuaReadySection({ onNavigate }: Props) {
 
                   <div className="p-3">
                     <h3 className="line-clamp-1 text-xs font-medium text-(--color-text)">
-                      {game.title}
+                      {displayTitle}
                     </h3>
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-(--color-muted)">
                       <span className="inline-flex items-center gap-1">

@@ -94,8 +94,9 @@ function mediaTypeToField(mediaType: string): keyof import("./tauri").GameMediaP
 const pendingAppInfoUpdates = new Map<string, Record<string, string | null>>();
 let appInfoFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
-function flushAppInfoUpdates() {
+async function flushAppInfoUpdates() {
   appInfoFlushTimer = null;
+  const { getMediaEntry, setMediaEntry } = await import("./gameCacheService");
   for (const [appId, fields] of pendingAppInfoUpdates) {
     const media: Record<string, string | null> = {
       coverPath: fields.coverPath ?? null,
@@ -107,6 +108,37 @@ function flushAppInfoUpdates() {
     updateGameAppinfoMedia(appId, null, media as any, null).catch(() => {});
     // Invalidate in-memory cache so UI picks up new paths
     invalidateResolvedMediaCache(appId);
+
+    // Update MediaIndex with new paths
+    const entry = getMediaEntry(appId);
+    if (entry) {
+      const updated = { ...entry };
+      let changed = 0;
+      for (const [field, path] of Object.entries(fields)) {
+        const relPath = path as string | null;
+        const key = field.replace("Path", "") as keyof typeof updated;
+        const hasKey = `has${key.charAt(0).toUpperCase() + key.slice(1)}` as keyof typeof updated;
+        if (relPath) {
+          (updated as any)[field] = `media/${relPath.split(/[/\\]/).pop()}`;
+          (updated as any)[hasKey] = true;
+        } else {
+          (updated as any)[field] = null;
+          (updated as any)[hasKey] = false;
+        }
+        changed++;
+      }
+      if (changed > 0) {
+        updated.updatedAt = Date.now();
+        setMediaEntry(updated);
+        console.log(`[MEDIA_INDEX] update key=steam:${appId} changedFields=${changed}`);
+      }
+    }
+
+    // Notify snapshot so UI picks up changes
+    const { notifyMediaUpdated } = await import("./startupSnapshotService");
+    notifyMediaUpdated(appId).catch(() => {});
+
+    console.log(`[GAME_STORE] mediaUpdated appid=${appId}`);
   }
   pendingAppInfoUpdates.clear();
 }

@@ -9,7 +9,7 @@ use crate::models::steam_appcache_achievements::{
   AchievementImageStatus, AchievementsAppSchemaEntry, AchievementsAppPercentagesFile,
   AchievementsAppSchemaResult, AppAchievementCache, AppAchievementCacheEntry,
   AppAchievementPercentagesEntry, DebugAchievementReport, DebugFileInfo, DebugKvNode,
-  DebugMatchResult, LibraryCacheProgress,
+  DebugMatchResult, LibraryCacheFileMetadata, LibraryCacheProgress,
   LibraryCacheValue, LocaleValue, OrphanCleanupResult, StatPair, SteamAppcacheAchievement,
   SteamAppcacheParsedProgress, SteamAppcacheScanResult, SteamAppcacheSchemaEntry,
   UserGameStatsRawResult,
@@ -116,7 +116,7 @@ fn find_appcache_stats_dir(steam_root: &Path) -> PathBuf {
   steam_root.join("appcache").join("stats")
 }
 
-fn resolve_steam_root(steam_path: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_steam_root(steam_path: Option<&str>) -> Result<PathBuf, String> {
   match steam_path {
     Some(p) => {
       let root = PathBuf::from(p);
@@ -1412,6 +1412,61 @@ pub fn parse_librarycache_achievements(
   })
 }
 
+// ---------------------------------------------------------------------------
+// check_achievement_librarycache_metadata — lightweight file metadata check,
+// no JSON parsing, used by the frontend auto-sync poller.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn check_achievement_librarycache_metadata(
+  steam_path: Option<String>,
+  steam_account_id: String,
+  app_id: u32,
+) -> Result<LibraryCacheFileMetadata, String> {
+  let steam_root = resolve_steam_root(steam_path.as_deref())?;
+  let lib_path = steam_root
+    .join("userdata")
+    .join(&steam_account_id)
+    .join("config")
+    .join("librarycache")
+    .join(format!("{}.json", app_id));
+  let path_str = lib_path.to_string_lossy().to_string();
+
+  if !lib_path.is_file() {
+    return Ok(LibraryCacheFileMetadata {
+      file_found: false,
+      file_path: path_str,
+      file_size: None,
+      modified_at: None,
+      error_reason: Some("file-not-found".to_string()),
+    });
+  }
+
+  match fs::metadata(&lib_path) {
+    Ok(meta) => {
+      let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+      Ok(LibraryCacheFileMetadata {
+        file_found: true,
+        file_path: path_str,
+        file_size: Some(meta.len()),
+        modified_at: modified,
+        error_reason: None,
+      })
+    }
+    Err(e) => Ok(LibraryCacheFileMetadata {
+      file_found: true,
+      file_path: path_str,
+      file_size: None,
+      modified_at: None,
+      error_reason: Some(format!("metadata-error: {}", e)),
+    }),
+  }
+}
+
 #[tauri::command]
 pub fn debug_achievement_progress(
   steam_path: Option<String>,
@@ -1814,11 +1869,22 @@ fn get_achievement_cache_dir(app_handle: &AppHandle, app_id: u32) -> Result<Path
     .app_data_dir()
     .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-  let cache_dir = app_dir.join("achievements").join(app_id.to_string());
-  fs::create_dir_all(&cache_dir)
-    .map_err(|e| format!("Failed to create achievement cache dir: {}", e))?;
+  // Use provider-aware path: achievements/steam/<appid>/,
+  // with fallback to legacy achievements/<appid>/
+  let provider_dir = app_dir.join("achievements").join("steam").join(app_id.to_string());
+  let legacy_dir = app_dir.join("achievements").join(app_id.to_string());
 
-  Ok(cache_dir)
+  if provider_dir.exists() {
+    Ok(provider_dir)
+  } else if legacy_dir.exists() {
+    eprintln!("[ACH][PATH] using legacy achievements path appid={}", app_id);
+    Ok(legacy_dir)
+  } else {
+    // Create new provider-aware path
+    fs::create_dir_all(&provider_dir)
+      .map_err(|e| format!("Failed to create achievement cache dir: {}", e))?;
+    Ok(provider_dir)
+  }
 }
 
 #[tauri::command]
@@ -1826,6 +1892,16 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
   let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
 
   diag_log(format!("Writing achievement cache for app_id={} to {:?}", app_id, cache_dir));
+
+  // Save originals before moving for image_sources.json comparison
+  let original_achievements = data.achievements.clone();
+
+  // Normalize icon URLs to relative paths before writing
+  let normalized_achievements: Vec<AppAchievementCacheEntry> = data.achievements.into_iter().map(|mut entry| {
+    entry.icon_url = normalize_icon_url_for_cache(&app_handle, app_id, &entry.icon_url, false);
+    entry.icon_gray_url = normalize_icon_url_for_cache(&app_handle, app_id, &entry.icon_gray_url, true);
+    entry
+  }).collect();
 
   // Write summary.json
   let mut summary = data.summary;
@@ -1836,10 +1912,10 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
   fs::write(&summary_path, &summary_content)
     .map_err(|e| format!("Failed to write summary: {}", e))?;
 
-  // Write achievements.json
+  // Write achievements.json (with normalized relative icon paths)
   let achievements_path = cache_dir.join("achievements.json");
   let achievements_content =
-    serde_json::to_string_pretty(&data.achievements).map_err(|e| format!("Failed to serialize achievements: {}", e))?;
+    serde_json::to_string_pretty(&normalized_achievements).map_err(|e| format!("Failed to serialize achievements: {}", e))?;
   fs::write(&achievements_path, &achievements_content)
     .map_err(|e| format!("Failed to write achievements: {}", e))?;
 
@@ -1849,7 +1925,46 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
     .map_err(|e| format!("Failed to serialize percentages: {}", e))?;
   fs::write(&pcts_path, &pcts_content).map_err(|e| format!("Failed to write percentages: {}", e))?;
 
-  diag_log(format!("Achievement cache written for app_id={}: {} achievements", app_id, data.achievements.len()));
+  // Write image_sources.json (separate remote URL metadata)
+  let sources_path = cache_dir.join("image_sources.json");
+  let source_entries: Vec<serde_json::Value> = normalized_achievements.iter().filter_map(|entry| {
+    let had_original = original_achievements.iter().find(|o| o.api_name == entry.api_name);
+    match had_original {
+      Some(orig) => {
+        let orig_icon = orig.icon_url.as_deref().unwrap_or("");
+        let orig_gray = orig.icon_gray_url.as_deref().unwrap_or("");
+        let new_icon = entry.icon_url.as_deref().unwrap_or("");
+        let new_gray = entry.icon_gray_url.as_deref().unwrap_or("");
+
+        let icon_changed = !orig_icon.is_empty() && orig_icon != new_icon && (orig_icon.starts_with("http://") || orig_icon.starts_with("https://"));
+        let gray_changed = !orig_gray.is_empty() && orig_gray != new_gray && (orig_gray.starts_with("http://") || orig_gray.starts_with("https://"));
+
+        if icon_changed || gray_changed {
+          let mut obj = serde_json::Map::new();
+          obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
+          if icon_changed {
+            obj.insert("remote_icon_url".to_string(), serde_json::Value::String(orig_icon.to_string()));
+          }
+          if gray_changed {
+            obj.insert("remote_icon_gray_url".to_string(), serde_json::Value::String(orig_gray.to_string()));
+          }
+          Some(serde_json::Value::Object(obj))
+        } else {
+          None
+        }
+      }
+      None => None,
+    }
+  }).collect();
+  if !source_entries.is_empty() {
+    let sources_content = serde_json::to_string_pretty(&source_entries)
+      .map_err(|e| format!("Failed to serialize image sources: {}", e))?;
+    fs::write(&sources_path, &sources_content)
+      .map_err(|e| format!("Failed to write image sources: {}", e))?;
+    diag_log(format!("Wrote {} image source entries", source_entries.len()));
+  }
+
+  diag_log(format!("Achievement cache written for app_id={}: {} achievements", app_id, normalized_achievements.len()));
   Ok(())
 }
 
@@ -1900,12 +2015,85 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
       .map_err(|e| format!("Failed to write migrated summary: {}", e))?;
   }
 
-  let achievements: Vec<crate::models::steam_appcache_achievements::AppAchievementCacheEntry> =
+  let mut achievements: Vec<crate::models::steam_appcache_achievements::AppAchievementCacheEntry> =
     serde_json::from_str(
       &fs::read_to_string(&achievements_path)
         .map_err(|e| format!("Failed to read achievements: {}", e))?,
     )
     .map_err(|e| format!("Failed to parse achievements: {}", e))?;
+
+  // Part 4: On-read migration — normalize any CDN URLs in icon fields to relative img/ paths
+  let mut schema_migrated = 0u32;
+  let mut sources_entries: Vec<serde_json::Value> = vec![];
+
+  for entry in achievements.iter_mut() {
+    let mut entry_changed = false;
+
+    // Migrate icon_url if it's a Steam CDN URL
+    if let Some(ref icon) = entry.icon_url.clone() {
+      if (icon.starts_with("https://steamcdn") || icon.starts_with("https://cdn.cloudflare.steamstatic.com"))
+        && icon.contains("/steamcommunity/public/images/apps/")
+      {
+        if let Some(rel) = cdn_url_to_relative_icon_path(icon, false) {
+          eprintln!("[ACH][SCHEMA_MIGRATE] appid={} apiName={} icon_url -> icon {}", app_id, entry.api_name, rel);
+          // Store the original remote URL in image_sources
+          let mut obj = serde_json::Map::new();
+          obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
+          obj.insert("remote_icon_url".to_string(), serde_json::Value::String(icon.clone()));
+          sources_entries.push(serde_json::Value::Object(obj));
+          entry.icon_url = Some(rel);
+          entry_changed = true;
+        }
+      }
+    }
+
+    // Migrate icon_gray_url if it's a Steam CDN URL
+    if let Some(ref icon_gray) = entry.icon_gray_url.clone() {
+      if (icon_gray.starts_with("https://steamcdn") || icon_gray.starts_with("https://cdn.cloudflare.steamstatic.com"))
+        && icon_gray.contains("/steamcommunity/public/images/apps/")
+      {
+        if let Some(rel) = cdn_url_to_relative_icon_path(icon_gray, true) {
+          eprintln!("[ACH][SCHEMA_MIGRATE] appid={} apiName={} icon_gray_url -> icon_gray {}", app_id, entry.api_name, rel);
+          // Add remote gray URL to existing or new sources entry
+          if let Some(existing) = sources_entries.iter_mut().find(|v| {
+            v.get("api_name").and_then(|n| n.as_str()) == Some(&entry.api_name)
+          }) {
+            if let Some(obj) = existing.as_object_mut() {
+              obj.insert("remote_icon_gray_url".to_string(), serde_json::Value::String(icon_gray.clone()));
+            }
+          } else {
+            let mut obj = serde_json::Map::new();
+            obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
+            obj.insert("remote_icon_gray_url".to_string(), serde_json::Value::String(icon_gray.clone()));
+            sources_entries.push(serde_json::Value::Object(obj));
+          }
+          entry.icon_gray_url = Some(rel);
+          entry_changed = true;
+        }
+      }
+    }
+
+    if entry_changed {
+      schema_migrated += 1;
+    }
+  }
+
+  if schema_migrated > 0 {
+    eprintln!("[ACH][SCHEMA_MIGRATE] appid={} migrated={}", app_id, schema_migrated);
+    // Write migrated achievements.json
+    let achievements_content =
+      serde_json::to_string_pretty(&achievements).map_err(|e| format!("Failed to serialize migrated achievements: {}", e))?;
+    fs::write(&achievements_path, &achievements_content)
+      .map_err(|e| format!("Failed to write migrated achievements: {}", e))?;
+    // Write/update image_sources.json
+    if !sources_entries.is_empty() {
+      let sources_path = cache_dir.join("image_sources.json");
+      let sources_content = serde_json::to_string_pretty(&sources_entries)
+        .map_err(|e| format!("Failed to serialize image sources: {}", e))?;
+      fs::write(&sources_path, &sources_content)
+        .map_err(|e| format!("Failed to write image sources: {}", e))?;
+    }
+  }
 
   let pcts: Vec<crate::models::steam_appcache_achievements::AppAchievementPercentagesEntry> =
     if pcts_path.exists() {
@@ -1997,41 +2185,6 @@ fn resolve_localized(value: &Option<LocaleValue>, _api_name: &str, preferred_lan
   }
 }
 
-/// Try to read an image file and encode it as a base64 data URL.
-/// Returns None if the file doesn't exist, can't be read, or is too large (>1MB).
-fn embed_image_as_data_url(path: &Path) -> Option<String> {
-  if !path.is_file() {
-    diag_log(format!("Icon file not found: {}", path.display()));
-    return None;
-  }
-
-  let data = fs::read(path).ok()?;
-
-  if data.is_empty() || data.len() > 1_048_576 {
-    diag_log(format!("Icon file too large or empty: {} ({} bytes)", path.display(), data.len()));
-    return None;
-  }
-
-  let mime = match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
-    "png" => "image/png",
-    "jpg" | "jpeg" => "image/jpeg",
-    "gif" => "image/gif",
-    "webp" => "image/webp",
-    "svg" => "image/svg+xml",
-    "bmp" => "image/bmp",
-    "ico" => "image/x-icon",
-    _ => {
-      diag_log(format!("Unknown icon extension for: {}", path.display()));
-      return None;
-    }
-  };
-
-  let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
-  let data_url = format!("data:{};base64,{}", mime, b64);
-  diag_log(format!("Embedded icon: {} ({} bytes -> {} chars)", path.display(), data.len(), data_url.len()));
-  Some(data_url)
-}
-
 #[tauri::command]
 pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<AchievementsAppSchemaResult, String> {
   diag_log(format!("=== read_achievements_app_schema_folder path={} app_id={} ===", path, app_id));
@@ -2119,9 +2272,29 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
       });
       let description = resolve_localized(&entry.description, &entry.name, None);
 
-      // Return raw path from achievements.json, do not embed
-      let icon_url = entry.icon.as_ref().filter(|p| !p.is_empty()).cloned();
-      let icon_gray_url = entry.icon_gray.as_ref().filter(|p| !p.is_empty()).cloned();
+      // Return raw path from achievements.json, do not embed.
+      // Normalize any Steam CDN URLs to relative img/ paths.
+      let raw_icon = entry.icon.as_ref().filter(|p| !p.is_empty()).cloned();
+      let raw_gray = entry.icon_gray.as_ref().filter(|p| !p.is_empty()).cloned();
+      // Normalize without app_handle (no absolute local path conversion, just CDN → img/)
+      let icon_url = raw_icon.and_then(|val| {
+        if (val.starts_with("https://steamcdn") || val.starts_with("https://cdn.cloudflare.steamstatic.com"))
+          && val.contains("/steamcommunity/public/images/apps/")
+        {
+          cdn_url_to_relative_icon_path(&val, false).or(Some(val))
+        } else {
+          Some(val)
+        }
+      });
+      let icon_gray_url = raw_gray.and_then(|val| {
+        if (val.starts_with("https://steamcdn") || val.starts_with("https://cdn.cloudflare.steamstatic.com"))
+          && val.contains("/steamcommunity/public/images/apps/")
+        {
+          cdn_url_to_relative_icon_path(&val, true).or(Some(val))
+        } else {
+          Some(val)
+        }
+      });
 
       AppAchievementCacheEntry {
         id: entry.name.clone(),
@@ -2247,4 +2420,403 @@ pub fn cleanup_achievement_orphan_images(
     orphaned_files: orphaned,
     orphaned_count,
   })
+}
+
+// ===================================================================
+// Icon URL normalization helpers
+// ===================================================================
+
+/// Extract a Steam CDN image hash from a URL like:
+/// https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/<appid>/<40hex>.jpg
+fn extract_steam_image_hash(url: &str) -> Option<String> {
+  let path = std::path::Path::new(url);
+  let stem = path.file_stem()?.to_str()?;
+  if stem.len() == 40 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+    Some(stem.to_string())
+  } else {
+    None
+  }
+}
+
+/// Normalize a Steam CDN URL to a local relative path, extracting the image hash.
+/// For gray icons (is_gray=true), returns `img/<hash>_gray.jpg`.
+/// For colored icons, returns `img/<hash>.jpg`.
+fn cdn_url_to_relative_icon_path(url: &str, is_gray: bool) -> Option<String> {
+  let hash = extract_steam_image_hash(url)?;
+  if is_gray {
+    Some(format!("img/{}_gray.jpg", hash))
+  } else {
+    Some(format!("img/{}.jpg", hash))
+  }
+}
+
+/// Normalize an icon URL for storage in achievements.json.
+/// - Remote Steam CDN URLs → `img/<hash>.jpg` (or `img/<hash>_gray.jpg` when `is_gray`)
+/// - Absolute local paths inside img dir → `img/<filename>`
+/// - Already relative `img/` paths → unchanged
+/// - Remote non-CDN URLs → stored as-is
+fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Option<String>, is_gray: bool) -> Option<String> {
+  let url = match url {
+    Some(u) if !u.is_empty() => u,
+    _ => return None,
+  };
+
+  // Already relative
+  if url.starts_with("img/") {
+    return Some(url.clone());
+  }
+
+  // Data URLs pass through
+  if url.starts_with("data:") {
+    return Some(url.clone());
+  }
+
+  // Steam CDN URL → extract hash, store as img/<hash>.jpg
+  if (url.starts_with("https://steamcdn") || url.starts_with("https://cdn.cloudflare.steamstatic.com"))
+    && url.contains("/steamcommunity/public/images/apps/")
+  {
+    if let Some(rel) = cdn_url_to_relative_icon_path(url, is_gray) {
+      eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url -> {} (from CDN URL)", app_id, rel);
+      return Some(rel);
+    }
+  }
+
+  // Absolute local path → try to normalize to relative
+  if url.starts_with('/') || url.chars().nth(1) == Some(':') {
+    let app_dir = match app_handle.path().app_data_dir() {
+      Ok(d) => d,
+      Err(_) => return Some(url.clone()),
+    };
+    let app_id_str = app_id.to_string();
+    let possible_bases = vec![
+      app_dir.join("achievements").join("steam").join(&app_id_str).join("img"),
+      app_dir.join("achievements").join(&app_id_str).join("img"),
+    ];
+    let path = std::path::Path::new(url);
+    for base in &possible_bases {
+      let path_str = path.to_string_lossy().replace('\\', "/");
+      let base_str = base.to_string_lossy().replace('\\', "/");
+      if path_str.starts_with(&base_str) {
+        let suffix = path_str[base_str.len()..].trim_start_matches('/');
+        let rel_str = format!("img/{}", suffix);
+        eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+        return Some(rel_str);
+      }
+      // Also try with parent of img
+      if let Some(base_parent) = base.parent() {
+        let base_parent_str = base_parent.to_string_lossy().replace('\\', "/") + "/";
+        if path_str.starts_with(&base_parent_str) {
+          let suffix = path_str[base_parent_str.len()..].trim_start_matches('/');
+          if suffix.starts_with("img/") || suffix.starts_with("img\\") {
+            let rel_str = suffix.replace('\\', "/");
+            eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+            return Some(rel_str);
+          }
+        }
+      }
+    }
+  }
+
+  // Remote HTTP/HTTPS URL that is NOT a Steam CDN URL:
+  // Keep as-is for backward compatibility, but it will be migrated to image_sources.json separately
+  eprintln!("[ACH][SCHEMA_MIGRATE] appid={} keeping remote icon url (non-CDN): {}", app_id, url);
+  Some(url.clone())
+}
+
+// ===================================================================
+// Migration: achievements/<appid>/ → achievements/steam/<appid>/
+// ===================================================================
+
+#[tauri::command]
+pub fn migrate_achievements_to_provider_folders(app_handle: AppHandle) -> Result<Value, String> {
+  let app_dir = app_handle.path().app_data_dir()
+    .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+  let achievements_dir = app_dir.join("achievements");
+
+  if !achievements_dir.exists() {
+    return Ok(serde_json::json!({ "found": 0, "migrated": 0, "errors": [] }));
+  }
+
+  let mut found = 0u32;
+  let mut migrated = 0u32;
+  let mut errors: Vec<String> = vec![];
+  let migration_marker = achievements_dir.join(".provider_migration_v1");
+
+  if migration_marker.exists() {
+    eprintln!("[ACH][MIGRATE] migration already completed, skipping");
+    return Ok(serde_json::json!({ "found": 0, "migrated": 0, "errors": [], "already_migrated": true }));
+  }
+
+  let entries = match fs::read_dir(&achievements_dir) {
+    Ok(e) => e,
+    Err(e) => {
+      return Ok(serde_json::json!({ "found": 0, "migrated": 0, "errors": [format!("Cannot read achievements dir: {}", e)] }));
+    }
+  };
+
+  for entry in entries.flatten() {
+    let path = entry.path();
+    if !path.is_dir() { continue; }
+    let dir_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    if dir_name == "steam" { continue; }
+    if !dir_name.chars().all(|c| c.is_ascii_digit()) { continue; }
+
+    found += 1;
+    eprintln!("[ACH][MIGRATE] old folder appid={}", dir_name);
+    let steam_dir = achievements_dir.join("steam").join(&dir_name);
+    if steam_dir.exists() {
+      eprintln!("[ACH][MIGRATE] appid={} target already exists, skipping", dir_name);
+      continue;
+    }
+    if let Err(e) = fs::create_dir_all(steam_dir.parent().unwrap()) {
+      errors.push(format!("appid={} cannot create parent: {}", dir_name, e));
+      continue;
+    }
+    match fs::rename(&path, &steam_dir) {
+      Ok(()) => {
+        migrated += 1;
+        eprintln!("[ACH][MIGRATE] moved achievements/{} -> achievements/steam/{}", dir_name, dir_name);
+      }
+      Err(e) => {
+        errors.push(format!("appid={} rename failed: {}", dir_name, e));
+      }
+    }
+  }
+
+  // Write migration marker
+  let now_secs = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_secs())
+    .unwrap_or(0);
+  let _ = fs::write(&migration_marker, format!("migrated {} folders at {}", migrated, now_secs));
+  eprintln!("[ACH][MIGRATE] complete count={}", migrated);
+
+  Ok(serde_json::json!({ "found": found, "migrated": migrated, "errors": errors }))
+}
+
+// ===================================================================
+// Runtime path resolvers (Part 4)
+// ===================================================================
+
+/// Resolve the absolute path to an achievement cache directory.
+/// e.g. resolveAchievementPath("steam", 268910)
+///   → <appData>/achievements/steam/268910/
+#[tauri::command]
+pub fn resolve_achievement_path(
+    app_handle: AppHandle,
+    provider: String,
+    app_id: u32,
+) -> Result<String, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let dir = app_dir.join("achievements").join(&provider).join(app_id.to_string());
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Resolve an absolute path for an achievement image from a relative path.
+/// e.g. resolveAchievementImagePath("steam", 268910, "img/hash.jpg")
+///   → <appData>/achievements/steam/268910/img/hash.jpg
+#[tauri::command]
+pub fn resolve_achievement_image_path(
+    app_handle: AppHandle,
+    provider: String,
+    app_id: u32,
+    relative_path: String,
+) -> Result<String, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let abs = app_dir.join("achievements").join(&provider).join(app_id.to_string()).join(&relative_path);
+    Ok(abs.to_string_lossy().to_string())
+}
+
+// ===================================================================
+// Validation: scan for absolute paths, asset URLs, remote icon fields
+// ===================================================================
+
+#[tauri::command]
+pub fn validate_portable_paths(app_handle: AppHandle) -> Result<Value, String> {
+  let app_dir = app_handle.path().app_data_dir()
+    .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+  let mut details: Vec<String> = vec![];
+  let mut appdata_abs = 0u32;
+  let mut asset_urls_persisted = 0u32;
+  let mut remote_icon = 0u32;
+  let mut providerless = 0u32;
+  let missing_local = 0u32;
+
+  let achievements_dir = app_dir.join("achievements");
+  if !achievements_dir.exists() {
+    return Ok(serde_json::json!({
+      "appdata_absolute_paths": 0, "asset_urls_persisted": 0,
+      "remote_icon_fields": 0, "providerless_achievement_folders": 0,
+      "missing_local_files": 0, "details": ["No achievements directory found"]
+    }));
+  }
+
+  // Scan achievement folders
+  for entry in fs::read_dir(&achievements_dir).unwrap().flatten() {
+    let path = entry.path();
+    if !path.is_dir() { continue; }
+    let dir_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+    // Check for providerless folders (direct numeric subdirs)
+    if dir_name.chars().all(|c| c.is_ascii_digit()) && dir_name != "steam" {
+      providerless += 1;
+      details.push(format!("PROVIDERLESS: achievements/{}", dir_name));
+    }
+
+    // Scan JSON files within for absolute paths
+    for json_entry in walkdir::WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
+      if json_entry.path().extension().map_or(true, |ext| ext != "json") { continue; }
+      let content = match fs::read_to_string(json_entry.path()) {
+        Ok(c) => c,
+        Err(_) => continue,
+      };
+      // Check for app data absolute paths
+      let appdata_str = app_dir.to_string_lossy().replace('\\', "/");
+      if content.contains(&appdata_str) {
+        appdata_abs += 1;
+        details.push(format!("ABSOLUTE: {} contains appdata path", json_entry.path().display()));
+      }
+      // Check for asset:// URLs
+      if content.contains("asset://") || content.contains("asset.localhost") {
+        asset_urls_persisted += 1;
+        details.push(format!("ASSET_URL: {} contains asset URL", json_entry.path().display()));
+      }
+      // Check for remote icon/gray icon URLs
+      if content.contains("\"icon_url\":\"http") || content.contains("\"icon_gray_url\":\"http") {
+        remote_icon += 1;
+        details.push(format!("REMOTE_ICON: {} contains remote icon URL", json_entry.path().display()));
+      }
+    }
+  }
+
+  // Scan game cache files in games/ directory
+  let games_dir = app_dir.join("games");
+  if games_dir.exists() {
+    for json_entry in walkdir::WalkDir::new(&games_dir).into_iter().filter_map(|e| e.ok()) {
+      if json_entry.path().extension().map_or(true, |ext| ext != "json") { continue; }
+      let content = match fs::read_to_string(json_entry.path()) {
+        Ok(c) => c,
+        Err(_) => continue,
+      };
+      let appdata_str = app_dir.to_string_lossy().replace('\\', "/");
+      if content.contains(&appdata_str) {
+        appdata_abs += 1;
+        details.push(format!("ABSOLUTE: {} contains appdata path", json_entry.path().display()));
+      }
+      if content.contains("asset://") || content.contains("asset.localhost") {
+        asset_urls_persisted += 1;
+        details.push(format!("ASSET_URL: {} contains asset URL", json_entry.path().display()));
+      }
+    }
+  }
+
+  eprintln!("[PATH][VALIDATE] absolutePaths={}", appdata_abs);
+  eprintln!("[PATH][VALIDATE] assetUrlsPersisted={}", asset_urls_persisted);
+  eprintln!("[PATH][VALIDATE] remoteIconFields={}", remote_icon);
+  eprintln!("[PATH][VALIDATE] providerlessAchievementFolders={}", providerless);
+  eprintln!("[PATH][VALIDATE] missingFiles={}", missing_local);
+
+  if appdata_abs == 0 && remote_icon == 0 && providerless == 0 && asset_urls_persisted == 0 && missing_local == 0 {
+    details.push("All paths are portable. No absolute paths, asset URLs, remote icon fields, or providerless folders found.".to_string());
+  }
+
+  Ok(serde_json::json!({
+    "absolutePaths": appdata_abs,
+    "assetUrlsPersisted": asset_urls_persisted,
+    "remoteIconFields": remote_icon,
+    "providerlessAchievementFolders": providerless,
+    "missingFiles": missing_local,
+    "details": details,
+  }))
+}
+
+// ===================================================================
+// Validate: check a single appId's generated achievements.json for
+// remote URLs in icon fields, and count local icon fields (Part 7).
+// ===================================================================
+
+#[tauri::command]
+pub fn validate_generated_achievement_schema(app_handle: AppHandle, app_id: u32) -> Result<Value, String> {
+  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)
+    .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+  let achievements_path = cache_dir.join("achievements.json");
+
+  if !achievements_path.exists() {
+    return Ok(serde_json::json!({
+      "appId": app_id,
+      "total": 0,
+      "remoteIconFields": 0,
+      "localIconFields": 0,
+      "missingLocalFiles": 0,
+      "details": ["No achievements.json found"]
+    }));
+  }
+
+  let content = fs::read_to_string(&achievements_path)
+    .map_err(|e| format!("Failed to read achievements.json: {}", e))?;
+
+  let entries: Vec<AppAchievementCacheEntry> = serde_json::from_str(&content)
+    .map_err(|e| format!("Failed to parse achievements.json: {}", e))?;
+
+  let total = entries.len();
+  let mut remote_icon_fields = 0u32;
+  let mut local_icon_fields = 0u32;
+  let mut missing_local_files = 0u32;
+  let img_dir = cache_dir.join("img");
+  let mut details: Vec<String> = vec![];
+
+  for entry in &entries {
+    // Check icon field
+    if let Some(ref icon) = entry.icon_url {
+      if icon.starts_with("http://") || icon.starts_with("https://") {
+        remote_icon_fields += 1;
+        details.push(format!("REMOTE_ICON: apiName={} icon={}", entry.api_name, icon));
+      } else if icon.starts_with("img/") {
+        local_icon_fields += 1;
+        let fname = icon.trim_start_matches("img/");
+        let disk_path = img_dir.join(fname);
+        if !disk_path.exists() {
+          missing_local_files += 1;
+          details.push(format!("MISSING: apiName={} icon={}", entry.api_name, icon));
+        }
+      }
+    }
+
+    // Check icon_gray field
+    if let Some(ref gray) = entry.icon_gray_url {
+      if gray.starts_with("http://") || gray.starts_with("https://") {
+        remote_icon_fields += 1;
+        details.push(format!("REMOTE_ICON: apiName={} icon_gray={}", entry.api_name, gray));
+      } else if gray.starts_with("img/") {
+        local_icon_fields += 1;
+        let fname = gray.trim_start_matches("img/");
+        let disk_path = img_dir.join(fname);
+        if !disk_path.exists() {
+          missing_local_files += 1;
+          details.push(format!("MISSING: apiName={} icon_gray={}", entry.api_name, gray));
+        }
+      }
+    }
+  }
+
+  eprintln!("[ACH][SCHEMA_VALIDATE] appid={}", app_id);
+  eprintln!("[ACH][SCHEMA_VALIDATE] total={}", total);
+  eprintln!("[ACH][SCHEMA_VALIDATE] remoteIconFields={}", remote_icon_fields);
+  eprintln!("[ACH][SCHEMA_VALIDATE] localIconFields={}", local_icon_fields);
+  eprintln!("[ACH][SCHEMA_VALIDATE] missingLocalFiles={}", missing_local_files);
+
+  Ok(serde_json::json!({
+    "appId": app_id,
+    "total": total,
+    "remoteIconFields": remote_icon_fields,
+    "localIconFields": local_icon_fields,
+    "missingLocalFiles": missing_local_files,
+    "details": details,
+  }))
 }

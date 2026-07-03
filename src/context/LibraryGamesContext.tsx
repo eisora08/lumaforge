@@ -177,11 +177,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     for (const game of games) {
       if (!game.appId) continue;
       const entry = appInfoMap[game.appId];
-      // Only write if entry is missing or actually different
-      if (entry && entry.name === game.title && entry.header_image === (game.imageUrl || null) && entry.updated_at && (now - entry.updated_at) < 86400) continue;
+      const gameName = game.title && !game.title.startsWith("Steam App ") ? game.title : null;
+      if (entry && entry.name === gameName && entry.header_image === (game.imageUrl || null) && entry.updated_at && (now - entry.updated_at) < 86400) continue;
       await updateLibraryAppInfo(game.appId, {
         app_id: game.appId,
-        name: game.title || null,
+        name: gameName,
         header_image: game.imageUrl || null,
         cover_path: null,
         grid_path: null,
@@ -203,7 +203,29 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // Load enriched games from SQLite cache (instant — no blocking)
     const cached = await loadCachedGames();
     if (cached && cached.games.length > 0) {
-      setGames(cached.games);
+      let loadedGames = cached.games;
+
+      // Merge any reconciled games from Stage 4.5 boot (Lua-only additions)
+      const { getReconciledGames } = await import("../services/gameStore");
+      const reconciled = getReconciledGames();
+      if (reconciled.length > 0) {
+        const reconciledById = new Map(reconciled.map((g) => [g.id, g]));
+        const existingIds = new Set(loadedGames.map((g) => g.id));
+        const added: LibraryGame[] = [];
+        for (const [id, game] of reconciledById) {
+          if (!existingIds.has(id)) {
+            added.push(game);
+          }
+        }
+        if (added.length > 0) {
+          loadedGames = [...loadedGames, ...added].sort((a, b) =>
+            a.title.localeCompare(b.title)
+          );
+          console.debug(`[GAME_STORE] gamesUpdated count=${loadedGames.length} source=config-lua-reconcile added=${added.length}`);
+        }
+      }
+
+      setGames(loadedGames);
       setWarnings(cached.warnings || []);
       setInitialLoading(false);
     } else {

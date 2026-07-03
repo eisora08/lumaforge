@@ -27,6 +27,11 @@ export type AppSettings = {
   steamAccountId: string;
   steamAchievementsEnabled: boolean;
   achievementSchemaPath: string;
+  achievementToastEnabled: boolean;
+  achievementNativeNotificationsEnabled: boolean;
+  achievementOverlayNotificationsEnabled: boolean;
+  achievementAutoSyncEnabled: boolean;
+  achievementAutoSyncIntervalSeconds: number;
 
   libraryCardArtworkMode: "landscape" | "poster";
   mediaCacheProfile: "minimal" | "playnite-balanced" | "full";

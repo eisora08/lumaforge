@@ -1,26 +1,6 @@
 use tauri::{LogicalPosition, Manager};
 
 
-#[cfg(target_os = "windows")]
-fn force_topmost(window: &tauri::WebviewWindow) {
-    use windows::Win32::UI::WindowsAndMessaging::*;
-    use windows::Win32::Foundation::*;
-
-    if let Ok(hwnd) = window.hwnd() {
-        unsafe {
-            SetWindowPos(
-                HWND(hwnd .0 as isize),
-                HWND_TOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-            );
-        }
-    }
-}
-
 #[tauri::command]
 pub fn show_toast_notification(
     app_handle: tauri::AppHandle,
