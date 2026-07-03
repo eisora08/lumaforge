@@ -1,4 +1,4 @@
-import { CheckCircle2, Gamepad2, Play, Server } from "lucide-react";
+import { Gamepad2, Play } from "lucide-react";
 import { useState, useMemo } from "react";
 import AsyncImage from "../../common/AsyncImage";
 
@@ -6,8 +6,6 @@ type StoreGameMediaGalleryProps = {
   title: string;
   imageUrl?: string;
   galleryImages?: string[];
-  installStatus?: string;
-  availableSourcesCount: number;
   appId: string;
   developer: string;
   platforms: string[];
@@ -17,8 +15,6 @@ export default function StoreGameMediaGallery({
   title,
   imageUrl,
   galleryImages = [],
-  installStatus = "not-installed",
-  availableSourcesCount,
   appId,
   developer,
   platforms,
@@ -100,20 +96,6 @@ export default function StoreGameMediaGallery({
 
           <div className="absolute bottom-0 left-0 right-0 p-6 lg:p-8">
             <div className="mb-3 flex flex-wrap gap-2">
-              {installStatus === "active" && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300 backdrop-blur-sm">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Installed
-                </span>
-              )}
-
-              {availableSourcesCount > 0 && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent) backdrop-blur-sm">
-                  <Server className="h-3.5 w-3.5" />
-                  Lua Ready
-                </span>
-              )}
-
               <span className="rounded-full border border-white/10 bg-black/40 px-3 py-1 text-xs text-white/70 backdrop-blur-sm">
                 AppID {appId}
               </span>

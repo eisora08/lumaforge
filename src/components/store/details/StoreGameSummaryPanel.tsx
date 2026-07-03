@@ -1,7 +1,6 @@
 import AsyncImage from "../../common/AsyncImage";
 import HubcapProviderBadges from "../../settings/HubcapProviderBadges";
 import {
-  CheckCircle2,
   Database,
   Download,
   ExternalLink,
@@ -14,6 +13,7 @@ import {
 
 import { SummaryLine } from "./StoreGameDetailPrimitives";
 
+import { CheckCircle2, Library, SquareArrowOutUpRight } from "lucide-react";
 import type { PackageGame, PackageSource } from "../../../types/package";
 import type { PackageInstallStatus } from "../../../types/packageInstall";
 import type { SourceCheckStatus } from "../../../services/sourceAvailabilityCacheService";
@@ -22,6 +22,8 @@ type StoreGameSummaryPanelProps = {
   game: PackageGame;
   previewImageUrl?: string;
   installStatus?: PackageInstallStatus;
+  isSteamInstalled?: boolean;
+  luaInstalled?: boolean;
   developer: string;
   platforms: string[];
   availableSources: number;
@@ -35,8 +37,8 @@ type StoreGameSummaryPanelProps = {
   onRefreshSources?: () => void;
 };
 
-function getInstallBadge(status: PackageInstallStatus) {
-  if (status === "active") {
+function getStatusBadge(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean) {
+  if (isSteamInstalled || (installStatus === "active" && luaInstalled === false)) {
     return {
       label: "Installed",
       icon: CheckCircle2,
@@ -44,7 +46,15 @@ function getInstallBadge(status: PackageInstallStatus) {
     };
   }
 
-  if (status === "disabled") {
+  if (installStatus === "active" || luaInstalled) {
+    return {
+      label: "In Library",
+      icon: Library,
+      className: "border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-accent)",
+    };
+  }
+
+  if (installStatus === "disabled") {
     return {
       label: "Disabled",
       icon: PauseCircle,
@@ -61,7 +71,12 @@ function getFileIcon(fileType: PackageSource["fileType"]) {
   return FileText;
 }
 
-function getDownloadLabel(source?: PackageSource | null) {
+function getDownloadLabel(source?: PackageSource | null, luaInstalled?: boolean) {
+  if (luaInstalled) {
+    if (source?.fileType === "lua") return "Update Lua";
+    if (source?.fileType === "zip") return "Update Package";
+    return "Update";
+  }
   if (!source) return "Download";
   if (source.fileType === "lua") return "Download Lua";
   if (source.fileType === "zip") return "Download Package";
@@ -72,6 +87,8 @@ export default function StoreGameSummaryPanel({
   game,
   previewImageUrl,
   installStatus = "not-installed",
+  isSteamInstalled = false,
+  luaInstalled = false,
   developer,
   platforms,
   availableSources,
@@ -90,10 +107,13 @@ export default function StoreGameSummaryPanel({
   const isError = sourceStatus === "error";
   const isTimeout = sourceStatus === "timeout";
 
-  const hasLuaReady = isReady && availableSources > 0;
-  const installBadge = getInstallBadge(installStatus);
+  const statusBadge = getStatusBadge(isSteamInstalled, installStatus, luaInstalled);
   const canDownload = isReady && !!selectedSource?.available;
   const needsRetry = isError || isTimeout;
+
+  console.debug(
+    `[STORE][DETAILS_STATE] appid=${game.appId} installed=${isSteamInstalled} luaInstalled=${luaInstalled} status=${statusBadge?.label || "not-installed"} button=${getDownloadLabel(selectedSource, luaInstalled)}`
+  );
 
   return (
     <div className="space-y-4">
@@ -121,30 +141,30 @@ export default function StoreGameSummaryPanel({
           </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {installBadge &&
+            {statusBadge &&
               (() => {
-                const Icon = installBadge.icon;
+                const Icon = statusBadge.icon;
 
                 return (
                   <span
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${installBadge.className}`}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${statusBadge.className}`}
                   >
                     <Icon className="h-3.5 w-3.5" />
-                    {installBadge.label}
+                    {statusBadge.label}
                   </span>
                 );
               })()}
 
-            {isChecking && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/15 px-2.5 py-1 text-xs font-medium text-yellow-300">
-                Checking sources...
+            {!isSteamInstalled && !luaInstalled && installStatus === "not-installed" && isReady && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-(--color-muted)">
+                <SquareArrowOutUpRight className="h-3.5 w-3.5" />
+                Not in Library
               </span>
             )}
 
-            {isReady && hasLuaReady && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-300">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Lua Ready
+            {isChecking && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/15 px-2.5 py-1 text-xs font-medium text-yellow-300">
+                Checking sources...
               </span>
             )}
 
@@ -231,7 +251,7 @@ export default function StoreGameSummaryPanel({
             {isChecking
               ? "Checking sources..."
               : isReady && canDownload
-                ? getDownloadLabel(selectedSource)
+                ? getDownloadLabel(selectedSource, luaInstalled)
                 : isNone
                   ? "No Sources Available"
                   : needsRetry
@@ -289,13 +309,7 @@ export default function StoreGameSummaryPanel({
           <SummaryLine label="AppID" value={game.appId} />
           <SummaryLine
             label="Status"
-            value={
-              installStatus === "active"
-                ? "Installed"
-                : installStatus === "disabled"
-                  ? "Disabled"
-                  : "Not Installed"
-            }
+            value={statusBadge?.label ?? "Not in Library"}
           />
           <SummaryLine
             label="Sources"

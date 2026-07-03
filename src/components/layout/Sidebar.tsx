@@ -174,6 +174,7 @@ export default function Sidebar({
           <div className="shrink-0 pt-3">
             <SidebarLibraryList
               onOpenGame={handleOpenGame}
+              activePage={activePage}
               compact={mode === "compact"}
               variant="header"
             />
@@ -185,6 +186,7 @@ export default function Sidebar({
           {showLabels && (
             <SidebarLibraryList
               onOpenGame={handleOpenGame}
+              activePage={activePage}
               compact={mode === "compact"}
               variant="list"
             />
@@ -193,6 +195,7 @@ export default function Sidebar({
           {isCollapsed && (
             <SidebarLibraryList
               onOpenGame={handleOpenGame}
+              activePage={activePage}
               compact={false}
               collapsed={true}
             />

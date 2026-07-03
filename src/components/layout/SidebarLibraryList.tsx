@@ -27,11 +27,13 @@ import { backgroundJobQueue } from "../../services/backgroundJobQueue";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import { showSuccess, showError } from "../toast/GameToast";
 import { useConfirm } from "../../services/confirmService";
+import type { AppPage } from "../../types/navigation";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 
 type Props = {
   onOpenGame?: () => void;
+  activePage?: AppPage;
   compact?: boolean;
   collapsed?: boolean;
   variant?: "full" | "header" | "list";
@@ -99,7 +101,7 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
   return null;
 }
 
-export default function SidebarLibraryList({ onOpenGame, compact = false, collapsed = false, variant = "full" }: Props) {
+export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full" }: Props) {
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
   const [query, setQuery] = useState("");
@@ -336,7 +338,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
         )
       ) : (
         filtered.map((game) => {
-          const isSelected = selectedGame?.id === game.id;
+          const isSelected = activePage === "library-game-detail" && selectedGame?.id === game.id;
           const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
           const resolved = game.appId ? (sidebarMediaMap[game.appId] ?? null) : null;
           const resolvedThumb = pickSidebarSrc(resolved, game.appId ?? undefined);

@@ -45,6 +45,8 @@ type StoreGameDetailsPageProps = {
   metadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
   installStatus?: PackageInstallStatus;
+  isSteamInstalled?: boolean;
+  luaInstalled?: boolean;
   moreLikeThisGames?: StoreMoreLikeThisGame[];
   selectedSource?: PackageSource | null;
   sourceStatus?: SourceCheckStatus;
@@ -143,15 +145,17 @@ export default function StoreGameDetailsPage({
   game,
   metadata,
   reviewSummary,
-  installStatus = "not-installed",
-  moreLikeThisGames = [],
-  selectedSource: selectedSourceProp,
-  sourceStatus: sourceStatusProp,
+  installStatus,
+  isSteamInstalled,
+  luaInstalled,
+  moreLikeThisGames,
+  selectedSource,
+  sourceStatus,
   onBack,
   onDownloadSource,
   onOpenGame,
   onSelectSourceKey,
-  onRefreshSources: onRefreshSourcesProp,
+  onRefreshSources,
 }: StoreGameDetailsPageProps) {
   const { settings } = useSettings();
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
@@ -163,18 +167,18 @@ export default function StoreGameDetailsPage({
   const sourceResolveReqRef = useRef(0);
 
   const hasParentSourceControl =
-    sourceStatusProp !== undefined || onRefreshSourcesProp !== undefined;
+    sourceStatus !== undefined || onRefreshSources !== undefined;
 
   const effectiveSourceStatus: SourceCheckStatus =
-    sourceStatusProp ?? internalSourceStatus ?? "idle";
+    sourceStatus ?? internalSourceStatus ?? "idle";
 
   const effectiveSources =
     hasParentSourceControl ? game.sources : internalSources;
 
   const effectiveSelectedSource: PackageSource | null | undefined =
-    selectedSourceProp ?? getBestAvailableSource({ ...game, sources: effectiveSources });
+    selectedSource ?? getBestAvailableSource({ ...game, sources: effectiveSources });
 
-  const effectiveRefreshSources = onRefreshSourcesProp ?? (() => {
+  const effectiveRefreshSources = onRefreshSources ?? (() => {
     const requestId = ++sourceResolveReqRef.current;
     const appId = game.appId;
 
@@ -541,8 +545,6 @@ export default function StoreGameDetailsPage({
           title={title}
           imageUrl={imageUrl}
           galleryImages={galleryImages}
-          installStatus={installStatus}
-          availableSourcesCount={availableSources.length}
           appId={game.appId}
           developer={developer}
           platforms={platforms}
@@ -581,6 +583,8 @@ export default function StoreGameDetailsPage({
               game={{ ...game, sources: effectiveSources }}
               previewImageUrl={imageUrl}
               installStatus={installStatus}
+              isSteamInstalled={isSteamInstalled}
+              luaInstalled={luaInstalled}
               developer={developer}
               platforms={platforms}
               availableSources={availableSources.length}
@@ -599,7 +603,7 @@ export default function StoreGameDetailsPage({
 
       <StoreGameDlcSection dlcCount={dlcCount} dlcMetadata={dlcMetadata} />
 
-      {moreLikeThisGames.length > 0 && (
+      {moreLikeThisGames && moreLikeThisGames.length > 0 && (
         <StoreMoreLikeThisSection
           games={moreLikeThisGames}
           onOpenGame={onOpenGame}

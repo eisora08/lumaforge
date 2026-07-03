@@ -285,7 +285,7 @@ export default function Store() {
     return () => { _mountedRef.current = false; };
   }, []);
 
-  const { refresh: libraryRefresh } = useLibraryGames();
+  const { refresh: libraryRefresh, games } = useLibraryGames();
 
   async function refreshInstalledScripts() {
     if (!settings.luaPath) {
@@ -479,6 +479,22 @@ export default function Store() {
 
     return map;
   }, [installedScripts]);
+
+  const steamInstalledByAppId = useMemo(() => {
+    const set = new Set<string>();
+    games.forEach((g) => {
+      if (g.appId && g.steamInstalled) set.add(g.appId);
+    });
+    return set;
+  }, [games]);
+
+  const luaInstalledByAppId = useMemo(() => {
+    const set = new Set<string>();
+    for (const [appId, status] of installedStatusByAppId) {
+      if (status === "active") set.add(appId);
+    }
+    return set;
+  }, [installedStatusByAppId]);
 
   useEffect(() => {
     const query = storeSearchQuery.trim();
@@ -1771,6 +1787,8 @@ export default function Store() {
             installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
             "not-installed"
           }
+          isSteamInstalled={steamInstalledByAppId.has(selectedDetailGameWithOverlay.appId)}
+          luaInstalled={luaInstalledByAppId.has(selectedDetailGameWithOverlay.appId)}
           selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
           sourceStatus={sourceStatus}
           moreLikeThisGames={selectedDetailRelatedGames}
