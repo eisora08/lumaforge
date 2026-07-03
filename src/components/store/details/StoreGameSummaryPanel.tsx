@@ -1,4 +1,5 @@
 import AsyncImage from "../../common/AsyncImage";
+import HubcapProviderBadges from "../../settings/HubcapProviderBadges";
 import {
   CheckCircle2,
   Database,
@@ -196,11 +197,12 @@ export default function StoreGameSummaryPanel({
                 .{selectedSource.fileType}
               </span>
             </div>
-            <div className="mt-1 flex items-center gap-2 text-sm text-(--color-text)">
+            <div className="mt-1 flex items-center gap-2 text-sm text-(--color-text) flex-wrap">
               <span>{selectedSource.providerName}</span>
               <span className="text-xs text-emerald-300">
                 Ready
               </span>
+              {selectedSource.providerName === "HubcapDB" && <HubcapProviderBadges surface="store-details" />}
             </div>
           </div>
         )}

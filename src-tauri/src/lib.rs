@@ -196,6 +196,9 @@ pub fn run() {
             commands::desktop::open_folder,
             commands::desktop::create_shortcut,
             commands::toast::show_toast_notification,
+            commands::hubcap::hubcap_health,
+            commands::hubcap::hubcap_user_stats,
+            commands::hubcap::hubcap_depot_keys,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

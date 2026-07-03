@@ -1571,8 +1571,11 @@ export default function Store() {
           updatedAt: Math.floor(Date.now() / 1000),
         }).catch(() => {});
 
+        const settingsHint = source.providerName === "HubcapDB"
+          ? `Revisa la API key en Configuración > Providers.`
+          : `Verifica la API key o permisos.`;
         showError(
-          `Error de autenticación con ${source.providerName}. Verifica la API key o permisos. (HTTP ${statusCode})`,
+          `${source.providerName} rechazó la descarga. ${settingsHint} (HTTP ${statusCode})`,
           { title: "Descarga fallida" }
         );
       } else {

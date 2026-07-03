@@ -24,3 +24,4 @@ pub mod library_cache;
 pub mod game_cache;
 pub mod startup_snapshot;
 pub mod playtime;
+pub mod hubcap;

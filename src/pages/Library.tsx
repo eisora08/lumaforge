@@ -41,6 +41,7 @@ import {
   showSuccess,
   showWarning,
 } from "../components/toast/GameToast";
+import { useConfirm } from "../services/confirmService";
 
 
 
@@ -61,6 +62,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
   const queuedMediaRef = useRef<Set<string>>(new Set());
+  const { confirm } = useConfirm();
 
   // displayGames comes directly from context — no separate luaGames list.
   // Games from LibraryGamesContext already have hasLua flag merged via
@@ -222,7 +224,13 @@ export default function LibraryPage({ onNavigate }: Props) {
       showWarning("No Lua script to delete.", { title: "No script" });
       return;
     }
-    if (!window.confirm(`Delete Lua script "${script.file_name}" for ${game.title}?`)) return;
+    const result = await confirm({
+      title: "Delete Lua script?",
+      description: `This will delete "${script.file_name}" for ${game.title}. This action cannot be undone.`,
+      confirmLabel: "Delete Lua",
+      variant: "danger",
+    });
+    if (!result.confirmed) return;
     try {
       await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
       showSuccess("Lua script deleted.", { title: "Deleted" });

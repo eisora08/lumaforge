@@ -27,6 +27,7 @@ import AchievementWatcherInit from "./components/achievements/AchievementWatcher
 import BackgroundJobDebugPanel from "./components/common/BackgroundJobDebugPanel";
 import { runBootTasks } from "./services/appBootCoordinator";
 import AppRouteTransition from "./components/common/AppRouteTransition";
+import { ConfirmProvider } from "./services/confirmService";
 import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
@@ -138,7 +139,7 @@ function App() {
 
 
   return (
-    <>
+    <ConfirmProvider>
       <GameSessionProvider>
       <SessionOverlayWrapper />
       <AchievementWatcherInit />
@@ -156,7 +157,7 @@ function App() {
       {import.meta.env.DEV && <BackgroundJobDebugPanel />}
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
-    </>
+    </ConfirmProvider>
   );
 
 }

@@ -1584,3 +1584,44 @@ export async function readInstalledGamesRegistry(): Promise<string> {
 export async function writeInstalledGamesRegistry(data: string): Promise<void> {
   await invoke("write_installed_games_registry", { data });
 }
+
+// --- Hubcap API ---
+
+export interface HubcapHealthResponse {
+  status: string;
+  elapsed_ms: number;
+}
+
+export interface HubcapUserStatsResponse {
+  ok: boolean;
+  status: string;
+  username: string | null;
+  today_usage: number | null;
+  daily_limit: number | null;
+  total_key_usage: number | null;
+  generation_used: number | null;
+  generation_limit: number | null;
+  depot_keys_count: number | null;
+  reset_at: number | string | null;
+  reset_in_seconds: number | null;
+  remaining: number | null;
+  plan: string | null;
+  last_used_at: string | null;
+}
+
+export interface HubcapDepotKeysResponse {
+  status: string;
+  count: number;
+}
+
+export async function hubcapHealth(baseUrl: string): Promise<HubcapHealthResponse> {
+  return await invoke<HubcapHealthResponse>("hubcap_health", { baseUrl });
+}
+
+export async function hubcapUserStats(baseUrl: string, apiKey: string): Promise<HubcapUserStatsResponse> {
+  return await invoke<HubcapUserStatsResponse>("hubcap_user_stats", { baseUrl, apiKey });
+}
+
+export async function hubcapDepotKeys(baseUrl: string, apiKey: string): Promise<HubcapDepotKeysResponse> {
+  return await invoke<HubcapDepotKeysResponse>("hubcap_depot_keys", { baseUrl, apiKey });
+}

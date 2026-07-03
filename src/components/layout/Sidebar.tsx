@@ -166,27 +166,38 @@ export default function Sidebar({
       </div>
 
       {/* Game list — flex-1, fills remaining space, scrolls internally */}
-      <div className={`flex-1 min-h-0 overflow-y-auto lf-scroll-area will-change-transform ${
+      <div className={`flex flex-col flex-1 min-h-0 ${
         showLabels ? "px-4" : "px-3"
-      }`}>        
+      }`}>
+        {/* Sticky header + search — outside scroll, stays fixed */}
         {showLabels && (
-          <div className="pt-1">
+          <div className="shrink-0 pt-3">
             <SidebarLibraryList
               onOpenGame={handleOpenGame}
               compact={mode === "compact"}
+              variant="header"
             />
           </div>
         )}
 
-        {isCollapsed && (
-          <div className="pt-1">
+        {/* Scrollable game items */}
+        <div className="flex-1 min-h-0 overflow-y-auto lf-scroll-area will-change-transform pt-2">
+          {showLabels && (
+            <SidebarLibraryList
+              onOpenGame={handleOpenGame}
+              compact={mode === "compact"}
+              variant="list"
+            />
+          )}
+
+          {isCollapsed && (
             <SidebarLibraryList
               onOpenGame={handleOpenGame}
               compact={false}
               collapsed={true}
             />
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Bottom block — shrink-0, pinned at bottom */}

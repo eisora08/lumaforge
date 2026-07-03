@@ -1,0 +1,353 @@
+import { hubcapHealth, hubcapUserStats, hubcapDepotKeys } from "./tauri";
+import type {
+  HubcapHealthResponse,
+  HubcapUserStatsResponse,
+  HubcapDepotKeysResponse,
+} from "./tauri";
+
+const ENABLE_VERBOSE_LOGS = false;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const ERROR_CACHE_TTL_MS = 60_000;
+const STORAGE_KEY = "lumaforge_hubcap_provider_status";
+const PERSIST_TTL_MS = 5 * 60 * 1000;
+
+function log(...args: unknown[]) {
+  if (ENABLE_VERBOSE_LOGS) {
+    console.log("[HUBCAP]", ...args);
+  }
+}
+
+// --- Exported types ---
+
+export type HubcapHealthStatus = "online" | "offline" | "degraded" | "error" | "unknown";
+
+export interface HubcapHealthResult {
+  status: HubcapHealthStatus;
+  elapsedMs: number;
+}
+
+export interface HubcapUsageStats {
+  username?: string;
+  todayUsage?: number;
+  dailyLimit?: number;
+  totalKeyUsage?: number;
+  generationUsed?: number;
+  generationLimit?: number;
+  depotKeysCount?: number;
+  resetAt?: number | string;
+  resetInSeconds?: number;
+  remaining?: number;
+  plan?: string;
+  lastUsedAt?: string;
+}
+
+export interface HubcapDepotKeyStatus {
+  status: "ok" | "unauthorized" | "forbidden" | "error" | "no_key" | "network_error";
+  count: number;
+}
+
+export interface HubcapProviderStatus {
+  healthStatus: HubcapHealthStatus;
+  apiKeyStatus: "unknown" | "ok" | "missing" | "unauthorized" | "forbidden" | "rate_limited" | "error";
+  todayUsage: number | null;
+  dailyLimit: number | null;
+  totalKeyUsage: number | null;
+  resetInSeconds: number | null;
+  resetAt: number | string | null;
+  resetLabel: string | null;
+  lastCheckedAt: number;
+}
+
+// --- In-memory cache (internal, per-endpoint) ---
+
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+let healthCache: CacheEntry<HubcapHealthResult> | null = null;
+const statsCache = new Map<string, CacheEntry<HubcapUsageStats>>();
+let depotCache: CacheEntry<HubcapDepotKeyStatus> | null = null;
+
+function isCacheValid<T>(entry: CacheEntry<T> | null | undefined): entry is CacheEntry<T> {
+  return entry != null && Date.now() < entry.expiresAt;
+}
+
+function createCacheEntry<T>(value: T, ttlMs = CACHE_TTL_MS): CacheEntry<T> {
+  return { value, expiresAt: Date.now() + ttlMs };
+}
+
+export function clearHubcapCaches(): void {
+  healthCache = null;
+  statsCache.clear();
+  depotCache = null;
+  log("caches cleared");
+}
+
+// --- Shared persisted provider status + pub/sub ---
+
+let _providerStatus: HubcapProviderStatus | null = null;
+let _loadAttempted = false;
+const _statusListeners = new Set<(status: HubcapProviderStatus) => void>();
+
+function defaultProviderStatus(): HubcapProviderStatus {
+  return {
+    healthStatus: "unknown",
+    apiKeyStatus: "unknown",
+    todayUsage: null,
+    dailyLimit: null,
+    totalKeyUsage: null,
+    resetInSeconds: null,
+    resetAt: null,
+    resetLabel: null,
+    lastCheckedAt: 0,
+  };
+}
+
+function loadPersistedProviderStatus(): HubcapProviderStatus | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as HubcapProviderStatus;
+    if (parsed && typeof parsed.lastCheckedAt === "number") {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedProviderStatus(status: HubcapProviderStatus): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(status));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getCachedProviderStatus(): HubcapProviderStatus {
+  if (!_loadAttempted) {
+    _loadAttempted = true;
+    const persisted = loadPersistedProviderStatus();
+    if (persisted) {
+      _providerStatus = persisted;
+      const isStale = Date.now() - persisted.lastCheckedAt > PERSIST_TTL_MS;
+      console.log(
+        `[HUBCAP][STATUS_CACHE] loaded=true stale=${isStale} today=${persisted.todayUsage} limit=${persisted.dailyLimit} reset=${persisted.resetLabel}`
+      );
+    } else {
+      console.log(`[HUBCAP][STATUS_CACHE] loaded=false stale=false`);
+    }
+  }
+  return _providerStatus ?? defaultProviderStatus();
+}
+
+export function subscribeProviderStatus(listener: (status: HubcapProviderStatus) => void): () => void {
+  _statusListeners.add(listener);
+  return () => {
+    _statusListeners.delete(listener);
+  };
+}
+
+function notifyProviderStatusListeners(status: HubcapProviderStatus): void {
+  for (const fn of _statusListeners) {
+    try {
+      fn(status);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function computeResetLabel(
+  resetInSeconds: number | null | undefined,
+  resetAt: number | string | null | undefined,
+): string | null {
+  if (resetInSeconds != null && resetInSeconds > 0) {
+    const d = Math.floor(resetInSeconds / 86400);
+    const h = Math.floor((resetInSeconds % 86400) / 3600);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h`;
+    return `${Math.floor(resetInSeconds / 60)}m`;
+  }
+  if (resetAt != null) {
+    const ts = typeof resetAt === "number" ? resetAt * 1000 : new Date(resetAt).getTime();
+    if (Number.isFinite(ts)) {
+      const diff = ts - Date.now();
+      if (diff > 0) {
+        const d = Math.floor(diff / 86400000);
+        const h = Math.floor((diff % 86400000) / 3600000);
+        if (d > 0) return `${d}d ${h}h`;
+        if (h > 0) return `${h}h`;
+        return `${Math.floor(diff / 60000)}m`;
+      }
+    }
+  }
+  return null;
+}
+
+export async function refreshHubcapStatus(
+  baseUrl: string,
+  apiKey: string,
+): Promise<HubcapProviderStatus> {
+  clearHubcapCaches();
+
+  const [healthResult, statsResult, depotResult] = await Promise.all([
+    checkHubcapHealth(baseUrl),
+    apiKey ? fetchHubcapUserStats(baseUrl, apiKey) : Promise.resolve(null),
+    apiKey ? fetchHubcapDepotKeys(baseUrl, apiKey) : Promise.resolve(null),
+  ]);
+
+  let apiKeyStatus: HubcapProviderStatus["apiKeyStatus"] = "unknown";
+
+  if (!apiKey) {
+    apiKeyStatus = "missing";
+  } else if (depotResult) {
+    if (depotResult.status === "ok") apiKeyStatus = "ok";
+    else if (depotResult.status === "unauthorized") apiKeyStatus = "unauthorized";
+    else if (depotResult.status === "forbidden") apiKeyStatus = "forbidden";
+    else if (depotResult.status === "network_error") apiKeyStatus = "error";
+  }
+
+  const todayUsage = statsResult?.todayUsage ?? null;
+  const dailyLimit = statsResult?.dailyLimit ?? null;
+  const totalKeyUsage = statsResult?.totalKeyUsage ?? null;
+  const resetInSeconds = statsResult?.resetInSeconds ?? null;
+  const resetAt = statsResult?.resetAt ?? null;
+  const resetLabel = computeResetLabel(resetInSeconds, resetAt);
+
+  const status: HubcapProviderStatus = {
+    healthStatus: healthResult.status,
+    apiKeyStatus,
+    todayUsage,
+    dailyLimit,
+    totalKeyUsage,
+    resetInSeconds,
+    resetAt,
+    resetLabel,
+    lastCheckedAt: Date.now(),
+  };
+
+  _providerStatus = status;
+  savePersistedProviderStatus(status);
+  notifyProviderStatusListeners(status);
+
+  console.log(
+    `[HUBCAP][STATUS_SAVE] today=${todayUsage} limit=${dailyLimit} reset=${resetLabel}`,
+  );
+  return status;
+}
+
+// --- Per-endpoint fetch functions (with internal cache) ---
+
+function mapHealthResponse(r: HubcapHealthResponse): HubcapHealthResult {
+  return { status: r.status as HubcapHealthStatus, elapsedMs: r.elapsed_ms };
+}
+
+function mapStatsResponse(r: HubcapUserStatsResponse): HubcapUsageStats {
+  return {
+    username: r.username ?? undefined,
+    todayUsage: r.today_usage ?? undefined,
+    dailyLimit: r.daily_limit ?? undefined,
+    totalKeyUsage: r.total_key_usage ?? undefined,
+    generationUsed: r.generation_used ?? undefined,
+    generationLimit: r.generation_limit ?? undefined,
+    depotKeysCount: r.depot_keys_count ?? undefined,
+    resetAt: r.reset_at ?? undefined,
+    resetInSeconds: r.reset_in_seconds ?? undefined,
+    remaining: r.remaining ?? undefined,
+    plan: r.plan ?? undefined,
+    lastUsedAt: r.last_used_at ?? undefined,
+  };
+}
+
+function mapDepotResponse(r: HubcapDepotKeysResponse): HubcapDepotKeyStatus {
+  return { status: r.status as HubcapDepotKeyStatus["status"], count: r.count };
+}
+
+export async function checkHubcapHealth(baseUrl: string): Promise<HubcapHealthResult> {
+  if (isCacheValid(healthCache)) {
+    log("health cache hit");
+    return healthCache.value;
+  }
+
+  try {
+    const raw = await hubcapHealth(baseUrl);
+    const result = mapHealthResponse(raw);
+    console.log(`[HUBCAP][HEALTH] status=${raw.status} elapsedMs=${raw.elapsed_ms}`);
+    healthCache = createCacheEntry(result);
+    return result;
+  } catch (error) {
+    const message = String(error);
+    const isTimeout = message.toLowerCase().includes("timeout");
+    const status: HubcapHealthStatus = isTimeout ? "offline" : "error";
+    const result: HubcapHealthResult = { status, elapsedMs: 0 };
+    healthCache = createCacheEntry(result, ERROR_CACHE_TTL_MS);
+    console.log(`[HUBCAP][HEALTH] status=${status} error="${message}"`);
+    return result;
+  }
+}
+
+export async function fetchHubcapUserStats(
+  baseUrl: string,
+  apiKey: string,
+): Promise<HubcapUsageStats | null> {
+  const cacheKey = `${baseUrl}|${apiKey.slice(0, 8)}`;
+  const cached = statsCache.get(cacheKey);
+  if (isCacheValid(cached)) {
+    log("stats cache hit");
+    return cached.value;
+  }
+
+  log("fetching user stats");
+  console.log(`[HUBCAP][USAGE_REFRESH] started=true`);
+
+  try {
+    const raw = await hubcapUserStats(baseUrl, apiKey);
+    console.log(`[HUBCAP][USAGE_REFRESH] done=true status=${raw.status}`);
+
+    if (!raw.ok) {
+      if (raw.status === "unauthorized") console.log(`[HUBCAP][AUTH] status=unauthorized`);
+      else if (raw.status === "forbidden") console.log(`[HUBCAP][AUTH] status=forbidden`);
+      else if (raw.status === "rate_limited") console.log(`[HUBCAP][RATE_LIMIT]`);
+
+      statsCache.set(cacheKey, createCacheEntry({}, ERROR_CACHE_TTL_MS));
+      return null;
+    }
+
+    const stats = mapStatsResponse(raw);
+    log("stats fetched", stats);
+    statsCache.set(cacheKey, createCacheEntry(stats));
+    return stats;
+  } catch (error) {
+    console.log(`[HUBCAP][USAGE_REFRESH] done=true status=error error="${String(error)}"`);
+    statsCache.set(cacheKey, createCacheEntry({}, ERROR_CACHE_TTL_MS));
+    return null;
+  }
+}
+
+export async function fetchHubcapDepotKeys(
+  baseUrl: string,
+  apiKey: string,
+): Promise<HubcapDepotKeyStatus> {
+  if (isCacheValid(depotCache)) {
+    log("depot cache hit");
+    return depotCache.value;
+  }
+
+  log("fetching depot keys");
+
+  try {
+    const raw = await hubcapDepotKeys(baseUrl, apiKey);
+    const entry = mapDepotResponse(raw);
+    console.log(`[HUBCAP][DEPOT_KEYS] status=${raw.status} count=${raw.count}`);
+    depotCache = createCacheEntry(entry, raw.status === "ok" ? CACHE_TTL_MS : ERROR_CACHE_TTL_MS);
+    return entry;
+  } catch (error) {
+    const entry: HubcapDepotKeyStatus = { status: "error", count: 0 };
+    depotCache = createCacheEntry(entry, ERROR_CACHE_TTL_MS);
+    console.log(`[HUBCAP][DEPOT_KEYS] status=network_error count=0 error="${String(error)}"`);
+    return entry;
+  }
+}

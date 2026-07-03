@@ -14,12 +14,14 @@ type ProviderSettingsCardProps = {
   provider: ApiProviderDefinition;
   settings: ApiProviderUserSettings;
   onChange: (settings: ApiProviderUserSettings) => void;
+  badgeContent?: React.ReactNode;
 };
 
 export default function ProviderSettingsCard({
   provider,
   settings,
   onChange,
+  badgeContent,
 }: ProviderSettingsCardProps) {
 
   function updateField<K extends keyof ApiProviderUserSettings>(
@@ -50,17 +52,20 @@ export default function ProviderSettingsCard({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => updateField("enabled", !settings.enabled)}
-          className={`relative h-7 w-12 shrink-0 rounded-full transition ${settings.enabled ? "bg-(--color-accent)" : "bg-white/10"
-            }`}
-        >
-          <span
-            className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${settings.enabled ? "left-6" : "left-1"
+        <div className="flex items-center gap-2">
+          {badgeContent}
+          <button
+            type="button"
+            onClick={() => updateField("enabled", !settings.enabled)}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition ${settings.enabled ? "bg-(--color-accent)" : "bg-white/10"
               }`}
-          />
-        </button>
+          >
+            <span
+              className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${settings.enabled ? "left-6" : "left-1"
+                }`}
+            />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4">

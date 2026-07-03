@@ -25,6 +25,7 @@ import {
 import { detectSteamPaths } from "../services/tauri";
 
 import ProviderSettingsCard from "../components/settings/ProviderSettingsCard";
+import HubcapProviderBadges from "../components/settings/HubcapProviderBadges";
 import SettingsSection from "../components/settings/SettingsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
@@ -342,6 +343,7 @@ export default function Settings() {
                       provider={provider}
                       settings={providerSettings}
                       onChange={handleProviderChange}
+                      badgeContent={provider.id === "hubcapdb" ? <HubcapProviderBadges surface="settings" /> : undefined}
                     />
                   );
                 })}

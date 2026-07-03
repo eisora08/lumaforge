@@ -37,6 +37,7 @@ import {
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { showSuccess, showError } from "../toast/GameToast";
+import { useConfirm } from "../../services/confirmService";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -88,6 +89,7 @@ export default function GameLauncherTile({
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
   const hasRequestedData = useRef(false);
   const hasMountedData = useRef(false);
+  const { confirm } = useConfirm();
 
   // Request game data via priority system when card enters viewport
   useEffect(() => {
@@ -214,6 +216,17 @@ export default function GameLauncherTile({
     e.stopPropagation();
     setMenuOpen(false);
     cb();
+  }
+
+  async function handleUninstall() {
+    const result = await confirm({
+      title: "Uninstall game?",
+      description: `This will remove the installed package for ${displayTitle}. Local files may be deleted depending on the install type.`,
+      confirmLabel: "Uninstall",
+      variant: "danger",
+    });
+    if (!result.confirmed) return;
+    showSuccess("Game uninstalled (simulated).");
   }
 
   function handleMenuToggle(e: React.MouseEvent) {
@@ -440,6 +453,7 @@ export default function GameLauncherTile({
                   icon: <Trash2 className="h-3.5 w-3.5" />,
                   disabled: !game.steamInstalled,
                   subtitle: !game.steamInstalled ? "Not installed" : undefined,
+                  onClick: game.steamInstalled ? () => { setMenuOpen(false); handleUninstall(); } : undefined,
                 },
                 ...(hasLua
                   ? [{

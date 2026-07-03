@@ -26,6 +26,7 @@ import { getBootSnapshot } from "../../services/appBootCoordinator";
 import { backgroundJobQueue } from "../../services/backgroundJobQueue";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import { showSuccess, showError } from "../toast/GameToast";
+import { useConfirm } from "../../services/confirmService";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 
@@ -33,6 +34,7 @@ type Props = {
   onOpenGame?: () => void;
   compact?: boolean;
   collapsed?: boolean;
+  variant?: "full" | "header" | "list";
 };
 
 function pickSidebarSrc(resolved: ResolvedSidebarMedia | null, appId?: string): string | null {
@@ -97,7 +99,7 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
   return null;
 }
 
-export default function SidebarLibraryList({ onOpenGame, compact = false, collapsed = false }: Props) {
+export default function SidebarLibraryList({ onOpenGame, compact = false, collapsed = false, variant = "full" }: Props) {
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
   const [query, setQuery] = useState("");
@@ -112,6 +114,7 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
   const sidebarRepairEnqueued = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
+  const { confirm } = useConfirm();
 
   // Defer all batch processing by 5s so initial mount stays zero-work
   useEffect(() => {
@@ -259,9 +262,8 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
     setMenuGame(null);
   }
 
-  return (
-    <div className="flex flex-col">
-      {/* Header */}
+  const renderHeader = () => (
+    <>
       {isFullMode && (
         <div className="mb-2 flex items-center justify-between px-1">
           <Gamepad2 className="h-4.5 w-4.5" />
@@ -301,105 +303,67 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
           />
         </div>
       )}
+    </>
+  );
 
-      {/* Game list */}
-      <div className={`${isCollapsedMode ? "space-y-2" : "space-y-0.5"
-        }`}>
-        {(initialLoading || (loading && games.length === 0)) ? (
-          isCollapsedMode ? (
-            <div className="space-y-2 py-1">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="flex justify-center px-2">
-                  <SkeletonBox className="h-10 w-10 shrink-0 rounded-xl" />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-1 py-1">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5">
-                  <SkeletonBox className="h-6 w-10 shrink-0 rounded" />
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <SkeletonBox className="h-3 w-3/4" />
-                    <SkeletonBox className="h-2 w-1/3" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )
-        ) : filtered.length === 0 ? (
-          isCollapsedMode ? null : (
-            <p className="py-2 text-center text-[10px] text-(--color-muted)">No games match.</p>
-          )
+  const renderGameList = () => (
+    <div className={`${isCollapsedMode ? "space-y-2" : "space-y-0.5"}`}>
+      {(initialLoading || (loading && games.length === 0)) ? (
+        isCollapsedMode ? (
+          <div className="space-y-2 py-1">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex justify-center px-2">
+                <SkeletonBox className="h-10 w-10 shrink-0 rounded-xl" />
+              </div>
+            ))}
+          </div>
         ) : (
-          filtered.map((game) => {
-            const isSelected = selectedGame?.id === game.id;
-            const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
-            const resolved = game.appId ? (sidebarMediaMap[game.appId] ?? null) : null;
-            const resolvedThumb = pickSidebarSrc(resolved, game.appId ?? undefined);
-            const sidebarFallbackPath = pickSidebarFallbackPath(resolved);
-            const displayTitle = getSidebarTitle(game, appInfoEntry);
-            const gk = computeGameKey(game);
-            const gs = getState(gk);
-            const isRunning = gs === "running";
-            const isLaunching = gs === "launching";
+          <div className="space-y-1 py-1">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5">
+                <SkeletonBox className="h-6 w-10 shrink-0 rounded" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <SkeletonBox className="h-3 w-3/4" />
+                  <SkeletonBox className="h-2 w-1/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : filtered.length === 0 ? (
+        isCollapsedMode ? null : (
+          <p className="py-2 text-center text-[10px] text-(--color-muted)">No games match.</p>
+        )
+      ) : (
+        filtered.map((game) => {
+          const isSelected = selectedGame?.id === game.id;
+          const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
+          const resolved = game.appId ? (sidebarMediaMap[game.appId] ?? null) : null;
+          const resolvedThumb = pickSidebarSrc(resolved, game.appId ?? undefined);
+          const sidebarFallbackPath = pickSidebarFallbackPath(resolved);
+          const displayTitle = getSidebarTitle(game, appInfoEntry);
+          const gk = computeGameKey(game);
+          const gs = getState(gk);
+          const isRunning = gs === "running";
+          const isLaunching = gs === "launching";
 
-            if (isCollapsedMode) {
-              return (
-                <button
-                  key={game.id}
-                  type="button"
-                  title={displayTitle}
-                  onClick={() => {
-                    setSelectedGame(game);
-                    onOpenGame?.();
-                  }}
-                  onContextMenu={(e) => handleContextMenu(e, game)}
-                  className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors ${isSelected
-                    ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
-                    : "hover:bg-white/[0.06]"
-                    }`}
-                >
-                  <div className="relative h-10 w-10 overflow-hidden rounded-xl object-cover">
-                    {resolvedThumb ? (
-                      <AsyncImage
-                        src={resolvedThumb}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        fallbackLocalPath={sidebarFallbackPath}
-                        fallback={
-                          <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
-                        }
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-white/5">
-                        <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
-                      </div>
-                    )}
-                    {isRunning && (
-                      <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-400 ring-1 ring-black/50" />
-                    )}
-                  </div>
-                </button>
-              );
-            }
-
+          if (isCollapsedMode) {
             return (
               <button
                 key={game.id}
                 type="button"
+                title={displayTitle}
                 onClick={() => {
                   setSelectedGame(game);
                   onOpenGame?.();
                 }}
                 onContextMenu={(e) => handleContextMenu(e, game)}
-                className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isSelected
-                  ? "bg-(--color-accent)/10 text-(--color-accent)"
-                  : "text-(--color-text) hover:bg-white/[0.06]"
+                className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors ${isSelected
+                  ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
+                  : "hover:bg-white/[0.06]"
                   }`}
               >
-                <div className={`relative shrink-0 overflow-hidden rounded object-cover ${isCompactMode ? "h-6 w-9" : "h-6 w-10"
-                  }`}>
+                <div className="relative h-10 w-10 overflow-hidden rounded-xl object-cover">
                   {resolvedThumb ? (
                     <AsyncImage
                       src={resolvedThumb}
@@ -407,161 +371,212 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
                       className="h-full w-full object-cover"
                       fallbackLocalPath={sidebarFallbackPath}
                       fallback={
-                        <Gamepad2 className="h-3 w-3 text-(--color-muted)" />
+                        <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
                       }
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center bg-white/5">
-                      <Gamepad2 className="h-3 w-3 text-(--color-muted)" />
+                      <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
                     </div>
                   )}
                   {isRunning && (
                     <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-400 ring-1 ring-black/50" />
                   )}
-                  {isLaunching && (
-                    <span className="absolute inset-0 flex items-center justify-center bg-black/40">
-                      <Loader2 className="h-3 w-3 animate-spin text-white" />
-                    </span>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    {isRunning && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
-                    <span className={`truncate font-medium leading-tight ${isCompactMode ? "text-[11px]" : ""
-                      }`}>
-                      {isCompactMode && displayTitle.length > 16
-                        ? displayTitle.slice(0, 14) + ".."
-                        : displayTitle
-                      }
-                    </span>
-                  </div>
-                  {!isCompactMode && (
-                    <div className="text-[10px] text-(--color-muted)">
-                      {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
-                      {!isRunning && !isLaunching && game.hasUpdate && " · Update"}
-                    </div>
-                  )}
-                  {isCompactMode && (
-                    <div className="text-[9px] text-(--color-muted)">
-                      {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
-                    </div>
-                  )}
                 </div>
               </button>
             );
-          })
-        )}
-      </div>
+          }
 
-      {menuGame && (
-        <CardActionMenu
-          open={menuOpen}
-          anchorRef={sidebarMenuAnchorRef as React.RefObject<HTMLElement | null>}
-          onClose={handleMenuClose}
-          cursorPos={contextMenuPos}
-          gameId={menuGame.appId}
-        >
-          {(() => {
-            const mgk = computeGameKey(menuGame);
-            const mState = getState(mgk);
-            const isRunning = mState === "running";
-            const mAction = menuGame.isPlayable || menuGame.steamInstalled ? "play" : "install";
-            const mHasLua = menuGame.luaScripts.length > 0;
-            const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
-
-            return (
-              <>
-                {isRunning ? (
-                  <MenuItem
-                    label="Stop"
-                    icon={<X className="h-3.5 w-3.5" />}
-                    onClick={() => { handleMenuClose(); stopSession(mgk); }}
-                  />
-                ) : mAction === "play" ? (
-                  <MenuItem
-                    label="Play"
-                    icon={<Play className="h-3.5 w-3.5" />}
-                    onClick={() => { handleMenuClose(); launchGame(menuGame); }}
+          return (
+            <button
+              key={game.id}
+              type="button"
+              onClick={() => {
+                setSelectedGame(game);
+                onOpenGame?.();
+              }}
+              onContextMenu={(e) => handleContextMenu(e, game)}
+              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isSelected
+                ? "bg-(--color-accent)/10 text-(--color-accent)"
+                : "text-(--color-text) hover:bg-white/[0.06]"
+                }`}
+            >
+              <div className={`relative shrink-0 overflow-hidden rounded object-cover ${isCompactMode ? "h-6 w-9" : "h-6 w-10"
+                }`}>
+                {resolvedThumb ? (
+                  <AsyncImage
+                    src={resolvedThumb}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    fallbackLocalPath={sidebarFallbackPath}
+                    fallback={
+                      <Gamepad2 className="h-3 w-3 text-(--color-muted)" />
+                    }
                   />
                 ) : (
-                  <MenuItem
-                    label="Install"
-                    icon={<Download className="h-3.5 w-3.5" />}
-                    onClick={() => { handleMenuClose(); }}
-                  />
+                  <div className="flex h-full w-full items-center justify-center bg-white/5">
+                    <Gamepad2 className="h-3 w-3 text-(--color-muted)" />
+                  </div>
                 )}
-                <MenuItem
-                  label={fav ? "Remove from favorites" : "Add to favorites"}
-                  icon={<Heart className={`h-3.5 w-3.5 ${fav ? "fill-current" : ""}`} />}
-                  onClick={() => {
-                    if (menuGame.appId) toggleFavorite(menuGame.appId);
-                    handleMenuClose();
-                  }}
-                />
-                <MenuItem
-                  label="Browse Local Files"
-                  icon={<FolderOpen className="h-3.5 w-3.5" />}
-                  onClick={() => {
-                    handleMenuClose();
-                    if (menuGame.installDir) {
-                      invoke("open_folder", { path: menuGame.installDir }).catch((err) => {
-                        showError(`Could not open folder: ${err}`);
-                      });
+                {isRunning && (
+                  <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-400 ring-1 ring-black/50" />
+                )}
+                {isLaunching && (
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+                    <Loader2 className="h-3 w-3 animate-spin text-white" />
+                  </span>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  {isRunning && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
+                  <span className={`truncate font-medium leading-tight ${isCompactMode ? "text-[11px]" : ""
+                    }`}>
+                    {isCompactMode && displayTitle.length > 16
+                      ? displayTitle.slice(0, 14) + ".."
+                      : displayTitle
                     }
-                  }}
-                />
+                  </span>
+                </div>
+                {!isCompactMode && (
+                  <div className="text-[10px] text-(--color-muted)">
+                    {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
+                    {!isRunning && !isLaunching && game.hasUpdate && " · Update"}
+                  </div>
+                )}
+                {isCompactMode && (
+                  <div className="text-[9px] text-(--color-muted)">
+                    {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
+                  </div>
+                )}
+              </div>
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+
+  const renderMenu = () => (
+    menuGame && (
+      <CardActionMenu
+        open={menuOpen}
+        anchorRef={sidebarMenuAnchorRef as React.RefObject<HTMLElement | null>}
+        onClose={handleMenuClose}
+        cursorPos={contextMenuPos}
+        gameId={menuGame.appId}
+      >
+        {(() => {
+          const mgk = computeGameKey(menuGame);
+          const mState = getState(mgk);
+          const isRunning = mState === "running";
+          const mAction = menuGame.isPlayable || menuGame.steamInstalled ? "play" : "install";
+          const mHasLua = menuGame.luaScripts.length > 0;
+          const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
+
+          return (
+            <>
+              {isRunning ? (
                 <MenuItem
-                  label="Create Shortcut"
-                  icon={<FileText className="h-3.5 w-3.5" />}
-                  onClick={async () => {
-                    handleMenuClose();
+                  label="Stop"
+                  icon={<X className="h-3.5 w-3.5" />}
+                  onClick={() => { handleMenuClose(); stopSession(mgk); }}
+                />
+              ) : mAction === "play" ? (
+                <MenuItem
+                  label="Play"
+                  icon={<Play className="h-3.5 w-3.5" />}
+                  onClick={() => { handleMenuClose(); launchGame(menuGame); }}
+                />
+              ) : (
+                <MenuItem
+                  label="Install"
+                  icon={<Download className="h-3.5 w-3.5" />}
+                  onClick={() => { handleMenuClose(); }}
+                />
+              )}
+              <MenuItem
+                label={fav ? "Remove from favorites" : "Add to favorites"}
+                icon={<Heart className={`h-3.5 w-3.5 ${fav ? "fill-current" : ""}`} />}
+                onClick={() => {
+                  if (menuGame.appId) toggleFavorite(menuGame.appId);
+                  handleMenuClose();
+                }}
+              />
+              <MenuItem
+                label="Browse Local Files"
+                icon={<FolderOpen className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  handleMenuClose();
+                  if (menuGame.installDir) {
+                    invoke("open_folder", { path: menuGame.installDir }).catch((err) => {
+                      showError(`Could not open folder: ${err}`);
+                    });
+                  }
+                }}
+              />
+              <MenuItem
+                label="Create Shortcut"
+                icon={<FileText className="h-3.5 w-3.5" />}
+                onClick={async () => {
+                  handleMenuClose();
 
-                    try {
-                      const installDir = menuGame.installDir;
+                  try {
+                    const installDir = menuGame.installDir;
 
-                      if (!installDir) {
-                        showError("Install directory not found");
-                        return;
-                      }
-
-                      const { discoverExecutables } = await import("../../services/tauri");
-
-                      const executables = await discoverExecutables(installDir);
-
-                      console.log("Executables found:", executables);
-
-                      if (!executables.length) {
-                        showError("No executables found in this folder");
-                        return;
-                      }
-
-                      const exe = executables[0];
-
-                      const exePath = exe.exe_path;
-
-                      const path = await invoke<string>("create_shortcut", {
-                        exePath,
-                        name: menuGame.title || `Game ${menuGame.appId}`,
-                      });
-
-                      showSuccess(`Shortcut created:\n${path}`);
-
-                    } catch (err) {
-                      showError(`Could not create shortcut: ${err}`);
+                    if (!installDir) {
+                      showError("Install directory not found");
+                      return;
                     }
-                  }}
-                />
 
+                    const { discoverExecutables } = await import("../../services/tauri");
 
-                <MenuItem
-                  label="Manage"
-                  icon={<Settings className="h-3.5 w-3.5" />}
+                    const executables = await discoverExecutables(installDir);
+
+                    console.log("Executables found:", executables);
+
+                    if (!executables.length) {
+                      showError("No executables found in this folder");
+                      return;
+                    }
+
+                    const exe = executables[0];
+
+                    const exePath = exe.exe_path;
+
+                    const path = await invoke<string>("create_shortcut", {
+                      exePath,
+                      name: menuGame.title || `Game ${menuGame.appId}`,
+                    });
+
+                    showSuccess(`Shortcut created:\n${path}`);
+
+                  } catch (err) {
+                    showError(`Could not create shortcut: ${err}`);
+                  }
+                }}
+              />
+
+              <MenuItem
+                label="Manage"
+                icon={<Settings className="h-3.5 w-3.5" />}
                   children={[
                     {
                       label: "Uninstall",
                       icon: <Trash2 className="h-3.5 w-3.5" />,
                       disabled: !menuGame.steamInstalled,
                       subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
+                      onClick: menuGame.steamInstalled ? (() => {
+                        handleMenuClose();
+                        confirm({
+                          title: "Uninstall game?",
+                          description: `This will remove the installed package for ${getSidebarTitle(menuGame, menuGame.appId ? (appInfoMap[menuGame.appId] ?? null) : null)}. Local files may be deleted depending on the install type.`,
+                          confirmLabel: "Uninstall",
+                          variant: "danger",
+                        }).then((r) => {
+                          if (r.confirmed) showSuccess("Game uninstalled (simulated).");
+                        });
+                      }) : undefined,
                     },
                     ...(mHasLua
                       ? [{
@@ -577,7 +592,43 @@ export default function SidebarLibraryList({ onOpenGame, compact = false, collap
             );
           })()}
         </CardActionMenu>
-      )}
+      )
+  );
+
+  // Collapsed mode: render everything inline (icons only)
+  if (isCollapsedMode) {
+    return (
+      <div className="flex flex-col">
+        {renderGameList()}
+        {renderMenu()}
+      </div>
+    );
+  }
+
+  // Split mode: header-only or list-only
+  if (variant === "header") {
+    return (
+      <div className="flex flex-col">
+        {renderHeader()}
+      </div>
+    );
+  }
+
+  if (variant === "list") {
+    return (
+      <div className="flex flex-col">
+        {renderGameList()}
+        {renderMenu()}
+      </div>
+    );
+  }
+
+  // Full mode (default): everything
+  return (
+    <div className="flex flex-col">
+      {renderHeader()}
+      {renderGameList()}
+      {renderMenu()}
     </div>
   );
 }
