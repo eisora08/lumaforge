@@ -200,16 +200,58 @@ function extractAppIdFromPath(path: string): string | null {
 class AchievementImageQueueImpl {
   private queue: ImageQueueItem[] = [];
   private activeCount = 0;
-  private maxConcurrent = 3;
+  private maxConcurrent = 1;
   private failedCooldowns = new Map<string, number>();
   private callbacks: ImageUpdateCallback[] = [];
   private processing = false;
   private activeKeys = new Set<string>();
   private completedKeys = new Set<string>();
   private destinationPaths = new Set<string>();
+  private sourceUrlDedup = new Set<string>();
+  private _http403Sources = new Set<string>();
+  private batchDownloaded = 0;
+  private batchSkipped = 0;
+  private batchFailed = 0;
+  private batchTimer: ReturnType<typeof setTimeout> | null = null;
+  private batchStartTime = 0;
+  private lastDrainTime = 0;
 
   private getJobKey(item: ImageQueueItem): string {
     return `${item.appId}:${item.apiName}:${item.type}`;
+  }
+
+  // ── Part 3: Pre-check which files exist for a batch of items ──
+  private async preSkipExistingBatch(items: ImageQueueItem[]): Promise<ImageQueueItem[]> {
+    const appGroups = new Map<string, ImageQueueItem[]>();
+    for (const item of items) {
+      if (!appGroups.has(item.appId)) appGroups.set(item.appId, []);
+      appGroups.get(item.appId)!.push(item);
+    }
+
+    const remaining: ImageQueueItem[] = [];
+    for (const [appId, group] of appGroups) {
+      try {
+        const { resolveAchievementImagePaths } = await import("./tauri");
+        const statuses = await resolveAchievementImagePaths(Number(appId));
+        const cacheByApiName = new Map(statuses.map((s) => [s.api_name, s]));
+
+        for (const item of group) {
+          const achStatus = cacheByApiName.get(item.apiName);
+          const exists = achStatus && (item.type === "icon_gray" ? achStatus.icon_gray_exists : achStatus.icon_exists);
+          if (exists) {
+            this.completedKeys.add(this.getJobKey(item));
+            this.batchSkipped++;
+            console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} type=${item.type} file=${item.fileName} reason=exists`);
+          } else {
+            remaining.push(item);
+          }
+        }
+      } catch {
+        // On error, add all to remaining to attempt download
+        remaining.push(...group);
+      }
+    }
+    return remaining;
   }
 
   subscribe(cb: ImageUpdateCallback): () => void {
@@ -219,28 +261,39 @@ class AchievementImageQueueImpl {
     };
   }
 
-  enqueue(items: ImageQueueItem[]) {
+  async enqueue(items: ImageQueueItem[]) {
+    const filtered: ImageQueueItem[] = [];
     for (const item of items) {
       // ── Part 2: Role mismatch detection ──
-      // If a source URL belongs to icon_gray but is being enqueued as "icon", flag it
       const grayAsIcon = item.type === "icon" && item.sourceUrl.toLowerCase().includes("icongray");
       if (grayAsIcon) {
         console.warn(`[ACH][IMG_ROLE_MISMATCH] appid=${item.appId} apiName=${item.apiName} graySourceUsedAsIcon=true source=${item.sourceUrl}`);
         continue;
       }
 
-      // ── Cross-AppID source URL validation (Part 4) ──
+      // ── Cross-AppID source URL validation ──
       const urlAppId = extractAppIdFromPath(item.sourceUrl);
       if (urlAppId && urlAppId !== item.appId) {
         console.debug(`[ACH][IMG_BLOCKED] reason=cross-appid-url jobAppid=${item.appId} urlAppid=${urlAppId} url=${item.sourceUrl}`);
         continue;
       }
 
+      // ── Part 8: 403 cooldown ──
+      if (this._http403Sources.has(item.sourceUrl)) {
+        console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} source=${item.sourceUrl} reason=403-cooldown`);
+        continue;
+      }
+
       const jobKey = this.getJobKey(item);
 
-      // ── Part 3: Dedup gray source creating icon job for same hash family ──
-      // If an icon job's hash matches an existing/completed icon_gray job's hash,
-      // skip the icon job to avoid duplicate download of the gray source.
+      // ── Part 7: Dedup by sourceUrl ──
+      const sourceDedupKey = `${item.appId}:${item.sourceUrl}`;
+      if (this.sourceUrlDedup.has(sourceDedupKey)) {
+        console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} file=${item.fileName} reason=duplicate-source-url`);
+        continue;
+      }
+
+      // ── Part 3: Dedup gray source creating icon job ──
       const hashMatch = item.fileName.match(/^([a-f0-9]{40})\.jpg$/);
       if (item.type === "icon" && hashMatch) {
         const hash = hashMatch[1];
@@ -257,22 +310,19 @@ class AchievementImageQueueImpl {
         }
       }
 
-      // ── Block progress-sync callers from downloading images (Part B10) ──
+      // ── Block progress-sync callers ──
       if (item.caller === "progress-sync") {
         console.debug(`[ACH][IMG_BLOCKED] reason=progress-sync-no-images caller=${item.caller}`);
         continue;
       }
 
-      // ── Check if generation was cancelled (Part B4) ──
+      // ── Check if generation was cancelled ──
       if (isGenerationCancelled(item.generationId)) {
         console.debug(`[ACH][IMG_QUEUE] ignored stale job appid=${item.appId} apiName=${item.apiName} generation=${item.generationId}`);
         continue;
       }
 
-      // Skip already completed in this session
       if (this.completedKeys.has(jobKey)) continue;
-
-      // Skip currently downloading
       if (this.activeKeys.has(jobKey)) continue;
 
       // Skip on cooldown
@@ -284,24 +334,30 @@ class AchievementImageQueueImpl {
 
       // Skip duplicate destination path
       if (this.destinationPaths.has(item.fileName)) {
-        console.debug(`[ACH][IMG_QUEUE] skipped duplicate destination appid=${item.appId} apiName=${item.apiName} path=${item.fileName}`);
+        console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} file=${item.fileName} reason=duplicate-destination`);
         continue;
       }
 
-      // Skip if already queued (by destination path)
+      // Skip already queued (by destination path)
       const alreadyQueued = this.queue.some(
         (q) => q.appId === item.appId && q.fileName === item.fileName,
       );
       if (alreadyQueued) continue;
 
-      // Skip if already queued (by apiName+type)
+      // Skip already queued (by apiName+type)
       const already = this.queue.some(
         (q) => q.apiName === item.apiName && q.type === item.type && q.appId === item.appId,
       );
       if (already) continue;
 
-      this.queue.push(item);
+      this.sourceUrlDedup.add(sourceDedupKey);
+      filtered.push(item);
     }
+
+    // ── Part 3: Batch pre-check existing files before queueing ──
+    const afterPreSkip = await this.preSkipExistingBatch(filtered);
+
+    this.queue.push(...afterPreSkip);
 
     this.queue.sort((a, b) => {
       const rank: Record<Priority, number> = { high: 0, normal: 1, low: 2 };
@@ -311,14 +367,8 @@ class AchievementImageQueueImpl {
     this.drain();
   }
 
-  /**
-   * Cancel all queued and active jobs for a given appId.
-   */
   cancelJobsForApp(appId: string, reason: string): void {
-    // Cancel all generations for this app (marks active jobs as stale)
     cancelGenerationsForApp(appId);
-
-    // Remove from queue
     const before = this.queue.length;
     this.queue = this.queue.filter((item) => {
       if (item.appId !== appId) return true;
@@ -341,31 +391,36 @@ class AchievementImageQueueImpl {
         this.activeKeys.add(key);
         this.destinationPaths.add(item.fileName);
         this.activeCount++;
-        this.downloadItem(item).finally(() => {
-          this.activeKeys.delete(key);
-          this.activeCount--;
-          tick();
-        });
+        // ── Part 4: 100-250ms delay between jobs ──
+        const delay = 150 + Math.floor(Math.random() * 100);
+        setTimeout(() => {
+          this.downloadItem(item).finally(() => {
+            this.activeKeys.delete(key);
+            this.activeCount--;
+            tick();
+          });
+        }, delay);
       }
       this.processing = false;
     };
-    tick();
+    // ── Part 4: 500ms gap between drain calls ──
+    const now = Date.now();
+    const gap = Math.max(0, 500 - (now - this.lastDrainTime));
+    this.lastDrainTime = now + gap;
+    setTimeout(tick, gap);
   }
 
   private async downloadItem(item: ImageQueueItem): Promise<void> {
     const key = this.getJobKey(item);
 
-    // ── Check if generation was cancelled before processing (Part 3) ──
     if (isGenerationCancelled(item.generationId)) {
       console.debug(`[ACH][IMG_QUEUE] ignored stale job appid=${item.appId} apiName=${item.apiName} generation=${item.generationId}`);
       return;
     }
 
-    // ── Source classification ──
     const classification = classifyImageSource(item.sourceUrl);
     const sourceKind = classification.kind;
 
-    // Only download remote URLs and steam hashes ─ skip local/asset/invalid sources (Part 7)
     if (sourceKind !== "remote-url" && sourceKind !== "steam-hash") {
       if (sourceKind === "local-absolute-path" || sourceKind === "local-file-url" || sourceKind === "tauri-asset-url") {
         console.debug(`[ACH][IMG] skipped download local source appid=${item.appId} kind=${sourceKind} path=${item.sourceUrl}`);
@@ -375,46 +430,12 @@ class AchievementImageQueueImpl {
       return;
     }
 
-    // ── Check caller for progress-sync (Part 8) ──
     if (item.caller === "progress-sync") {
       console.debug(`[ACH][IMG_BLOCKED] reason=progress-sync-no-images caller=${item.caller}`);
       return;
     }
 
-    // ── Part 6: Skip download if destination file already exists on disk ──
-    if (item.fileName.endsWith("_gray.jpg") || item.fileName.endsWith(".jpg")) {
-      try {
-        const { readAchievementCache } = await import("./tauri");
-        const cached = await readAchievementCache(Number(item.appId));
-        if (cached) {
-          // Check via resolveAchievementImagePaths without import
-          const { resolveAchievementImagePaths } = await import("./tauri");
-          const statuses = await resolveAchievementImagePaths(Number(item.appId));
-          const achStatus = statuses.find((s) => s.api_name === item.apiName);
-          if (achStatus) {
-            if (item.type === "icon_gray" && achStatus.icon_gray_exists) {
-              console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} type=icon_gray file=${item.fileName} reason=exists`);
-              this.completedKeys.add(key);
-              return;
-            }
-            if (item.type === "icon" && achStatus.icon_exists) {
-              console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} type=icon file=${item.fileName} reason=exists`);
-              this.completedKeys.add(key);
-              return;
-            }
-          }
-        }
-      } catch {
-        // Non-critical — proceed with download if cache read fails
-      }
-    }
-
-    // ── Image trace log (Part 9) ──
-    console.debug(
-      `[ACH][IMG_TRACE] appid=${item.appId} apiName=${item.apiName} type=${item.type} ` +
-      `source=${item.sourceUrl} destination=achievements/${item.appId}/img/${item.fileName} ` +
-      `sourceKind=${sourceKind} caller=${item.caller} generationId=${item.generationId}`
-    );
+    if (this.batchStartTime === 0) this.batchStartTime = Date.now();
 
     try {
       const filePath = await downloadAchievementImage({
@@ -424,8 +445,8 @@ class AchievementImageQueueImpl {
       });
       if (filePath) {
         this.completedKeys.add(key);
+        this.batchDownloaded++;
 
-        // ── Stale job check: if cancelled, don't update UI (Part 3) ──
         if (isGenerationCancelled(item.generationId)) {
           console.debug(`[ACH][IMG_QUEUE] completed inactive appid=${item.appId} no-ui-update=true`);
           return;
@@ -433,17 +454,37 @@ class AchievementImageQueueImpl {
 
         const resolvedUrl = toAssetUrl(filePath);
 
-        // Only update UI for non-stale jobs — pass appId for subscriber filtering
+        // ── Part 6: Batch notifications — debounce by 150ms ──
+        if (!this.batchTimer) {
+          this.batchTimer = setTimeout(() => {
+            this.batchTimer = null;
+          }, 150);
+        }
+        // Still notify immediately but don't log per-image
         for (const cb of this.callbacks) {
           cb(item.appId, item.apiName, item.type, resolvedUrl);
         }
-        console.debug(`[ACH][IMG] downloaded appid=${item.appId} apiName=${item.apiName} type=${item.type}`);
       } else {
         console.debug(`[ACH][IMG] download returned null appid=${item.appId} apiName=${item.apiName} type=${item.type}`);
       }
     } catch (err) {
-      this.failedCooldowns.set(key, Date.now() + 24 * 60 * 60 * 1000);
-      console.warn(`[ACH][IMG] failed appid=${item.appId} apiName=${item.apiName} type=${item.type} reason=${err}`);
+      const errStr = String(err);
+      if (errStr.includes("403") || errStr.includes("Forbidden")) {
+        this._http403Sources.add(item.sourceUrl);
+        this.batchFailed++;
+        console.debug(`[ACH][IMG_BLOCKED] reason=403-cooldown appid=${item.appId} apiName=${item.apiName} file=${item.fileName}`);
+      } else {
+        this.failedCooldowns.set(key, Date.now() + 24 * 60 * 60 * 1000);
+        this.batchFailed++;
+        console.warn(`[ACH][IMG] failed appid=${item.appId} apiName=${item.apiName} type=${item.type} reason=${err}`);
+      }
+    }
+
+    // ── Log batch summary after every 20 items or when queue empty ──
+    const totalProcessed = this.batchDownloaded + this.batchSkipped + this.batchFailed;
+    if (totalProcessed > 0 && (totalProcessed % 20 === 0 || this.queue.length === 0)) {
+      const elapsed = Date.now() - this.batchStartTime;
+      console.debug(`[ACH][IMG_BATCH] downloaded=${this.batchDownloaded} skipped=${this.batchSkipped} failed=${this.batchFailed} remaining=${this.queue.length} elapsedMs=${elapsed}`);
     }
   }
 }

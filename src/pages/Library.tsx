@@ -436,8 +436,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                   <>
                     <div className={
                       (settings.libraryCardArtworkMode ?? "landscape") === "poster"
-                        ? "grid grid-cols-[repeat(auto-fill,minmax(165px,1fr))] gap-[22px] lf-card-stagger"
-                        : "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-[22px] lf-card-stagger"
+                        ? "grid grid-cols-[repeat(auto-fill,minmax(165px,1fr))] gap-5.5 lf-card-stagger"
+                        : "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5.5 lf-card-stagger"
                     }>
                       {paginatedGames.map((game) => (
                         <GameLauncherTile

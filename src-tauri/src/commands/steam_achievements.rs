@@ -522,9 +522,8 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
     })
     .map(|s| s.trim().to_string());
 
-  // Reject entries where display_name is a localization token
+  // Reject entries where display_name is a localization token (counted by caller for summary)
   if display_name.as_deref().map_or(true, |d| !is_valid_display_name(d)) {
-    eprintln!("[ACH][SCHEMA] skipped token-only entry: api_name={}", api_name);
     return None;
   }
 
@@ -587,16 +586,23 @@ fn try_parse_schema_proto(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry>, 
   }
 
   let mut entries = Vec::new();
+  let mut skipped_token = 0u32;
   for msg in &sub_msgs {
     if let Some(entry) = parse_schema_from_submsg(&msg.raw) {
       if !entries.iter().any(|e: &SteamAppcacheSchemaEntry| e.api_name == entry.api_name) {
         entries.push(entry);
       }
+    } else {
+      skipped_token += 1;
     }
   }
 
   if entries.is_empty() {
     return Err("No parseable schema entries found".to_string());
+  }
+
+  if skipped_token > 0 {
+    eprintln!("[ACH][SCHEMA] skippedTokenOnly={} accepted={}", skipped_token, entries.len());
   }
 
   Ok(entries)
@@ -702,6 +708,7 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
   }
   let all_strings = extract_strings_from_slice(data, 3);
   let mut entries = Vec::new();
+  let mut skipped_token_count = 0u32;
   for name in &names {
     let display_name = all_strings
       .iter()
@@ -715,7 +722,7 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
     // Apply quality gate: skip entries with token-only display names
     let clean_name = display_name.as_deref().filter(|d| is_valid_display_name(d));
     if clean_name.is_none() {
-      eprintln!("[ACH][SCHEMA] skipping token-only: api_name={}", name);
+      skipped_token_count += 1;
       continue;
     }
 
@@ -736,9 +743,9 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
     return Err("All schema entries were rejected (token-only)".to_string());
   }
 
-  // Warn if most entries were rejected
-  if entries.len() < names.len() / 2 {
-    eprintln!("[ACH][SCHEMA] quality gate: {}/{} passed (many rejected as tokens)", entries.len(), names.len());
+  // Summary instead of per-entry logs
+  if skipped_token_count > 0 {
+    eprintln!("[ACH][SCHEMA] skippedTokenOnly={} accepted={}", skipped_token_count, entries.len());
   }
 
   Ok(entries)
@@ -1981,7 +1988,7 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
     return Ok(None);
   }
 
-  eprintln!("[ACH][CACHE] read appid={}", app_id);
+  diag_log(format!("read cache appid={}", app_id));
 
   let mut summary: crate::models::steam_appcache_achievements::AppAchievementSummary =
     serde_json::from_str(
@@ -2023,26 +2030,24 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
     .map_err(|e| format!("Failed to parse achievements: {}", e))?;
 
   // Part 4: On-read migration — normalize any CDN URLs in icon fields to relative img/ paths
-  let mut schema_migrated = 0u32;
+  let mut migrated_icons = 0u32;
+  let mut migrated_gray = 0u32;
   let mut sources_entries: Vec<serde_json::Value> = vec![];
 
   for entry in achievements.iter_mut() {
-    let mut entry_changed = false;
-
     // Migrate icon_url if it's a Steam CDN URL
     if let Some(ref icon) = entry.icon_url.clone() {
       if (icon.starts_with("https://steamcdn") || icon.starts_with("https://cdn.cloudflare.steamstatic.com"))
         && icon.contains("/steamcommunity/public/images/apps/")
       {
         if let Some(rel) = cdn_url_to_relative_icon_path(icon, false) {
-          eprintln!("[ACH][SCHEMA_MIGRATE] appid={} apiName={} icon_url -> icon {}", app_id, entry.api_name, rel);
           // Store the original remote URL in image_sources
           let mut obj = serde_json::Map::new();
           obj.insert("api_name".to_string(), serde_json::Value::String(entry.api_name.clone()));
           obj.insert("remote_icon_url".to_string(), serde_json::Value::String(icon.clone()));
           sources_entries.push(serde_json::Value::Object(obj));
           entry.icon_url = Some(rel);
-          entry_changed = true;
+          migrated_icons += 1;
         }
       }
     }
@@ -2053,7 +2058,6 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
         && icon_gray.contains("/steamcommunity/public/images/apps/")
       {
         if let Some(rel) = cdn_url_to_relative_icon_path(icon_gray, true) {
-          eprintln!("[ACH][SCHEMA_MIGRATE] appid={} apiName={} icon_gray_url -> icon_gray {}", app_id, entry.api_name, rel);
           // Add remote gray URL to existing or new sources entry
           if let Some(existing) = sources_entries.iter_mut().find(|v| {
             v.get("api_name").and_then(|n| n.as_str()) == Some(&entry.api_name)
@@ -2068,18 +2072,14 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
             sources_entries.push(serde_json::Value::Object(obj));
           }
           entry.icon_gray_url = Some(rel);
-          entry_changed = true;
+          migrated_gray += 1;
         }
       }
     }
-
-    if entry_changed {
-      schema_migrated += 1;
-    }
   }
 
-  if schema_migrated > 0 {
-    eprintln!("[ACH][SCHEMA_MIGRATE] appid={} migrated={}", app_id, schema_migrated);
+  if migrated_icons > 0 || migrated_gray > 0 {
+    eprintln!("[ACH][SCHEMA_MIGRATE] appid={} migratedIcons={} migratedGrayIcons={} unchanged={}", app_id, migrated_icons, migrated_gray, achievements.len().saturating_sub(migrated_icons.max(migrated_gray) as usize));
     // Write migrated achievements.json
     let achievements_content =
       serde_json::to_string_pretty(&achievements).map_err(|e| format!("Failed to serialize migrated achievements: {}", e))?;
