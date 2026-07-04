@@ -12,6 +12,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { countRender } from "../../services/perfCounters";
+
+import {
+  batchLoadGameMedia,
+  resolveSidebarMedia,
+  isSidebarInstalledGame,
+  dedupeLibraryGames,
+  getSidebarLabel,
+  hasActiveInstalledLuaScript,
+} from "../../services/gameCacheService";
+
 import { invoke } from "@tauri-apps/api/core";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
@@ -20,10 +31,8 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
 import { SkeletonBox } from "../common/Skeleton";
-import { batchLoadGameMedia, resolveSidebarMedia } from "../../services/gameCacheService";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
-import { backgroundJobQueue } from "../../services/backgroundJobQueue";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import { showSuccess, showError } from "../toast/GameToast";
 import { useConfirm } from "../../services/confirmService";
@@ -108,6 +117,7 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
 }
 
 export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full" }: Props) {
+  countRender("SidebarLibraryList");
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
   const [query, setQuery] = useState("");
@@ -120,7 +130,6 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
-  const sidebarRepairEnqueued = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
   const { confirm } = useConfirm();
 
@@ -130,8 +139,40 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     return () => clearTimeout(t);
   }, []);
 
+  const lastInstalledLogRef = useRef("");
+
   const installed = useMemo(() => {
-    return games.filter((g) => g.isPlayable || g.steamInstalled || (g.source === "local" && !!g.executablePath));
+    const deduped = dedupeLibraryGames(games);
+    const filtered = deduped.filter(isSidebarInstalledGame);
+
+    const steamInstalledCount = deduped.filter((g) => g.steamInstalled === true).length;
+    const luaActiveCount = deduped.filter(hasActiveInstalledLuaScript).length;
+    const localInstalledCount = deduped.filter(
+      (g) => g.source === "local" && typeof g.executablePath === "string" && g.executablePath.length > 0
+    ).length;
+    const explicitInstalledCount = deduped.filter((g) =>
+      (g as any).installedStatus === "active" ||
+      (g as any).installStatus === "active" ||
+      (g as any).status === "installed"
+    ).length;
+
+    if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) {
+      const logKey = `i=${games.length}:o=${filtered.length}`;
+      if (logKey !== lastInstalledLogRef.current) {
+        lastInstalledLogRef.current = logKey;
+        console.log(
+          `[SIDEBAR][INSTALLED_BREAKDOWN] input=${games.length} deduped=${deduped.length} ` +
+          `steamInstalled=${steamInstalledCount} luaActive=${luaActiveCount} ` +
+          `localInstalled=${localInstalledCount} explicitInstalled=${explicitInstalledCount} ` +
+          `output=${filtered.length}`
+        );
+        console.log(
+          `[SIDEBAR][INSTALLED_FILTER] input=${games.length} deduped=${deduped.length} output=${filtered.length}`
+        );
+      }
+    }
+
+    return filtered;
   }, [games]);
 
   const filtered = useMemo(() => {
@@ -234,27 +275,27 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   }, [canonicalInfoMap]);
 
   // High-priority media repair for visible games with missing thumbnails
-  useEffect(() => {
-    const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
-    const uniqueIds = [...new Set(ids)];
-    const missingIds = uniqueIds.filter((id) => {
-      const resolved = sidebarMediaMap[id];
-      if (!resolved) return false; // still loading
-      return !resolved.landscape.exists && !resolved.cover.exists;
-    });
+  // useEffect(() => {
+  //   const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
+  //   const uniqueIds = [...new Set(ids)];
+  //   const missingIds = uniqueIds.filter((id) => {
+  //     const resolved = sidebarMediaMap[id];
+  //     if (!resolved) return false; // still loading
+  //     return !resolved.landscape.exists && !resolved.cover.exists;
+  //   });
 
-    if (missingIds.length === 0) return;
+  //   if (missingIds.length === 0) return;
 
-    for (const id of missingIds) {
-      if (sidebarRepairEnqueued.current.has(id)) continue;
-      sidebarRepairEnqueued.current.add(id);
-      const key = backgroundJobQueue.enqueue("repair-game-media", "steam", { appId: id, priority: "high" });
-      if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) {
-        console.log(`[MEDIA][SIDEBAR] visible=${uniqueIds.length} missing=${missingIds.length}`);
-        console.log(`[JOB] queued key=${key} priority=high`);
-      }
-    }
-  }, [filtered, sidebarMediaMap]);
+  //   for (const id of missingIds) {
+  //     if (sidebarRepairEnqueued.current.has(id)) continue;
+  //     sidebarRepairEnqueued.current.add(id);
+  //     const key = backgroundJobQueue.enqueue("repair-game-media", "steam", { appId: id, priority: "high" });
+  //     if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) {
+  //       console.log(`[MEDIA][SIDEBAR] visible=${uniqueIds.length} missing=${missingIds.length}`);
+  //       console.log(`[JOB] queued key=${key} priority=high`);
+  //     }
+  //   }
+  // }, [filtered, sidebarMediaMap]);
 
   function handleContextMenu(e: React.MouseEvent<HTMLButtonElement>, game: LibraryGame) {
     e.preventDefault();
@@ -360,7 +401,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           if (isCollapsedMode) {
             return (
               <button
-                key={game.id}
+                key={`sidebar:installed:${game.appId ?? game.id}`}
                 type="button"
                 title={displayTitle}
                 onClick={() => {
@@ -399,7 +440,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
 
           return (
             <button
-              key={game.id}
+              key={`sidebar:installed:${game.appId ?? game.id}`}
               type="button"
               onClick={() => {
                 setSelectedGame(game);
@@ -450,13 +491,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 </div>
                 {!isCompactMode && (
                   <div className="text-[10px] text-(--color-muted)">
-                    {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
+                    {isRunning ? "Running" : isLaunching ? "Launching" : getSidebarLabel(game)}
                     {!isRunning && !isLaunching && game.hasUpdate && " · Update"}
                   </div>
                 )}
                 {isCompactMode && (
                   <div className="text-[9px] text-(--color-muted)">
-                    {isRunning ? "Running" : isLaunching ? "Launching" : game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Lua"}
+                    {isRunning ? "Running" : isLaunching ? "Launching" : getSidebarLabel(game)}
                   </div>
                 )}
               </div>
@@ -570,39 +611,39 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
               <MenuItem
                 label="Manage"
                 icon={<Settings className="h-3.5 w-3.5" />}
-                  children={[
-                    {
-                      label: "Uninstall",
-                      icon: <Trash2 className="h-3.5 w-3.5" />,
-                      disabled: !menuGame.steamInstalled,
-                      subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
-                      onClick: menuGame.steamInstalled ? (() => {
-                        handleMenuClose();
-                        confirm({
-                          title: "Uninstall game?",
-                          description: `This will remove the installed package for ${getSidebarTitle(menuGame, menuGame.appId ? (appInfoMap[menuGame.appId] ?? null) : null)}. Local files may be deleted depending on the install type.`,
-                          confirmLabel: "Uninstall",
-                          variant: "danger",
-                        }).then((r) => {
-                          if (r.confirmed) showSuccess("Game uninstalled (simulated).");
-                        });
-                      }) : undefined,
-                    },
-                    ...(mHasLua
-                      ? [{
-                        label: "Delete Lua",
-                        icon: <X className="h-3.5 w-3.5" />,
-                        destructive: true as const,
-                        disabled: true,
-                      }]
-                      : []),
-                  ]}
-                />
-              </>
-            );
-          })()}
-        </CardActionMenu>
-      )
+                children={[
+                  {
+                    label: "Uninstall",
+                    icon: <Trash2 className="h-3.5 w-3.5" />,
+                    disabled: !menuGame.steamInstalled,
+                    subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
+                    onClick: menuGame.steamInstalled ? (() => {
+                      handleMenuClose();
+                      confirm({
+                        title: "Uninstall game?",
+                        description: `This will remove the installed package for ${getSidebarTitle(menuGame, menuGame.appId ? (appInfoMap[menuGame.appId] ?? null) : null)}. Local files may be deleted depending on the install type.`,
+                        confirmLabel: "Uninstall",
+                        variant: "danger",
+                      }).then((r) => {
+                        if (r.confirmed) showSuccess("Game uninstalled (simulated).");
+                      });
+                    }) : undefined,
+                  },
+                  ...(mHasLua
+                    ? [{
+                      label: "Delete Lua",
+                      icon: <X className="h-3.5 w-3.5" />,
+                      destructive: true as const,
+                      disabled: true,
+                    }]
+                    : []),
+                ]}
+              />
+            </>
+          );
+        })()}
+      </CardActionMenu>
+    )
   );
 
   // Collapsed mode: render everything inline (icons only)

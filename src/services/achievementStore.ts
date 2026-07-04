@@ -157,21 +157,21 @@ class AchievementStoreImpl {
         safeSummary.source, safeSummary.updatedAt,
         existing.source, existing.updatedAt,
       );
-      console.log(
+      if (DEBUG_ACH_VERBOSE) console.log(
         `[ACH][SUMMARY_SOURCE] appid=${appId} source=${safeSummary.source} ` +
         `unlocked=${safeSummary.unlocked}/${safeSummary.total} updatedAt=${safeSummary.updatedAt} ` +
         `progressAvailable=${safeSummary.progressAvailable} accepted=${accepted} ` +
         `existingSource=${existing.source} existingUnlocked=${existing.unlocked}/${existing.total} existingUpdatedAt=${existing.updatedAt}`
       );
       if (!accepted) {
-        console.log(`[ACH][SUMMARY_MERGE] appid=${appId} rejected reason=older-or-equal-source`);
+        if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appId} rejected reason=older-or-equal-source`);
         return;
       }
       if (accepted && existing.source !== safeSummary.source) {
-        console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${existing.source}:${existing.unlocked}/${existing.total} new=${safeSummary.source}:${safeSummary.unlocked}/${safeSummary.total} accepted=true reason=newer-source`);
+        if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${existing.source}:${existing.unlocked}/${existing.total} new=${safeSummary.source}:${safeSummary.unlocked}/${safeSummary.total} accepted=true reason=newer-source`);
       }
     } else {
-      console.log(
+      if (DEBUG_ACH_VERBOSE) console.log(
         `[ACH][SUMMARY_SOURCE] appid=${appId} source=${safeSummary.source} ` +
         `unlocked=${safeSummary.unlocked}/${safeSummary.total} updatedAt=${safeSummary.updatedAt} ` +
         `progressAvailable=${safeSummary.progressAvailable} accepted=true reason=first-summary`
@@ -196,7 +196,7 @@ class AchievementStoreImpl {
       return null;
     }
 
-    console.log(
+    if (DEBUG_ACH_VERBOSE) console.log(
       `[ACH][SUMMARY_SOURCE] appid=${appId} source=librarycache(patch) ` +
       `unlocked=${patch.unlocked}/${patch.total} progressMap=${patch.progressMap.size} trace=${tid}`
     );

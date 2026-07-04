@@ -5,7 +5,7 @@ import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { getCachedPlaytimeStore } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId } from "../../services/playtimeService";
 import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
 
 const DEBUG_NAME_HERO = false;
@@ -47,11 +47,8 @@ function hasValidMedia(game: SnapshotGame): boolean {
 }
 
 function getEffectiveLastPlayedMs(game: SnapshotGame): number {
-  const playtimeStore = getCachedPlaytimeStore();
-  if (playtimeStore && game.appId) {
-    const entry = playtimeStore.games[`app-${game.appId}`];
-    if (entry?.lastPlayedAt) return entry.lastPlayedAt * 1000;
-  }
+  const entry = getPlaytimeEntryByAppId(game.appId);
+  if (entry?.lastPlayedAt) return entry.lastPlayedAt * 1000;
   if (game.lastPlayed) return game.lastPlayed * 1000;
   return 0;
 }
@@ -274,8 +271,17 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   }, [heroGame, heroAppId]);
 
   const lastPlayedStr = useMemo(() => {
+    const entry = getPlaytimeEntryByAppId(heroAppId);
+    if (entry?.lastPlayedAt) return formatLastPlayed(entry.lastPlayedAt);
     return formatLastPlayed(heroGame?.lastPlayed);
-  }, [heroGame?.lastPlayed]);
+  }, [heroAppId, heroGame?.lastPlayed]);
+
+  const heroPlaytimeStr = useMemo(() => {
+    const seconds = getPlaytimeSecondsForAppId(heroAppId);
+    if (seconds > 0) return `${Math.round(seconds / 60)} min`;
+    if (heroGame?.playtime != null) return `${heroGame.playtime} min`;
+    return null;
+  }, [heroAppId, heroGame?.playtime]);
 
   const stopModalTitle = heroSession?.title || heroGame?.title || "Unknown Game";
 
@@ -432,9 +438,9 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                     Last played: {lastPlayedStr}
                   </span>
                 )}
-                {heroGame.playtime != null && (
+                {heroPlaytimeStr && (
                   <span className="text-xs text-white/60">
-                    {heroGame.playtime} min
+                    {heroPlaytimeStr}
                   </span>
                 )}
               </>

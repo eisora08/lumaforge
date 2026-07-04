@@ -826,6 +826,40 @@ Persist Store display images across navigation, fix Show More dedup, restore saf
 - `vite build` ✅ passes
 - `cargo check` ✅ passes
 
+## Session — Background Queue and Boot Side Effects (Part 4)
+
+### Part 4/5 — Background Queue and Boot Side Effects
+
+#### Steps 1-2: Fix Store-active job deferral
+- **Moved Store route check from `executeJob` to `processNext`** (`backgroundJobQueue.ts`) — check happens BEFORE `job.status = "running"`, preventing the job from being marked as "started" then "completed" when deferred.
+- **Re-enqueue with "queued" status** — deferred jobs reuse a fresh status object, not a mutated "completed" one.
+- **Dedup for deferred jobs** — `queue.some()` check prevents pushing a duplicate with the same id when Store-blocked.
+- **Removed old Store-route block from `executeJob`** — no longer necessary, avoids dual-check confusion.
+- Log format: `[JOB][DEFER] key=<key> reason=store-active retryMs=2000` / `[JOB][DEFER_SKIP] key=<key> reason=already-queued`.
+
+#### Step 5: Remove unsafe clearReconciledGames from normal boot
+- **Removed `clearReconciledGames()` call** (`appBootCoordinator.ts` line 436) in the `else` branch (games already in SQLite). Previously, if the game index was empty after the rebuild, `clearReconciledGames()` had already wiped healthy state with no recovery path.
+- **Removed unused `clearReconciledGames` import** from the dynamic import at line 304.
+
+#### Step 6: Guarantee setReconciledGames after reconcile
+- Changed `if (reconciledGames && reconciledGames.length > 0)` to `if (reconciledGames)` — `setReconciledGames` now always fires in the `else` branch (with the empty-overwrite guard in `gameStore.ts` preventing actual wipe if runtime has healthy state).
+
+#### Step 7: Remove name-only media wipe pattern
+- **`updateGameAppinfoMedia` now preserves existing media** (`appBootCoordinator.ts:507-511`). Instead of passing all-null media paths, reads `appinfos[game.appId].media` and passes existing paths through, only updating the `name` field.
+- Prevents erasing background/logo/icon/cover/landscape paths that were set by a previous repair or import.
+
+#### Step 8: Make hydrateMediaOnStartup idle/no-op aware
+- **Store route guard** — checks `window.location.hash` before running; logs `[BOOT][MEDIA_HYDRATE_SKIP] reason=store-active` when on Store.
+- **Chunking** — processes appIds in chunks of 10 to avoid blocking the main thread during boot.
+- **Lazy import** — `hydrateMediaOnStartup` only imported when not on Store route.
+
+#### Step 9: Gate validate-cache-health for navigation
+- **Store route guard** — skips `validateStartupCacheHealth()` when `#/store` is active, logs `[BOOT][HEALTH_SKIP] reason=store-active`.
+
+### Build
+- `tsc --noEmit` ✅ passes (only pre-existing unused-variable warnings in `LibraryGameDetails.tsx`)
+- `vite build` ✅ passes (only pre-existing chunk warnings)
+
 ## Session — Critical UI State Hardening
 
 ### Goal
@@ -996,3 +1030,328 @@ Transform the flat Discover tab (Hero + sections + More to Explore) into a rich 
 ### Build
 - `tsc --noEmit` ✅ passes (only pre-existing unused-import warnings)
 - `vite build` ✅ passes (only pre-existing chunk warnings)
+
+## Session — Final Polish: Console log throttling + MediaIndex no-op guard
+
+### Goal
+Reduce console noise from `ASYNC_IMAGE_ERROR`, `GENRE_GROUPS_RAW`, and false `notifyMediaUpdated` calls for `has*`-only MediaIndex updates.
+
+### Step 3: Throttle ASYNC_IMAGE_ERROR
+- Only logs when terminal (no parent `onError` handler) or has `fallbackLocalPath`.
+- For Store cards with fallback chains (`onError` set), errors are expected fallback retries — log suppressed.
+- `AsyncImage.tsx:197`
+
+### Step 4: Throttle [STORE][GENRE_GROUPS_RAW]
+- Module-level `_lastGenreGroupsLog` tracks genre composition fingerprint.
+- Only logs when `rawGenreGroups.size` or per-genre counts change.
+- `Store.tsx:963`
+
+### Step 7: Suppress false notifyMediaUpdated for has*-only changes
+- `flushAppInfoUpdates` in `mediaDownloadQueue.ts` now distinguishes path changes from `has*` flag fixes.
+- When `pathActuallyChanged === 0` and `mediaIndexChanged > 0`: skips `notifyMediaUpdated`, logs `[MEDIA_INDEX][UPDATE_SKIP] reason=snapshot-already-synced`.
+
+### Build
+- `tsc --noEmit` ✅ passes (only pre-existing `LibraryGameDetails.tsx` unused-variable warnings)
+- `vite build` ✅ passes (only pre-existing chunk warnings)
+
+## Session — Final Cleanup: Snapshot No-Op Writes, Sidebar Filter Logging, and No-Source Media Repair Noise
+
+### Goal
+Reduce unnecessary writes and misleading logs without changing working Library/Sidebar/Store behavior. Library stays 82, Sidebar stays 34.
+
+### Step 1: Full-rebuild no-op guard in scheduleSnapshotWrite
+- Added `computeSnapshotFingerprint` check immediately after `buildStartupSnapshotFromCurrentState` in `scheduleSnapshotWrite`.
+- When fingerprint matches `_lastWriteFingerprint`, skips calling `saveStartupSnapshot` entirely.
+- Log: `[BootSnapshot][WRITE_SKIP] reason=no-content-change-full-rebuild games=<n> sidebarItems=<n>`.
+- Also moved `SIDEBAR_FILTER`/`SIDEBAR_REPAIR` log inside this guard block so it only fires when a write actually happens.
+- `startupSnapshotService.ts:1210-1221`
+
+### Step 2: Rename misleading SIDEBAR_REPAIR log
+- `SIDEBAR_REPAIR` only logs when `cachedSnapshot?.sidebar.items.length === deduped.length` (was full-library — old bad snapshot).
+- Normal installed-only filtering logs as `[BootSnapshot][SIDEBAR_FILTER]`.
+- Removed duplicate `SIDEBAR_FILTER` log from `buildStartupSnapshotFromCurrentState` (now gated behind `ENABLE_VERBOSE`).
+- `startupSnapshotService.ts:1222-1229`
+
+### Step 3: Input fingerprint to skip scheduling identical games
+- Added `computeGamesFingerprint` in `LibraryGamesContext.tsx` — tracks appId + key status flags.
+- Added module-level `_lastGamesFingerprint` to compare against.
+- When fingerprint unchanged, logs `[LIBRARY_CONTEXT][SNAPSHOT_SCHEDULE_SKIP] reason=unchanged-games games=<n>` and returns early.
+- `LibraryGamesContext.tsx:28-34`, `LibraryGamesContext.tsx:434-440`
+
+### Step 4: No-source cooldown before repair scan
+- Moved `isNoSourceCooldown` check to the VERY top of `detectAndQueueMissingMedia`, above display-only/Store/system/global checks.
+- When cooldown active, logs `[MEDIA][AUTO_REPAIR_COOLDOWN] appid=<appid> reason=no-source-url` and returns immediately.
+- No `AUTO_REPAIR_SCAN`, `AUTO_REPAIR_FAILED`, or disk scan while cooldown active.
+- `gameCacheService.ts:1552-1556`
+
+### Step 5: Optional persistence (skipped)
+- No existing suitable persistent store for session-only cooldown. Creating a new DB/file is overkill. Session cooldown is sufficient.
+
+### Step 6: Gate achievement ACH logs behind DEBUG flag
+- Added `DEBUG_ACH_DETAILS = false` constant in `LibraryGameDetails.tsx`.
+- `[ACH][STATE_PRESERVE]`, `[ACH][VISIBLE_CACHE_HIT]`, `[ACH][VISIBLE_CACHE_MISS]`, `[ACH][VISIBLE_CACHE_READ]`, `[ACH][SUMMARY_DERIVED_FROM_LIST]` all gated behind flag.
+- `LibraryGameDetails.tsx:1`, `:504`, `:530`, `:544`, `:580`, `:583`, `:588`
+
+## Session — Performance Architecture Pass
+
+### Goal
+Separate boot critical path from idle work, batch Tauri commands, consolidate Store state, and add performance counters to make the app feel native-fast.
+
+### Constraints
+- Do not change Library game count (82) or Sidebar installed-only behavior (34).
+- Do not make Sidebar mirror Library or re-enable achievement auto-scans.
+- Do not create new services or databases; reuse existing patterns.
+- Prefer batch APIs, early no-op skips, idle scheduling, stable cache restoration, small incremental changes.
+
+### Phase 0+11: Performance counters + boot summary
+- Created `src/services/perfCounters.ts` — module-level counters for Tauri invokes, appinfo attempts/skips/writes, snapshot writes/skips, media classify, jobs queued, store cache source.
+- `initPerfCounters()` called at boot start, `logBootPerfSummary()` runs 100ms after boot transitions to `ready`.
+- `[PERF][BOOT]` log with all counter values and elapsed time.
+
+### Phase 1: Boot phase boundaries
+- Added phase markers: `critical-start` → `critical-done` → `post-shell-start` → `post-shell-done` → `idle-ready`.
+- Each phase logged via `setBootPhaseLabel()` in `perfCounters.ts` and `[BOOT] phase=<phase>` console log.
+- `critical-start`: before Stage 1 (load settings).
+- `critical-done`: after Stage 3 (snapshot loaded + hydrate).
+- `post-shell-start`: after Stage 7 (achievement watcher started).
+- `post-shell-done`: after Stage 10 (confirm-mounted).
+- `idle-ready`: when `_bootStatus = "ready"`.
+
+### Phase 2: Idle scheduler
+- `backgroundJobQueue.ts` — added `_routeShellReady`, `_bootCompleted`, `_lastNavigationChange`, `_idleAcknowledged` flags.
+- `isIdleReady()` checks: routeShellReady && bootCompleted && no-navigation-5s && store-inactive && no-max-active-jobs.
+- `setRouteShellReady(v)`, `setBootCompleted(v)`, `setNavigationChanged()` methods on the queue.
+- `processNext()` defers P4-P6 jobs (background-repair, achievement, cleanup) when not idle ready, logs `[IDLE][DEFER]` with reasons.
+- P0-P3 jobs always run regardless — user-initiated and visible-page actions are never blocked.
+- `[IDLE][READY]`, `[IDLE][RUN]`, `[IDLE][DONE]` diagnostic logs.
+- Boot coordinator calls `setRouteShellReady(true)` at Stage 8, `setBootCompleted(true)` when boot transitions to ready.
+
+### Phase 3: Batch Tauri commands
+- Stage 5 (achievement cache reads): switched from sequential `for..await` to `Promise.allSettled` for 20 concurrent reads in boot critical path.
+- Stage 4.5 already uses `readCanonicalAppinfos(appIds)` batch API.
+- Stage 6 already uses batch `getMediaManifestsBatch`.
+- Idle scheduler's `_bootCompleted` guard prevents premature background work.
+
+### Phase 6: Store state consolidation
+- `DiscoverState` in `storeDiscoverStateCache.ts` already serves as unified single source of truth with fingerprint + status validation.
+- `CacheEntry` in `storeDiscoverCache.ts` handles persistent caching with partial-cache guard.
+- No additional consolidation needed.
+
+### Phase 7: Store large catalog guard
+- `rankedSteamCatalog`, `catalogGames`, `allStoreSections`, `moreToExploreGames` all use `useMemo` with stable `catalogFingerprint` dependency.
+- `allStoreSections` checks cached version first via fingerprint match, skips recomputation.
+- No additional guards needed.
+
+### Phase 10: Background validation deferral
+- `validate-portable-paths`, `generate-achievement-schema`, `ensure-achievement-images` all deferred via idle scheduler (P4-P6 tiers).
+- Store-active check in processNext blocks `STORE_BLOCKED_JOB_TYPES` before marking jobs running.
+
+### Key Files Changed
+- `src/services/perfCounters.ts` — **new** — counters + boot summary log
+- `src/services/appBootCoordinator.ts` — phase markers, setRouteShellReady/setBootCompleted integration, Promise.all batch for achievement cache reads, perf summary log after boot
+- `src/services/backgroundJobQueue.ts` — idle scheduler (isIdleReady, setRouteShellReady, setBootCompleted, setNavigationChanged), P4-P6 deferral in processNext, [IDLE] logs, countJobQueued integration
+
+## Session — React Render Audit + Disk Hot Path Reduction
+
+### Goal
+Reduce unnecessary React re-renders (context boundary memoization, effect deps) and eliminate redundant `getGameAppInfo` Tauri invokes via a session-level cache.
+
+### Prompt 7: Context boundary memoization
+- **LibraryGamesContext**: `useMemo` on context value, `useCallback` on `setSelectedId`, `setSelectedGame`, `refresh` — prevents cascade re-renders of all consumers on every library load
+- **RouteTransitionContext**: `useMemo` on value with `[isPending, navigatingTo]` — prevents router re-render on unrelated state changes
+- **GameDetailsContext**: `useCallback` on `selectGame`/`clearSelection`, `useMemo` on value — stops re-creating callbacks on every render
+- **FavoritesContext**: `useMemo` on value with `[favoriteIds]` — stops re-creating object identity on every render
+- **Store.tsx no-deps effect** (line 1260): Added 14-item explicit dependency array (was deps-free, ran on every render)
+- **`VIRTUAL_CARD_STYLE`**: Extracted constant — replaces 2 identical inline style objects
+
+### Prompt 8 Phase 1: Disk/cache audit counters
+- `perfCounters.ts` — added `_appinfoReads`, `_appinfoCacheHits`, `_appinfoBatchReads`, `_diskReadsBoot`, `_diskReadsRoute`, `_diskWritesBoot`, `_diskWritesRoute`, `_manifestReads`
+- `logBootPerfSummary()` — `[PERF][DISK]` line with all disk counters, `[PERF][CACHE_HIT_RATE]` with appinfo cache hit/miss ratio
+- `[DATA_SOURCE_MAP]` — logged once on boot documenting data source layering
+
+### Prompt 8 Phase 3: Session-level appinfo cache
+- `gameCacheService.ts` — `_sessionAppinfoCache` (Map<string, GameAppInfo | null>) replaces direct `getGameAppInfo` Tauri invoke for read-heavy code paths
+- `getCachedGameAppInfo(appId)` — checks in-memory cache first; counts cache hit/read via `countAppinfoCacheHit`/`countAppinfoRead`
+- `clearSessionAppInfoCache(appId?)` — clears cache for a specific appId or all entries
+- Cache invalidated on write paths: `updateGameAppinfoMediaIfChanged` deletes cached entry after `updateGameAppinfoMedia` completes; post-repair re-read in `loadGameAppInfoWithMediaFallback` also invalidates before read
+- 8 call sites converted from `getGameAppInfo` to `getCachedGameAppInfo`:
+  - `resolveCanonicalName` (read before metadata fallback)
+  - `fillCanonicalName` (read check + pre-write merge)
+  - `loadGameAppInfo` (public wrapper)
+  - `loadGameAppInfoWithMediaFallback` (session cache hit + primary disk read)
+  - `cacheAppInfoMedia` (pre-write merge)
+  - `detectAndQueueMissingMedia` (repair source resolution)
+  - `refreshArtwork` (repair source resolution)
+- Import: `countAppinfoRead`, `countAppinfoCacheHit` from `./perfCounters`
+
+### Key Files Changed
+- `src/services/perfCounters.ts` — disk/cache counters, updated boot summary
+- `src/services/gameCacheService.ts` — `_sessionAppinfoCache`, `getCachedGameAppInfo`, `clearSessionAppInfoCache`, 8 call site conversions, cache invalidation on writes
+- `src/contexts/LibraryGamesContext.tsx` — `useMemo` on value, `useCallback` on setters
+- `src/contexts/RouteTransitionContext.tsx` — `useMemo` on value
+- `src/contexts/GameDetailsContext.tsx` — `useCallback` + `useMemo`
+- `src/contexts/FavoritesContext.tsx` — `useMemo` on value
+- `src/pages/Store.tsx` — added deps to no-deps effect, `VIRTUAL_CARD_STYLE` extraction
+
+### Prompt 8 Phase 7: Media path TTL cache
+- `gameCacheService.ts` — `setCachedResolvedMedia(appId, value)` wraps `resolvedMediaSessionCache` with `CacheEntry<T>` (value + timestamp)
+- `getCachedResolvedMedia` now checks TTL (`MEDIA_PATH_CACHE_TTL_MS = 10min`) before returning stale data
+- `getCachedGameMediaPaths(appId)` — public wrapper for read paths
+- `clearCachedGameMediaPaths(appId?)` — public clear for invalidation
+- All `resolvedMediaSessionCache.set()` call sites migrated to `setCachedResolvedMedia()`
+- Stale entries auto-evicted on next read
+
+### Prompt 8 Phase 8: SQLite as read index for names
+- `gameCacheService.ts` — `getSqliteName(appId)` reads SQLite games table via `readAllGames()` (cached 5min, single invoke per 5min)
+- `resolveCanonicalName` checks SQLite cache FIRST before appinfo.json
+- 1 `readAllGames` invoke per 5min vs 82 `getGameAppInfo` invokes
+
+### Prompt 8 Phase 9: Hot path write policy
+- `updateGameAppinfoMediaIfChanged` invalidates `_sessionAppinfoCache.delete(appId)` after each write
+- Post-repair re-read invalidates cache before re-read
+
+### Prompt 8 Phase 10: Cache freshness TTL
+- `CacheEntry<T>` generic type with `{ value: T; ts: number }` pattern
+- `APPINFO_CACHE_TTL_MS = 5min` (appinfo cache)
+- `MEDIA_PATH_CACHE_TTL_MS = 10min` (resolved media paths)
+- `isCacheEntryFresh()` helper — old entries (no `.ts`) treated as stale
+
+### Prompt 8 Phase 11/12: Boot/Route disk budgets
+- `perfCounters.ts` — boot warning when `_diskReadsBoot > 500` or `_diskWritesBoot > 200`
+- `checkRouteDiskBudget(routeName)` — warns when `_diskReadsRoute > 50`, resets counters
+
+### Key Files Changed (additional)
+- `src/services/perfCounters.ts` — boot/route budget warnings, `checkRouteDiskBudget`
+- `src/services/gameCacheService.ts` — `CacheEntry`, TTL constants, `setCachedResolvedMedia`, `getSqliteName`, `getCachedGameMediaPaths`
+
+### Build
+- `tsc --noEmit` ✅ passes (only pre-existing `LibraryGameDetails.tsx` unused-variable warnings)
+- `vite build` ✅ passes (only pre-existing chunk warnings)
+
+## Session — Store Route Jank Fix (click handler defer + log dedup)
+
+### Goal
+Prevent Store-to-Home navigation jank by deferring non-critical work out of click handlers and deduplicating per-render/re-mount console logs.
+
+### Phase 1: Audit — AppRouteTransition behavior
+- `AppRouteTransition` wraps children with CSS transition only — React unmounts old page, mounts new page immediately on `routeKey` change. No keep-alive.
+- Render summary (`logRenderSummary`) is cumulative per-session, not a transition spike. 2140 PackageCard renders over an entire Store session is expected.
+
+### Phase 5: Defer heavy click handler work in openDetailsForGame
+- **Restructured `openDetailsForGame`** (`Store.tsx:1984`):
+  - CRITICAL PATH (in handler): `setActiveSectionId(null)`, `setSelectedDetailGame(game)` — immediate React state updates
+  - Fast cache hydrate path stays in handler
+  - DEFERRED PATH: Extracted `scheduleSourceResolve()` — runs via `setTimeout(0)` to let the browser paint first
+  - Deferred: `pushInteractionEvent`, `setInteractionScoreByAppId`, `setSourcesLoadingByAppId`, `updateSourceAvailability`, `resolveProviderOverlaysForStoreGames`
+  - `requestId` comparison still works for stale-request detection (same closure)
+- Click handler returns immediately; source resolution starts ~16ms later after the browser has painted
+
+### Phase 6: Deduplicate Store restore logs
+- `Store.tsx` — restore effect (`[STORE][STATE_RESTORE]`, `[STORE][DISCOVER_STATE_RESTORED]`) now uses `restoreLoggedRef` to fire only on mount
+- Changed dep from `[steamCatalog.length]` to `[]` — no need to wait for catalog load (cached state is always available)
+- Prevents re-logging on Steam catalog refetches
+
+### Phase 7: Gate per-render debug logs
+- `App.tsx` — added `DEBUG_ROUTE_RENDER = false` flag; `[ROUTE][PAGE_RENDER]` now requires both `DEBUG_ROUTE_RENDER` AND `import.meta.env.DEV`
+- `StoreGameDetailsPage.tsx` — `logDetailsMedia` call gated behind `ENABLE_VERBOSE_SOURCE_LOGS` (was always firing)
+
+### Key Files Changed
+- `src/pages/Store.tsx` — `openDetailsForGame` restructured + `scheduleSourceResolve` extract; `restoreLoggedRef` + dep change in restore effect
+- `src/App.tsx` — `DEBUG_ROUTE_RENDER` flag, gate `[ROUTE][PAGE_RENDER]`
+- `src/components/store/StoreGameDetailsPage.tsx` — gate `logDetailsMedia` behind `ENABLE_VERBOSE_SOURCE_LOGS`
+
+### Build
+- `tsc --noEmit` ✅ passes (only pre-existing `LibraryGameDetails.tsx` unused-variable warnings)
+- `vite build` ✅ passes (only pre-existing chunk warnings)
+
+## Session — Final Smooth Startup Guard: Do Not Build Cold Store During Boot Critical Path
+
+### Goal
+Avoid heavy Store Discover build over 162K games during boot critical path.
+
+### Part 1: App.tsx — restore fallback
+- `restoreActivePage()` checks `getCachedStoreDiscover()` + `isCacheComplete()` when stored page is `"store"`.
+- If no complete cache, returns `"home"` instead. Log: `[ROUTE][RESTORE_FALLBACK]`.
+
+### Part 2: Store.tsx — defer cold discover build
+- `rankedSteamCatalog` useMemo: when no complete cache and `!isBootReady()`, returns `[]` + logs `[STORE][BUILD_DEFER]`.
+- `deferredBuildKey` + `bootPollRef` — polls `isBootReady()` at 300ms intervals; increments key when ready, triggering rebuild.
+- Partial cache write guarded: logs `[STORE][PARTIAL_BUILD_DEFER] reason=boot-critical`.
+
+### Part 3: Complete cache fast path preserved
+- When complete cache exists, `rankedSteamCatalog` returns cached data instantly — no deferral overhead.
+
+### Key Files Changed
+- `src/App.tsx` — import + restore fallback
+- `src/pages/Store.tsx` — `isBootReady` import, `deferredBuildKey`/`bootPollRef`, deferral guard, polling effect, partial cache guard
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
+## Session — Playtime Lookup Fixes (Phases 2-8)
+
+### Goal
+Fix playtime not showing correctly across all surfaces by auditing the entire playtime data flow — from Rust `record_play_session_end` to TS consumer components.
+
+### Phase 1: Audit complete
+Root causes identified:
+- **`computeTotalPlaytime()`** was fundamentally wrong: returned `externalPlaytimeSeconds` for external-source games (ignoring local session playtime) and `localPlaytimeSeconds` for local games (ignoring external/imported playtime). Rust already correctly maintains `totalPlaytimeSeconds`.
+- **Key construction mismatch**: Some call sites used `game.id` (e.g., `"steam-480"`) instead of `\`app-${game.appId}\`` (e.g., `"app-480"`) for playtime store lookup, producing cache misses.
+- **GameHero.tsx** displayed snapshot playtime (`heroGame.playtime` in minutes) instead of playtime store data with per-second precision.
+- **`lastPlayedAt`** was only set on session end (Rust) — sessions that ran for hours showed stale `lastPlayedAt` until the game exited.
+- **Snapshot playtime** used only Steam stats, ignoring LumaForge-tracked sessions.
+- **Manual Refresh Achievements** handled all layers (store + disk) but didn't explicitly schedule a snapshot write.
+
+### Phase 2: Helper functions + `computeTotalPlaytime` fix
+- **`computeTotalPlaytime()`** (`playtimeService.ts:122`) now returns `entry.totalPlaytimeSeconds` — trusts Rust's authoritative total.
+- **`getPlaytimeEntryByAppId(appId)`** — normalized lookup via `\`app-${appId}\`` key; returns `null` for null/missing appId.
+- **`getPlaytimeSecondsForAppId(appId)`** — convenience wrapper returning `totalPlaytimeSeconds` or 0.
+- Fixed 6 call sites to use helpers:
+  - `GameHero.tsx` — `getEffectiveLastPlayedMs` and hero selection
+  - `TopPlayedSection.tsx` — session count + totalSeconds
+  - `LibraryGameDetails.tsx` — key construction + lookup
+  - `LibraryGameDetailPage.tsx` — key construction for import
+
+### Phase 3: GameHero display
+- `heroPlaytimeStr` useMemo — prefers playtime store seconds, falls back to snapshot minutes.
+- `lastPlayedStr` useMemo — prefers playtime store `lastPlayedAt` (updated at session start), falls back to snapshot.
+- Playtime display shows `"X min"` from store (per-second precision) or snapshot (backup).
+
+### Phase 4: `lastPlayedAt` updated on session launch
+- `GameSessionContext.tsx:1078-1083` — after `startPlaySession` succeeds, also updates `cachedStore.games[key].lastPlayedAt` to `Date.now() / 1000` immediately.
+- UI now shows "just now" for currently-playing games without waiting for session end.
+
+### Phase 5: Playtime merged into snapshot
+- `startupSnapshotService.ts:1184` — snapshot `playtime` field uses `getPlaytimeSecondsForAppId(appId) / 60` (playtime store first), falls back to `game.steamPlaytimeMinutes`.
+- Dashboard sections reading snapshot data now see LumaForge-tracked playtime.
+
+### Phase 6: Achievement summary refresh (no changes needed)
+- Already implemented in Session — `LibraryGameDetails.tsx:522-638` reads disk cache for visible app only, no auto-scan.
+- `ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP = true` flag.
+
+### Phase 7: Manual Refresh Achievements
+- Handler calls `achievementStore.setSummary(appIdStr, s)` which persists to disk.
+- Next snapshot write (triggered by LibraryGamesContext) picks up fresh achievement data from `achievementStore` during `buildStartupSnapshotFromCurrentState`.
+- No explicit snapshot schedule needed — incremental flow captures it.
+
+### Phase 8: Snapshot write reason logging
+- `scheduleSnapshotWrite()` now accepts optional `reason` parameter (defaults to `"full-rebuild"`).
+- `[BootSnapshot][SCHEDULE] reason=<caller>` log for each call site:
+  - `library-reconcile` — from LibraryGamesContext effect
+  - `batch-media-update` — from `notifyMediaUpdatedBatch`
+  - `media-change` — from `scheduleSnapshotUpdateAfterMediaChange`
+- All defer/no-op logs also include `caller=<reason>`.
+
+### Key Files Changed
+- `src/services/playtimeService.ts` — `computeTotalPlaytime` fix, `getPlaytimeEntryByAppId`, `getPlaytimeSecondsForAppId`
+- `src/components/dashboard/GameHero.tsx` — helper imports, `getEffectiveLastPlayedMs` rewrite, `heroPlaytimeStr` + `lastPlayedStr` useMemoi
+- `src/components/dashboard/TopPlayedSection.tsx` — helper imports, sessionCount + totalSeconds via helpers
+- `src/components/library/LibraryGameDetails.tsx` — `getPlaytimeEntryByAppId` import, key construction fix
+- `src/pages/LibraryGameDetailPage.tsx` — key construction fix for playtime import
+- `src/context/GameSessionContext.tsx` — `getCachedPlaytimeStore` import, `lastPlayedAt` update on session start
+- `src/services/startupSnapshotService.ts` — `getPlaytimeSecondsForAppId` import, snapshot playtime merge, `reason` param on `scheduleSnapshotWrite`
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
+- `vite build` ✅ (only pre-existing chunk warnings)

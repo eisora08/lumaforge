@@ -710,7 +710,7 @@ class AchievementWatcherService {
           const cached = await readAchievementCache(Number(appId));
           if (cached) {
             const cachedSummary = this.cacheToSummary(appId, cached);
-            console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=cache(watcher) unlocked=${cachedSummary.unlocked}/${cachedSummary.total} updatedAt=${cachedSummary.updatedAt} progressAvailable=${cachedSummary.progressAvailable}`);
+            if (DEBUG_ACH_WATCHER) console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=cache(watcher) unlocked=${cachedSummary.unlocked}/${cachedSummary.total} updatedAt=${cachedSummary.updatedAt} progressAvailable=${cachedSummary.progressAvailable}`);
             achievementStore.setSummary(appId, cachedSummary);
             console.debug(`[ACH][BG][${traceId}] loadedCacheFallback=true appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
           }

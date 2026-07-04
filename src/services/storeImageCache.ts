@@ -43,6 +43,16 @@ export function getStoreImageCacheVersion(): number {
 
 const ENABLE_VERBOSE_LOGS = false;
 
+// Throttle placeholder logs per appId to avoid spam
+const _placeholderLogged = new Set<string>();
+function logPlaceholderOnce(appId: string): void {
+  if (!_placeholderLogged.has(appId)) {
+    _placeholderLogged.add(appId);
+    console.log(`[IMG][PLACEHOLDER] appid=${appId} reason=all-fallbacks-failed`);
+  }
+}
+
+
 function log(...args: unknown[]) {
   if (ENABLE_VERBOSE_LOGS) {
     console.log("[StoreImage]", ...args);
@@ -118,6 +128,22 @@ export function getStoreImageCacheSnapshot(): Record<string, StoreImageCacheEntr
   return snapshot;
 }
 
+// ── Steam CDN URL builder ──
+// Generates full filenames only. Never truncates or slices extensions.
+export function buildSteamImageUrl(appId: string | number, kind: "capsule" | "header" | "hero" | "library" | "capsule-small"): string | null {
+  const id = typeof appId === "string" ? parseInt(appId, 10) : appId;
+  if (!id || isNaN(id) || id <= 0) return null;
+  const base = `https://steamcdn-a.akamaihd.net/steam/apps/${id}`;
+  switch (kind) {
+    case "capsule": return `${base}/capsule_616x353.jpg`;
+    case "capsule-small": return `${base}/capsule_184x69.jpg`;
+    case "header": return `${base}/header.jpg`;
+    case "hero":
+    case "library": return `${base}/library_hero.jpg`;
+    default: return null;
+  }
+}
+
 // Build a display image URL from catalog metadata / provider / fallback
 // Does NOT touch local MediaIndex or appinfo.
 export function resolveStoreDisplayImage(
@@ -161,27 +187,18 @@ export function resolveStoreDisplayImage(
     }
   }
 
-  // Steam CDN fallback
+  // Steam CDN fallback via buildSteamImageUrl helper
   const appIdNum = Number(appId);
   if (Number.isFinite(appIdNum) && appIdNum > 0) {
     let cdnUrl: string | null = null;
-    // Steam CDN URL patterns
-    if (role === "hero") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/library_hero.jpg`;
-    } else if (role === "capsule") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/capsule_231x87.jpg`;
-    } else if (role === "header") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/header.jpg`;
-    } else if (role === "featured" || role === "featuredThumb") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/capsule_616x353.jpg`;
-    } else if (role === "thumbnail" || role === "browseCard") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/capsule_184x69.jpg`;
-    } else if (role === "newsCard") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/header.jpg`;
-    } else if (role === "storeDetailsHero") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/library_hero.jpg`;
-    } else if (role === "storeDetailsThumb") {
-      cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/capsule_184x69.jpg`;
+    if (role === "hero" || role === "storeDetailsHero") {
+      cdnUrl = buildSteamImageUrl(appIdNum, "hero");
+    } else if (role === "featured" || role === "featuredThumb" || role === "capsule") {
+      cdnUrl = buildSteamImageUrl(appIdNum, "capsule");
+    } else if (role === "header" || role === "newsCard") {
+      cdnUrl = buildSteamImageUrl(appIdNum, "header");
+    } else if (role === "thumbnail" || role === "browseCard" || role === "storeDetailsThumb") {
+      cdnUrl = buildSteamImageUrl(appIdNum, "capsule-small");
     }
     if (cdnUrl) {
       setStoreImageCacheEntry(appId, role, {
@@ -245,13 +262,13 @@ export function getBestStoreImage(
     for (const role of rolePriority) {
       let cdnUrl: string | null = null;
       if (role === "hero" || role === "storeDetailsHero") {
-        cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/library_hero.jpg`;
+        cdnUrl = buildSteamImageUrl(appIdNum, "hero");
       } else if (role === "featured" || role === "capsule") {
-        cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/capsule_616x353.jpg`;
+        cdnUrl = buildSteamImageUrl(appIdNum, "capsule");
       } else if (role === "header") {
-        cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/header.jpg`;
+        cdnUrl = buildSteamImageUrl(appIdNum, "header");
       } else if (role === "thumbnail" || role === "browseCard") {
-        cdnUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}/capsule_184x69.jpg`;
+        cdnUrl = buildSteamImageUrl(appIdNum, "capsule-small");
       }
       if (cdnUrl) {
         setStoreImageCacheEntry(appId, role, {
@@ -267,5 +284,6 @@ export function getBestStoreImage(
     }
   }
 
+  logPlaceholderOnce(appId);
   return undefined;
 }

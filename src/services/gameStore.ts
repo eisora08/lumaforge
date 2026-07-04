@@ -80,7 +80,7 @@ export function setReconciledGamesFromSnapshot(
 export type LibraryHealthReport = {
   luaGames: number;
   sqliteGames: number;
-  storeGames: number;
+  reconciledGames: number;
   missingFromSQLite: number;
   missingFromStore: number;
   staleSqliteOnly: number;
@@ -115,24 +115,26 @@ export async function validateLibraryIndexHealth(
   } catch { /* ignore */ }
 
   const sqliteAppIds = new Set(sqliteEntries.map((e) => e.appId));
-  const storeAppIds = new Set(storeGames.filter((g) => g.appId).map((g) => g.appId!));
-  const allConfigured = new Set([...luaAppIds, ...storeAppIds]);
+  const reconciledAppIds = new Set(storeGames.filter((g) => g.appId).map((g) => g.appId!));
+  const allConfigured = new Set([...luaAppIds, ...reconciledAppIds]);
 
   const missingFromSQLite = [...allConfigured].filter((id) => !sqliteAppIds.has(id));
-  const missingFromStore = [...allConfigured].filter((id) => !storeAppIds.has(id));
+  const missingFromStore = [...allConfigured].filter((id) => !reconciledAppIds.has(id));
   const staleSqliteOnly = [...sqliteAppIds].filter((id) => !allConfigured.has(id));
 
-  // Check media health
-  for (const game of storeGames) {
-    if (!game.appId) continue;
-    try {
-      const { resolveGameMediaPaths } = await import("./tauri");
-      const paths = await resolveGameMediaPaths(game.appId);
-      if (!paths || (!paths.landscapePath && !paths.coverPath && !paths.backgroundPath)) {
+  // Check media health — batch all appIds in a single invoke
+  const mediaHealthAppIds = storeGames.filter((g) => g.appId).map((g) => g.appId!) as string[];
+  if (mediaHealthAppIds.length > 0) {
+    const { resolveGameMediaPathsBatch } = await import("./tauri");
+    const paths = await resolveGameMediaPathsBatch(mediaHealthAppIds);
+    for (const game of storeGames) {
+      if (!game.appId) continue;
+      const gamePaths = paths[game.appId];
+      if (!gamePaths || (!gamePaths.landscapePath && !gamePaths.coverPath && !gamePaths.backgroundPath)) {
         missingMedia++;
         details.push(`[HEALTH] appid=${game.appId} no media files on disk`);
       }
-    } catch { /* ignore */ }
+    }
   }
 
   // Check for invalid persisted paths (absolute appdata paths)
@@ -152,7 +154,7 @@ export async function validateLibraryIndexHealth(
   const report: LibraryHealthReport = {
     luaGames: luaAppIds.size,
     sqliteGames: sqliteAppIds.size,
-    storeGames: storeAppIds.size,
+    reconciledGames: reconciledAppIds.size,
     missingFromSQLite: missingFromSQLite.length,
     missingFromStore: missingFromStore.length,
     staleSqliteOnly: staleSqliteOnly.length,
@@ -163,7 +165,7 @@ export async function validateLibraryIndexHealth(
 
   console.log(`[LIBRARY][HEALTH] luaGames=${report.luaGames}`);
   console.log(`[LIBRARY][HEALTH] sqliteGames=${report.sqliteGames}`);
-  console.log(`[LIBRARY][HEALTH] storeGames=${report.storeGames}`);
+  console.log(`[LIBRARY][HEALTH] reconciledGames=${report.reconciledGames}`);
   console.log(`[LIBRARY][HEALTH] missingFromSQLite=${report.missingFromSQLite}`);
   console.log(`[LIBRARY][HEALTH] missingFromStore=${report.missingFromStore}`);
   console.log(`[LIBRARY][HEALTH] missingMedia=${report.missingMedia}`);
@@ -215,10 +217,21 @@ export async function validateMediaCacheHealth(): Promise<MediaCacheHealthReport
   let assetUrlsPersisted = 0;
 
   try {
-    const { readCanonicalAppinfos, validateSnapshotMediaPaths } = await import("./tauri");
+    const { readCanonicalAppinfos, validateSnapshotMediaPathsBatch } = await import("./tauri");
     const appIds = _reconciledGames.map((g) => g.appId).filter(Boolean) as string[];
     const appinfos = await readCanonicalAppinfos(appIds);
     let gamesCount = 0;
+
+    // Phase 3+5: Batch-validate all media paths in a single invoke.
+    const mediaValidationBatch: Record<string, { landscapePath: string | null; coverPath: string | null; backgroundPath: string | null; logoPath: string | null; iconPath: string | null }> = {};
+    for (const [appId, info] of Object.entries(appinfos)) {
+      if (info?.media) {
+        mediaValidationBatch[appId] = info.media;
+      }
+    }
+    const validatedBatch = Object.keys(mediaValidationBatch).length > 0
+      ? await validateSnapshotMediaPathsBatch(mediaValidationBatch)
+      : {};
 
     for (const [appId, info] of Object.entries(appinfos)) {
       if (!info) continue;
@@ -249,7 +262,7 @@ export async function validateMediaCacheHealth(): Promise<MediaCacheHealthReport
           }
         }
 
-        const validated = await validateSnapshotMediaPaths(appId, info.media as any).catch(() => null);
+        const validated = validatedBatch[appId];
         if (validated) {
           const missing = [
             !validated.landscapeExists && !!info.media.landscapePath,
@@ -311,7 +324,7 @@ export async function validateMediaCacheHealth(): Promise<MediaCacheHealthReport
 export async function validateStartupCacheHealth(): Promise<{
   snapshotGames: number;
   sqliteGames: number;
-  storeGames: number;
+  reconciledCacheGames: number;
   luaGames: number;
   jobsQueued: number;
   mediaIndexEntries: number;
@@ -323,7 +336,7 @@ export async function validateStartupCacheHealth(): Promise<{
 }> {
   let snapshotGames = 0;
   let sqliteGames = 0;
-  let storeGames = 0;
+  let reconciledCacheGames = 0;
   let luaGames = 0;
   let mediaIndexEntries = 0;
   let mediaWithCover = 0;
@@ -347,7 +360,7 @@ export async function validateStartupCacheHealth(): Promise<{
     sqliteGames = all.length;
   } catch { /* ignore */ }
 
-  storeGames = _reconciledGames.length;
+  reconciledCacheGames = _reconciledGames.length;
 
   try {
     const { getCachedSettings } = await import("./appBootCoordinator");
@@ -378,7 +391,7 @@ export async function validateStartupCacheHealth(): Promise<{
 
   console.log(`[BOOT][HEALTH] snapshotGames=${snapshotGames}`);
   console.log(`[BOOT][HEALTH] sqliteGames=${sqliteGames}`);
-  console.log(`[BOOT][HEALTH] storeGames=${storeGames}`);
+  console.log(`[BOOT][HEALTH] reconciledCacheGames=${reconciledCacheGames}`);
   console.log(`[BOOT][HEALTH] luaGames=${luaGames}`);
   console.log(`[BOOT][HEALTH] jobsQueued=${jobsQueued}`);
   console.log(`[BOOT][HEALTH] mediaIndexEntries=${mediaIndexEntries}`);
@@ -388,7 +401,7 @@ export async function validateStartupCacheHealth(): Promise<{
   console.log(`[BOOT][HEALTH] mediaWithLogo=${mediaWithLogo}`);
   console.log(`[BOOT][HEALTH] mediaWithIcon=${mediaWithIcon}`);
 
-  return { snapshotGames, sqliteGames, storeGames, luaGames, jobsQueued, mediaIndexEntries, mediaWithCover, mediaWithLandscape, mediaWithBackground, mediaWithLogo, mediaWithIcon };
+  return { snapshotGames, sqliteGames, reconciledCacheGames, luaGames, jobsQueued, mediaIndexEntries, mediaWithCover, mediaWithLandscape, mediaWithBackground, mediaWithLogo, mediaWithIcon };
 }
 
 // ── Dev validation: validateAppInfoMedia ──
@@ -502,7 +515,8 @@ export async function rebuildLibraryIndex(
   console.log("[LIBRARY][REBUILD] started");
   const { resolveLibraryGames } = await import("./libraryGameResolver");
   const { saveCachedGames } = await import("./gameDetectionCache");
-  const { batchUpsertGames, readCanonicalAppinfos, getStoreDetails, updateGameAppinfoMedia } = await import("./tauri");
+  const { batchUpsertGames, readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
+  const { updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
 
   const result = await resolveLibraryGames(settings);
   const games = result.games;
@@ -532,10 +546,12 @@ export async function rebuildLibraryIndex(
         game.title = resolvedName;
         // Write to canonical appinfo so snapshot hydration can use name on next boot
         if (source !== "appinfo") {
-          updateGameAppinfoMedia(
+          updateGameAppinfoMediaIfChanged(
             game.appId, resolvedName,
             { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
             null,
+            undefined,
+            "rebuildLibraryIndex",
           ).catch(() => {});
         }
       } else {

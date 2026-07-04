@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SkeletonBox } from "./Skeleton";
 import { readGameMediaDataUrl } from "../../services/gameCacheService";
+import { countRender, isInteractionBusy } from "../../services/perfCounters";
 
 type AsyncImageProps = {
   src?: string | null;
@@ -57,6 +58,7 @@ export default function AsyncImage({
   fallback, onLoad, onError, loading = "lazy", decoding = "async",
   fallbackLocalPath,
 }: AsyncImageProps) {
+  countRender("AsyncImage");
   const [displaySrc, setDisplaySrc] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -194,7 +196,20 @@ export default function AsyncImage({
       imageLoadCache.set(srcRef.current, { status: "failed", lastUpdated: Date.now() });
       imgLog("LOAD_FAIL", `urlHash=${urlHash(srcRef.current)}`);
     }
-    console.log(`[MEDIA][ASYNC_IMAGE_ERROR] displaySrcPrefix=${displaySrc ? displaySrc.slice(0, 60) : "null"} dataUrlAttempted=${dataUrlAttemptedRef.current} hasFallbackPath=${!!fallbackLocalPathRef.current} event=${event.type}`);
+    // Only log terminal errors (no parent fallback handler) to reduce noise.
+    // When onError is set (e.g. PackageCard fallback chain), the parent handles
+    // retrying with alternate URLs — errors during fallback are expected.
+    const isTerminal = !onErrorRef.current;
+    if (isTerminal || fallbackLocalPathRef.current) {
+      console.log(`[MEDIA][ASYNC_IMAGE_ERROR] displaySrcPrefix=${displaySrc ? displaySrc.slice(0, 60) : "null"} dataUrlAttempted=${dataUrlAttemptedRef.current} hasFallbackPath=${!!fallbackLocalPathRef.current} terminal=${isTerminal} event=${event.type}`);
+    }
+    // Phase 8: Skip data URL fallback during active interaction (scroll/click)
+    if (isInteractionBusy()) {
+      setFailed(true);
+      onErrorRef.current?.();
+      return;
+    }
+
     if (
       !dataUrlAttemptedRef.current &&
       fallbackLocalPathRef.current &&

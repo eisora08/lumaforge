@@ -710,7 +710,7 @@ export default function Settings() {
                         const lines = [
                           `Lua games: ${report.luaGames}`,
                           `SQLite games: ${report.sqliteGames}`,
-                          `Store games: ${report.storeGames}`,
+                          `Reconciled games: ${report.reconciledGames}`,
                           `Missing from SQLite: ${report.missingFromSQLite}`,
                           `Missing from Store: ${report.missingFromStore}`,
                           `Stale SQLite-only: ${report.staleSqliteOnly}`,

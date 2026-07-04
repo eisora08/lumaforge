@@ -174,63 +174,66 @@ fn resolve_snapshot_media_path(app_handle: &AppHandle, app_id: &str, path: &str)
     }
 }
 
-#[tauri::command]
-pub fn validate_snapshot_media_paths(
-    app_handle: AppHandle,
-    app_id: String,
-    media: crate::models::startup_snapshot::SnapshotGameMedia,
-) -> Result<ValidatedMediaPaths, String> {
+/// Internal helper: validate a single snapshot media path entry.
+/// Used by both validate_snapshot_media_paths and validate_snapshot_media_paths_batch.
+fn validate_single_media_path(
+    app_handle: &AppHandle,
+    app_id: &str,
+    role: &str,
+    path: &Option<String>,
+) -> (Option<String>, bool) {
     let provider = "steam";
-    let check_path = |role: &str, path: &Option<String>| -> (Option<String>, bool) {
-        match path {
-            Some(p) => {
-                // Remote URLs, data: URIs, and asset:// URLs are kept as-is
-                if p.starts_with("http://") || p.starts_with("https://")
-                    || p.starts_with("data:") || p.starts_with("asset://")
-                    || p.starts_with("file://")
-                {
-                    return (Some(p.clone()), true);
-                }
-                // .tmp paths are always stripped (stale download artifacts)
-                if p.ends_with(".tmp") {
-                    println!("[BootSnapshot] stripping .tmp path: {}", p);
-                    return (None, false);
-                }
-                // Resolve provider-relative paths against game directory
-                // For paths like "media/landscape.jpg", resolve against
-                // <appData>/games/steam/<appId>/media/landscape.jpg
-                // This matches the layout used by update_game_appinfo_media
-                // and media_path_exists_for_app in game_cache.rs.
-                let resolved = resolve_snapshot_media_path(&app_handle, &app_id, p);
-                let exists = resolved.exists();
-                const DEBUG_BOOTSNAPSHOT_VALIDATE: bool = false;
-                if DEBUG_BOOTSNAPSHOT_VALIDATE {
-                    println!(
-                        "[BootSnapshot][VALIDATE_PATH] appid={} provider={} role={} input={} resolved={} exists={}",
-                        app_id, provider, role, p, resolved.display(), exists
-                    );
-                }
-                if exists {
-                    (Some(p.clone()), true)
-                } else {
-                    println!(
-                        "[BootSnapshot][VALIDATE_PATH_MISSING] appid={} role={} resolved={}",
-                        app_id, role, resolved.display()
-                    );
-                    (None, false)
-                }
+    match path {
+        Some(p) => {
+            // Remote URLs, data: URIs, and asset:// URLs are kept as-is
+            if p.starts_with("http://") || p.starts_with("https://")
+                || p.starts_with("data:") || p.starts_with("asset://")
+                || p.starts_with("file://")
+            {
+                return (Some(p.clone()), true);
             }
-            None => (None, false),
+            // .tmp paths are always stripped (stale download artifacts)
+            if p.ends_with(".tmp") {
+                println!("[BootSnapshot] stripping .tmp path: {}", p);
+                return (None, false);
+            }
+            // Resolve provider-relative paths against game directory
+            let resolved = resolve_snapshot_media_path(app_handle, app_id, p);
+            let exists = resolved.exists();
+            const DEBUG_BOOTSNAPSHOT_VALIDATE: bool = false;
+            if DEBUG_BOOTSNAPSHOT_VALIDATE {
+                println!(
+                    "[BootSnapshot][VALIDATE_PATH] appid={} provider={} role={} input={} resolved={} exists={}",
+                    app_id, provider, role, p, resolved.display(), exists
+                );
+            }
+            if exists {
+                (Some(p.clone()), true)
+            } else {
+                println!(
+                    "[BootSnapshot][VALIDATE_PATH_MISSING] appid={} role={} resolved={}",
+                    app_id, role, resolved.display()
+                );
+                (None, false)
+            }
         }
-    };
+        None => (None, false),
+    }
+}
 
-    let (cover_path, cover_exists) = check_path("cover", &media.cover_path);
-    let (landscape_path, landscape_exists) = check_path("landscape", &media.landscape_path);
-    let (background_path, background_exists) = check_path("background", &media.background_path);
-    let (logo_path, logo_exists) = check_path("logo", &media.logo_path);
-    let (icon_path, icon_exists) = check_path("icon", &media.icon_path);
+/// Internal helper: validate all 5 media roles for a single app.
+fn validate_snapshot_game_media(
+    app_handle: &AppHandle,
+    app_id: &str,
+    media: &crate::models::startup_snapshot::SnapshotGameMedia,
+) -> ValidatedMediaPaths {
+    let (cover_path, cover_exists) = validate_single_media_path(app_handle, app_id, "cover", &media.cover_path);
+    let (landscape_path, landscape_exists) = validate_single_media_path(app_handle, app_id, "landscape", &media.landscape_path);
+    let (background_path, background_exists) = validate_single_media_path(app_handle, app_id, "background", &media.background_path);
+    let (logo_path, logo_exists) = validate_single_media_path(app_handle, app_id, "logo", &media.logo_path);
+    let (icon_path, icon_exists) = validate_single_media_path(app_handle, app_id, "icon", &media.icon_path);
 
-    Ok(ValidatedMediaPaths {
+    ValidatedMediaPaths {
         cover_path,
         cover_exists,
         landscape_path,
@@ -241,5 +244,35 @@ pub fn validate_snapshot_media_paths(
         logo_exists,
         icon_path,
         icon_exists,
-    })
+    }
+}
+
+#[tauri::command]
+pub fn validate_snapshot_media_paths(
+    app_handle: AppHandle,
+    app_id: String,
+    media: crate::models::startup_snapshot::SnapshotGameMedia,
+) -> Result<ValidatedMediaPaths, String> {
+    Ok(validate_snapshot_game_media(&app_handle, &app_id, &media))
+}
+
+// ---------------------------------------------------------------------------
+// validate_snapshot_media_paths_batch — batch validate media paths for
+// multiple games in a single Tauri call.
+// Replaces per-app validateSnapshotMediaPaths loops in
+// hydrateStartupSnapshotMedia and buildStartupSnapshotFromCurrentState.
+// Read-only, per-item errors are non-fatal (missing entry = skipped).
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn validate_snapshot_media_paths_batch(
+    app_handle: AppHandle,
+    items: std::collections::HashMap<String, crate::models::startup_snapshot::SnapshotGameMedia>,
+) -> Result<std::collections::HashMap<String, ValidatedMediaPaths>, String> {
+    use std::collections::HashMap;
+    let mut result = HashMap::new();
+    for (app_id, media) in items {
+        result.insert(app_id.clone(), validate_snapshot_game_media(&app_handle, &app_id, &media));
+    }
+    Ok(result)
 }

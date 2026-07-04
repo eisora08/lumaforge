@@ -383,7 +383,9 @@ export default function StoreGameDetailsPage({
       console.log(
         `[STORE][SOURCE_STATE] appid=${game.appId} checking=${isChecking} savedSelected=${hasSavedSource} selectedProvider=${effectiveSelectedSource?.providerName || "null"} providerResults=${game.sources.length} hasPreview=${!!imageUrl}`,
       );
-      logDetailsMedia(game.appId, previewResult, isChecking);
+      if (ENABLE_VERBOSE_SOURCE_LOGS) {
+        logDetailsMedia(game.appId, previewResult, isChecking);
+      }
     }
   });
 

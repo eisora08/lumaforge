@@ -1,9 +1,10 @@
-import { Children, ReactNode, useEffect, useRef } from "react";
+import { Children, memo, ReactNode, useEffect, useRef } from "react";
 import {
   ArrowRight,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import { countRender } from "../../services/perfCounters";
 
 type StoreHorizontalSectionProps = {
   title: string;
@@ -16,7 +17,24 @@ type StoreHorizontalSectionProps = {
   sectionKey?: string;
 };
 
-export default function StoreHorizontalSection({
+function areSectionPropsEqual(
+  a: StoreHorizontalSectionProps,
+  b: StoreHorizontalSectionProps,
+): boolean {
+  // Section metadata — string changes trigger re-render
+  if (a.title !== b.title) return false;
+  if (a.description !== b.description) return false;
+  if (a.sectionKey !== b.sectionKey) return false;
+  // onViewAll handler identity (stable if useCallback-ed in parent)
+  if (a.onViewAll !== b.onViewAll) return false;
+  // autoScrollToEndKey
+  if (a.autoScrollToEndKey !== b.autoScrollToEndKey) return false;
+  // Skip children — PackageCard has its own memo, section re-render is cheap
+  // if title/description/sectionKey haven't changed
+  return true;
+}
+
+function StoreHorizontalSectionRaw({
   title,
   description,
   children,
@@ -24,6 +42,7 @@ export default function StoreHorizontalSection({
   autoScrollToEndKey,
   sectionKey,
 }: StoreHorizontalSectionProps) {
+  countRender("StoreHorizontalSection");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -115,3 +134,6 @@ export default function StoreHorizontalSection({
     </section>
   );
 }
+
+const StoreHorizontalSection = memo(StoreHorizontalSectionRaw, areSectionPropsEqual);
+export default StoreHorizontalSection;

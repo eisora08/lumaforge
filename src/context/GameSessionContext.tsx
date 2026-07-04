@@ -1,18 +1,87 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isProcessRunning, terminateProcess, terminateProcessTree, terminateProcessByName, launchSteamApp, launchExecutable, listProcesses } from "../services/tauri";
 import { findGameProcess, findGameProcesses, findCandidates, pickBestCandidate, resolveExecutablePath, getExeNamesFromSession, extractExeName } from "../utils/gameProcessDetection";
-import { startPlaySession, endPlaySession } from "../services/playtimeService";
+import { startPlaySession, endPlaySession, getCachedPlaytimeStore } from "../services/playtimeService";
+import { setActivePlayedSession, clearActivePlayedSession } from "../services/achievementAutoSyncService";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
 import { setInstalledGameEntry, discoverAndRegister } from "../services/installedGamesRegistry";
 
 const ENABLE_VERBOSE_LAUNCH_LOGS = false;
+const ENABLE_VERBOSE_SESSION_POLL = false;
+const ENABLE_VERBOSE_ACH_REFRESH_LOGS = false;
 const STOP_RETRY_MAX = 5;
 const STOP_RETRY_DELAY_MS = 400;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Targeted lightweight local-cache achievement refresh for a single appId.
+ *  Reads disk cache, compares with store, applies if newer, persists, snaps. */
+async function attemptAchievementRefresh(appId: string): Promise<void> {
+  try {
+    const { readAchievementCache, writeAchievementCache } = await import("../services/tauri");
+    const { achievementStore } = await import("../services/achievementStore");
+    const cached = await readAchievementCache(Number(appId));
+    if (!cached) {
+      console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=false updatedAt=null`);
+      return;
+    }
+    const diskUpdatedAt = cached.summary.updated_at;
+    if (ENABLE_VERBOSE_ACH_REFRESH_LOGS) console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=true updatedAt=${diskUpdatedAt}`);
+    const existingSummary = achievementStore.getSummary(appId);
+    const storeUpdatedAt = existingSummary?.updatedAt ?? 0;
+    if (diskUpdatedAt <= storeUpdatedAt) {
+      console.log(`[ACH][SESSION_STOP_REFRESH_SKIP] appid=${appId} reason=no-newer-local-cache`);
+      return;
+    }
+    const newUnlocked = cached.summary.unlocked;
+    const newTotal = cached.summary.total;
+    const oldUnlocked = existingSummary?.unlocked ?? 0;
+    if (ENABLE_VERBOSE_ACH_REFRESH_LOGS) console.log(`[ACH][SUMMARY_COMPARE] appid=${appId} old=${oldUnlocked}/${existingSummary?.total ?? 0} new=${newUnlocked}/${newTotal} changed=true`);
+    const achievements = cached.achievements.map((entry: any) => ({
+      id: entry.api_name,
+      apiName: entry.api_name,
+      name: entry.name,
+      description: entry.description,
+      iconUrl: entry.icon ?? entry.icon_url,
+      iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
+      unlocked: entry.unlocked,
+      unlockTime: entry.unlock_time ? (entry.unlock_time < 1000000000000 ? entry.unlock_time * 1000 : entry.unlock_time) : undefined,
+      rarityPercent: entry.rarity_percent,
+      statId: entry.stat_id,
+      bit: entry.bit,
+    }));
+    const summary = {
+      appId,
+      total: newTotal,
+      unlocked: newUnlocked,
+      percent: cached.summary.percent,
+      progressAvailable: cached.summary.progress_available,
+      source: cached.summary.source,
+      achievements,
+      updatedAt: diskUpdatedAt,
+    } as any;
+    achievementStore.setSummary(appId, summary);
+    console.log(`[ACH][SUMMARY_APPLY] appid=${appId} unlocked=${newUnlocked}/${newTotal} reason=session-stop-local-cache`);
+    // Phase 4: Persist to disk cache immediately
+    try {
+      await writeAchievementCache(Number(appId), cached);
+      console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt}`);
+    } catch (writeErr) {
+      console.warn(`[ACH][CACHE_WRITE] failed appid=${appId}`, String(writeErr));
+    }
+    // Schedule snapshot write
+    const { notifyMediaUpdated } = await import("../services/startupSnapshotService");
+    await notifyMediaUpdated(appId, { source: "achievement-refresh" });
+    console.log(`[BootSnapshot][SCHEDULE] reason=achievement-summary-changed appid=${appId}`);
+    // Phase 7: Manual Refresh remaining paths
+    // (Manual Refresh Achievements continues to work via existing code path)
+  } catch (err) {
+    console.warn(`[ACH][SESSION_STOP_REFRESH] failed appid=${appId}`, String(err));
+  }
 }
 
 export type OverlayEvent = {
@@ -196,7 +265,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         if (s.state === "running" && s.pid != null) {
           try {
             const running = await isProcessRunning(s.pid);
-            console.debug("[GameSession] pid check", { gameKey: key, pid: s.pid, running });
+            if (ENABLE_VERBOSE_SESSION_POLL) console.debug("[GameSession] pid check", { gameKey: key, pid: s.pid, running });
             if (!running) {
               console.debug("[GameSession] process exited, clearing", { gameKey: key });
               changed = true;
@@ -1052,6 +1121,11 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         if (!everRanRef.current.has(key)) {
           everRanRef.current.add(key);
 
+          // Phase 1: Register active played session for targeted achievement/playtime tracking
+          if (curSession.appId) {
+            setActivePlayedSession(curSession.appId, key);
+          }
+
           // Discover and register executable for Steam games without exe info
           if (curSession.source === "steam" && !curSession.executablePath && curSession.installDir) {
             discoverAndRegister(key, curSession.installDir, curSession.title, "steam").catch(() => {});
@@ -1077,6 +1151,43 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             startedAt: Math.floor(Date.now() / 1000),
           }).then((activeSession) => {
             activePlaySessionsRef.current[key] = activeSession.sessionId;
+            // Phase 5: Update lastPlayedAt in cached store immediately so UI shows "just now"
+            const cached = getCachedPlaytimeStore();
+            if (cached) {
+              const now = Math.floor(Date.now() / 1000);
+              // Always update via canonical app-<appId> key for consistent lookup
+              const canonicalKey = curSession.appId ? `app-${curSession.appId}` : key;
+              if (cached.games[canonicalKey]) {
+                cached.games[canonicalKey].lastPlayedAt = now;
+              } else {
+                // Create entry if it doesn't exist yet
+                cached.games[canonicalKey] = {
+                  gameKey: canonicalKey,
+                  appId: curSession.appId ?? null,
+                  provider: ptProvider,
+                  title: curSession.title || "Unknown Game",
+                  playtimeSource: ptProvider === "steam" ? "external" : "local",
+                  externalPlaytimeSeconds: 0,
+                  externalSource: ptProvider === "steam" ? "steam" : null,
+                  externalImportedAt: null,
+                  localPlaytimeSeconds: 0,
+                  totalPlaytimeSeconds: 0,
+                  lastPlayedAt: now,
+                  lastSessionSeconds: null,
+                  sessions: [],
+                };
+              }
+              // Also update legacy key if different
+              if (key !== canonicalKey) {
+                if (cached.games[key]) {
+                  cached.games[key].lastPlayedAt = now;
+                } else {
+                  cached.games[key] = { ...cached.games[canonicalKey], gameKey: key };
+                }
+              }
+              cached.updatedAt = Date.now();
+              console.log(`[ACTIVITY][LAUNCH_TRACKED] appid=${curSession.appId} lastPlayedAt=${now}`);
+            }
           }).catch((err: unknown) => {
             console.warn("[Playtime] start failed", err);
           });
@@ -1123,6 +1234,56 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
         // Clean up media ref
         delete sessionMediaRef.current[key];
+
+        // Phase 1: Clear active played session
+        if (prevSession.appId) {
+          clearActivePlayedSession();
+        }
+
+        // Phase 3+4+5+6: Targeted achievement + playtime refresh with retries
+        const stoppedAppId = prevSession.appId;
+        if (stoppedAppId && durationSeconds >= 15) {
+          console.log(`[ACH][SESSION_STOP_REFRESH] appid=${stoppedAppId} reason=played-session`);
+
+          // Phase 5: Log playtime session end
+          console.log(`[PLAYTIME][SESSION_STOP_REFRESH] appid=${stoppedAppId}`);
+          console.log(`[PLAYTIME][SESSION_END] appid=${stoppedAppId} seconds=${durationSeconds} threshold=15`);
+
+          (async () => {
+            // Attempt 1: immediate read
+            await attemptAchievementRefresh(stoppedAppId);
+
+            // Phase 6: Schedule snapshot write for playtime changes
+            try {
+              const { notifyMediaUpdated } = await import("../services/startupSnapshotService");
+              const cached = getCachedPlaytimeStore();
+              const ptEntry = cached?.games[`app-${stoppedAppId}`];
+              if (ptEntry) {
+                console.log(`[ACTIVITY][PLAYTIME_UPDATED] appid=${stoppedAppId} external=${ptEntry.externalPlaytimeSeconds} local=${ptEntry.localPlaytimeSeconds} total=${ptEntry.totalPlaytimeSeconds} source=${ptEntry.playtimeSource}`);
+              }
+              // Schedule snapshot for playtime change
+              notifyMediaUpdated(stoppedAppId, { source: "playtime-changed" }).catch(() => {});
+              console.log(`[BootSnapshot][SCHEDULE] reason=playtime-changed appid=${stoppedAppId}`);
+            } catch (snapErr) {
+              console.warn("[PLAYTIME] snapshot schedule failed", String(snapErr));
+            }
+          })();
+
+          // Retry 2: after 5 seconds
+          setTimeout(() => {
+            console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=5000`);
+            attemptAchievementRefresh(stoppedAppId).catch(() => {});
+          }, 5000);
+
+          // Retry 3: after 20 seconds
+          setTimeout(() => {
+            console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=20000`);
+            attemptAchievementRefresh(stoppedAppId).catch(() => {});
+          }, 20000);
+        } else if (stoppedAppId && durationSeconds < 15) {
+          console.log(`[PLAYTIME][SESSION_DURATION_SKIP] appid=${stoppedAppId} seconds=${durationSeconds} threshold=15 lastPlayedKept=true`);
+          // Clear session watch even for short sessions
+        }
       }
     }
 

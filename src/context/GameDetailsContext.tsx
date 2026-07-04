@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 type GlobalGameSelection = {
   appId: string;
@@ -17,16 +17,18 @@ const GameDetailsContext = createContext<GameDetailsContextValue | null>(null);
 export function GameDetailsProvider({ children }: { children: ReactNode }) {
   const [selectedGame, setSelectedGame] = useState<GlobalGameSelection | null>(null);
 
-  function selectGame(game: GlobalGameSelection) {
+  const selectGame = useCallback((game: GlobalGameSelection) => {
     setSelectedGame(game);
-  }
+  }, []);
 
-  function clearSelection() {
+  const clearSelection = useCallback(() => {
     setSelectedGame(null);
-  }
+  }, []);
+
+  const ctxValue = useMemo(() => ({ selectedGame, selectGame, clearSelection }), [selectedGame]);
 
   return (
-    <GameDetailsContext.Provider value={{ selectedGame, selectGame, clearSelection }}>
+    <GameDetailsContext.Provider value={ctxValue}>
       {children}
     </GameDetailsContext.Provider>
   );

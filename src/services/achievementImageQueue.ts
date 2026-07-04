@@ -3,7 +3,42 @@ import { downloadAchievementImage } from "./tauri";
 
 export const ACHIEVEMENT_IMAGE_MIGRATION_AUTO = false;
 export const DEBUG_ACH_MIGRATION = false;
+export const DEBUG_ACH_IMAGE_QUEUE = false;
 let _imgMigrationSkipLogged = false;
+
+// ── Session dedup for resolved images (Phase 2 + 7) ──
+// Prevents redundant resolveImageSource calls per appId+type+hash within a session.
+const _sessionResolvedHashes = new Set<string>();
+
+function extractImageIdentity(value: string): string | null {
+  if (!value) return null;
+  const hashMatch = value.match(/([a-f0-9]{40})/i);
+  if (hashMatch) return hashMatch[1].toLowerCase();
+  const fileMatch = value.match(/\/([^/]+)\.jpg$/);
+  if (fileMatch) return fileMatch[1].replace(/_gray$/, "").toLowerCase();
+  // Handle pure img/<hash>[_gray].jpg paths
+  const imgMatch = value.match(/^img\/([^.]+)/);
+  if (imgMatch) return imgMatch[1].replace(/_gray$/, "").toLowerCase();
+  return null;
+}
+
+export function isImageResolved(appId: string, value: string | null | undefined, type: ImageType): boolean {
+  if (!value) return false;
+  const identity = extractImageIdentity(value);
+  if (!identity) return false;
+  return _sessionResolvedHashes.has(`${appId}:${type}:${identity}`);
+}
+
+export function markImageResolved(appId: string, value: string | null | undefined, type: ImageType): void {
+  if (!value) return;
+  const identity = extractImageIdentity(value);
+  if (!identity) return;
+  _sessionResolvedHashes.add(`${appId}:${type}:${identity}`);
+}
+
+export function clearSessionResolveCache(): void {
+  _sessionResolvedHashes.clear();
+}
 
 function logImgMigrationSkipOnce(): void {
   if (!_imgMigrationSkipLogged) {
@@ -155,7 +190,7 @@ export function resolveImageSource(
   if (classification.kind === "steam-hash") {
     const suffix = type === "icon_gray" ? "_gray" : "";
     const fileName = `${value}${suffix}.jpg`;
-    console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${value} fileName=${fileName}`);
+    if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${value} fileName=${fileName}`);
     return {
       sourceUrl: buildCdnUrl(appId, value),
       fileName,
@@ -167,14 +202,14 @@ export function resolveImageSource(
     const rawFileName = value.split("/").filter(Boolean).pop() || "";
     // If no meaningful filename after the last slash, skip
     if (!rawFileName) {
-      console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} invalidUrl reason=no-filename url=${value}`);
+      if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} invalidUrl reason=no-filename url=${value}`);
       return null;
     }
     // For icon_gray, ensure hash-based filenames get _gray suffix
     const fileName = type === "icon_gray"
       ? rawFileName.replace(/^([a-f0-9]{40})\.jpg$/i, "$1_gray.jpg")
       : rawFileName;
-    console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${rawFileName.replace(/\.jpg$/i, "")} fileName=${fileName}`);
+    if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${rawFileName.replace(/\.jpg$/i, "")} fileName=${fileName}`);
     return { sourceUrl: value, fileName, sourceKind: "remote-url" };
   }
 
@@ -182,7 +217,7 @@ export function resolveImageSource(
     const cleaned = classification.cleaned;
     const suffix = type === "icon_gray" ? "_gray" : "";
     const fileName = `${cleaned}${suffix}.jpg`;
-    console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${cleaned} fileName=${fileName}`);
+    if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_RESOLVE] appid=${appId} apiName=${apiName ?? "?"} type=${type} input=${value} hash=${cleaned} fileName=${fileName}`);
     return {
       sourceUrl: buildCdnUrl(appId, cleaned),
       fileName,
@@ -192,11 +227,11 @@ export function resolveImageSource(
 
   // Local paths must not be remote-downloaded
   if (classification.kind === "local-absolute-path" || classification.kind === "local-file-url" || classification.kind === "tauri-asset-url") {
-    console.debug(`[ACH][IMG] skipped download local source appid=${appId} kind=${classification.kind} path=${value}`);
+    if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG] skipped download local source appid=${appId} kind=${classification.kind} path=${value}`);
     return null;
   }
 
-  console.warn(`[ACH][IMG] skipped invalid source appid=${appId} value=${value} kind=${classification.kind}`);
+  if (DEBUG_ACH_IMAGE_QUEUE) console.warn(`[ACH][IMG] skipped invalid source appid=${appId} value=${value} kind=${classification.kind}`);
   return null;
 }
 
@@ -300,7 +335,7 @@ class AchievementImageQueueImpl {
     this.callbacks.push(cb);
     if (!this.statusInterval) {
       this.statusInterval = setInterval(() => {
-        console.debug(`[ACH][IMG_QUEUE_STATUS] active=${this.activeCount} queued=${this.queue.length} completed=${this.completedKeys.size} skippedExisting=${this.batchSkipped} skippedSourceDup=${this.sourceUrlDedup.size - this.batchSkipped} skipped403=${this._http403Sources.size}`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_QUEUE_STATUS] active=${this.activeCount} queued=${this.queue.length} completed=${this.completedKeys.size} skippedExisting=${this.batchSkipped} skippedSourceDup=${this.sourceUrlDedup.size - this.batchSkipped} skipped403=${this._http403Sources.size}`);
       }, 30000);
     }
     return () => {
@@ -327,12 +362,12 @@ class AchievementImageQueueImpl {
 
       const urlAppId = extractAppIdFromPath(item.sourceUrl);
       if (urlAppId && urlAppId !== item.appId) {
-        console.debug(`[ACH][IMG_BLOCKED] reason=cross-appid-url jobAppid=${item.appId} urlAppid=${urlAppId} url=${item.sourceUrl}`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_BLOCKED] reason=cross-appid-url jobAppid=${item.appId} urlAppid=${urlAppId} url=${item.sourceUrl}`);
         continue;
       }
 
       if (this._http403Sources.has(item.sourceUrl)) {
-        console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} source=${item.sourceUrl} reason=403-cooldown`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_SKIP] appid=${item.appId} apiName=${item.apiName} source=${item.sourceUrl} reason=403-cooldown`);
         continue;
       }
 
@@ -342,13 +377,13 @@ class AchievementImageQueueImpl {
       // ── Part 3: Dedup by sourceUrl ──
       const sourceDedupKey = `${item.appId}:${item.sourceUrl}`;
       if (this.sourceUrlDedup.has(sourceDedupKey)) {
-        console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} file=${item.fileName} reason=duplicate-source-url`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} file=${item.fileName} reason=duplicate-source-url`);
         continue;
       }
 
       // ── Part 3: Dedup by hash+type ──
       if (this.hashKeyDedup.has(hashKey)) {
-        console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} hash=${hashKey.split(":")[1]} type=${item.type} reason=duplicate-hash`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} hash=${hashKey.split(":")[1]} type=${item.type} reason=duplicate-hash`);
         continue;
       }
 
@@ -363,13 +398,13 @@ class AchievementImageQueueImpl {
         );
         const grayActive = this.activeKeys.has(`${item.appId}:${item.apiName}:icon_gray`);
         if (grayCompleted || grayInQueue || grayActive) {
-          console.debug(`[ACH][IMG_DEDUP_GRAY] appid=${item.appId} apiName=${item.apiName} hash=${hash} skipped=${item.fileName} reason=gray-source`);
+          if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_DEDUP_GRAY] appid=${item.appId} apiName=${item.apiName} hash=${hash} skipped=${item.fileName} reason=gray-source`);
           continue;
         }
       }
 
       if (item.caller === "progress-sync") {
-        console.debug(`[ACH][IMG_BLOCKED] reason=progress-sync-no-images caller=${item.caller}`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_BLOCKED] reason=progress-sync-no-images caller=${item.caller}`);
         continue;
       }
 
@@ -387,7 +422,7 @@ class AchievementImageQueueImpl {
       }
 
       if (this.destinationPaths.has(item.fileName)) {
-        console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} file=${item.fileName} reason=duplicate-destination`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_DEDUP] appid=${item.appId} file=${item.fileName} reason=duplicate-destination`);
         continue;
       }
 
@@ -426,7 +461,7 @@ class AchievementImageQueueImpl {
       return false;
     });
     const removed = before - this.queue.length;
-    if (removed > 0) {
+    if (removed > 0 && DEBUG_ACH_IMAGE_QUEUE) {
       console.debug(`[ACH][IMG_QUEUE] cancelled ${removed} jobs appid=${appId} reason=${reason}`);
     }
   }
@@ -477,7 +512,7 @@ class AchievementImageQueueImpl {
             cb(appId, an, t, ru);
           }
         }
-        console.debug(`[ACH][IMG_NOTIFY] appid=${appId} mode=${mode} reason=batch count=${batch.length}`);
+        if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_NOTIFY] appid=${appId} mode=${mode} reason=batch count=${batch.length}`);
       }, 300);
       this.notifyTimers.set(appId, timer);
     }
@@ -534,7 +569,7 @@ class AchievementImageQueueImpl {
     }
 
     const totalProcessed = this.batchDownloaded + this.batchSkipped + this.batchFailed;
-    if (totalProcessed > 0 && (totalProcessed % 20 === 0 || this.queue.length === 0)) {
+    if (DEBUG_ACH_IMAGE_QUEUE && totalProcessed > 0 && (totalProcessed % 20 === 0 || this.queue.length === 0)) {
       const elapsed = Date.now() - this.batchStartTime;
       const cacheReads = this.batchCacheReads;
       console.debug(`[ACH][IMG_BATCH] cacheReads=${cacheReads} downloaded=${this.batchDownloaded} skippedExisting=${this.batchSkipped} skippedDuplicate=${totalProcessed - this.batchDownloaded - this.batchSkipped - this.batchFailed} failed=${this.batchFailed} elapsedMs=${elapsed}`);

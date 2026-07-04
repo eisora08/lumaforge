@@ -6,10 +6,11 @@ import {
 } from "lucide-react";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import AchievementIcon from "../common/AchievementIcon";
-import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId } from "../../services/achievementImageQueue";
+import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
 import { achievementStore } from "../../services/achievementStore";
 import { cleanupAchievementOrphanImages } from "../../services/tauri";
+import { isInteractionBusy } from "../../services/perfCounters";
 
 type Props = {
   summary: GameAchievementsSummary;
@@ -186,27 +187,69 @@ export default function AchievementsModal({
   }, [propSummary]);
 
   // Enqueue images with generation token (Part B3)
+  // Phase 3: Enqueues for all visible achievements (modal shows full list)
+  // Phase 4: Deferred during user interaction
+  // Phase 5: Per-image logs gated behind DEBUG_ACH_IMAGE_QUEUE
   const modalGenRef = useRef<string>("");
   useEffect(() => {
     if (!summary.achievements?.length || !appIdStr) return;
+
+    // Phase 5: Skip entirely when auto-download is disabled
+    if (!ACHIEVEMENT_IMAGE_MIGRATION_AUTO) return;
+
+    // Phase 4: Defer during interaction (navigation, scroll, click)
+    if (isInteractionBusy()) return;
 
     const generationId = nextGenerationId(appIdStr, "achievements-modal");
     modalGenRef.current = generationId;
 
     const items: import("../../services/achievementImageQueue").ImageQueueItem[] = [];
+    const startTime = performance.now();
+    let cachedCount = 0;
+    let skippedCount = 0;
+
     for (const a of summary.achievements) {
+      // Phase 2+7: Session dedup — skip if already resolved this session
       if (a.iconUrl && !isResolvedUrl(a.iconUrl)) {
-        const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "normal", caller: "achievements-modal", createdAt: Date.now(), generationId });
+        if (isImageResolved(appIdStr, a.iconUrl, "icon")) {
+          skippedCount++;
+        } else {
+          const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
+          if (resolved) {
+            items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "normal", caller: "achievements-modal", createdAt: Date.now(), generationId });
+            markImageResolved(appIdStr, a.iconUrl, "icon");
+          } else {
+            cachedCount++;
+          }
+        }
+      } else if (a.iconUrl) {
+        cachedCount++;
       }
+
       if (a.iconGrayUrl && !isResolvedUrl(a.iconGrayUrl)) {
-        const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "normal", caller: "achievements-modal", createdAt: Date.now(), generationId });
+        if (isImageResolved(appIdStr, a.iconGrayUrl, "icon_gray")) {
+          skippedCount++;
+        } else {
+          const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
+          if (resolved) {
+            items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "normal", caller: "achievements-modal", createdAt: Date.now(), generationId });
+            markImageResolved(appIdStr, a.iconGrayUrl, "icon_gray");
+          } else {
+            cachedCount++;
+          }
+        }
+      } else if (a.iconGrayUrl) {
+        cachedCount++;
       }
     }
+
     if (items.length > 0) {
-      console.debug(`[ACH][IMG] modal enqueued ${items.length} images for appid=${appIdStr}`);
+      if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG] modal enqueued ${items.length} images for appid=${appIdStr}`);
       achievementImageQueue.enqueue(items);
+    }
+    const elapsedMs = Math.round(performance.now() - startTime);
+    if (DEBUG_ACH_IMAGE_QUEUE) {
+      console.debug(`[ACH][IMG_SUMMARY] appid=${appIdStr} requested=${summary.achievements.length * 2} cachedHits=${cachedCount} queued=${items.length} skipped=${skippedCount} elapsedMs=${elapsedMs}`);
     }
   }, [summary.achievements, appIdStr]);
 

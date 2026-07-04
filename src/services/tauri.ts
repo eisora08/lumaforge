@@ -1162,6 +1162,36 @@ export type SnapshotGameMediaForValidation = {
   iconPath: string | null;
 };
 
+// Batch type: map of appId -> SnapshotGameMediaForValidation
+export type SnapshotGameMediaRecord = Record<string, SnapshotGameMediaForValidation>;
+
+// validateSnapshotMediaPathsBatch — batch validate media paths for multiple games.
+// Replaces per-app validateSnapshotMediaPaths loops in snapshot hydration/building.
+export async function validateSnapshotMediaPathsBatch(
+  items: SnapshotGameMediaRecord,
+): Promise<Record<string, ValidatedMediaPaths>> {
+  try {
+    return await invoke<Record<string, ValidatedMediaPaths>>("validate_snapshot_media_paths_batch", { items });
+  } catch {
+    const fallback: Record<string, ValidatedMediaPaths> = {};
+    for (const [appId, media] of Object.entries(items)) {
+      fallback[appId] = {
+        coverPath: media.coverPath,
+        coverExists: !!media.coverPath,
+        landscapePath: media.landscapePath,
+        landscapeExists: !!media.landscapePath,
+        backgroundPath: media.backgroundPath,
+        backgroundExists: !!media.backgroundPath,
+        logoPath: media.logoPath,
+        logoExists: !!media.logoPath,
+        iconPath: media.iconPath,
+        iconExists: !!media.iconPath,
+      };
+    }
+    return fallback;
+  }
+}
+
 // Batch read canonical appinfos (lightweight, no network)
 export async function readCanonicalAppinfos(
   appIds: string[],
@@ -1268,6 +1298,19 @@ export async function resolveGameMediaPaths(appId: string): Promise<GameMediaPat
     return await invoke<GameMediaPaths>("resolve_game_media_paths", { appId });
   } catch {
     return null;
+  }
+}
+
+// resolveGameMediaPathsBatch — batch resolve media paths for multiple appIds.
+// Replaces per-app resolveGameMediaPaths loops in hydrateMediaOnStartup
+// and buildStartupSnapshotFromCurrentState.
+export async function resolveGameMediaPathsBatch(
+  appIds: string[],
+): Promise<Record<string, GameMediaPaths>> {
+  try {
+    return await invoke<Record<string, GameMediaPaths>>("resolve_game_media_paths_batch", { appIds });
+  } catch {
+    return {};
   }
 }
 

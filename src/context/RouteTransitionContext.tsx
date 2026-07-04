@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useTransition } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, useTransition } from "react";
 import type { ReactNode } from "react";
 
 const ENABLE_VERBOSE_TRANSITION_LOGS = false;
@@ -33,8 +33,10 @@ export function RouteTransitionProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const ctxValue = useMemo(() => ({ isPending, navigatingTo, startRouteTransition }), [isPending, navigatingTo]);
+
   return (
-    <RouteTransitionContext.Provider value={{ isPending, navigatingTo, startRouteTransition }}>
+    <RouteTransitionContext.Provider value={ctxValue}>
       {children}
     </RouteTransitionContext.Provider>
   );

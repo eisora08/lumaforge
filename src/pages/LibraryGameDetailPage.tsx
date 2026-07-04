@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { countRender } from "../services/perfCounters";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
   installSteamApp,
@@ -42,6 +43,7 @@ type Props = {
 };
 
 export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
+  countRender("LibraryGameDetailPage");
   const { selectedGame, setSelectedGame, appInfoMap } = useLibraryGames();
   const { settings } = useSettings();
   const [metadataLoading, setMetadataLoading] = useState(false);
@@ -240,9 +242,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         // Import Steam playtime when available
         const stat = statsMap.get(appIdNum);
         if (stat?.playtimeMinutes && stat.playtimeMinutes > 0) {
-          const gameKey = resolvedGame.id || `app-${resolvedGame.appId}`;
           importExternalPlaytime({
-            gameKey,
+            gameKey: `app-${resolvedGame.appId}`,
             appId: resolvedGame.appId,
             provider: "steam",
             title: resolvedGame.title,

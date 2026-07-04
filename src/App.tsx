@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useTransition } from "react";
+import { countRender, logRenderSummary, startRenderSession, markNavigation } from "./services/perfCounters";
 
 import AppLayout from "./components/layout/AppLayout";
 
@@ -21,6 +22,7 @@ import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
 import GameSessionHUD from "./components/system/GameSessionHUD";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
+import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
 import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
@@ -41,6 +43,14 @@ function restoreActivePage(): AppPage {
   try {
     const stored = localStorage.getItem(ACTIVE_PAGE_KEY);
     if (stored && KNOWN_PAGES.has(stored as AppPage)) {
+      // Phase: If last route was Store but no complete cache, start on Home instead
+      if (stored === "store") {
+        const cached = getCachedStoreDiscover();
+        if (!isCacheComplete(cached)) {
+          console.log(`[ROUTE][RESTORE_FALLBACK] from=store to=home reason=no-complete-store-cache`);
+          return "home";
+        }
+      }
       return stored as AppPage;
     }
   } catch { /* ignore */ }
@@ -48,6 +58,7 @@ function restoreActivePage(): AppPage {
 }
 
 const NAV_PERF_ENABLED = true;
+const DEBUG_ROUTE_RENDER = false;
 
 function SessionOverlayWrapper() {
   const { overlayEvent, clearOverlay } = useGameSession();
@@ -55,11 +66,13 @@ function SessionOverlayWrapper() {
 }
 
 function App() {
+  countRender("App");
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
   const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
   const [bootStarted, setBootStarted] = useState(false);
   const [, startTransition] = useTransition();
   const initialRender = useRef(true);
+  const prevPageRef = useRef(activePage);
 
   // Start boot coordinator once on mount
   useEffect(() => {
@@ -76,11 +89,20 @@ function App() {
     try {
       localStorage.setItem(ACTIVE_PAGE_KEY, activePage);
     } catch { /* ignore */ }
+    // Phase 1: Mount audit — confirm only the active route's page is mounted
+    console.log(`[ROUTE][MOUNT_AUDIT] active=${activePage} mountedPages=[${activePage}]`);
+    // Log render summary on route change
+    logRenderSummary(`previousRoute=${prevPageRef.current} nextRoute=${activePage}`);
+    startRenderSession();
+    prevPageRef.current = activePage;
   }, [activePage]);
 
   function handleNavigate(page: AppPage) {
     if (page === activePage) return;
     const startTime = NAV_PERF_ENABLED ? performance.now() : 0;
+
+    // Phase 9: Mark navigation timestamp so services can defer background work
+    markNavigation();
 
     if (page === "game-details") {
       setGameDetailsPrevPage(activePage);
@@ -105,6 +127,10 @@ function App() {
   }
 
   function renderPage() {
+    // Phase 2: Confirm only the active route page renders
+    if (DEBUG_ROUTE_RENDER && import.meta.env.DEV) {
+      console.log(`[ROUTE][PAGE_RENDER] active=${activePage} rendered=${activePage}`);
+    }
     switch (activePage) {
       case "home":
         return <Home onNavigate={handleNavigate} />;

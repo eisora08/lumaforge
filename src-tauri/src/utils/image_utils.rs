@@ -19,6 +19,10 @@ pub const BACKGROUND_PREFERRED_ASPECT: f64 = 2.0;
 /// Acceptable minimum aspect ratio for background when no better source exists.
 pub const BACKGROUND_ACCEPTABLE_ASPECT: f64 = 1.60;
 
+/// Set to true to enable detailed [MediaClassify] debug logs per-image.
+/// Set to false to suppress noise during boot/image loading.
+const DEBUG_MEDIA_CLASSIFY: bool = false;
+
 /// Returns (width, height) of an image from raw bytes.
 pub fn get_image_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     let img = image::load_from_memory(bytes)
@@ -36,50 +40,52 @@ pub fn classify_image_role(
     let (w, h) = get_image_dimensions(bytes)?;
     let aspect = w as f64 / h as f64;
 
-    println!("[MediaClassify] role candidate: {}", intended_role);
-    println!("[MediaClassify] dimensions: {}x{}", w, h);
-    println!("[MediaClassify] aspect ratio: {:.4}", aspect);
+    if DEBUG_MEDIA_CLASSIFY {
+        println!("[MediaClassify] role candidate: {}", intended_role);
+        println!("[MediaClassify] dimensions: {}x{}", w, h);
+        println!("[MediaClassify] aspect ratio: {:.4}", aspect);
+    }
 
     match intended_role {
         "cover" => {
             if aspect <= COVER_MAX_ASPECT {
-                println!("[MediaClassify] accepted role: cover");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: cover"); }
                 Ok(Some("cover".to_string()))
             } else if aspect >= LANDSCAPE_MIN_ASPECT {
-                println!("[MediaClassify] reclassified cover -> landscape");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified cover -> landscape"); }
                 Ok(Some("landscape".to_string()))
             } else {
-                println!("[MediaClassify] rejected invalid cover role");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] rejected invalid cover role"); }
                 Ok(None)
             }
         }
         "landscape" => {
             if aspect >= LANDSCAPE_MIN_ASPECT {
-                println!("[MediaClassify] accepted role: landscape");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: landscape"); }
                 Ok(Some("landscape".to_string()))
             } else if aspect <= COVER_MAX_ASPECT {
-                println!("[MediaClassify] reclassified landscape -> cover");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified landscape -> cover"); }
                 Ok(Some("cover".to_string()))
             } else {
-                println!("[MediaClassify] rejected invalid landscape role");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] rejected invalid landscape role"); }
                 Ok(None)
             }
         }
         "background" => {
             if aspect >= BACKGROUND_PREFERRED_ASPECT {
-                println!("[MediaClassify] accepted role: background (wide)");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: background (wide)"); }
                 Ok(Some("background".to_string()))
             } else if aspect >= BACKGROUND_ACCEPTABLE_ASPECT {
-                println!("[MediaClassify] accepted role: background (acceptable)");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: background (acceptable)"); }
                 Ok(Some("background".to_string()))
             } else if aspect >= LANDSCAPE_MIN_ASPECT {
-                println!("[MediaClassify] reclassified background -> landscape");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified background -> landscape"); }
                 Ok(Some("landscape".to_string()))
             } else if aspect <= COVER_MAX_ASPECT {
-                println!("[MediaClassify] reclassified background -> cover");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified background -> cover"); }
                 Ok(Some("cover".to_string()))
             } else {
-                println!("[MediaClassify] rejected invalid background role");
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] rejected invalid background role"); }
                 Ok(None)
             }
         }
@@ -87,7 +93,7 @@ pub fn classify_image_role(
             Ok(Some(intended_role.to_string()))
         }
         _ => {
-            println!("[MediaClassify] unknown role: {}", intended_role);
+            if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] unknown role: {}", intended_role); }
             Ok(Some(intended_role.to_string()))
         }
     }

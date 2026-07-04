@@ -34,6 +34,8 @@ export interface StoreSectionModel {
   games: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
 }
 
+export type CacheStatus = "empty" | "partial" | "complete";
+
 export interface CacheEntry {
   catalogFingerprint: string;
   rankedSteamCatalog: { appid: number; name: string }[];
@@ -48,6 +50,8 @@ export interface CacheEntry {
   builtAt: number;
   /** If true, the cached Discover sections are incomplete and should be rebuilt. */
   isPartialCache?: boolean;
+  /** Explicit cache completeness status. Derived from isPartialCache + thresholds. */
+  status?: CacheStatus;
 }
 
 let _cachedDiscover: CacheEntry | null = null;
@@ -72,20 +76,36 @@ export function getCachedStoreDiscover(): CacheEntry | null {
   return _cachedDiscover;
 }
 
+export function isCacheComplete(entry: CacheEntry | null): boolean {
+  if (!entry) return false;
+  if (entry.isPartialCache) return false;
+  return (
+    entry.featuredGames.length >= 4 &&
+    entry.discoverSections.length >= 5 &&
+    entry.allStoreSections.length > 0
+  );
+}
+
 export function setCachedStoreDiscover(entry: CacheEntry): void {
   // If the incoming cache is incomplete, do NOT overwrite a valid existing cache.
-  // A cache is incomplete when featured or sections are too few to render properly.
+  // A cache is complete when featured games >= 4, discover sections >= 5, and it's not partial.
   const isComplete =
     entry.featuredGames.length >= 4 &&
     entry.discoverSections.length >= 5 &&
     !entry.isPartialCache;
+  // Phase 3+4+7: Complete cache priority — never overwrite complete with partial
   if (!isComplete) {
     const existing = getCachedStoreDiscover();
-    if (existing && !existing.isPartialCache) {
-      console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=incomplete featured=${entry.featuredGames.length} sections=${entry.discoverSections.length} existingSections=${existing.discoverSections.length}`);
+    if (existing && isCacheComplete(existing)) {
+      console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=complete-cache-exists currentPartial=${!!entry.isPartialCache} currentFeatured=${entry.featuredGames.length} currentSections=${entry.discoverSections.length} existingSections=${existing.discoverSections.length}`);
+      return;
+    }
+    if (existing && isCacheComplete(existing) && existing.catalogFingerprint === entry.catalogFingerprint) {
+      console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=complete-cache-exists fingerprint=matched`);
       return;
     }
   }
+  entry.status = isComplete ? "complete" : "partial";
   _cachedDiscover = entry;
 }
 
@@ -97,6 +117,8 @@ export function isDiscoverCacheComplete(entry: CacheEntry | null): boolean {
     entry.discoverSections.length >= 5
   );
 }
+
+
 
 export function buildCatalogFingerprint(catalog: { appid: number; name: string }[]): string {
   return computeFingerprint(catalog);

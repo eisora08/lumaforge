@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../types/libraryGame";
 import type { SteamUserGameStats } from "../types/steamUserStats";
-import { getGameAppInfo, resolveGameMediaPaths, readCanonicalAppinfos, validateSnapshotMediaPaths as validatePathsRust } from "./tauri";
+import { getGameAppInfo, resolveGameMediaPaths, resolveGameMediaPathsBatch, readCanonicalAppinfos, validateSnapshotMediaPaths as validatePathsRust, validateSnapshotMediaPathsBatch } from "./tauri";
 import type { GameMediaPaths, GameAppInfo, SnapshotGameMediaForValidation, ValidatedMediaPaths } from "./tauri";
+import { dedupeLibraryGames, isSidebarInstalledGame } from "./gameCacheService";
+import { isRecentlyNavigated, isInteractionBusy } from "./perfCounters";
+import { getPlaytimeSecondsForAppId } from "./playtimeService";
 
 const SNAPSHOT_VERSION = 1;
 let cachedSnapshot: StartupSnapshot | null = null;
@@ -476,6 +479,14 @@ async function _processDirtyAppIds(): Promise<void> {
   _mediaUpdateTimer = null;
   _writeInProgress = true;
 
+  // Phase 9: Defer snapshot write during active interaction (scroll/click/nav)
+  if (isInteractionBusy()) {
+    console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy dirtyAppIds=${_dirtyAppIds.size}`);
+    _writeInProgress = false;
+    _mediaUpdateTimer = setTimeout(_processDirtyAppIds, 2000);
+    return;
+  }
+
   const appIds = [..._dirtyAppIds];
   const dirtyCount = appIds.length;
 
@@ -609,7 +620,7 @@ export async function notifyMediaUpdatedBatch(
   }
 
   // Schedule a debounced snapshot write (1-3 seconds)
-  scheduleSnapshotWrite(games, appInfoMap, statsMap, 1500);
+  scheduleSnapshotWrite(games, appInfoMap, statsMap, 1500, "batch-media-update");
 }
 
 export type StartupSnapshot = {
@@ -751,6 +762,23 @@ export async function hydrateStartupSnapshotMedia(
   let missingCount = 0;
   let staleCount = 0;
 
+  // Phase 3+5: Batch-validate all snapshot media paths in a single Tauri call.
+  const snapshotMediaBatch: Record<string, SnapshotGameMediaForValidation> = {};
+  for (const game of snapshot.library.games) {
+    if (!game.appId) continue;
+    const canonicalInfo = canonicalInfos[game.appId];
+    const normalizedMedia = canonicalInfo ? normalizeAppInfoMedia(canonicalInfo) : null;
+    if (normalizedMedia) {
+      snapshotMediaBatch[game.appId] = normalizedMedia;
+    }
+  }
+  const validatedBatch = Object.keys(snapshotMediaBatch).length > 0
+    ? await validateSnapshotMediaPathsBatch(snapshotMediaBatch)
+    : {};
+  if (Object.keys(snapshotMediaBatch).length > 0) {
+    console.log(`[PERF][BOOT_BATCH] hydrateSnapshot validatedBatch=${Object.keys(validatedBatch).length}/${Object.keys(snapshotMediaBatch).length}`);
+  }
+
   for (const game of snapshot.library.games) {
     if (!game.appId) continue;
 
@@ -769,10 +797,9 @@ export async function hydrateStartupSnapshotMedia(
 
     let gameChanged = false;
 
-    // Copy full validated media object from canonical appinfo into snapshot.
-    // This ensures snapshot always reflects the latest canonical paths on boot.
+    // Use batch-validated result if available, fall back to per-app if not in batch
     if (normalizedMedia) {
-      const validated = await validateSnapshotMediaPaths(game.appId, normalizedMedia);
+      const validated = validatedBatch[game.appId] ?? await validateSnapshotMediaPaths(game.appId, normalizedMedia);
 
       // Apply all paths from appinfo — replace snapshot values with canonically
       // validated paths. Only count as repair if at least one path changed.
@@ -886,6 +913,9 @@ export async function loadStartupSnapshot(): Promise<StartupSnapshot | null> {
       const achNull = result.library.games.filter(g => g.achievementSummary == null).length;
       const withUpdatedField = result.library.games.filter(g => g.updatedAt != null).length;
       console.log(`[BootSnapshot][SHAPE] games=${result.library.games.length} withFavoriteField=${withFavField} favoriteTrue=${favTrue} withHiddenField=${withHiddenField} hiddenTrue=${hiddenTrue} withAchievementSummaryField=${result.library.games.length} achievementSummaryObject=${achObject} achievementSummaryNull=${achNull} withUpdatedAt=${withUpdatedField}`);
+      // Phase 6: Initialize fingerprint on load so first full-rebuild doesn't
+      // write when dirtyAppIds=0 and content hasn't changed.
+      _lastWriteFingerprint = computeSnapshotFingerprint(result);
       if (needsUpgrade) {
         saveStartupSnapshot(result); // persist upgraded fields to disk
       }
@@ -905,14 +935,18 @@ let _lastWriteFingerprint = "";
 
 function computeSnapshotFingerprint(snapshot: StartupSnapshot): string {
   // Lightweight fingerprint — exclude updatedAt (transient, changes every write)
-  const relevant = snapshot.library.games.slice(0, 200).map((g) => ({
+  const relevantGames = snapshot.library.games.slice(0, 200).map((g) => ({
     a: g.appId,
     m: g.media,
     s: g.achievementSummary ? `${g.achievementSummary.total}:${g.achievementSummary.unlocked}:${g.achievementSummary.percent}` : null,
     f: g.favorite,
     h: g.hidden,
   }));
-  return JSON.stringify(relevant);
+  const relevantSidebar = snapshot.sidebar.items.slice(0, 100).map((s) => ({
+    a: s.appId,
+    m: s.media,
+  }));
+  return JSON.stringify({ games: relevantGames, sidebar: relevantSidebar });
 }
 
 export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<void> {
@@ -1006,6 +1040,30 @@ export async function buildStartupSnapshotFromCurrentState(
     console.log(`[BootSnapshot] canonical appinfos read: ${canonicalReadCount} / ${allAppIds.length}`);
   }
 
+  // Phase 3+5: Batch-validate media paths for games with canonical info.
+  const canonicalMediaBatch: Record<string, SnapshotGameMediaForValidation> = {};
+  for (const game of games) {
+    if (!game.appId) continue;
+    const canonicalInfo = canonicalInfos[game.appId];
+    if (canonicalInfo) {
+      const normalized = normalizeAppInfoMedia(canonicalInfo);
+      if (normalized) {
+        canonicalMediaBatch[game.appId] = normalized;
+      }
+    }
+  }
+  const validatedCanonicalBatch = Object.keys(canonicalMediaBatch).length > 0
+    ? await validateSnapshotMediaPathsBatch(canonicalMediaBatch)
+    : {};
+
+  // Collect non-canonical games for batch disk path resolution
+  const diskFallbackAppIds = games
+    .filter((g) => g.appId && !canonicalInfos[g.appId])
+    .map((g) => g.appId) as string[];
+  const fallbackDiskPaths = diskFallbackAppIds.length > 0
+    ? await resolveGameMediaPathsBatch(diskFallbackAppIds)
+    : {};
+
   for (const game of games) {
     if (!game.appId) continue;
     appIds.push(game.appId);
@@ -1027,7 +1085,7 @@ export async function buildStartupSnapshotFromCurrentState(
       const normalized = normalizeAppInfoMedia(canonicalInfo);
       if (normalized) {
         debugAppLog(game.appId, `canonical media: cover=${!!normalized.coverPath} landscape=${!!normalized.landscapePath} bg=${!!normalized.backgroundPath} logo=${!!normalized.logoPath} icon=${!!normalized.iconPath}`);
-        validatedForStatus = await validateSnapshotMediaPaths(game.appId, normalized);
+        validatedForStatus = validatedCanonicalBatch[game.appId] ?? await validateSnapshotMediaPaths(game.appId, normalized);
         hasMedia = !!(validatedForStatus.landscapePath || validatedForStatus.coverPath || validatedForStatus.backgroundPath || validatedForStatus.logoPath || validatedForStatus.iconPath);
         debugAppLog(game.appId, `validated media: hasMedia=${hasMedia} cover=${!!validatedForStatus.coverPath} landscape=${!!validatedForStatus.landscapePath} background=${!!validatedForStatus.backgroundPath} logo=${!!validatedForStatus.logoPath} icon=${!!validatedForStatus.iconPath}`);
         media = {
@@ -1044,29 +1102,25 @@ export async function buildStartupSnapshotFromCurrentState(
     } else {
       debugAppLog(game.appId, "no canonical appinfo, falling back to disk");
       // No canonical appinfo — fallback to physical media files
-      try {
-        const diskPaths = await resolveGameMediaPaths(game.appId);
-        if (diskPaths) {
-          const rawMedia: SnapshotGameMedia = {
-            landscapePath: diskPaths.landscapePath ?? null,
-            coverPath: diskPaths.coverPath ?? null,
-            backgroundPath: diskPaths.backgroundPath ?? null,
-            logoPath: diskPaths.logoPath ?? null,
-            iconPath: diskPaths.iconPath ?? null,
-          };
-          validatedForStatus = await validateSnapshotMediaPaths(game.appId, rawMedia);
-          hasMedia = !!(validatedForStatus.landscapePath || validatedForStatus.coverPath || validatedForStatus.backgroundPath || validatedForStatus.logoPath || validatedForStatus.iconPath);
-          media = {
-            landscapePath: validatedForStatus.landscapePath,
-            coverPath: validatedForStatus.coverPath,
-            backgroundPath: validatedForStatus.backgroundPath,
-            logoPath: validatedForStatus.logoPath,
-            iconPath: validatedForStatus.iconPath,
-          };
-        } else {
-          media = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
-        }
-      } catch {
+      const diskPaths = fallbackDiskPaths[game.appId];
+      if (diskPaths) {
+        const rawMedia: SnapshotGameMedia = {
+          landscapePath: diskPaths.landscapePath ?? null,
+          coverPath: diskPaths.coverPath ?? null,
+          backgroundPath: diskPaths.backgroundPath ?? null,
+          logoPath: diskPaths.logoPath ?? null,
+          iconPath: diskPaths.iconPath ?? null,
+        };
+        validatedForStatus = await validateSnapshotMediaPaths(game.appId, rawMedia);
+        hasMedia = !!(validatedForStatus.landscapePath || validatedForStatus.coverPath || validatedForStatus.backgroundPath || validatedForStatus.logoPath || validatedForStatus.iconPath);
+        media = {
+          landscapePath: validatedForStatus.landscapePath,
+          coverPath: validatedForStatus.coverPath,
+          backgroundPath: validatedForStatus.backgroundPath,
+          logoPath: validatedForStatus.logoPath,
+          iconPath: validatedForStatus.iconPath,
+        };
+      } else {
         media = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
       }
     }
@@ -1127,7 +1181,7 @@ export async function buildStartupSnapshotFromCurrentState(
       installPath: game.installDir || null,
       media,
       lastPlayed: game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null,
-      playtime: game.steamPlaytimeMinutes ?? null,
+      playtime: (getPlaytimeSecondsForAppId(game.appId) > 0 ? Math.round(getPlaytimeSecondsForAppId(game.appId) / 60) : null) ?? game.steamPlaytimeMinutes ?? null,
       cloudStatus: game.steamCloudStatus ?? null,
       mediaStatus,
       missingMedia,
@@ -1140,20 +1194,22 @@ export async function buildStartupSnapshotFromCurrentState(
       mediaReadyAppIds.push(game.appId);
     }
 
-    sidebarItems.push({
-      appId: game.appId,
-      title,
-      provider: "steam",
-      media: {
-        landscapePath: media.landscapePath,
-        coverPath: media.coverPath,
-      },
-    });
+    // Sidebar: only include installed/playable/active games
+    if (isSidebarInstalledGame(game)) {
+      sidebarItems.push({
+        appId: game.appId,
+        title,
+        provider: "steam",
+        media: {
+          landscapePath: media.landscapePath,
+          coverPath: media.coverPath,
+        },
+      });
+    }
   }
 
   if (ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS) {
-    console.log(`[BootSnapshot] mediaReadyAppIds count: ${mediaReadyAppIds.length}`);
-    console.log(`[BootSnapshot] sidebar media populated`);
+    console.log(`[BootSnapshot][SIDEBAR_FILTER] library=${games.length} sidebarAfter=${sidebarItems.length} installedOnly=true`);
   }
 
   let statsEntry: SnapshotStats | null = null;
@@ -1188,18 +1244,69 @@ export function scheduleSnapshotWrite(
   appInfoMap: Record<string, any>,
   statsMap: Map<number, SteamUserGameStats> | null,
   delayMs = 2000,
+  reason?: string,
 ): void {
   if (debounceTimer) {
     clearTimeout(debounceTimer);
   }
-  console.log(`[BootSnapshot][SCHEDULE] reason=full-rebuild games=${games.length} alreadyScheduled=${!!debounceTimer}`);
+
+  // Phase 11: Defer full-rebuild snapshot writes during active navigation
+  // to prevent competing with route transitions for disk I/O.
+  if (isRecentlyNavigated(2000)) {
+    console.log(`[BootSnapshot][WRITE_DEFER] reason=navigation-active caller=${reason ?? "unknown"} delayMs=${delayMs}`);
+    debounceTimer = setTimeout(() => {
+      scheduleSnapshotWrite(games, appInfoMap, statsMap, delayMs, reason);
+    }, 1000);
+    return;
+  }
+
+  const deduped = dedupeLibraryGames(games);
+  if (deduped.length !== games.length) {
+    console.log(`[BootSnapshot][DEDUP] before=${games.length} after=${deduped.length}`);
+  }
+  console.log(`[BootSnapshot][SCHEDULE] reason=${reason ?? "full-rebuild"} caller=${reason ?? "unknown"} games=${deduped.length} delayMs=${delayMs}`);
   debounceTimer = setTimeout(async () => {
+    // Phase 7: Defer full rebuild during active interaction (scroll/click/nav)
+    if (isInteractionBusy()) {
+      console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy caller=${reason ?? "unknown"} full-rebuild=true`);
+      // Re-schedule with same params after cooldown
+      const cbArgs: Parameters<typeof scheduleSnapshotWrite> = [games, appInfoMap, statsMap, delayMs, reason];
+      debounceTimer = setTimeout(() => scheduleSnapshotWrite(...cbArgs), 1500);
+      return;
+    }
+
     const dirtyCount = _dirtyAppIds.size;
-    console.log(`[BootSnapshot][WRITE_START] reason=full-rebuild dirtyAppIds=${dirtyCount}`);
     try {
-      const snapshot = await buildStartupSnapshotFromCurrentState(games, appInfoMap, statsMap);
+      const snapshot = await buildStartupSnapshotFromCurrentState(deduped, appInfoMap, statsMap);
+
+      // No-op guard BEFORE WRITE_START log: skip save if content hasn't changed
+      const newFp = computeSnapshotFingerprint(snapshot);
+      if (newFp === _lastWriteFingerprint) {
+        console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change-full-rebuild games=${snapshot.library.games.length} sidebarItems=${snapshot.sidebar.items.length}`);
+        return;
+      }
+
+      // If dirtyCount is 0 but fingerprint changed, still proceed (unusual edge case)
+      if (dirtyCount === 0) {
+        console.log(`[BootSnapshot][WRITE_PROCEED] reason=fingerprint-changed-despite-dirty0 games=${snapshot.library.games.length}`);
+      }
+
+      console.log(`[BootSnapshot][WRITE_START] reason=full-rebuild dirtyAppIds=${dirtyCount}`);
+
+      // Step 2: log sidebar filtering — SIDEBAR_FILTER for normal installed-only,
+      // SIDEBAR_REPAIR only when fixing an old snapshot that had full-library sidebar
+      const sidebarItemCount = snapshot.sidebar.items.length;
+      if (deduped.length !== sidebarItemCount) {
+        const wasFullLibrary = cachedSnapshot?.sidebar.items.length === deduped.length;
+        if (wasFullLibrary) {
+          console.log(`[BootSnapshot][SIDEBAR_REPAIR] before=${cachedSnapshot!.sidebar.items.length} after=${sidebarItemCount} reason=old-full-library-sidebar`);
+        } else {
+          console.log(`[BootSnapshot][SIDEBAR_FILTER] libraryGames=${deduped.length} sidebarItems=${sidebarItemCount} installedOnly=true`);
+        }
+      }
+
       await saveStartupSnapshot(snapshot);
-      console.log(`[BootSnapshot][WRITE_DONE] games=${snapshot.library.games.length} sidebarItems=${snapshot.sidebar.items.length} dirtyAppIds=${dirtyCount}`);
+      console.log(`[BootSnapshot][WRITE_DONE] games=${snapshot.library.games.length} sidebarItems=${sidebarItemCount} dirtyAppIds=${dirtyCount}`);
       if (_coalescedScheduleCount > 0) {
         console.log(`[BootSnapshot][WRITE_COALESCED] skippedExtraSchedules=${_coalescedScheduleCount}`);
         _coalescedScheduleCount = 0;
@@ -1222,7 +1329,7 @@ export function scheduleSnapshotUpdateAfterMediaChange(
   statsMap: Map<number, SteamUserGameStats> | null,
 ): void {
   // Debounce 1-3 seconds — batch multiple games, avoid write storm
-  scheduleSnapshotWrite(games, appInfoMap, statsMap, 1500);
+  scheduleSnapshotWrite(games, appInfoMap, statsMap, 1500, "media-change");
 }
 
 export function cancelScheduledSnapshotWrite(): void {

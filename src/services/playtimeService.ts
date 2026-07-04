@@ -118,12 +118,59 @@ export async function endPlaySession(input: PlaySessionEnd): Promise<PlaytimeEnt
 
 export const MIN_SESSION_SECONDS = 15;
 
-/** Compute total playtime based on source: external games don't accumulate local */
+/** Compute total playtime — Rust already maintains totalPlaytimeSeconds correctly */
 export function computeTotalPlaytime(entry: PlaytimeEntry): number {
-  if (entry.playtimeSource === "external" || entry.externalSource != null) {
-    return entry.externalPlaytimeSeconds;
+  return entry.totalPlaytimeSeconds;
+}
+
+/** Look up a playtime entry by appId — tries normalized key then legacy aliases */
+export function getPlaytimeEntryByAppId(appId: string | null | undefined): PlaytimeEntry | null {
+  if (!appId) return null;
+  if (!cachedStore) return null;
+  // Primary: canonical key
+  let entry = cachedStore.games[`app-${appId}`] ?? null;
+  if (entry) return entry;
+  // Legacy aliases
+  entry = cachedStore.games[`steam:${appId}`] ?? null;
+  if (entry) { console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam:${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  entry = cachedStore.games[`steam-${appId}`] ?? null;
+  if (entry) { console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam-${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  entry = cachedStore.games[appId] ?? null;
+  if (entry) { console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  return null;
+}
+
+/** Get total playtime seconds for a game by appId, or 0 if not found */
+export function getPlaytimeSecondsForAppId(appId: string | null | undefined): number {
+  const entry = getPlaytimeEntryByAppId(appId);
+  return entry ? entry.totalPlaytimeSeconds : 0;
+}
+
+/** Try to load playtime store if not already loaded. Returns true if already loaded. */
+export function isPlaytimeStoreLoaded(): boolean {
+  return cachedStore !== null;
+}
+
+/** Get the last known session end time for an appId, or null */
+export function getLastSessionEndForAppId(appId: string | null | undefined): number | null {
+  const entry = getPlaytimeEntryByAppId(appId);
+  if (!entry) return null;
+  if (entry.lastPlayedAt) return entry.lastPlayedAt;
+  // Fallback: use latest session end/start
+  if (entry.sessions.length > 0) {
+    const sorted = [...entry.sessions].sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
+    return sorted[0].endedAt ?? sorted[0].startedAt;
   }
-  return (entry.localPlaytimeSeconds ?? 0);
+  return null;
+}
+
+/** Describe the playtime source for UI display */
+export function getPlaytimeSourceLabel(appId: string | null | undefined): string {
+  const entry = getPlaytimeEntryByAppId(appId);
+  if (!entry) return "unknown";
+  if (entry.playtimeSource === "external" || entry.externalSource != null) return "external";
+  if (entry.localPlaytimeSeconds > 0) return "local";
+  return "unknown";
 }
 
 export function formatPlaytime(seconds: number): string {

@@ -1,4 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { countRender, isInteractionBusy } from "../../services/perfCounters";
+
+const DEBUG_IMG_FAIL = false;
+
+// Truncate URL for logging while preserving the filename (last path segment).
+function logUrl(url: string | undefined | null, maxLen = 120): string {
+  if (!url) return "(none)";
+  if (url.length <= maxLen) return url;
+  const lastSlash = url.lastIndexOf("/");
+  const filename = lastSlash >= 0 ? url.slice(lastSlash + 1) : url;
+  const prefix = url.slice(0, Math.max(0, maxLen - filename.length - 3));
+  return `${prefix}...${filename}`;
+}
 
 import {
   Download,
@@ -56,6 +69,25 @@ type PackageCardProps = {
   onDownloadSource?: (game: PackageGame, source: PackageSource) => void;
 };
 
+/** Steam CDN fallback URLs for known image roles. */
+function getSteamCdnUrls(appId: string, variant?: "landscape" | "poster"): string[] {
+  const id = parseInt(appId, 10);
+  if (!id || isNaN(id) || id <= 0) return [];
+  const base = `https://cdn.akamai.steamstatic.com/steam/apps/${id}`;
+  if (variant === "poster") {
+    return [
+      `${base}/library_600x900.jpg`,
+      `${base}/capsule_616x353.jpg`,
+      `${base}/header.jpg`,
+    ];
+  }
+  return [
+    `${base}/capsule_616x353.jpg`,
+    `${base}/header.jpg`,
+    `${base}/library_600x900.jpg`,
+  ];
+}
+
 /** Return all candidate image URLs in priority order for fallback. */
 function getBestCardImageChain(
   game: PackageGame,
@@ -65,7 +97,59 @@ function getBestCardImageChain(
   const candidates = variant === "poster"
     ? [metadata?.capsule_image_v5, metadata?.capsule_image, game.imageUrl, metadata?.header_image]
     : [metadata?.header_image, game.imageUrl, metadata?.capsule_image, metadata?.capsule_image_v5];
-  return candidates.filter((u): u is string => typeof u === "string");
+  const metadataUrls = candidates.filter((u): u is string => typeof u === "string");
+  const cdnUrls = getSteamCdnUrls(game.appId, variant);
+  // Append CDN URLs as last-resort fallbacks, deduplicating against metadata URLs
+  const allUrls = [...metadataUrls];
+  for (const url of cdnUrls) {
+    if (!allUrls.includes(url)) allUrls.push(url);
+  }
+  return allUrls;
+}
+
+/** Custom comparator for React.memo — compares only visible props. */
+function arePackageCardPropsEqual(
+  a: PackageCardProps,
+  b: PackageCardProps,
+): boolean {
+  // Game identity (stable key)
+  if (a.game.appId !== b.game.appId) return false;
+  // Game display fields
+  if (a.game.title !== b.game.title) return false;
+  if (a.game.imageUrl !== b.game.imageUrl) return false;
+  const aSources = a.game.sources.filter((s) => s.available).length;
+  const bSources = b.game.sources.filter((s) => s.available).length;
+  if (aSources !== bSources) return false;
+  // Variant
+  if (a.variant !== b.variant) return false;
+  // Badges fingerprint
+  const aBadges = a.badges?.map((b) => `${b.type}:${b.label}`).join(",") ?? "";
+  const bBadges = b.badges?.map((b) => `${b.type}:${b.label}`).join(",") ?? "";
+  if (aBadges !== bBadges) return false;
+  // Handler identity (stable if callbacks are useCallback-ed)
+  if (a.onInstallComplete !== b.onInstallComplete) return false;
+  if (a.onOpenDetails !== b.onOpenDetails) return false;
+  if (a.onOpenSourceSelector !== b.onOpenSourceSelector) return false;
+  if (a.onDownload !== b.onDownload) return false;
+  if (a.onOpenGame !== b.onOpenGame) return false;
+  if (a.onDownloadSource !== b.onDownloadSource) return false;
+  // Store metadata relevant display fields
+  const aMeta = a.storeMetadata;
+  const bMeta = b.storeMetadata;
+  if ((aMeta === undefined) !== (bMeta === undefined)) return false;
+  if (aMeta && bMeta) {
+    if (aMeta.name !== bMeta.name) return false;
+    if (aMeta.developer !== bMeta.developer) return false;
+    if (aMeta.header_image !== bMeta.header_image) return false;
+    if (aMeta.capsule_image !== bMeta.capsule_image) return false;
+    if (aMeta.capsule_image_v5 !== bMeta.capsule_image_v5) return false;
+    const aPlats = aMeta.platforms?.slice().sort().join(",") ?? "";
+    const bPlats = bMeta.platforms?.slice().sort().join(",") ?? "";
+    if (aPlats !== bPlats) return false;
+  }
+  // Review summary — only check if reviewSummary is fully undefined vs present
+  // (the component doesn't currently render reviewSummary fields, so skip deep compare)
+  return true;
 }
 
 function getStoreTitle(game: PackageGame, metadata?: SteamAppMetadata) {
@@ -98,7 +182,7 @@ function CardImage({
   );
 }
 
-export default function PackageCard({
+function PackageCardRaw({
   game,
   storeMetadata,
   badges,
@@ -110,6 +194,7 @@ export default function PackageCard({
   onOpenSourceSelector,
   onDownloadSource,
 }: PackageCardProps) {
+  countRender("PackageCard");
   const { settings } = useSettings();
   const { addJob, updateJob } = useDownloadQueue();
 
@@ -336,8 +421,21 @@ export default function PackageCard({
                 alt={displayTitle}
                 objectClass="object-cover"
                 onError={() => {
+                  // Phase 8: Skip fallback chain during active interaction (scroll/click)
+                  if (isInteractionBusy()) {
+                    if (_mountedRef.current) setImageFailed(true);
+                    return;
+                  }
+                  if (!_mountedRef.current) {
+                    if (DEBUG_IMG_FAIL) console.log(`[PACKAGE_CARD][FALLBACK_CANCEL] reason=unmounted`);
+                    return;
+                  }
+                  if (DEBUG_IMG_FAIL) console.log(`[IMG][FAIL] appid=${game.appId} source=${logUrl(displayImageUrl)}`);
                   if (hasMoreFallbacks) {
-                    setImageFallbackIndex((i) => i + 1);
+                    const nextIdx = imageFallbackIndex + 1;
+                    const nextUrl = imageFallbackChain[nextIdx];
+                    if (DEBUG_IMG_FAIL) console.log(`[IMG][FALLBACK_NEXT] appid=${game.appId} nextSource=${logUrl(nextUrl)}`);
+                    setImageFallbackIndex(nextIdx);
                   } else {
                     setImageFailed(true);
                   }
@@ -384,14 +482,20 @@ export default function PackageCard({
           </div>
         </article>
 
-        <StoreSourceSelectorModal
-          open={sourceSelectorOpen}
-          game={game}
-          selectedSource={bestSource}
-          onClose={() => setSourceSelectorOpen(false)}
-          onDownloadSource={handleSourceDownload}
-          onOpenDetails={onOpenDetails || onOpenGame}
-        />
+        {/* Phase 11: Only render StoreSourceSelectorModal when open AND
+            parent doesn't provide onOpenSourceSelector (meaning Store.tsx
+            already handles modals at page level). This avoids mounting
+            hundreds of closed modal components per card. */}
+        {!onOpenSourceSelector && sourceSelectorOpen && (
+          <StoreSourceSelectorModal
+            open={sourceSelectorOpen}
+            game={game}
+            selectedSource={bestSource}
+            onClose={() => setSourceSelectorOpen(false)}
+            onDownloadSource={handleSourceDownload}
+            onOpenDetails={onOpenDetails || onOpenGame}
+          />
+        )}
       </>
     );
   }
@@ -417,8 +521,21 @@ export default function PackageCard({
             alt={displayTitle}
             objectClass="object-cover"
             onError={() => {
+              // Phase 8: Skip fallback chain during active interaction (scroll/click)
+              if (isInteractionBusy()) {
+                if (_mountedRef.current) setImageFailed(true);
+                return;
+              }
+              if (!_mountedRef.current) {
+                if (DEBUG_IMG_FAIL) console.log(`[PACKAGE_CARD][FALLBACK_CANCEL] reason=unmounted`);
+                return;
+              }
+              if (DEBUG_IMG_FAIL) console.log(`[IMG][FAIL] appid=${game.appId} source=${logUrl(displayImageUrl)}`);
               if (hasMoreFallbacks) {
-                setImageFallbackIndex((i) => i + 1);
+                const nextIdx = imageFallbackIndex + 1;
+                const nextUrl = imageFallbackChain[nextIdx];
+                if (DEBUG_IMG_FAIL) console.log(`[IMG][FALLBACK_NEXT] appid=${game.appId} nextSource=${logUrl(nextUrl)}`);
+                setImageFallbackIndex(nextIdx);
               } else {
                 setImageFailed(true);
               }
@@ -460,14 +577,20 @@ export default function PackageCard({
         </div>
       </article>
 
-      <StoreSourceSelectorModal
-        open={sourceSelectorOpen}
-        game={game}
-        selectedSource={bestSource}
-        onClose={() => setSourceSelectorOpen(false)}
-        onDownloadSource={handleSourceDownload}
-        onOpenDetails={onOpenDetails || onOpenGame}
-      />
+      {/* Phase 11: Only render StoreSourceSelectorModal when open AND parent
+          doesn't handle source selector at page level. */}
+      {!onOpenSourceSelector && sourceSelectorOpen && (
+        <StoreSourceSelectorModal
+          open={sourceSelectorOpen}
+          game={game}
+          selectedSource={bestSource}
+          onClose={() => setSourceSelectorOpen(false)}
+          onDownloadSource={handleSourceDownload}
+          onOpenDetails={onOpenDetails || onOpenGame}
+        />
+      )}
     </>
   );
 }
+
+export default memo(PackageCardRaw, arePackageCardPropsEqual);

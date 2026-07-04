@@ -6,6 +6,7 @@ import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
 import { GameActivityProvider } from "../../context/GameActivityContext";
 import type { AppPage } from "../../types/navigation";
 import type { SidebarMode } from "./Sidebar";
+import { countRender } from "../../services/perfCounters";
 
 type AppLayoutProps = {
   activePage: AppPage;
@@ -36,6 +37,7 @@ export default function AppLayout({
   onNavigate,
   children,
 }: AppLayoutProps) {
+  countRender("AppLayout");
   const [manualMode, setManualMode] = useState<"auto" | "expanded" | "collapsed">("auto");
   const [autoMode, setAutoMode] = useState<SidebarMode>("expanded");
   const [drawerOpen, setDrawerOpen] = useState(false);

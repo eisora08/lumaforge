@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { countRender } from "../services/perfCounters";
 import { Activity } from "lucide-react";
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
@@ -6,8 +7,7 @@ import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
-import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
-import NewNoteworthySection from "../components/dashboard/NewNoteworthySection";
+
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
 import { getCachedSnapshot } from "../services/startupSnapshotService";
@@ -58,6 +58,7 @@ function deduplicateActivities(activities: { id: string; title: string; createdA
 }
 
 export default function Home({ onNavigate }: Props) {
+  countRender("Home");
   const snapshot = useMemo(() => getCachedSnapshot(), []);
   const { activities } = useGameActivity();
   const { sessions } = useGameSession();
@@ -171,8 +172,6 @@ export default function Home({ onNavigate }: Props) {
 
         {dashboardDiscoveryReady && (
           <>
-            {/* <NewNoteworthySection onNavigate={onNavigate} />
-            <FeaturedPicksSection onNavigate={onNavigate} /> */}
             <TrendingRightNowSection onNavigate={onNavigate} />
           </>
         )}

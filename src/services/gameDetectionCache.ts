@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../types/libraryGame";
+import { dedupeLibraryGames } from "./gameCacheService";
 
 const CACHE_KEY = "lumaforge-library-games-v3";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -44,9 +45,13 @@ export async function saveCachedGames(
   warnings?: string[],
   errors?: string[],
 ): Promise<void> {
+  const deduped = dedupeLibraryGames(games);
+  if (deduped.length !== games.length) {
+    console.log(`[LIBRARY_CACHE][DEDUP] before=${games.length} after=${deduped.length}`);
+  }
   const cache: DetectedGamesCache = {
     savedAt: Date.now(),
-    games,
+    games: deduped,
     warnings,
     errors,
   };

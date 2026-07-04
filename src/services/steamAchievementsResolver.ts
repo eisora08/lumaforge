@@ -12,6 +12,7 @@ import {
 } from "./tauri";
 import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, SteamAppcacheSchemaEntry, SteamAppcacheParsedProgress, UserGameStatsRawResult, DebugAchievementReport, LibraryCacheProgress } from "./tauri";
 import { achievementStore, isSourceNewerOrEqual } from "./achievementStore";
+import { DEBUG_ACH_VERBOSE } from "./achievementAutoFlags";
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const ACHIEVEMENT_CACHE_VERSION = 6;
@@ -599,13 +600,13 @@ export async function resolveSteamAchievements(params: {
         const stored = achievementStore.getSummary(appIdStr);
         if (stored) {
           const accept = isSourceNewerOrEqual(cacheSummary.source, cacheSummary.updatedAt, stored.source, stored.updatedAt);
-          console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=${accept} existingSource=${stored.source}`);
+          if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=${accept} existingSource=${stored.source}`);
           if (!accept) {
-            console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
+            if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
             return stored;
           }
         } else {
-          console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=true reason=first-summary`);
+          if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=cache unlocked=${cacheSummary.unlocked}/${cacheSummary.total} updatedAt=${cacheSummary.updatedAt} progressAvailable=${cacheSummary.progressAvailable} accepted=true reason=first-summary`);
         }
         return cacheSummary;
       }
@@ -967,13 +968,13 @@ export async function resolveSteamAchievements(params: {
   const stored = achievementStore.getSummary(appIdStr);
   if (stored) {
     const accept = isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt);
-    console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=${accept} existingSource=${stored.source} existingUnlocked=${stored.unlocked}/${stored.total}`);
+    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=${accept} existingSource=${stored.source} existingUnlocked=${stored.unlocked}/${stored.total}`);
     if (!accept) {
-      console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
+      if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
       return stored;
     }
   } else {
-    console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=true reason=first-summary`);
+    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=true reason=first-summary`);
   }
 
   return summary;

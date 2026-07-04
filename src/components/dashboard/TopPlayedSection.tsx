@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Trophy } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { getCachedPlaytimeStore } from "../../services/playtimeService";
+import { getCachedPlaytimeStore, getPlaytimeSecondsForAppId, getPlaytimeEntryByAppId } from "../../services/playtimeService";
 import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
 
 const DEBUG_MEDIA_DASH = false;
@@ -37,7 +37,8 @@ function getTopPlayed(
     .filter((g) => g.appId && !exclude.has(g.appId))
     .map((g) => {
       const totalSeconds = playtimeMap[g.appId!] ?? (g.playtime ? g.playtime * 60 : 0);
-      const sessionCount = playtimeStore?.games[`app-${g.appId}`]?.sessions?.length ?? 0;
+      const ptEntry = getPlaytimeEntryByAppId(g.appId);
+      const sessionCount = ptEntry?.sessions?.length ?? 0;
       return { game: g, totalSeconds, sessionCount };
     })
     .sort((a, b) => {
@@ -176,8 +177,7 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
           {deduplicateByAppId(displayGames).map((game) => {
             const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
             const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
-            const totalSeconds =
-              getCachedPlaytimeStore()?.games[`app-${game.appId}`]?.totalPlaytimeSeconds ?? 0;
+            const totalSeconds = getPlaytimeSecondsForAppId(game.appId);
             const totalStr = formatPlaytime(totalSeconds);
 
             return (

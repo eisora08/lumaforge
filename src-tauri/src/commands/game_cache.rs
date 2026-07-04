@@ -630,7 +630,7 @@ pub fn update_game_appinfo_media(
                 if resolved != rel {
                     media_log(&format!("[MEDIA][PATH] normalized before write appid={} input={} relative={}", app_id, resolved, rel));
                 }
-                media_log(&format!("[MEDIA][APPINFO_WRITE] appid={} field={} relative={}", app_id, field, rel));
+                media_log(&format!("[MEDIA][PATH_FOUND] appid={} field={} relative={}", app_id, field, rel));
                 return Some(rel);
             }
             media_log(&format!("[AppInfoUpdate] incoming path missing {}, checking existing: {}", field, p));
@@ -675,6 +675,27 @@ pub fn update_game_appinfo_media(
             icon: merge_src(&sources.icon, existing.and_then(|m| m.icon.as_ref())),
         });
     }
+    // No-op guard: skip write if merged content matches existing file.
+    // updated_at is NOT set here — we compare WITHOUT it first so that
+    // unchanged content doesn't trigger a write just because of a new timestamp.
+    let existing_content = if path.exists() {
+        fs::read_to_string(&path).ok()
+    } else {
+        None
+    };
+
+    // Serialize WITHOUT updated_at for the comparison
+    let content_no_ts = serde_json::to_string_pretty(&entry)
+        .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
+
+    if let Some(ref existing) = existing_content {
+        if *existing == content_no_ts {
+            println!("[MEDIA][APPINFO_SKIP] appid={} reason=rust-no-effective-change", app_id);
+            return Ok(());
+        }
+    }
+
+    // Content actually changed — set updated_at and write
     entry.updated_at = Some(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -684,10 +705,11 @@ pub fn update_game_appinfo_media(
 
     let content = serde_json::to_string_pretty(&entry)
         .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
+
     fs::write(&path, &content)
         .map_err(|e| format!("Failed to write game appinfo: {}", e))?;
 
-    log(&format!("appinfo media updated for {}", app_id));
+    println!("[MEDIA][APPINFO_WRITE] appid={} path={:?}", app_id, path);
     Ok(())
 }
 
@@ -1822,4 +1844,68 @@ fn try_move_media_file(
         }
     }
     false
+}
+
+// ---------------------------------------------------------------------------
+// resolve_game_media_paths_batch — resolve media paths for multiple appIds
+// in a single Tauri call. Replaces per-app resolveGameMediaPaths loops in
+// hydrateMediaOnStartup and buildStartupSnapshotFromCurrentState.
+// Read-only. Does NOT repair .tmp files or hash indexes.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn resolve_game_media_paths_batch(
+    app_handle: AppHandle,
+    app_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, GameMediaPaths>, String> {
+    use std::collections::HashMap;
+    let mut result = HashMap::new();
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    for app_id in app_ids {
+        let media_dir = app_dir.join("games").join("steam")
+            .join(safe_filename(&app_id)).join("media");
+
+        if !media_dir.exists() {
+            continue;
+        }
+
+        let cover_path = {
+            let p = media_dir.join("cover.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("cover.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        };
+        let background_path = {
+            let p = media_dir.join("background.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("background.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        };
+        let logo_path = {
+            let p = media_dir.join("logo.png");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("logo.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        };
+        let icon_path = {
+            let p = media_dir.join("icon.png");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("icon.jpg"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        };
+        let landscape_path = {
+            let p = media_dir.join("landscape.jpg");
+            if p.exists() { Some(p.to_string_lossy().to_string()) }
+            else { let p2 = media_dir.join("landscape.png"); if p2.exists() { Some(p2.to_string_lossy().to_string()) } else { None } }
+        };
+
+        result.insert(app_id, GameMediaPaths {
+            cover_path,
+            background_path,
+            logo_path,
+            icon_path,
+            landscape_path,
+        });
+    }
+    Ok(result)
 }

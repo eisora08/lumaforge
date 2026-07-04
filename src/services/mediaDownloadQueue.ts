@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { updateGameAppinfoMedia } from "./tauri";
-import { invalidateResolvedMediaCache } from "./gameCacheService";
+import type { GameAppInfo, GameMediaPaths } from "./tauri";
+import { invalidateResolvedMediaCache, normalizeMediaPathForIndex, updateGameAppinfoMediaIfChanged, getCachedGameAppInfo, getMediaEntry } from "./gameCacheService";
+import { isInteractionBusy } from "./perfCounters";
+
+const FLUSH_IDLE_RETRY_MS = 2000; // Phase 3: retry delay when paused
 
 const ENABLE_VERBOSE_MEDIA_QUEUE_LOGS = false;
 
@@ -93,87 +96,225 @@ function mediaTypeToField(mediaType: string): keyof import("./tauri").GameMediaP
 
 const pendingAppInfoUpdates = new Map<string, Record<string, string | null>>();
 let appInfoFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushRunning = false; // Phase 1: single-flight guard
+let flushGeneration = 0;  // Phase 1: generation counter for stale callback detection
 
-// Track last route change time for navigation guard
-let _lastRouteChange = 0;
-if (typeof window !== "undefined") {
-  window.addEventListener("hashchange", () => { _lastRouteChange = Date.now(); });
-}
-
+// ── Phase 1+2+3: Single-flight, Map-based, interaction-paused appinfo flush ──
+// - Only one flush runs at a time (flushRunning guard)
+// - Processes ONE appId per idle chunk (MAX_FLUSH_CHUNK_SIZE=1)
+// - Processes appIds directly from Map (no stale snapshot array)
+// - Hard pauses during interaction; defers on Store active
+// Phase 4: Normalizes paths before comparing to skip no-op updates
+// Phase 5: Uses getCachedGameAppInfo to avoid duplicate reads
 async function flushAppInfoUpdates() {
+  // Phase 1: Generation guard — capture our generation at start
+  const gen = ++flushGeneration;
+  if (flushRunning) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_SCHEDULE_SKIP] reason=already-running pending=${pendingAppInfoUpdates.size}`);
+    return;
+  }
+  flushRunning = true;
   appInfoFlushTimer = null;
 
-  // Defer if a navigation happened within the last 2 seconds
-  const msSinceRouteChange = Date.now() - _lastRouteChange;
-  if (msSinceRouteChange < 2000) {
-    console.log(`[MEDIA_REPAIR][DEFER] reason=navigation-active msSince=${msSinceRouteChange}`);
-    appInfoFlushTimer = setTimeout(flushAppInfoUpdates, 2000 - msSinceRouteChange);
+  if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_START] pending=${pendingAppInfoUpdates.size} generation=${gen}`);
+
+  // Phase 3: Hard pause during interaction BEFORE any work
+  if (isInteractionBusy()) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_PAUSE] reason=interaction-busy pending=${pendingAppInfoUpdates.size}`);
+    flushRunning = false;
+    appInfoFlushTimer = setTimeout(() => {
+      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_RETRY_SCHEDULED] delayMs=2000 pending=${pendingAppInfoUpdates.size}`);
+      flushAppInfoUpdates();
+    }, FLUSH_IDLE_RETRY_MS);
     return;
   }
 
-  // Skip media index updates while Store is active to avoid triggering snapshot writes
+  // Phase 2: Defer on Store active (don't clear — items stay pending)
   const hash = typeof window !== "undefined" ? window.location.hash : "";
   if (hash.startsWith("#/store")) {
-    console.log(`[MEDIA_INDEX][UPDATE_SKIP] reason=store-active updates=${pendingAppInfoUpdates.size}`);
-    pendingAppInfoUpdates.clear();
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_INDEX][UPDATE_SKIP] reason=store-active pending=${pendingAppInfoUpdates.size} (deferred)`);
+    flushRunning = false;
+    appInfoFlushTimer = setTimeout(flushAppInfoUpdates, FLUSH_IDLE_RETRY_MS);
     return;
   }
+
   const [{ getMediaEntry, setMediaEntry }, { notifyMediaUpdated }] = await Promise.all([
     import("./gameCacheService"),
     import("./startupSnapshotService"),
   ]);
-  for (const [appId, fields] of pendingAppInfoUpdates) {
-    const media: Record<string, string | null> = {
-      coverPath: fields.coverPath ?? null,
-      backgroundPath: fields.backgroundPath ?? null,
-      logoPath: fields.logoPath ?? null,
-      iconPath: fields.iconPath ?? null,
-      landscapePath: fields.landscapePath ?? null,
-    };
-    updateGameAppinfoMedia(appId, null, media as any, null).catch(() => {});
-    // Invalidate in-memory cache so UI picks up new paths
-    invalidateResolvedMediaCache(appId);
 
-    // Update MediaIndex with new paths (skip if no effective change)
-    const entry = getMediaEntry(appId);
-    if (entry) {
-      const updated = { ...entry };
-      let changed = 0;
-      for (const [field, path] of Object.entries(fields)) {
-        const relPath = path as string | null;
-        const key = field.replace("Path", "") as keyof typeof updated;
-        const hasKey = `has${key.charAt(0).toUpperCase() + key.slice(1)}` as keyof typeof updated;
-        const newPath = relPath ? `media/${relPath.split(/[/\\\\]/).pop()}` : null;
-        const newHas = !!relPath;
-        const oldPath = (updated as any)[field] as string | null;
-        const oldHas = (updated as any)[hasKey] as boolean;
-        if (oldPath === newPath && oldHas === newHas) continue;
-        (updated as any)[field] = newPath;
-        (updated as any)[hasKey] = newHas;
-        changed++;
-      }
-      if (changed > 0) {
-        updated.updatedAt = Date.now();
-        setMediaEntry(updated);
-        console.log(`[MEDIA_INDEX] update key=steam:${appId} changedFields=${changed} source=local-media-repair`);
-        // Notify snapshot so UI picks up changes (debounced in startupSnapshotService)
-        // Pass source=local-media-repair so notifyMediaUpdated can decide whether
-        // to schedule a write (local-media-repair already updated appinfo.json + MediaIndex,
-        // so a snapshot re-read would find no effective change → skip scheduling)
+  // Phase 2: Pick ONE appId directly from Map (no stale snapshot array)
+  const appId = pendingAppInfoUpdates.keys().next().value as string | undefined;
+
+  if (!appId) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_DONE] processed=0 generation=${gen}`);
+    flushRunning = false;
+    return;
+  }
+
+  const fields = pendingAppInfoUpdates.get(appId)!;
+
+  // Phase 3: Re-check interaction before processing this appId
+  if (isInteractionBusy()) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_PAUSE] reason=interaction-busy after=0 pending=${pendingAppInfoUpdates.size}`);
+    flushRunning = false;
+    appInfoFlushTimer = setTimeout(() => {
+      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_RETRY_SCHEDULED] delayMs=2000 pending=${pendingAppInfoUpdates.size}`);
+      flushAppInfoUpdates();
+    }, FLUSH_IDLE_RETRY_MS);
+    return;
+  }
+
+  // Phase 5: Use cached appinfo to avoid duplicate reads
+  let existingAppInfo: GameAppInfo | null = null;
+  try {
+    existingAppInfo = await getCachedGameAppInfo(appId);
+  } catch { /* not critical */ }
+
+  const existingMedia = existingAppInfo?.media ?? ({} as GameMediaPaths);
+
+  // Rebuild merged fields from pending + existing
+  const merged = {
+    coverPath: fields.coverPath ?? existingMedia.coverPath ?? null,
+    backgroundPath: fields.backgroundPath ?? existingMedia.backgroundPath ?? null,
+    logoPath: fields.logoPath ?? existingMedia.logoPath ?? null,
+    iconPath: fields.iconPath ?? existingMedia.iconPath ?? null,
+    landscapePath: fields.landscapePath ?? existingMedia.landscapePath ?? null,
+  };
+
+  // Phase 4: Normalize paths before comparison — handles absolute-vs-relative
+  const proposedNormalized: Record<string, string | null> = {};
+  const existingNormalized: Record<string, string | null> = {};
+  const mediaKeys: (keyof GameMediaPaths)[] = ["coverPath", "backgroundPath", "logoPath", "iconPath", "landscapePath"];
+  let hasEffectiveChange = false;
+  for (const k of mediaKeys) {
+    const pNorm = normalizeMediaPathForIndex((merged as any)[k]);
+    const eNorm = normalizeMediaPathForIndex((existingMedia as any)[k] ?? null);
+    proposedNormalized[k] = pNorm;
+    existingNormalized[k] = eNorm;
+    if (pNorm !== eNorm) hasEffectiveChange = true;
+  }
+
+  if (!hasEffectiveChange) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA][APPINFO_SKIP] appid=${appId} reason=already-synced-before-rust caller=flushAppInfoUpdates`);
+    pendingAppInfoUpdates.delete(appId);
+    // Schedule next if more pending
+    if (pendingAppInfoUpdates.size > 0) {
+      appInfoFlushTimer = setTimeout(flushAppInfoUpdates, 300);
+    } else {
+      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_DONE] processed=0 skipped=1 generation=${gen}`);
+    }
+    flushRunning = false;
+    return;
+  }
+
+  await updateGameAppinfoMediaIfChanged(
+    appId,
+    existingAppInfo?.name ?? null,
+    merged,
+    existingAppInfo?.remote ?? null,
+    existingAppInfo?.mediaSources ?? null,
+    "flushAppInfoUpdates",
+  ).catch(() => {});
+  invalidateResolvedMediaCache(appId);
+
+  // Update MediaIndex
+  const entry = getMediaEntry(appId);
+  if (entry) {
+    const updated = { ...entry };
+    let mediaIndexChanged = 0;
+    let pathActuallyChanged = 0;
+    for (const [field, path] of Object.entries(fields)) {
+      const relPath = path as string | null;
+      const key = field.replace("Path", "") as keyof typeof updated;
+      const hasKey = `has${key.charAt(0).toUpperCase() + key.slice(1)}` as keyof typeof updated;
+      const newPath = normalizeMediaPathForIndex(relPath);
+      const newHas = !!newPath;
+      const oldPath = normalizeMediaPathForIndex((updated as any)[field] as string | null);
+      const oldHas = (updated as any)[hasKey] as boolean;
+      if (oldPath === newPath && oldHas === newHas) continue;
+      (updated as any)[field] = newPath;
+      (updated as any)[hasKey] = newHas;
+      mediaIndexChanged++;
+      if (oldPath !== newPath) pathActuallyChanged++;
+    }
+    if (mediaIndexChanged > 0) {
+      updated.updatedAt = Date.now();
+      setMediaEntry(updated);
+      if (pathActuallyChanged > 0) {
+        if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_INDEX] update key=steam:${appId} changedFields=${mediaIndexChanged} source=local-media-repair`);
         notifyMediaUpdated(appId, { source: "local-media-repair" }).catch(() => {});
       } else {
-        console.log(`[MEDIA_INDEX][UPDATE_SKIP] appid=${appId} reason=no-effective-change`);
+        if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_INDEX][UPDATE_SKIP] appid=${appId} reason=snapshot-already-synced`);
       }
+    } else {
+      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_INDEX][UPDATE_SKIP] appid=${appId} reason=no-effective-change`);
     }
   }
-  pendingAppInfoUpdates.clear();
+
+  pendingAppInfoUpdates.delete(appId);
+  flushRunning = false;
+
+  // Schedule next chunk if more appIds pending
+  const remaining = pendingAppInfoUpdates.size;
+  if (remaining > 0) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_CHUNK] processed=1 remaining=${remaining} generation=${gen}`);
+    appInfoFlushTimer = setTimeout(flushAppInfoUpdates, 300);
+  } else {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_DONE] processed=1 generation=${gen}`);
+  }
 }
 
-function queueAppInfoUpdate(appId: string, field: string, path: string | null) {
-  const existing = pendingAppInfoUpdates.get(appId) ?? {};
-  existing[field] = path;
-  pendingAppInfoUpdates.set(appId, existing);
-  if (appInfoFlushTimer) clearTimeout(appInfoFlushTimer);
+async function queueAppInfoUpdate(appId: string, field: string, path: string | null, caller = "unknown") {
+  const proposedNorm = normalizeMediaPathForIndex(path);
+
+  // Check 1: Compare against MediaIndex (synchronous, in-memory)
+  const entry = getMediaEntry(appId);
+  if (entry) {
+    const existingIndexNorm = normalizeMediaPathForIndex((entry as any)[field] as string | null);
+    if (existingIndexNorm !== null && proposedNorm === existingIndexNorm) {
+      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][ENQUEUE_SKIP] appid=${appId} field=${field} reason=already-synced-index source=${caller}`);
+      return;
+    }
+  }
+
+  // Check 2: Compare against cached appinfo media (async, session cache)
+  try {
+    const existingAppInfo = await getCachedGameAppInfo(appId);
+    if (existingAppInfo?.media) {
+      const existingPath = (existingAppInfo.media as any)[field] as string | null | undefined;
+      const existingPathNorm = normalizeMediaPathForIndex(existingPath ?? null);
+      if (proposedNorm !== null && proposedNorm === existingPathNorm) {
+        if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][ENQUEUE_SKIP] appid=${appId} field=${field} reason=already-synced-appinfo source=${caller}`);
+        return;
+      }
+    }
+  } catch { /* not critical — proceed with enqueue */ }
+
+  // Check 3: If appId already pending, only merge if this field actually differs from pending
+  const existing = pendingAppInfoUpdates.get(appId);
+  if (existing) {
+    const pendingPath = existing[field];
+    const pendingNorm = normalizeMediaPathForIndex(pendingPath ?? null);
+    if (proposedNorm === pendingNorm) {
+      if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][ENQUEUE_SKIP] appid=${appId} field=${field} reason=already-pending source=${caller}`);
+      return;
+    }
+    existing[field] = path;
+    pendingAppInfoUpdates.set(appId, existing);
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][ENQUEUE_APPINFO] appid=${appId} field=${field} source=${caller} changed=true`);
+    return; // already scheduled
+  }
+
+  // New appId or first field — schedule flush
+  pendingAppInfoUpdates.set(appId, { [field]: path });
+  if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][ENQUEUE_APPINFO] appid=${appId} field=${field} source=${caller} changed=true`);
+
+  if (flushRunning || appInfoFlushTimer) {
+    if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_SCHEDULE_SKIP] reason=already-scheduled-or-running pending=${pendingAppInfoUpdates.size}`);
+    return;
+  }
+  if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][FLUSH_SCHEDULE] pending=${pendingAppInfoUpdates.size} delayMs=500 generation=${flushGeneration + 1}`);
   appInfoFlushTimer = setTimeout(flushAppInfoUpdates, 500);
 }
 
@@ -224,7 +365,7 @@ async function performDownload(entry: InternalJob, key: string) {
       recentlyFailed.delete(key);
       log("success", key, result);
       // Update appinfo with the downloaded file path (batched debounced)
-      queueAppInfoUpdate(job.appId, mediaTypeToField(job.mediaType), result);
+      queueAppInfoUpdate(job.appId, mediaTypeToField(job.mediaType), result, "media-download");
       notify({ type: "success", job, result: { success: true, appId: job.appId, mediaType: job.mediaType, localPath: result }, queueSize: pendingQueue.length });
       entry.resolve({ success: true, appId: job.appId, mediaType: job.mediaType, localPath: result });
     } else {

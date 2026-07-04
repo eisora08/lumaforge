@@ -5,10 +5,11 @@
 // ---------------------------------------------------------------------------
 
 import type { PackageGame } from "../types/package";
-import type { StoreSectionModel } from "./storeDiscoverCache";
+import type { StoreSectionModel, CacheStatus } from "./storeDiscoverCache";
 
 export interface DiscoverState {
   fingerprint: string;
+  status: CacheStatus;
   featuredGames: PackageGame[];
   dynamicDiscoverSections: StoreSectionModel[];
   allStoreSections: StoreSectionModel[];
@@ -40,6 +41,7 @@ export function getDiscoverStateVersion(): string {
 export function isDiscoverStateValid(state: DiscoverState | null): boolean {
   if (!state) return false;
   return (
+    (state.status === "complete" || state.status === "partial") &&
     Array.isArray(state.featuredGames) &&
     Array.isArray(state.dynamicDiscoverSections) &&
     Array.isArray(state.allStoreSections) &&

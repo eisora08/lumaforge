@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { countRender } from "../../services/perfCounters";
 import {
   Download,
   FileText,
@@ -77,6 +78,7 @@ export default function GameLauncherTile({
   onInstall,
   onDeleteScript,
 }: GameLauncherTileProps) {
+  countRender("GameLauncherTile");
   const { settings } = useSettings();
   const { ref, isVisible } = useInViewport();
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);

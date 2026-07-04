@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { backgroundJobQueue } from "./backgroundJobQueue";
 import { loadSettings } from "../context/SettingsContext";
 import type { AppSettings } from "../types/settings";
+import { initPerfCounters, setBootPhaseLabel } from "./perfCounters";
 
 export type BootStatus =
   | "booting"
@@ -22,6 +23,7 @@ export type BootTaskId =
   | "load-cached-media-index"
   | "start-achievement-watcher"
   | "start-background-job-queue"
+  | "load-playtime-store"
   | "schedule-background-repair"
   | "confirm-mounted";
 
@@ -40,6 +42,7 @@ let _bootError: string | null = null;
 let _bootLog: BootLogEntry[] = [];
 let _listeners: Set<() => void> = new Set();
 let _bootPromise: Promise<void> | null = null;
+let _bootStart = 0;
 let _snapshotLoaded: StartupSnapshot | null = null;
 let _snapshotResolve: (() => void) | null = null;
 let _snapshotReady: Promise<void> = new Promise((resolve) => {
@@ -134,11 +137,14 @@ export function subscribe(fn: () => void): () => void {
 export async function runBootTasks(): Promise<void> {
   if (_bootPromise) return _bootPromise;
 
+  initPerfCounters();
+  setBootPhaseLabel("critical-start");
   logBoot("start");
   _bootStatus = "booting";
   _bootProgress = 0;
   _bootError = null;
   _bootLog = [];
+  _bootStart = Date.now();
   _splashClosed = false;
 
   const timeoutPromise = new Promise<void>((_, reject) => {
@@ -228,6 +234,8 @@ export async function runBootTasks(): Promise<void> {
           });
 
           if (_snapshotResolve) _snapshotResolve();
+          setBootPhaseLabel("critical-done");
+          logBoot("phase=critical-done");
 
           // Stage 3.5: Enrich snapshot game titles (resolve placeholders via metadata/store)
           await track("enrich-snapshot-titles", async () => {
@@ -301,7 +309,7 @@ export async function runBootTasks(): Promise<void> {
             try {
               const settings = _cachedSettings;
               if (settings) {
-                const { setReconciledGames, clearReconciledGames } = await import("./gameStore");
+                const { setReconciledGames } = await import("./gameStore");
                 const { scanInstalledLuaScripts, scanSteamInstalledGames } = await import("./tauri");
                 const { loadCachedGames } = await import("./gameDetectionCache");
                 const { checkSteamScanAllowed, markSteamScanComplete } = await import("./libraryGameResolver");
@@ -433,7 +441,6 @@ export async function runBootTasks(): Promise<void> {
                     }
                   }
                 } else {
-                  clearReconciledGames();
                   // Use the cached games from SQLite for name enrichment
                   if (sqliteCache && sqliteCache.games.length > 0) {
                     const { loadSteamGameIndex } = await import("./fullSteamGameIndex");
@@ -444,7 +451,8 @@ export async function runBootTasks(): Promise<void> {
                     reconciledGames = index.map((e) => indexEntryToLibraryGame(e, luaOverlay));
                   }
                   // Persist to gameStore so validateStartupCacheHealth shows correct count
-                  if (reconciledGames && reconciledGames.length > 0) {
+                  // Always call setReconciledGames; empty-overwrite guard in gameStore prevents wipe
+                  if (reconciledGames) {
                     const { setReconciledGames } = await import("./gameStore");
                     setReconciledGames(reconciledGames);
                     console.log(`[GAMESTORE][HYDRATE] source=reconciled games=${reconciledGames.length}`);
@@ -464,7 +472,8 @@ export async function runBootTasks(): Promise<void> {
                 // Runs regardless of whether reconciliation was needed.
                 if (reconciledGames && reconciledGames.length > 0) {
                   const { isPlaceholderSteamTitle } = await import("./gameCacheService");
-                  const { updateGameAppinfoMedia, readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
+                  const { readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
+                  const { updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
                   const { resolveGameMetadata } = await import("./gameMetadataResolver");
                   const emptyTitleGames = reconciledGames.filter(
                     (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
@@ -504,10 +513,21 @@ export async function runBootTasks(): Promise<void> {
                       if (resolvedName) {
                         console.log(`[NAME][CANONICAL_WRITE] appid=${game.appId} name=${resolvedName} source=${source}`);
                         game.title = resolvedName;
-                        updateGameAppinfoMedia(
+                        // Read existing appinfo to preserve media paths (only update name)
+                        const existingForName = appinfos[game.appId];
+                        const existingMedia = existingForName?.media ?? {};
+                        updateGameAppinfoMediaIfChanged(
                           game.appId, resolvedName,
-                          { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
+                          {
+                            coverPath: existingMedia.coverPath ?? null,
+                            backgroundPath: existingMedia.backgroundPath ?? null,
+                            logoPath: existingMedia.logoPath ?? null,
+                            iconPath: existingMedia.iconPath ?? null,
+                            landscapePath: existingMedia.landscapePath ?? null,
+                          },
                           null,
+                          undefined,
+                          "bootStage45Enrichment",
                         ).catch(() => {});
                       } else {
                         console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
@@ -553,17 +573,23 @@ export async function runBootTasks(): Promise<void> {
               if (!ACHIEVEMENT_READ_CACHE_ON_BOOT) {
                 logCacheReadBootSkipOnce();
               } else {
-                const { achievementStore } = await import("./achievementStore");
-                const { readAchievementCache } = await import("./tauri");
-                if (_snapshotLoaded) {
-                  const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
-                  let loaded = 0;
-                  // Load up to 20 summaries during splash — enough for instant UI
-                  const batch = appIds.slice(0, 20);
-                  for (const appId of batch) {
-                    try {
-                      const cache = await readAchievementCache(Number(appId));
-                      if (cache) {
+                  const { achievementStore } = await import("./achievementStore");
+                  const { readAchievementCache } = await import("./tauri");
+                  if (_snapshotLoaded) {
+                    const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
+                    let loaded = 0;
+                    // Load up to 20 summaries during splash — enough for instant UI
+                    // Batch with Promise.all for concurrent Tauri invokes
+                    const batch = appIds.slice(0, 20);
+                    const results = await Promise.allSettled(
+                      batch.map((appId) => readAchievementCache(Number(appId)))
+                    );
+                    for (let i = 0; i < batch.length; i++) {
+                      const appId = batch[i];
+                      const result = results[i];
+                      if (result.status === "fulfilled") {
+                        const cache = result.value;
+                        if (cache) {
                         const summary = {
                           appId,
                           total: cache.achievements.length,
@@ -585,7 +611,7 @@ export async function runBootTasks(): Promise<void> {
                         achievementStore.setSummary(appId, summary as any);
                         loaded++;
                       }
-                    } catch { /* skip games without achievement cache */ }
+                    }
                   }
                   if (loaded > 0) {
                     logBoot(`loaded ${loaded} achievement summaries into store`);
@@ -628,6 +654,18 @@ export async function runBootTasks(): Promise<void> {
             logBoot("cached media index done");
           });
 
+          // Stage 6.5: Load playtime store for Activity playtime/lastPlayed lookups
+          await track("load-playtime-store", async () => {
+            logBoot("load playtime store start");
+            try {
+              const { loadPlaytimeStore } = await import("./playtimeService");
+              await loadPlaytimeStore();
+              logBoot("load playtime store done");
+            } catch (err) {
+              console.warn("[BOOT] playtime store load failed:", String(err));
+            }
+          });
+
           // Stage 7: Start achievement watcher (file watching only, no scanning)
           await track("start-achievement-watcher", async () => {
             logBoot("achievement watcher setup start");
@@ -649,11 +687,15 @@ export async function runBootTasks(): Promise<void> {
             logBoot("achievement watcher setup end");
           });
 
+          setBootPhaseLabel("post-shell-start");
+          logBoot("phase=post-shell-start");
+
           // Stage 8 (formerly Stage 7): Start background job queue idle processing
           await track("start-background-job-queue", async () => {
             logBoot("background job queue ready");
             // The queue was imported at module level; it's ready to accept jobs.
             // Actual processing starts when jobs are enqueued.
+            backgroundJobQueue.setRouteShellReady(true);
             logBoot("background job queue initialized");
           });
 
@@ -703,22 +745,44 @@ export async function runBootTasks(): Promise<void> {
                 }
                 // Startup media hydration — fill missing appinfo fields
                 try {
-                  const { hydrateMediaOnStartup } = await import("./gameCacheService");
-                  if (_snapshotLoaded) {
+                  const hash = typeof window !== "undefined" ? window.location.hash : "";
+                  if (hash.startsWith("#/store")) {
+                    console.log("[BOOT][MEDIA_HYDRATE_SKIP] reason=store-active");
+                  } else if (_snapshotLoaded) {
+                    const { hydrateMediaOnStartup } = await import("./gameCacheService");
                     const appIds = _snapshotLoaded.library.games
                       .filter((g) => g.appId)
                       .map((g) => g.appId!);
-                    await hydrateMediaOnStartup(appIds);
+                    // Chunk to avoid blocking main thread
+                    const CHUNK_SIZE = 10;
+                    for (let i = 0; i < appIds.length; i += CHUNK_SIZE) {
+                      const chunk = appIds.slice(i, i + CHUNK_SIZE);
+                      await hydrateMediaOnStartup(chunk);
+                    }
                   }
                 } catch (err) {
                   console.warn("[BOOT] media hydration failed:", String(err));
                 }
                 // Validate startup cache health
                 try {
-                  const { validateStartupCacheHealth } = await import("./gameStore");
-                  await validateStartupCacheHealth();
+                  const hash = typeof window !== "undefined" ? window.location.hash : "";
+                  if (!hash.startsWith("#/store")) {
+                    const { validateStartupCacheHealth } = await import("./gameStore");
+                    await validateStartupCacheHealth();
+                  } else {
+                    console.log("[BOOT][HEALTH_SKIP] reason=store-active");
+                  }
                 } catch (err) {
                   console.warn("[BOOT] cache health validation failed:", String(err));
+                }
+                // One-time duplicate detection
+                if (_snapshotLoaded) {
+                  const snapshotGames = _snapshotLoaded.library.games;
+                  const appIds = snapshotGames.map((g) => g.appId).filter(Boolean);
+                  const uniqueAppIds = new Set(appIds);
+                  if (uniqueAppIds.size < appIds.length) {
+                    console.log(`[BOOT][DEDUP_FOUND] snapshot has ${appIds.length - uniqueAppIds.size} duplicate appIds`);
+                  }
                 }
               }, 2000);
             } catch (err) {
@@ -730,11 +794,26 @@ export async function runBootTasks(): Promise<void> {
           // Stage 10 (formerly Stage 9): Confirm main window is mounted
           await track("confirm-mounted", async () => {
             logBoot("route shell ready");
+            setBootPhaseLabel("post-shell-done");
           });
+
+          // Performance summary: aggregate metrics from boot stages
+          setBootPhaseLabel("idle-ready");
+          const perfSummary = {
+            snapshotGames: _snapshotLoaded?.library.games.length ?? 0,
+            snapshotSidebar: _snapshotLoaded?.sidebar.items.length ?? 0,
+          };
+          console.log(`[BOOT][PERF_SUMMARY] snapshotGames=${perfSummary.snapshotGames} snapshotSidebar=${perfSummary.snapshotSidebar} elapsedMs=${Date.now() - _bootStart}`);
 
           _bootStatus = "ready";
           _bootProgress = 100;
           notify();
+          backgroundJobQueue.setBootCompleted(true);
+          logBoot("phase=idle-ready");
+
+          // Log performance counter summary after boot settles (deferred via microtask)
+          const { logBootPerfSummary } = await import("./perfCounters");
+          setTimeout(() => logBootPerfSummary(), 100);
         })(),
         timeoutPromise,
       ]);

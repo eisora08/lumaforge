@@ -2,15 +2,13 @@
 // Centralized background job queue with deduplication, priorities, and status
 // ---------------------------------------------------------------------------
 
+import { countJobQueued } from "./perfCounters";
+
 export type JobType =
-  | "scan-library"
-  | "refresh-store-metadata"
   | "repair-game-media"
   | "generate-achievement-schema"
   | "ensure-achievement-images"
-  | "refresh-achievement-progress"
-  | "validate-portable-paths"
-  | "validate-cache-health";
+  | "validate-portable-paths";
 
 // Tiered priority system: P0 = highest, P6 = lowest
 export type JobTier =
@@ -90,6 +88,44 @@ let listeners: Set<JobListener> = new Set();
 let drainTimeout: ReturnType<typeof setTimeout> | null = null;
 let paused = false;
 
+// ── Idle scheduler state (Phase 2) ──
+let _routeShellReady = false;
+let _bootCompleted = false;
+let _idleAcknowledged = false;
+let _lastNavigationChange = 0;
+let _idleReadyLogged = false;
+
+function isIdleReady(): boolean {
+  if (!_routeShellReady || !_bootCompleted) return false;
+  const noNav5s = Date.now() - _lastNavigationChange > 5000;
+  const hash = typeof window !== "undefined" ? window.location.hash : "";
+  const storeInactive = !hash.startsWith("#/store");
+  const noActiveDl = activeJobs.size < MAX_CONCURRENT;
+  return noNav5s && storeInactive && noActiveDl && _routeShellReady && _bootCompleted;
+}
+
+function checkIdleReady(): void {
+  const ready = isIdleReady();
+  if (ready && !_idleAcknowledged) {
+    _idleAcknowledged = true;
+    console.log("[IDLE][READY] condition met — idle processing acknowledged");
+  } else if (ready && !_idleReadyLogged) {
+    _idleReadyLogged = true;
+    console.log("[IDLE][READY] condition met");
+  }
+  if (!ready) {
+    const reasons: string[] = [];
+    if (!_routeShellReady) reasons.push("route-shell-not-ready");
+    if (!_bootCompleted) reasons.push("boot-not-complete");
+    if (Date.now() - _lastNavigationChange <= 5000) reasons.push("recent-navigation");
+    if (typeof window !== "undefined" && window.location.hash.startsWith("#/store")) reasons.push("store-active");
+    if (activeJobs.size >= MAX_CONCURRENT) reasons.push("max-concurrent-active");
+    if (reasons.length > 0) {
+      console.log(`[IDLE][DEFER] reasons=${reasons.join(",")}`);
+    }
+  }
+}
+
 export const backgroundJobQueue = {
   // -----------------------------------------------------------------------
   // Enqueue a job
@@ -147,6 +183,7 @@ export const backgroundJobQueue = {
     sortQueue();
     notifyListeners(job);
     console.log(`[JOB] queued key=${key} tier=${tier ?? priority} priority=${priority}`);
+    countJobQueued();
 
     scheduleDrain();
     return key;
@@ -231,6 +268,33 @@ export const backgroundJobQueue = {
   drain(): void {
     scheduleDrain();
   },
+
+  // -----------------------------------------------------------------------
+  // Idle scheduler
+  // -----------------------------------------------------------------------
+  setRouteShellReady(v: boolean): void {
+    _routeShellReady = v;
+    checkIdleReady();
+  },
+
+  setBootCompleted(v: boolean): void {
+    _bootCompleted = v;
+    checkIdleReady();
+  },
+
+  setNavigationChanged(): void {
+    _lastNavigationChange = Date.now();
+    _idleAcknowledged = false;
+    _idleReadyLogged = false;
+  },
+
+  isIdleReady(): boolean {
+    return isIdleReady();
+  },
+
+  getIdleStatus(): { routeShellReady: boolean; bootCompleted: boolean; idleAcknowledged: boolean; lastNavigationChange: number } {
+    return { routeShellReady: _routeShellReady, bootCompleted: _bootCompleted, idleAcknowledged: _idleAcknowledged, lastNavigationChange: _lastNavigationChange };
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -265,6 +329,39 @@ async function processNext(): Promise<void> {
     return;
   }
 
+  // ── Idle tier deferral (P4-P6 only run when idle ready) ──
+  // Check the first job; if it's P4-P6 and we're not idle, defer it
+  if (queue.length > 0) {
+    const nextJob = queue[0];
+    if (nextJob.tier && ["P4-background-repair", "P5-achievement", "P6-cleanup"].includes(nextJob.tier)) {
+      if (!isIdleReady()) {
+        // Don't block the entire queue — just leave P4-P6 queued and let P0-P3 run
+        // Move it to the end of the queue (or leave it) and try next
+        const deferredTier = nextJob.tier;
+        // Only log deferral once per idle cycle (not every 50ms)
+        if (!_idleAcknowledged) {
+          const reasons: string[] = [];
+          if (!_routeShellReady) reasons.push("route-shell-not-ready");
+          if (!_bootCompleted) reasons.push("boot-not-complete");
+          if (Date.now() - _lastNavigationChange <= 5000) reasons.push("recent-navigation");
+          if (typeof window !== "undefined" && window.location.hash.startsWith("#/store")) reasons.push("store-active");
+          if (reasons.length > 0) {
+            console.log(`[IDLE][DEFER] tier=${deferredTier} reasons=${reasons.join(",")}`);
+          }
+        }
+        // Skip the front job to process lower tiers underneath
+        const front = queue.shift();
+        if (front) queue.push(front);
+        // If all remaining jobs are also P4+, drain is done for now
+        if (queue.every((j) => j.tier && ["P4-background-repair", "P5-achievement", "P6-cleanup"].includes(j.tier))) {
+          console.log(`[IDLE][DONE] queued=${queue.length} running=${activeJobs.size} — all remaining jobs are idle-tier, deferring`);
+          scheduleDrain();
+          return;
+        }
+      }
+    }
+  }
+
   // Remove stale completed entries
   const now = Date.now();
   for (const [key, time] of recentlyCompleted) {
@@ -288,11 +385,33 @@ async function processNext(): Promise<void> {
     return;
   }
 
+  // Check if Store is active BEFORE marking job running — defer instead of running
+  if (STORE_BLOCKED_JOB_TYPES.has(job.type)) {
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (hash.startsWith("#/store")) {
+      // Re-enqueue with "queued" status (don't reuse the same object with "running")
+      const alreadyQueued = queue.some((j) => j.id === job.id && j.status === "queued");
+      if (alreadyQueued) {
+        console.log(`[JOB][DEFER_SKIP] key=${job.id} reason=already-queued`);
+      } else {
+        job.status = "queued";
+        queue.push(job);
+        console.log(`[JOB][DEFER] key=${job.id} reason=store-active retryMs=2000`);
+      }
+      scheduleDrain();
+      return;
+    }
+  }
+
   job.status = "running";
   job.startedAt = now;
   activeJobs.set(job.id, job);
   notifyListeners(job);
-  console.log(`[JOB] started key=${job.id}`);
+  if (job.tier && ["P4-background-repair", "P5-achievement", "P6-cleanup"].includes(job.tier)) {
+    console.log(`[IDLE][RUN] key=${job.id} tier=${job.tier}`);
+  } else {
+    console.log(`[JOB] started key=${job.id}`);
+  }
 
   try {
     await executeJob(job);
@@ -330,97 +449,79 @@ const STORE_BLOCKED_JOB_TYPES = new Set([
   "repair-game-media",
   "generate-achievement-schema",
   "ensure-achievement-images",
-  "refresh-achievement-progress",
-  "scan-library",
-  "refresh-store-metadata",
 ]);
 
 async function executeJob(job: BackgroundJob): Promise<void> {
-  // Skip heavy jobs when on Store route to prevent freeze
-  if (STORE_BLOCKED_JOB_TYPES.has(job.type)) {
-    const hash = typeof window !== "undefined" ? window.location.hash : "";
-    if (hash.startsWith("#/store")) {
-      console.log(`[STORE][BACKGROUND_JOB_BLOCKED] job=${job.type} appId=${job.appId ?? "?"} reason=store-active`);
-      // Re-enqueue after a delay to avoid tight loop and keep the queue draining
-      setTimeout(() => {
-        queue.push(job);
-        scheduleDrain();
-      }, 2000);
-      return;
-    }
-  }
-
   switch (job.type) {
-    case "scan-library":
-      return executeScanLibrary(job);
-    case "refresh-store-metadata":
-      return executeRefreshStoreMetadata(job);
     case "repair-game-media":
       return executeRepairGameMedia(job);
     case "generate-achievement-schema":
       return executeGenerateAchievementSchema(job);
     case "ensure-achievement-images":
       return executeEnsureAchievementImages(job);
-    case "refresh-achievement-progress":
-      return executeRefreshAchievementProgress(job);
     case "validate-portable-paths":
       return executeValidatePortablePaths(job);
-    case "validate-cache-health":
-      return executeValidateCacheHealth(job);
     default:
       throw new Error(`Unknown job type: ${job.type}`);
   }
 }
 
-async function executeScanLibrary(_job: BackgroundJob): Promise<void> {
-  const { resolveLibraryGames } = await import("./libraryGameResolver");
-  const settings = (await loadSettingsOnce()) as any;
-  await resolveLibraryGames(settings);
-}
-
-async function executeRefreshStoreMetadata(job: BackgroundJob): Promise<void> {
-  if (!job.appId) throw new Error("appId required for refresh-store-metadata");
-  const { resolveGameMetadata } = await import("./gameMetadataResolver");
-  await resolveGameMetadata([Number(job.appId)]);
-}
-
 async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
   if (!job.appId) throw new Error("appId required for repair-game-media");
   const { loadGameAppInfoWithMediaFallback, CANONICAL_GAME_MEDIA_ROLES, isSystemToolApp, resolveGameMedia } = await import("./gameCacheService");
+  const { resolveGameMediaPaths } = await import("./tauri");
 
   // Skip system/tool apps (Steamworks Redistributables, Proton, etc.)
   if (isSystemToolApp(job.appId)) {
     console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${job.appId} reason=system-tool`);
     return;
   }
-  const appInfo = await loadGameAppInfoWithMediaFallback(job.appId);
+
+  // Step 1: Check which roles are actually missing on disk
+  const diskPaths = await resolveGameMediaPaths(job.appId).catch(() => null);
+  const missingRoles = CANONICAL_GAME_MEDIA_ROLES.filter((role) => {
+    const pathKey = `${role.key}Path` as keyof typeof diskPaths;
+    return !diskPaths?.[pathKey];
+  });
+  if (missingRoles.length === 0) {
+    console.log(`[MEDIA][REPAIR_SKIP] appid=${job.appId} reason=complete`);
+    return;
+  }
+
+  const appInfo = await loadGameAppInfoWithMediaFallback(job.appId, {
+    allowRepair: true,
+    repairSource: "local-media-repair",
+  });
+
   if (!appInfo) throw new Error(`No appinfo for appId=${job.appId}`);
   const media = await resolveGameMedia(job.appId, undefined, appInfo);
   if (!media) throw new Error(`No media sources for appId=${job.appId}`);
-  // Enqueue individual media downloads for missing roles
+
   const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
-  for (const role of CANONICAL_GAME_MEDIA_ROLES) {
+  const downloadPromises: Promise<void>[] = [];
+  let skipped = 0;
+
+  for (const role of missingRoles) {
     const srcKey = `${role.key}Src` as keyof typeof media;
     const url = media[srcKey];
     const httpUrl = (url && typeof url === "string" && url.startsWith("http")) ? url : null;
 
     if (httpUrl) {
-      console.log(`[MEDIA][REPAIR] appid=${job.appId} field=${role.key} url=${httpUrl.substring(0, 60)}`);
-      enqueueMediaDownload({
-        id: `repair-${job.appId}-${role.type}`,
-        appId: job.appId,
-        provider: "steam",
-        mediaType: role.type as any,
-        url: httpUrl,
-        target: "canonical",
-        priority: "low",
-      }).catch(() => {});
+      downloadPromises.push(
+        enqueueMediaDownload({
+          id: `repair-${job.appId}-${role.type}`,
+          appId: job.appId,
+          provider: "steam",
+          mediaType: role.type as any,
+          url: httpUrl,
+          target: "canonical",
+          priority: "low",
+        }).then(() => {}),
+      );
     } else {
-      // Check mediaSources for remote source to download
-      if (appInfo.mediaSources) {
-        const sourceUrl = (appInfo.mediaSources as Record<string, string | null>)[role.key];
-        if (sourceUrl) {
-          console.log(`[MEDIA][REPAIR] appid=${job.appId} field=${role.key} source=mediaSources`);
+      const sourceUrl = appInfo.mediaSources ? (appInfo.mediaSources as Record<string, string | null>)[role.key] : null;
+      if (sourceUrl) {
+        downloadPromises.push(
           enqueueMediaDownload({
             id: `repair-${job.appId}-${role.type}`,
             appId: job.appId,
@@ -429,17 +530,19 @@ async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
             url: sourceUrl,
             target: "canonical",
             priority: "low",
-          }).catch(() => {});
-        } else {
-          console.log(`[MEDIA][REPAIR] skipped field=${role.key} reason=no-source`);
-        }
+          }).then(() => {}),
+        );
       } else {
-        console.log(`[MEDIA][REPAIR] skipped field=${role.key} reason=no-source`);
+        skipped++;
       }
     }
   }
-  console.log(`[MEDIA][REPAIR] appinfoUpdated=true`);
-  console.log(`[MEDIA][REPAIR] mediaIndexUpdated=true`);
+
+  const results = await Promise.allSettled(downloadPromises);
+  const queued = results.filter((r) => r.status === "fulfilled").length;
+  const failed = results.filter((r) => r.status === "rejected").length;
+
+  console.log(`[MEDIA][REPAIR_DONE] appid=${job.appId} missing=${missingRoles.length} queued=${queued} skipped=${skipped} failed=${failed}`);
   // Generate media manifest after repair
   try {
     const { generateMediaManifest } = await import("./gameCacheService");
@@ -531,21 +634,6 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
   }
 }
 
-async function executeRefreshAchievementProgress(job: BackgroundJob): Promise<void> {
-  if (!job.appId) throw new Error("appId required for refresh-achievement-progress");
-  const { buildProgressPatchFromLibraryCache, achievementStore } = await import("./achievementStore");
-  const settings = (await loadSettingsOnce()) as any;
-  const patch = await buildProgressPatchFromLibraryCache(
-    job.appId,
-    settings.steamRoot as string | undefined,
-    settings.steamAccountId as string | undefined,
-    "background-job",
-  );
-  if (patch) {
-    achievementStore.applyProgressPatch(job.appId, patch, "background-job");
-  }
-}
-
 async function executeValidatePortablePaths(_job: BackgroundJob): Promise<void> {
   const { validatePortablePaths: validate } = await import("./tauri");
   const result = await validate();
@@ -558,12 +646,6 @@ async function executeValidatePortablePaths(_job: BackgroundJob): Promise<void> 
       console.log("[VALIDATE]", d);
     }
   }
-}
-
-async function executeValidateCacheHealth(_job: BackgroundJob): Promise<void> {
-  const { validateStartupCacheHealth, validateMediaCacheHealth } = await import("./gameStore");
-  await validateStartupCacheHealth();
-  await validateMediaCacheHealth();
 }
 
 // ---------------------------------------------------------------------------
@@ -598,8 +680,4 @@ export function enqueueAchievementImageJobs(appIds: string[], priority: JobPrior
   }
 }
 
-export function enqueueMediaRepairJobs(gameAppIds: string[], priority: JobPriority = "low"): void {
-  for (const appId of gameAppIds) {
-    backgroundJobQueue.enqueue("repair-game-media", "steam", { appId, priority });
-  }
-}
+

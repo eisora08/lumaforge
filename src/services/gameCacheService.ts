@@ -37,7 +37,10 @@ import type {
   IconUrls,
   MediaManifest,
   MediaManifestFiles,
+  GameRemoteRefsInput,
+  GameMediaSources,
 } from "./tauri";
+import type { LibraryGame } from "../types/libraryGame";
 
 export type {
   GameAppInfo,
@@ -51,10 +54,139 @@ export type {
   BackgroundUrls,
   LogoUrls,
   IconUrls,
+  GameRemoteRefsInput,
+  GameMediaSources,
 };
 
 // Re-export for data URL fallback
 export { readGameMediaDataUrl };
+
+// ── Phase 10: Cache freshness TTL ──
+// All session caches are invalidated after APPINFO_CACHE_TTL_MS.
+// Prevents stale data from being returned when appinfo.json is updated
+// by an external process (e.g., Steam, another LumaForge instance).
+const APPINFO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// ── Phase 8: SQLite-backed name cache ──
+// Reads SQLite `games` table once (via readAllGames) and uses it as the
+// primary name source, avoiding per-game appinfo.json reads for name resolution.
+let _sqliteNameCache: Record<string, string> = {};
+let _sqliteNameCacheTs = 0;
+const SQLITE_NAME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getSqliteName(appId: string): Promise<string | null> {
+  const now = Date.now();
+  if (now - _sqliteNameCacheTs > SQLITE_NAME_CACHE_TTL_MS) {
+    try {
+      const { readAllGames } = await import("./tauri");
+      const games = await readAllGames();
+      _sqliteNameCache = {};
+      for (const g of games) {
+        if (g.title) _sqliteNameCache[g.appId] = g.title;
+      }
+      _sqliteNameCacheTs = now;
+    } catch {
+      return null;
+    }
+  }
+  return _sqliteNameCache[appId] ?? null;
+}
+
+// ── Session-level appinfo cache ──
+// Avoids repeated `getGameAppInfo` Tauri invokes for the same appId during a session.
+// Cleared when appinfo is written (via clearSessionAppInfoCache).
+import { countAppinfoRead, countAppinfoCacheHit, isRecentlyNavigated, isInteractionBusy } from "./perfCounters";
+
+type CacheEntry<T> = { value: T; ts: number };
+
+const _sessionAppinfoCache = new Map<string, CacheEntry<GameAppInfo | null>>();
+
+function isCacheEntryFresh<T>(entry: CacheEntry<T> | undefined): entry is CacheEntry<T> {
+  if (!entry) return false;
+  return (Date.now() - entry.ts) < APPINFO_CACHE_TTL_MS;
+}
+
+export function clearSessionAppInfoCache(appId?: string): void {
+  if (appId) {
+    _sessionAppinfoCache.delete(appId);
+  } else {
+    _sessionAppinfoCache.clear();
+  }
+}
+
+export async function getCachedGameAppInfo(appId: string): Promise<GameAppInfo | null> {
+  const cached = _sessionAppinfoCache.get(appId);
+  if (isCacheEntryFresh(cached)) {
+    countAppinfoCacheHit();
+    return cached.value;
+  }
+  countAppinfoRead();
+  const result = await getGameAppInfo(appId).catch(() => null);
+  _sessionAppinfoCache.set(appId, { value: result, ts: Date.now() });
+  return result;
+}
+
+// ── Frontend-side no-op guard for updateGameAppinfoMedia ──
+// Compares proposed appinfo fields against existing on disk before calling Rust.
+// Prevents unnecessary IPC calls when nothing has changed.
+
+export type AppinfoProposal = {
+  name: string | null;
+  media: GameMediaPaths;
+  remote?: GameRemoteRefsInput | null;
+  mediaSources?: GameMediaSources | null;
+};
+
+export async function hasAppinfoEffectiveChange(
+  appId: string,
+  proposed: AppinfoProposal,
+): Promise<boolean> {
+  try {
+    const existing = await getCachedGameAppInfo(appId);
+    if (!existing) return true;
+    if ((existing.name ?? null) !== (proposed.name ?? null)) return true;
+    const exMedia = existing.media ?? ({} as GameMediaPaths);
+    const keys: (keyof GameMediaPaths)[] = ["coverPath", "backgroundPath", "logoPath", "iconPath", "landscapePath"];
+    for (const k of keys) {
+      if ((exMedia[k] ?? null) !== (proposed.media[k] ?? null)) return true;
+    }
+    if (proposed.remote !== undefined) {
+      const existingRemote = existing.remote ?? null;
+      const proposedRemote = proposed.remote ?? null;
+      const remoteJson = (v: unknown) => v ? JSON.stringify(v) : "null";
+      if (remoteJson(existingRemote) !== remoteJson(proposedRemote)) return true;
+    }
+    if (proposed.mediaSources !== undefined) {
+      const existingSources = existing.mediaSources ?? null;
+      const proposedSources = proposed.mediaSources ?? null;
+      const sourcesJson = (v: unknown) => v ? JSON.stringify(v) : "null";
+      if (sourcesJson(existingSources) !== sourcesJson(proposedSources)) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+export async function updateGameAppinfoMediaIfChanged(
+  appId: string,
+  name: string | null,
+  media: GameMediaPaths,
+  remote?: GameRemoteRefsInput | null,
+  mediaSources?: GameMediaSources | null,
+  caller?: string,
+): Promise<boolean> {
+  const hasChange = await hasAppinfoEffectiveChange(appId, { name, media, remote, mediaSources });
+  if (!hasChange) {
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][APPINFO_SKIP] appid=${appId} reason=already-synced-before-rust caller=${caller ?? "unknown"}`);
+    return false;
+  }
+  if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][APPINFO_CALL] caller=${caller ?? "unknown"} appid=${appId}`);
+  await updateGameAppinfoMedia(appId, name, media, remote, mediaSources);
+  // Invalidate session cache so subsequent reads get fresh data
+  _sessionAppinfoCache.delete(appId);
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -164,6 +296,260 @@ export function deduplicateByAppId<T extends { appId?: string | undefined | null
   return out;
 }
 
+/** Known media filenames that map to media roles. */
+const KNOWN_MEDIA_FILENAMES = new Set([
+  "cover.jpg", "cover.png",
+  "landscape.jpg", "landscape.png",
+  "background.jpg", "background.png",
+  "logo.png", "logo.jpg",
+  "icon.png", "icon.jpg",
+]);
+
+/**
+ * Normalize a media path for MediaIndex/manifest storage.
+ * Always returns `media/<filename>` or `null`.
+ * Absolute paths, temp files, remote URLs, and unknown filenames all become null.
+ */
+export function normalizeMediaPathForIndex(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  // Remote URLs, asset/data/file URIs are not local media paths
+  if (/^https?:\/\//i.test(trimmed)) return null;
+  if (/^(asset|data|file):/i.test(trimmed)) return null;
+  // Skip .tmp files
+  if (trimmed.endsWith(".tmp")) return null;
+  // Extract filename from absolute or relative path
+  const filename = trimmed.replace(/\\/g, "/").split("/").filter(Boolean).pop();
+  if (!filename) return null;
+  if (!KNOWN_MEDIA_FILENAMES.has(filename)) {
+    // If it doesn't match known names, still accept but prefix with media/
+    return `media/${filename}`;
+  }
+  return `media/${filename}`;
+}
+
+// ---------------------------------------------------------------------------
+// Canonical LibraryGame dedup — merges Steam + Lua entries for same appId
+// ---------------------------------------------------------------------------
+
+const DEBUG_SIDEBAR_FILTER = false;
+
+export function hasActiveInstalledLuaScript(game: LibraryGame): boolean {
+  if (!Array.isArray(game.luaScripts) || game.luaScripts.length === 0) {
+    return false;
+  }
+
+  return game.luaScripts.some((script: any) => {
+    if (!script) return false;
+
+    const hasRealLocalReference =
+      typeof script.path === "string" ||
+      typeof script.file_path === "string" ||
+      typeof script.filePath === "string" ||
+      typeof script.luaPath === "string" ||
+      typeof script.installPath === "string" ||
+      typeof script.targetPath === "string";
+
+    const explicitlyDisabled =
+      script.isDisabled === true ||
+      script.is_disabled === true ||
+      script.disabled === true ||
+      script.status === "disabled" ||
+      script.installStatus === "disabled";
+
+    const explicitlyActive =
+      script.status === "active" ||
+      script.installStatus === "active" ||
+      script.active === true ||
+      script.isActive === true ||
+      script.is_active === true;
+
+    return hasRealLocalReference && explicitlyActive && !explicitlyDisabled;
+  });
+}
+
+export function isSidebarInstalledGame(game: LibraryGame): boolean {
+  if ((game as any).hidden === true) return false;
+
+  const steamInstalled = game.steamInstalled === true;
+
+  const localInstalled =
+    game.source === "local" &&
+    typeof game.executablePath === "string" &&
+    game.executablePath.length > 0;
+
+  const explicitInstalledStatus =
+    (game as any).installedStatus === "active" ||
+    (game as any).installStatus === "active" ||
+    (game as any).status === "installed";
+
+  const luaActive = hasActiveInstalledLuaScript(game);
+
+  const included = Boolean(
+    steamInstalled ||
+    localInstalled ||
+    explicitInstalledStatus ||
+    luaActive
+  );
+
+  if (DEBUG_SIDEBAR_FILTER && game.appId) {
+    console.log(
+      `[SIDEBAR][INSTALLED_PREDICATE] appid=${game.appId} title="${game.title}" ` +
+      `steamInstalled=${steamInstalled} localInstalled=${localInstalled} ` +
+      `explicitInstalledStatus=${explicitInstalledStatus} luaActive=${luaActive} ` +
+      `isPlayable=${!!game.isPlayable} isLuaActive=${!!game.isLuaActive} ` +
+      `source=${game.source} included=${included}`
+    );
+  }
+
+  return included;
+}
+
+export function getSidebarLabel(game: LibraryGame): string {
+  const steamInstalled = game.steamInstalled === true;
+
+  const localInstalled =
+    game.source === "local" &&
+    typeof game.executablePath === "string" &&
+    game.executablePath.length > 0;
+
+  const explicitInstalledStatus =
+    (game as any).installedStatus === "active" ||
+    (game as any).installStatus === "active" ||
+    (game as any).status === "installed";
+
+  const luaActive = hasActiveInstalledLuaScript(game);
+
+  if (steamInstalled && luaActive) return "Steam + Lua";
+  if (steamInstalled) return "Steam";
+  if (luaActive) return "Lua";
+  if (localInstalled) return "Local";
+  if (explicitInstalledStatus) return "Installed";
+
+  return "Not installed";
+}
+export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
+  if (games.length <= 1) return games;
+  const before = games.length;
+  const byAppId = new Map<string, LibraryGame>();
+  const noAppId: LibraryGame[] = [];
+
+  for (const game of games) {
+    if (!game.appId) {
+      // Games without appId — keep as-is but dedup by id
+      if (!noAppId.find((g) => g.id === game.id)) {
+        noAppId.push(game);
+      }
+      continue;
+    }
+    const existing = byAppId.get(game.appId);
+    if (!existing) {
+      byAppId.set(game.appId, { ...game });
+      continue;
+    }
+    // Merge: Steam + Lua for same appId into one richer object
+    const merged = { ...existing };
+
+    // Boolean flags: true wins
+    merged.steamInstalled = existing.steamInstalled || game.steamInstalled;
+    merged.isPlayable = existing.isPlayable || game.isPlayable;
+    merged.isInstallable = existing.isInstallable && game.isInstallable;
+    merged.hasLua = existing.hasLua || game.hasLua;
+    merged.isLuaActive = existing.isLuaActive || game.isLuaActive;
+    merged.isLuaDisabled = existing.isLuaDisabled && game.isLuaDisabled;
+    merged.hasLuaSource = existing.hasLuaSource || game.hasLuaSource;
+    merged.isFavorite = existing.isFavorite || game.isFavorite;
+
+    // Title: prefer non-placeholder
+    if (game.title && !game.title.startsWith("Steam App ") && (existing.title.startsWith("Steam App ") || !existing.title)) {
+      merged.title = game.title;
+    }
+    if (game.customTitle) merged.customTitle = game.customTitle || existing.customTitle;
+
+    // Scripts & sources: union by app_id/path/file_name
+    const seenScripts = new Set(existing.luaScripts.map((s) => `${s.app_id}:${s.path}:${s.file_name}`));
+    merged.luaScripts = [...existing.luaScripts];
+    for (const s of game.luaScripts || []) {
+      const key = `${s.app_id}:${s.path}:${s.file_name}`;
+      if (!seenScripts.has(key)) {
+        seenScripts.add(key);
+        merged.luaScripts.push(s);
+      }
+    }
+    const seenSources = new Set(existing.sources.map((s) => `${s.providerId}:${s.fileType}:${s.downloadUrl}`));
+    merged.sources = [...existing.sources];
+    for (const s of game.sources || []) {
+      const key = `${s.providerId}:${s.fileType}:${s.downloadUrl}`;
+      if (!seenSources.has(key)) {
+        seenSources.add(key);
+        merged.sources.push(s);
+      }
+    }
+
+    // Source: prefer "steam" over "lua" for the source field (steam is richer)
+    if (game.source === "steam" || existing.source !== "steam") {
+      merged.source = game.source;
+    }
+
+    // Media: prefer whichever has imageUrl
+    if (!merged.imageUrl && game.imageUrl) merged.imageUrl = game.imageUrl;
+
+    // Stats: pick latest/best values
+    if (game.steamLastPlayedAt !== undefined) {
+      merged.steamLastPlayedAt = Math.max(
+        existing.steamLastPlayedAt ?? 0,
+        game.steamLastPlayedAt,
+      ) || undefined;
+    }
+    if (game.steamPlaytimeMinutes !== undefined) {
+      merged.steamPlaytimeMinutes = Math.max(
+        existing.steamPlaytimeMinutes ?? 0,
+        game.steamPlaytimeMinutes,
+      ) || undefined;
+    }
+    if (game.localLastPlayedAt !== undefined) {
+      merged.localLastPlayedAt = Math.max(
+        existing.localLastPlayedAt ?? 0,
+        game.localLastPlayedAt,
+      ) || undefined;
+    }
+    if (game.localPlaytimeMinutes !== undefined) {
+      merged.localPlaytimeMinutes = Math.max(
+        existing.localPlaytimeMinutes ?? 0,
+        game.localPlaytimeMinutes,
+      ) || undefined;
+    }
+
+    // Achievements: prefer richer
+    if (!merged.achievementUnlocked && game.achievementUnlocked) merged.achievementUnlocked = game.achievementUnlocked;
+    if (!merged.achievementTotal && game.achievementTotal) merged.achievementTotal = game.achievementTotal;
+    if (!merged.achievementsSupported && game.achievementsSupported) merged.achievementsSupported = game.achievementsSupported;
+
+    // Metadata: prefer one with metadata
+    if (!merged.metadata && game.metadata) merged.metadata = game.metadata;
+
+    // Executables: prefer one with more info
+    if (!merged.executablePath && game.executablePath) merged.executablePath = game.executablePath;
+    if (!merged.installDir && game.installDir) merged.installDir = game.installDir;
+    if (!merged.libraryPath && game.libraryPath) merged.libraryPath = game.libraryPath;
+    if (!merged.sizeOnDisk && game.sizeOnDisk) merged.sizeOnDisk = game.sizeOnDisk;
+    if (!merged.lastUpdated && game.lastUpdated) merged.lastUpdated = game.lastUpdated;
+
+    byAppId.set(game.appId, merged);
+  }
+
+  const result = [...byAppId.values(), ...noAppId].sort((a, b) =>
+    a.title.localeCompare(b.title),
+  );
+  const after = result.length;
+  const removed = before - after;
+  if (removed > 0) {
+    console.log(`[LIBRARY][DEDUP] before=${before} after=${after} removed=${removed}`);
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // MediaIndex — formal runtime media entry
 // *Path fields are relative (from appinfo)
@@ -219,19 +605,19 @@ export function seedMediaIndexFromManifests(
     const entry: MediaIndexEntry = {
       provider: manifest.provider,
       appId: manifest.appid,
-      coverPath: manifest.files.cover.exists ? manifest.files.cover.path : null,
+      coverPath: manifest.files.cover.exists ? normalizeMediaPathForIndex(manifest.files.cover.path) : null,
       coverUrl: manifest.files.cover.exists ? (urls.coverUrl ?? null) : null,
       hasCover: manifest.files.cover.exists,
-      landscapePath: manifest.files.landscape.exists ? manifest.files.landscape.path : null,
+      landscapePath: manifest.files.landscape.exists ? normalizeMediaPathForIndex(manifest.files.landscape.path) : null,
       landscapeUrl: manifest.files.landscape.exists ? (urls.landscapeUrl ?? null) : null,
       hasLandscape: manifest.files.landscape.exists,
-      backgroundPath: manifest.files.background.exists ? manifest.files.background.path : null,
+      backgroundPath: manifest.files.background.exists ? normalizeMediaPathForIndex(manifest.files.background.path) : null,
       backgroundUrl: manifest.files.background.exists ? (urls.backgroundUrl ?? null) : null,
       hasBackground: manifest.files.background.exists,
-      logoPath: manifest.files.logo.exists ? manifest.files.logo.path : null,
+      logoPath: manifest.files.logo.exists ? normalizeMediaPathForIndex(manifest.files.logo.path) : null,
       logoUrl: manifest.files.logo.exists ? (urls.logoUrl ?? null) : null,
       hasLogo: manifest.files.logo.exists,
-      iconPath: manifest.files.icon.exists ? manifest.files.icon.path : null,
+      iconPath: manifest.files.icon.exists ? normalizeMediaPathForIndex(manifest.files.icon.path) : null,
       iconUrl: manifest.files.icon.exists ? (urls.iconUrl ?? null) : null,
       hasIcon: manifest.files.icon.exists,
       updatedAt: manifest.updatedAt,
@@ -253,17 +639,49 @@ const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false; // Toggle for Part 4 debug logs
 // Session cache for resolved media paths (prevents repeated disk checks)
 // ---------------------------------------------------------------------------
 
-const resolvedMediaSessionCache = new Map<string, GameMediaPaths | null>();
+const resolvedMediaSessionCache = new Map<string, CacheEntry<GameMediaPaths | null>>();
 
 // Cache for converted src URLs (local path → asset:// URL)
 // Prevents repeated convertFileSrc calls on the same path during a session
 const resolvedSrcCache = new Map<string, string>();
 
+const MEDIA_PATH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 function getCachedResolvedMedia(appId: string): GameMediaPaths | null | undefined {
-  if (resolvedMediaSessionCache.has(appId)) {
-    return resolvedMediaSessionCache.get(appId) ?? null;
+  const cached = resolvedMediaSessionCache.get(appId);
+  if (cached && (Date.now() - cached.ts) < MEDIA_PATH_CACHE_TTL_MS) {
+    return cached.value;
   }
-  return undefined; // not in cache
+  if (cached) {
+    clearCachedGameMediaPaths(appId);
+  }
+  return undefined; // not in cache or stale
+}
+
+export function setCachedResolvedMedia(appId: string, value: GameMediaPaths | null): void {
+  resolvedMediaSessionCache.set(appId, { value, ts: Date.now() });
+}
+
+// ── Phase 7: Cached game media paths — avoids repeated Tauri invokes ──
+// All callers should use this instead of directly calling resolveGameMediaPaths.
+export async function getCachedGameMediaPaths(appId: string): Promise<GameMediaPaths | null> {
+  const cached = getCachedResolvedMedia(appId);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = await resolveGameMediaPaths(appId).catch(() => null);
+  if (result !== null) {
+    setCachedResolvedMedia(appId, result);
+  }
+  return result;
+}
+
+export function clearCachedGameMediaPaths(appId?: string): void {
+  if (appId) {
+    resolvedMediaSessionCache.delete(appId);
+  } else {
+    resolvedMediaSessionCache.clear();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -347,7 +765,13 @@ export async function resolveDashboardTitles(
 // Writes the resolved name to canonical appinfo for persistence.
 // Safe to call from async contexts (not render).
 export async function resolveCanonicalName(appId: string): Promise<string | null> {
-  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  // Phase 8: Check SQLite first (cached, single invoke for all games)
+  const sqliteName = await getSqliteName(appId);
+  if (sqliteName && !isPlaceholderSteamTitle(sqliteName, appId)) {
+    return sqliteName;
+  }
+  // Fallback: appinfo.json (session-cached)
+  const appInfo = await getCachedGameAppInfo(appId);
   if (appInfo?.name && !isPlaceholderSteamTitle(appInfo.name, appId)) {
     return appInfo.name;
   }
@@ -356,7 +780,7 @@ export async function resolveCanonicalName(appId: string): Promise<string | null
 
 async function fillCanonicalName(appId: string): Promise<string | null> {
   const { resolveGameMetadata } = await import("./gameMetadataResolver");
-  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  const appInfo = await getCachedGameAppInfo(appId);
   if (appInfo?.name && !isPlaceholderSteamTitle(appInfo.name, appId)) {
     return appInfo.name;
   }
@@ -380,12 +804,18 @@ async function fillCanonicalName(appId: string): Promise<string | null> {
     }
   }
   if (resolvedName) {
-    console.log(`[NAME][CANONICAL_WRITE] appid=${appId} name=${resolvedName} source=${source}`);
-    updateGameAppinfoMedia(
+    // Preserve existing media fields — never wipe media when updating name
+    const existing = await getCachedGameAppInfo(appId);
+    const media = existing?.media ?? null;
+    const remote = existing?.remote ?? null;
+    const mediaSources = existing?.mediaSources ?? null;
+    console.log(`[NAME][CANONICAL_WRITE_SAFE] appid=${appId} name=${resolvedName} source=${source} preserveMedia=${!!media}`);
+    updateGameAppinfoMediaIfChanged(
       appId, resolvedName,
-      { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
-      null,
-    ).catch(() => {});
+      media ?? { coverPath: null, backgroundPath: null, logoPath: null, iconPath: null, landscapePath: null },
+      remote, mediaSources,
+      "fillCanonicalName",
+    ).catch(() => { });
     return resolvedName;
   }
   return null;
@@ -407,7 +837,7 @@ export function seedResolvedMediaCacheFromSnapshot(
       iconPath: g.media.iconPath ?? null,
     };
     const hasAny = !!(media.landscapePath || media.coverPath || media.backgroundPath || media.logoPath || media.iconPath);
-    resolvedMediaSessionCache.set(g.appId, hasAny ? media : null);
+    setCachedResolvedMedia(g.appId, hasAny ? media : null);
     const hasKeyMedia = !!(media.landscapePath) && !!(media.coverPath || media.backgroundPath);
     if (hasKeyMedia) {
       markAppInfoRepaired(g.appId);
@@ -420,22 +850,30 @@ export function seedResolvedMediaCacheFromSnapshot(
 // ---------------------------------------------------------------------------
 
 export async function loadGameAppInfo(appId: string): Promise<GameAppInfo | null> {
-  return getGameAppInfo(appId);
+  return getCachedGameAppInfo(appId);
 }
 
 // Load appinfo and validate all media paths against disk.
 // Always does a disk check once per session per appId.
 // Session-caches the validated paths so repeated calls are instant.
 // Writes corrected appinfo.json when stale paths are detected.
-export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<GameAppInfo | null> {
+// When allowRepair=false (default), reads existing data without any repair/write.
+export async function loadGameAppInfoWithMediaFallback(appId: string, options?: { allowRepair?: boolean; repairSource?: MediaRepairSource }): Promise<GameAppInfo | null> {
+  const allowRepair = options?.allowRepair ?? false;
+  const repairSource = options?.repairSource;
+  if (!allowRepair) {
+    if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log(`[MEDIA][READ_ONLY] appid=${appId}`);
+  } else {
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][REPAIR_ALLOWED] appid=${appId} source=${repairSource ?? "unspecified"}`);
+  }
   // Session cache hit — return appinfo with validated paths merged.
   // If cache has insufficient media (missing background/logo/icon), fall through to repair.
   const cached = getCachedResolvedMedia(appId);
   if (cached !== undefined) {
     if (cached && !(cached.backgroundPath || cached.logoPath || cached.iconPath)) {
-      resolvedMediaSessionCache.delete(appId);
+      clearCachedGameMediaPaths(appId);
     } else {
-      const appInfo = await getGameAppInfo(appId).catch(() => null);
+      const appInfo = await getCachedGameAppInfo(appId);
       if (appInfo) {
         if (cached) {
           appInfo.media = cached;
@@ -449,7 +887,7 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
           const resolved = await resolveMediaPaths(appId, cached);
           if (resolved) {
             appInfo.media = resolved;
-            resolvedMediaSessionCache.set(appId, resolved);
+            setCachedResolvedMedia(appId, resolved);
           }
         }
         return appInfo;
@@ -461,7 +899,7 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
         if (hasRelative) {
           const resolved = await resolveMediaPaths(appId, cached);
           if (resolved) {
-            resolvedMediaSessionCache.set(appId, resolved);
+            setCachedResolvedMedia(appId, resolved);
             return { appId, provider: "steam", name: null, updatedAt: null, media: resolved, mediaSources: null, remote: null };
           }
         }
@@ -471,21 +909,22 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
     }
   }
 
-  // Read appinfo.json from disk
-  let appInfo = await getGameAppInfo(appId).catch(() => null);
+  // Read appinfo.json from disk (session-cached)
+  let appInfo = await getCachedGameAppInfo(appId);
 
-  // Validate all paths against disk (once per session)
-  if (!isAppInfoRepaired(appId)) {
+  // Validate all paths against disk (once per session) — only when repair is allowed
+  if (allowRepair && !isAppInfoRepaired(appId)) {
     try {
       // First, fix any misclassified media files (e.g. vertical landscape.jpg)
       // so the file names match actual image orientation before scanning disk paths.
-      await repairMediaRoles(appId).catch(() => {});
+      await repairMediaRoles(appId).catch(() => { });
       // Then repair stale paths AND add disk-only paths in appinfo.json
       // This updates appinfo on disk. We re-read appInfo afterward.
-      await repairAppinfoMediaPaths(appId).catch(() => {});
+      await repairAppinfoMediaPaths(appId).catch(() => { });
 
       // Re-read appinfo after repair (it may have been updated with disk paths)
-      const repairedAppInfo = await getGameAppInfo(appId).catch(() => null);
+      _sessionAppinfoCache.delete(appId);
+      const repairedAppInfo = await getCachedGameAppInfo(appId);
       if (repairedAppInfo) {
         appInfo = repairedAppInfo;
       }
@@ -551,15 +990,15 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
               console.log(`[MediaCache] appinfo updated for ${appId}`);
             }
             const mediaSources = appInfo?.mediaSources ?? null;
-            updateGameAppinfoMedia(appId, name, validatedMedia, remote, mediaSources).catch(() => {});
+            await updateGameAppinfoMediaIfChanged(appId, name, validatedMedia, remote, mediaSources, "loadGameAppInfoWithMediaFallback").catch(() => { });
             invalidateCanonicalMediaCache(appId);
-            notifyMediaUpdated(appId).catch(() => {});
+            notifyMediaUpdated(appId).catch(() => { });
           }
         }
 
         // Resolve relative paths to absolute for the session cache (UI uses these)
         const resolvedForCache = await resolveMediaPaths(appId, validatedMedia);
-        resolvedMediaSessionCache.set(appId, resolvedForCache);
+        setCachedResolvedMedia(appId, resolvedForCache);
         if (appInfo) {
           appInfo.media = resolvedForCache;
           return appInfo;
@@ -575,9 +1014,8 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
   }
 
   // After repair (or when repair was already done this session), re-check disk
-  // for new background/logo/icon files that the cached appinfo may be missing.
-  // This fixes the case where media files appeared on disk after the last repair.
-  if (appInfo?.media && (!appInfo.media.backgroundPath || !appInfo.media.logoPath || !appInfo.media.iconPath)) {
+  // for new background/logo/icon files (only when repair is allowed)
+  if (allowRepair && appInfo?.media && (!appInfo.media.backgroundPath || !appInfo.media.logoPath || !appInfo.media.iconPath)) {
     try {
       const diskPaths = await resolveGameMediaPaths(appId);
       if (diskPaths) {
@@ -603,12 +1041,12 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
             iconPath: appInfo.media.iconPath ?? absToRel(diskPaths.iconPath) ?? null,
           };
 
-          await updateGameAppinfoMedia(appId, appInfo.name, updatedMedia, appInfo.remote, appInfo.mediaSources).catch(() => {});
+          await updateGameAppinfoMediaIfChanged(appId, appInfo.name, updatedMedia, appInfo.remote, appInfo.mediaSources, "loadGameAppInfoWithMediaFallback-postRepair").catch(() => { });
           invalidateCanonicalMediaCache(appId);
-          notifyMediaUpdated(appId).catch(() => {});
+          notifyMediaUpdated(appId).catch(() => { });
 
           const resolvedForCache = await resolveMediaPaths(appId, updatedMedia);
-          resolvedMediaSessionCache.set(appId, resolvedForCache);
+          setCachedResolvedMedia(appId, resolvedForCache);
           appInfo.media = resolvedForCache;
           return appInfo;
         }
@@ -623,7 +1061,7 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
     const resolved = await resolveMediaPaths(appId, appInfo.media);
     if (resolved) {
       appInfo.media = resolved;
-      resolvedMediaSessionCache.set(appId, resolved);
+      setCachedResolvedMedia(appId, resolved);
     }
   }
   return appInfo ?? null;
@@ -631,13 +1069,13 @@ export async function loadGameAppInfoWithMediaFallback(appId: string): Promise<G
 
 // Clear the session cache (e.g. after artwork refresh)
 export function clearResolvedMediaSessionCache(): void {
-  resolvedMediaSessionCache.clear();
+  clearCachedGameMediaPaths();
   resolvedSrcCache.clear();
 }
 
 // Invalidate cache for a specific appId (e.g. after a media download updates appinfo)
 export function invalidateResolvedMediaCache(appId: string): void {
-  resolvedMediaSessionCache.delete(appId);
+  clearCachedGameMediaPaths(appId);
 }
 
 // ---------------------------------------------------------------------------
@@ -777,9 +1215,24 @@ export async function cacheMediaForGame(
     }
   }
 
-  // Update canonical appinfo (merge with existing)
+  // Update canonical appinfo — merge with existing to preserve other roles
   try {
-    await updateGameAppinfoMedia(appId, name, paths, null);
+    const existing = await getCachedGameAppInfo(appId);
+    const mergedMedia = {
+      landscapePath: paths.landscapePath ?? existing?.media?.landscapePath ?? null,
+      coverPath: paths.coverPath ?? existing?.media?.coverPath ?? null,
+      backgroundPath: paths.backgroundPath ?? existing?.media?.backgroundPath ?? null,
+      logoPath: paths.logoPath ?? existing?.media?.logoPath ?? null,
+      iconPath: paths.iconPath ?? existing?.media?.iconPath ?? null,
+    };
+    await updateGameAppinfoMediaIfChanged(
+      appId,
+      name ?? existing?.name ?? null,
+      mergedMedia,
+      existing?.remote ?? null,
+      existing?.mediaSources ?? null,
+      "cacheAppInfoMedia",
+    );
   } catch {
     // non-critical
   }
@@ -789,7 +1242,7 @@ export async function cacheMediaForGame(
 
   // Notify snapshot service so startup-snapshot.json picks up new paths
   invalidateCanonicalMediaCache(appId);
-  notifyMediaUpdated(appId).catch(() => {});
+  notifyMediaUpdated(appId).catch(() => { });
 
   // Update artwork.json
   if (sgdbRef) {
@@ -978,7 +1431,7 @@ export async function resolveGameMedia(
 // Returns the list of roles that were queued for download.
 // ---------------------------------------------------------------------------
 
-export type MediaRepairSource = 
+export type MediaRepairSource =
   | "local-media-repair"
   | "manual-refresh-artwork"
   | "game-details-visible-repair"
@@ -992,6 +1445,38 @@ export type MediaRepairSource =
   | "refresh-artwork"
   | "global"
   | "boot";
+
+// ── Source alias helpers ──
+const DISPLAY_ONLY_SOURCES = new Set([
+  "store-display", "dashboard-display", "browse-display", "metadata-display",
+]);
+
+const MANUAL_ARTWORK_SOURCES = new Set(["manual-refresh-artwork", "refresh-artwork"]);
+
+const VISIBLE_REPAIR_SOURCES = new Set(["game-details-visible-repair", "visible-details"]);
+
+const GLOBAL_REPAIR_SOURCES = new Set(["global", "boot", "boot-hydration", "local-media-repair"]);
+
+export function isDisplayOnlySource(source: MediaRepairSource): boolean {
+  return DISPLAY_ONLY_SOURCES.has(source);
+}
+
+export function isManualArtworkSource(source: MediaRepairSource): boolean {
+  return MANUAL_ARTWORK_SOURCES.has(source);
+}
+
+export function isVisibleRepairSource(source: MediaRepairSource): boolean {
+  return VISIBLE_REPAIR_SOURCES.has(source);
+}
+
+export function isGlobalRepairSource(source: MediaRepairSource): boolean {
+  return GLOBAL_REPAIR_SOURCES.has(source);
+}
+
+export function isStoreRouteActive(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.location.hash.startsWith("#/store") || window.location.pathname.includes("store");
+}
 
 export type RefreshArtworkOptions = {
   roles: string[];
@@ -1010,7 +1495,7 @@ export type RefreshArtworkResult = {
 // Type definitions for MediaIndex source tracking
 // ---------------------------------------------------------------------------
 
-export type MediaIndexSource = 
+export type MediaIndexSource =
   | "local-media-repair"
   | "manual-refresh-artwork"
   | "game-details-visible-repair"
@@ -1065,9 +1550,25 @@ export function createMediaIndexUpdate(
 export async function refreshArtwork(appId: string, options: RefreshArtworkOptions): Promise<RefreshArtworkResult> {
   const result: RefreshArtworkResult = { queued: [], failed: [], skipped: [] };
 
-  // Skip if Store is active — prevents triggering media index updates during Store navigation
-  const storeHash = typeof window !== "undefined" ? window.location.hash : "";
-  if (storeHash.startsWith("#/store") && options.source !== "refresh-artwork") {
+  // Block display-only sources immediately
+  if (isDisplayOnlySource(options.source)) {
+    console.log(`[MEDIA][DISPLAY_SOURCE_SKIP] appid=${appId} source=${options.source}`);
+    return result;
+  }
+
+  // Skip if Store route is active (allow refresh-artwork to bypass when user explicitly opens Store)
+  if (isStoreRouteActive() && !isManualArtworkSource(options.source)) {
+    return result;
+  }
+
+  // Phase 10: Defer artwork refresh during active interaction (scroll/click/nav)
+  if (isInteractionBusy() && !isManualArtworkSource(options.source)) {
+    console.log(`[MEDIA][REFRESH_DEFER] appid=${appId} reason=interaction-busy`);
+    return result;
+  }
+
+  if (isRecentlyNavigated(2000) && !isManualArtworkSource(options.source)) {
+    console.log(`[MEDIA][REFRESH_DEFER] appid=${appId} reason=navigation-active`);
     return result;
   }
 
@@ -1077,15 +1578,8 @@ export async function refreshArtwork(appId: string, options: RefreshArtworkOptio
   }
 
   // Skip global repair for non-visible sources
-  if (options.source !== "visible-details" && options.source !== "refresh-artwork") {
+  if (!isVisibleRepairSource(options.source) && !isManualArtworkSource(options.source)) {
     logGlobalRepairSkipOnce();
-    return result;
-  }
-
-    // Block display-only sources from updating MediaIndex
-  const displaySources = new Set(["store-display", "dashboard-display", "browse-display", "metadata-display", "boot-hydration"]);
-  if (displaySources.has(options.source)) {
-    console.log(`[MEDIA][REFRESH_SKIP] appid=${appId} reason=display-source source=${options.source}`);
     return result;
   }
 
@@ -1140,7 +1634,7 @@ export async function refreshArtwork(appId: string, options: RefreshArtworkOptio
       const metaMap = await resolveGameMetadata([appIdNum]);
       const meta = metaMap[appIdNum];
       if (meta?.resolved) gameMeta = meta as unknown as Record<string, any>;
-    } catch {}
+    } catch { }
   }
 
   let sgdbArtwork: Record<string, string | undefined> | undefined;
@@ -1161,7 +1655,7 @@ export async function refreshArtwork(appId: string, options: RefreshArtworkOptio
         };
       }
     }
-  } catch {}
+  } catch { }
 
   const gameObj = gameMeta ? {
     metadata: gameMeta,
@@ -1169,7 +1663,7 @@ export async function refreshArtwork(appId: string, options: RefreshArtworkOptio
     imageUrl: gameMeta.capsule_image as string | undefined,
   } : undefined;
 
-  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  const appInfo = await getCachedGameAppInfo(appId);
   const resolvedMedia = await resolveGameMedia(appId, gameObj, appInfo).catch(() => null);
   const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
 
@@ -1220,12 +1714,14 @@ export async function refreshArtwork(appId: string, options: RefreshArtworkOptio
   }
 
   // Update media health
+
   const health: MediaHealth = {
-    complete: result.queued.length === 0,
+    complete: rolesNeedingRepair.length === 0,
     checkedAt: Date.now(),
-    missing: result.failed,
+    missing: [...new Set([...result.failed, ...rolesNeedingRepair.filter(r => !result.queued.includes(r))])],
     lastRepairAttemptAt: Date.now(),
   };
+
   if (result.failed.length > 0) health.lastRepairError = "no-source-url";
   setMediaHealth(appId, health);
 
@@ -1236,28 +1732,46 @@ export async function refreshArtwork(appId: string, options: RefreshArtworkOptio
 }
 
 export async function detectAndQueueMissingMedia(appId: string, source: MediaRepairSource = "visible-details"): Promise<string[]> {
-  // Skip if Store is active — prevents triggering media index updates during Store navigation
-  const storeHash = typeof window !== "undefined" ? window.location.hash : "";
-  if (storeHash.startsWith("#/store")) {
+  // No-source-url cooldown — skip repair if recently found no source URLs.
+  // Must be at the very top to prevent repeated disk scans and AUTO_REPAIR_SCAN logs.
+  if (isNoSourceCooldown(appId)) {
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_COOLDOWN] appid=${appId} reason=no-source-url`);
+    return [];
+  }
+
+  // Phase 10: Defer media repair during active interaction (scroll/click/nav)
+  if (isInteractionBusy()) {
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_DEFER] appid=${appId} reason=interaction-busy`);
+    return [];
+  }
+
+  // Defer media repair during active navigation to avoid competing
+  // with route transitions for disk I/O.
+  if (isRecentlyNavigated(2000)) {
+    console.log(`[MEDIA][AUTO_REPAIR_DEFER] appid=${appId} reason=navigation-active`);
+    return [];
+  }
+
+  // Block display-only sources immediately — no disk check, no metadata fetch, no enqueue
+  if (isDisplayOnlySource(source)) {
+    console.log(`[MEDIA][DISPLAY_SOURCE_SKIP] appid=${appId} source=${source}`);
+    return [];
+  }
+
+  // Skip if Store route is active — prevents media index updates during Store navigation
+  if (isStoreRouteActive()) {
     return [];
   }
 
   // Skip system/tool apps (Steamworks Redistributables, Proton, etc.)
   if (isSystemToolApp(appId)) {
-    console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${appId} reason=system-tool`);
-    return [];
-  }
-
-  // Block display-only sources from updating MediaIndex
-  const displaySources = new Set(["store-display", "dashboard-display", "browse-display", "metadata-display"]);
-  if (displaySources.has(source)) {
-    console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${appId} reason=display-source source=${source}`);
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${appId} reason=system-tool`);
     return [];
   }
 
   // Emergency stabilization: only visible-details and manual refresh-artwork
   // should auto-repair. Global/boot repair is disabled.
-  if (source !== "visible-details" && source !== "refresh-artwork") {
+  if (!isVisibleRepairSource(source) && !isManualArtworkSource(source)) {
     logGlobalRepairSkipOnce();
     return [];
   }
@@ -1280,7 +1794,7 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
 
   if (missing.length === 0) return missing;
 
-  console.log(`[MEDIA][AUTO_REPAIR_SCAN] appid=${appId} missing=${missing.join(",")}`);
+  if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_SCAN] appid=${appId} missing=${missing.join(",")}`);
 
   // ── Source resolution ─────────────────────────────────────────────────────
   // 1. Load game metadata (Steam Store API) for remote URLs (background, logo)
@@ -1300,7 +1814,7 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
       if (meta?.resolved) {
         gameMeta = meta as unknown as Record<string, any>;
       }
-    } catch {}
+    } catch { }
   }
 
   // Try SGDB artwork if settings available
@@ -1323,7 +1837,7 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
         };
       }
     }
-  } catch {}
+  } catch { }
 
   // Build game-like object from metadata for resolveGameMedia fallback
   const gameObj = gameMeta ? {
@@ -1332,7 +1846,7 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
     imageUrl: gameMeta.capsule_image as string | undefined,
   } : undefined;
 
-  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  const appInfo = await getCachedGameAppInfo(appId);
   const resolvedMedia = await resolveGameMedia(appId, gameObj, appInfo).catch(() => null);
 
   const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
@@ -1379,7 +1893,7 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
 
     if (sourceUrl) {
       queuedRoles.push(role);
-      console.log(`[MEDIA][AUTO_REPAIR_QUEUE] appid=${appId} role=${role} source=${sourceReason} priority=low`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_QUEUE] appid=${appId} role=${role} source=${sourceReason} priority=low`);
       enqueueMediaDownload({
         id: `auto-repair-${appId}-${role}`,
         appId,
@@ -1388,26 +1902,28 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
         url: sourceUrl,
         target: "canonical",
         priority: "low",
-      }).catch(() => {});
+      }).catch(() => { });
     } else {
-      console.log(`[MEDIA][AUTO_REPAIR_FAILED] appid=${appId} role=${role} reason=no-source-url`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_FAILED] appid=${appId} role=${role} reason=no-source-url`);
     }
   }
 
   // ── Update media health metadata ──
+  const isComplete = missing.length === 0;
   const health: MediaHealth = {
-    complete: missing.length === 0 || queuedRoles.length === 0,
+    complete: isComplete,
     checkedAt: Date.now(),
     missing: queuedRoles.length > 0 ? queuedRoles : missing.filter((r) => !queuedRoles.includes(r)),
   };
   if (queuedRoles.length > 0) {
     health.lastRepairAttemptAt = Date.now();
-    console.log(`[MEDIA][AUTO_REPAIR_DONE] appid=${appId} queued=${queuedRoles.join(",")}`);
+    if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_DONE] appid=${appId} queued=${queuedRoles.join(",")}`);
   } else if (missing.length > 0 && queuedRoles.length === 0) {
-    // Failed to find source URLs for missing roles
+    health.lastRepairAttemptAt = Date.now();
     health.lastRepairError = "no-source-url";
   }
   setMediaHealth(appId, health);
+  if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][HEALTH_UPDATE] appid=${appId} complete=${isComplete} missing=${missing.length} error=${health.lastRepairError ?? "null"}`);
 
   return queuedRoles;
 }
@@ -1613,6 +2129,21 @@ export function isHttpUrl(path: string): boolean {
   return /^https?:\/\//i.test(path);
 }
 
+export function safeLocalPathToUrl(path: string): string | null {
+  // Only callers with file-existence-validated paths should reach this.
+  // This helper ensures the path is safe to convert (not tmp, not relative).
+  if (isHttpUrl(path)) return path;
+  if (isTmpPath(path)) {
+    if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log(`[MEDIA][LOCAL_URL_SKIP] reason=tmp-file path=${path}`);
+    return null;
+  }
+  if (path.startsWith("media/") || path.startsWith("img/")) {
+    if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log(`[MEDIA][LOCAL_URL_SKIP] reason=relative-path path=${path}`);
+    return null;
+  }
+  return localPathToUrl(path);
+}
+
 export function localPathToUrl(path: string): string | null {
   if (isHttpUrl(path)) return path;
   if (path.endsWith(".tmp")) {
@@ -1745,12 +2276,15 @@ export async function generateMediaManifest(
     if (!relPath) {
       return { path: `media/${role}.jpg`, exists: false, size: null, modifiedAt: null };
     }
+    let normalized: string | null = null;
     if (resolved) {
       const exists = !!(resolved[existsKey] as boolean);
       const resolvedPath = resolved[pathKey] as string | null;
-      return { path: resolvedPath ?? relPath, exists, size: null, modifiedAt: null };
+      normalized = normalizeMediaPathForIndex(resolvedPath ?? relPath);
+      return { path: normalized ?? `media/${role}.jpg`, exists, size: null, modifiedAt: null };
     }
-    return { path: relPath, exists: false, size: null, modifiedAt: null };
+    normalized = normalizeMediaPathForIndex(relPath);
+    return { path: normalized ?? `media/${role}.jpg`, exists: false, size: null, modifiedAt: null };
   };
 
   const manifest: MediaManifest = {
@@ -1768,7 +2302,7 @@ export async function generateMediaManifest(
   };
 
   await writeMediaManifestTauri(appId, manifest);
-  console.log(`[MEDIA][MANIFEST] written appid=${appId} cover=${manifest.files.cover.exists} landscape=${manifest.files.landscape.exists} background=${manifest.files.background.exists}`);
+  console.log(`[MEDIA][MANIFEST] written appid=${appId} coverPath=${manifest.files.cover.path} landscapePath=${manifest.files.landscape.path} backgroundPath=${manifest.files.background.path} logoPath=${manifest.files.logo.path} iconPath=${manifest.files.icon.path}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1810,19 +2344,42 @@ export async function hydrateMediaOnStartup(
   appIds: string[],
 ): Promise<{ updatedAppInfos: number; withBackground: number; withLandscape: number; withIcon: number; withLogo: number }> {
   if (appIds.length === 0) return { updatedAppInfos: 0, withBackground: 0, withLandscape: 0, withIcon: 0, withLogo: 0 };
-  const { resolveGameMediaPaths, getGameAppInfo, updateGameAppinfoMedia } = await import("./tauri");
+  const { readCanonicalAppinfos, resolveGameMediaPathsBatch } = await import("./tauri");
+  // Phase 2+5: Batch-read all appinfos and disk paths in 2 Tauri calls instead of 2*N per-app invokes.
+  const [batchDiskPaths, batchAppInfos] = await Promise.all([
+    resolveGameMediaPathsBatch(appIds),
+    readCanonicalAppinfos(appIds),
+  ]);
+  console.log(`[PERF][BOOT_BATCH] appIds=${appIds.length} appinfoBatch=true manifestsBatch=true mediaPathsBatch=true`);
   let updatedAppInfos = 0;
   let withBackground = 0;
   let withLandscape = 0;
   let withIcon = 0;
   let withLogo = 0;
+  let consecutiveSkipped = 0;
   for (const appId of appIds) {
     try {
-      const diskPaths = await resolveGameMediaPaths(appId);
+      // Quick pre-check: skip if this appId's MediaIndex already has all roles filled
+      // (seeded from manifests during Stage 6). No disk scan on skip.
+      const existingEntry = getMediaEntry(appId);
+      const entryComplete = existingEntry && existingEntry.hasLandscape && existingEntry.hasCover
+        && existingEntry.hasBackground && existingEntry.hasLogo && existingEntry.hasIcon;
+      if (entryComplete) {
+        consecutiveSkipped++;
+        if (consecutiveSkipped >= 5) {
+          // All remaining games in this batch are likely already synced — stop early
+          console.log(`[MEDIA_HYDRATE][BATCH_SKIP] reason=all-apps-already-synced appIds=${appIds.length} processed=${updatedAppInfos}`);
+          break;
+        }
+        continue;
+      }
+      consecutiveSkipped = 0;
+
+      const diskPaths = batchDiskPaths[appId];
       if (!diskPaths) continue;
       const hasDiskFiles = !!(diskPaths.landscapePath || diskPaths.coverPath || diskPaths.backgroundPath || diskPaths.logoPath || diskPaths.iconPath);
       if (!hasDiskFiles) continue;
-      const appInfo = await getGameAppInfo(appId);
+      const appInfo = batchAppInfos[appId];
       if (!appInfo) continue;
       const existing = appInfo.media;
       const absToRel = (abs: string | null): string | null => {
@@ -1842,7 +2399,44 @@ export async function hydrateMediaOnStartup(
         landscapePath: existing?.landscapePath ?? absToRel(diskPaths.landscapePath) ?? null,
         coverPath: existing?.coverPath ?? absToRel(diskPaths.coverPath) ?? null,
       };
-      await updateGameAppinfoMedia(appId, null, merged as any, null).catch(() => {});
+
+      // Compare with existing normalized media; skip no-op writes
+      const normalizedMerged = {
+        backgroundPath: merged.backgroundPath,
+        iconPath: merged.iconPath,
+        logoPath: merged.logoPath,
+        landscapePath: merged.landscapePath,
+        coverPath: merged.coverPath,
+      };
+      const existingNormalized = {
+        backgroundPath: existing?.backgroundPath ?? null,
+        iconPath: existing?.iconPath ?? null,
+        logoPath: existing?.logoPath ?? null,
+        landscapePath: existing?.landscapePath ?? null,
+        coverPath: existing?.coverPath ?? null,
+      };
+      const hasChange = Object.keys(normalizedMerged).some(
+        (k) => (normalizedMerged as any)[k] !== (existingNormalized as any)[k],
+      );
+      if (!hasChange) {
+        console.log(`[MEDIA_HYDRATE][SKIP] appid=${appId} reason=already-synced`);
+        continue;
+      }
+
+      const changedFields = Object.keys(normalizedMerged).filter(
+        (k) => (normalizedMerged as any)[k] !== (existingNormalized as any)[k],
+      ).length;
+      console.log(`[MEDIA_HYDRATE][WRITE] appid=${appId} changedFields=${changedFields}`);
+
+      // Preserve existing name, remote, and mediaSources
+      await updateGameAppinfoMediaIfChanged(
+        appId,
+        appInfo.name ?? null,
+        merged as any,
+        appInfo.remote ?? null,
+        appInfo.mediaSources ?? null,
+        "hydrateMediaOnStartup",
+      ).catch(() => { });
       if (merged.backgroundPath) withBackground++;
       if (merged.landscapePath) withLandscape++;
       if (merged.iconPath) withIcon++;
@@ -1869,11 +2463,13 @@ export async function hydrateMediaOnStartup(
       // Non-critical — skip failed app
     }
   }
-  console.log(`[BOOT][MEDIA_HYDRATE] games=${appIds.length}`);
-  console.log(`[BOOT][MEDIA_HYDRATE] updatedAppInfos=${updatedAppInfos}`);
-  console.log(`[BOOT][MEDIA_HYDRATE] withBackground=${withBackground}`);
-  console.log(`[BOOT][MEDIA_HYDRATE] withLandscape=${withLandscape}`);
-  console.log(`[BOOT][MEDIA_HYDRATE] withIcon=${withIcon}`);
-  console.log(`[BOOT][MEDIA_HYDRATE] withLogo=${withLogo}`);
+  if (updatedAppInfos > 0) {
+    console.log(`[BOOT][MEDIA_HYDRATE] games=${appIds.length}`);
+    console.log(`[BOOT][MEDIA_HYDRATE] updatedAppInfos=${updatedAppInfos}`);
+    console.log(`[BOOT][MEDIA_HYDRATE] withBackground=${withBackground}`);
+    console.log(`[BOOT][MEDIA_HYDRATE] withLandscape=${withLandscape}`);
+    console.log(`[BOOT][MEDIA_HYDRATE] withIcon=${withIcon}`);
+    console.log(`[BOOT][MEDIA_HYDRATE] withLogo=${withLogo}`);
+  }
   return { updatedAppInfos, withBackground, withLandscape, withIcon, withLogo };
 }

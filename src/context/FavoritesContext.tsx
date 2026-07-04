@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "lumaforge-favorites-v1";
 
@@ -54,8 +54,10 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const ctxValue = useMemo(() => ({ favoriteIds, isFavorite, toggleFavorite }), [favoriteIds]);
+
   return (
-    <FavoritesContext.Provider value={{ favoriteIds, isFavorite, toggleFavorite }}>
+    <FavoritesContext.Provider value={ctxValue}>
       {children}
     </FavoritesContext.Provider>
   );

@@ -1,4 +1,9 @@
+// Debug flag for achievement-related details logs (noisy per-navigation logs)
+const DEBUG_ACH_DETAILS = false;
+const DEBUG_LAUNCH_BUTTON_RENDER = false;
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { countRender, isInteractionBusy } from "../../services/perfCounters";
 import {
   Activity,
   ArrowLeft,
@@ -53,17 +58,18 @@ import {
 } from "../../services/libraryLocalCacheService";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
-import { getPlaytimeEntry, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel } from "../../services/playtimeService";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
 import { showAchievementToast, showGroupedAchievementToast, showTestAchievementToast } from "./AchievementToast";
 import { sendAchievementNativeNotification } from "../../services/achievementNotificationService";
-import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration } from "../../services/achievementImageQueue";
+import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
 import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
+import { notifyMediaUpdated } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession } from "../../context/GameSessionContext";
@@ -218,6 +224,7 @@ export default function LibraryGameDetails({
   onCancelLaunch,
   onOpenStopModal,
 }: LibraryGameDetailsProps) {
+  countRender("LibraryGameDetails");
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
@@ -231,7 +238,7 @@ export default function LibraryGameDetails({
     canonicalAppInfo,
   );
 
-  console.debug("[LaunchButton] render", {
+  if (DEBUG_LAUNCH_BUTTON_RENDER) console.debug("[LaunchButton] render", {
     gameId: game.id,
     title: detailTitle,
     appId: game.appId,
@@ -338,15 +345,14 @@ export default function LibraryGameDetails({
       ? "Supported"
       : "Not tracked";
 
-  const lastPlayedSource = game.localLastPlayedAt || game.steamLastPlayedAt || 0;
-  const lastPlayed = lastPlayedSource > 0
-    ? formatTimestamp(lastPlayedSource)
-    : "Never";
-
-  // Try playtime store first, fallback to Steam/local stats
-  const gameKey = game.id || (game.appId ? `app-${game.appId}` : null);
-  const ptEntry = gameKey ? getPlaytimeEntry(gameKey) : null;
+  // Phase 1: Audit Activity playtime
+  const ptEntry = getPlaytimeEntryByAppId(game.appId);
   const totalSeconds = ptEntry ? computeTotalPlaytime(ptEntry) : 0;
+  const sourceLabel = getPlaytimeSourceLabel(game.appId);
+  const lastPlayedFromActivity = getLastSessionEndForAppId(game.appId);
+  if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][PLAYTIME_AUDIT] appid=${game.appId} activityFound=${!!ptEntry} key=${ptEntry?.gameKey ?? null} totalSeconds=${totalSeconds} lastPlayedAt=${ptEntry?.lastPlayedAt ?? null} uiPlaytime=${formatPlaytimeSeconds(totalSeconds || 0)} uiLastPlayed=${lastPlayedFromActivity ?? "Never"}`);
+
+  // Phase 3: Display Activity totalPlaytimeSeconds (overrides Steam/local fallback)
   const hasPlaytimeStore = totalSeconds > 0;
   const playTimeValue = hasPlaytimeStore
     ? Math.round(totalSeconds / 60)
@@ -354,6 +360,18 @@ export default function LibraryGameDetails({
   const playTimeDisplay = playTimeValue > 0
     ? (hasPlaytimeStore ? formatPlaytimeSeconds(totalSeconds) : formatPlaytime(playTimeValue))
     : "Not tracked";
+  if (hasPlaytimeStore && ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
+    console.log(`[ACTIVITY][PLAYTIME_DISPLAY] appid=${game.appId} totalSeconds=${totalSeconds} source=${sourceLabel} label=${playTimeDisplay}`);
+  }
+
+  // Phase 4: Last played — prefer Activity (updated on launch), fallback to Steam/local
+  const lastPlayedSource = lastPlayedFromActivity ?? game.localLastPlayedAt ?? game.steamLastPlayedAt ?? 0;
+  const lastPlayed = lastPlayedSource > 0
+    ? (() => {
+        if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][LAST_PLAYED_DISPLAY] appid=${game.appId} value=${lastPlayedSource} source=${lastPlayedFromActivity ? "activity" : (game.localLastPlayedAt ? "local" : "steam")}`);
+        return formatTimestamp(lastPlayedSource);
+      })()
+    : "Never";
 
   // Derive progress from loaded achievement list if summary doesn't have it
   const derivedUnlocked = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
@@ -498,7 +516,7 @@ export default function LibraryGameDetails({
     }
     const stored = achievementStore.getSummary(appIdStr) ?? null;
     if (stored) {
-      console.log(`[ACH][STATE_PRESERVE] appid=${appIdStr} reason=route-change unlocked=${stored.unlocked}/${stored.total}`);
+      if (DEBUG_ACH_DETAILS) console.log(`[ACH][STATE_PRESERVE] appid=${appIdStr} reason=route-change unlocked=${stored.unlocked}/${stored.total}`);
     }
     setAchievementsSummary(prev => {
       if (prev?.appId === stored?.appId && prev?.source === stored?.source && prev?.unlocked === stored?.unlocked && prev?.total === stored?.total) return prev;
@@ -511,8 +529,7 @@ export default function LibraryGameDetails({
   // No stats/schema scan, no migration, no cache write, no full library scan.
   const shouldAutoLoadAchievements = false; // ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS — hard-disabled
   const ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP = true;
-  const cacheReadLoggedRef = useRef(false);
-  const diskCacheReadRef = useRef(false);
+  const diskCacheRef = useRef<{ updatedAt: number } | null>(null);
   useEffect(() => {
     if (!appIdStr) return;
     if (!shouldAutoLoadAchievements) {
@@ -521,71 +538,72 @@ export default function LibraryGameDetails({
       const stored = achievementStore.getSummary(appIdStr);
       if (stored) {
         setAchievementsSummary(stored);
-        if (!cacheReadLoggedRef.current) {
-          cacheReadLoggedRef.current = true;
-          const unlockedCount = stored.achievements?.filter((a: any) => a.unlocked).length ?? stored.unlocked ?? 0;
-          console.log(`[ACH][VISIBLE_CACHE_HIT] appid=${appIdStr} unlocked=${unlockedCount}/${stored.total}`);
-        }
-        setAchievementsLoading(false);
-        return;
+        if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_CACHE_HIT] appid=${appIdStr} unlocked=${stored.unlocked}/${stored.total} storeUpdatedAt=${stored.updatedAt}`);
       }
-      // 2. If ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP, try disk cache (no write/no migration)
-      if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP && !diskCacheReadRef.current) {
-        diskCacheReadRef.current = true;
+      // 2. If ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP, check if disk cache is newer than store
+      if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP) {
         const appIdNum = Number(appIdStr);
         if (Number.isFinite(appIdNum)) {
           import("../../services/tauri").then(({ readAchievementCache }) => {
               if (cancelled) return;
               readAchievementCache(appIdNum).then((diskCache) => {
-                if (cancelled || !diskCache) {
-                  console.log(`[ACH][VISIBLE_CACHE_MISS] appid=${appIdStr} action=show-placeholder`);
-                  setAchievementsLoading(false);
+                if (cancelled) return;
+                const diskUpdatedAt = diskCache?.summary?.updated_at ?? 0;
+                const storeUpdatedAt = achievementStore.getSummary(appIdStr)?.updatedAt ?? 0;
+                const lastSeenAt = diskCacheRef.current?.updatedAt ?? 0;
+                if (!diskCache || !diskCache.achievements?.length) {
+                  if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false`);
+                  if (!stored) setAchievementsLoading(false);
                   return;
                 }
-                if (!cancelled && diskCache.achievements?.length) {
-                  const total = diskCache.achievements.length;
-                  const unlocked = diskCache.achievements.filter((a: any) => a.unlocked).length;
-                  const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
-                  const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
-                  const summary = {
-                    appId: appIdStr,
-                    source: "local-cache" as const,
-                    total,
-                    unlocked,
-                    percent,
-                    progressAvailable: hasRealProgress,
-                    updatedAt: diskCache.summary?.updated_at ?? Date.now(),
-                    achievements: diskCache.achievements.map((a: any) => ({
-                      id: a.api_name ?? a.id ?? "",
-                      apiName: a.api_name ?? a.name ?? "",
-                      name: a.display_name ?? a.name ?? a.api_name ?? "",
-                      description: a.description ?? "",
-                      iconUrl: a.icon_url ?? a.icon ?? undefined,
-                      iconGrayUrl: a.icon_gray_url ?? a.icon_gray ?? undefined,
-                      unlocked: !!a.unlocked,
-                      unlockTime: a.unlock_time ?? undefined,
-                      progress: a.progress ?? undefined,
-                      progressMax: a.progress_max ?? undefined,
-                      rarityPercent: a.rarity_percent ?? undefined,
-                    })),
-                  };
-                  achievementStore.setSummary(appIdStr, summary);
-                  setAchievementsSummary(summary);
-                  console.log(`[ACH][VISIBLE_CACHE_READ] appid=${appIdStr} count=${total}`);
-                  console.log(`[ACH][SUMMARY_DERIVED_FROM_LIST] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
-                } else {
-                  console.log(`[ACH][VISIBLE_CACHE_MISS] appid=${appIdStr} action=show-placeholder`);
+                // Apply if disk is newer than what we last saw, or newer than store
+                const shouldApply = diskUpdatedAt > lastSeenAt || diskUpdatedAt > storeUpdatedAt;
+                if (!shouldApply) {
+                  if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=false diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
+                  if (!stored) setAchievementsLoading(false);
+                  return;
                 }
+                diskCacheRef.current = { updatedAt: diskUpdatedAt };
+                const total = diskCache.achievements.length;
+                const unlocked = diskCache.achievements.filter((a: any) => a.unlocked).length;
+                const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
+                const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
+                const summary = {
+                  appId: appIdStr,
+                  source: "local-cache" as const,
+                  total,
+                  unlocked,
+                  percent,
+                  progressAvailable: hasRealProgress,
+                  updatedAt: diskCache.summary?.updated_at ?? Date.now(),
+                  achievements: diskCache.achievements.map((a: any) => ({
+                    id: a.api_name ?? a.id ?? "",
+                    apiName: a.api_name ?? a.name ?? "",
+                    name: a.display_name ?? a.name ?? a.api_name ?? "",
+                    description: a.description ?? "",
+                    iconUrl: a.icon_url ?? a.icon ?? undefined,
+                    iconGrayUrl: a.icon_gray_url ?? a.icon_gray ?? undefined,
+                    unlocked: !!a.unlocked,
+                    unlockTime: a.unlock_time ?? undefined,
+                    progress: a.progress ?? undefined,
+                    progressMax: a.progress_max ?? undefined,
+                    rarityPercent: a.rarity_percent ?? undefined,
+                  })),
+                };
+                console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=true diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
+                console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${unlocked}/${total} reason=newer-local-cache`);
+                achievementStore.setSummary(appIdStr, summary);
+                setAchievementsSummary(summary);
                 setAchievementsLoading(false);
               }).catch(() => {
-                if (!cancelled) {
-                  console.log(`[ACH][VISIBLE_CACHE_MISS] appid=${appIdStr} action=show-placeholder reason=disk-read-failed`);
+                if (!cancelled && !stored) {
+                  if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false reason=disk-read-failed`);
                   setAchievementsLoading(false);
                 }
               });
           });
         } else {
-          setAchievementsLoading(false);
+          if (!stored) setAchievementsLoading(false);
         }
         return;
       }
@@ -657,7 +675,7 @@ export default function LibraryGameDetails({
       percent,
       progressAvailable: true,
     };
-    console.log(`[ACH][SUMMARY_DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
+    if (DEBUG_ACH_DETAILS) console.log(`[ACH][SUMMARY_DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
     achievementStore.setSummary(appIdStr, patched);
     setAchievementsSummary(patched);
   }, [appIdStr, achievementsSummary]);
@@ -773,18 +791,27 @@ export default function LibraryGameDetails({
 
   // Enqueue missing achievement images when summary loads — once per loadKey change
   // Uses generation tokens to prevent cross-AppID contamination (Part B3)
+  // Phase 3: Only resolves images for the first 5 visible achievements (matching sidebar render)
+  // Phase 4: Deferred during user interaction
+  // Phase 5: Per-image logs gated behind DEBUG_ACH_IMAGE_QUEUE
   const lastEnqueueKey = useRef<string>("");
   const prevAppIdRef = useRef<string>("");
   const lastGenerationRef = useRef<string>("");
+  const VISIBLE_BATCH_SIZE = 5; // matches sidebar .slice(0, 5)
   useEffect(() => {
     if (!achievementsSummary?.achievements?.length || !appIdStr) return;
+
+    // Phase 5: Skip entirely when auto-download is disabled
+    if (!ACHIEVEMENT_IMAGE_MIGRATION_AUTO) return;
+
+    // Phase 4: Defer during interaction (navigation, scroll, click)
+    if (isInteractionBusy()) return;
 
     // Cancel previous generation when appId changes
     if (prevAppIdRef.current && prevAppIdRef.current !== appIdStr) {
       if (lastGenerationRef.current) {
         cancelGeneration(lastGenerationRef.current);
         achievementImageQueue.cancelJobsForApp(prevAppIdRef.current, "appid-changed");
-        console.debug(`[ACH][IMG] cancelled generation for previous appid=${prevAppIdRef.current}`);
       }
     }
     prevAppIdRef.current = appIdStr;
@@ -794,24 +821,60 @@ export default function LibraryGameDetails({
 
     const currentKey = `${appIdStr}:${achievementsSummary.source}:${achievementsSummary.total}:${achievementsSummary.updatedAt ?? 0}`;
     if (lastEnqueueKey.current === currentKey) {
-      console.debug(`[ACH][IMG_QUEUE] ensure skipped reason=already-ensured appid=${appIdStr}`);
+      if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG_QUEUE] ensure skipped reason=already-ensured appid=${appIdStr}`);
       return;
     }
     lastEnqueueKey.current = currentKey;
+
+    // Phase 3: Limit to visible batch (first N achievements)
+    const visibleAchievements = achievementsSummary.achievements.slice(0, VISIBLE_BATCH_SIZE);
     const items: import("../../services/achievementImageQueue").ImageQueueItem[] = [];
-    for (const a of achievementsSummary.achievements) {
+    const startTime = performance.now();
+    let cachedCount = 0;
+    let skippedCount = 0;
+
+    for (const a of visibleAchievements) {
+      // Phase 2+7: Session dedup — skip if already resolved this session
       if (a.iconUrl && !isResolvedUrl(a.iconUrl)) {
-        const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "high", caller: "game-details", createdAt: Date.now(), generationId });
+        if (isImageResolved(appIdStr, a.iconUrl, "icon")) {
+          skippedCount++;
+        } else {
+          const resolved = resolveImageSource(a.iconUrl, appIdStr, "icon");
+          if (resolved) {
+            items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon", priority: "high", caller: "game-details", createdAt: Date.now(), generationId });
+            markImageResolved(appIdStr, a.iconUrl, "icon");
+          } else {
+            cachedCount++;
+          }
+        }
+      } else if (a.iconUrl) {
+        cachedCount++;
       }
+
       if (a.iconGrayUrl && !isResolvedUrl(a.iconGrayUrl)) {
-        const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
-        if (resolved) items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high", caller: "game-details", createdAt: Date.now(), generationId });
+        if (isImageResolved(appIdStr, a.iconGrayUrl, "icon_gray")) {
+          skippedCount++;
+        } else {
+          const resolved = resolveImageSource(a.iconGrayUrl, appIdStr, "icon_gray");
+          if (resolved) {
+            items.push({ appId: appIdStr, apiName: a.apiName, ...resolved, type: "icon_gray", priority: "high", caller: "game-details", createdAt: Date.now(), generationId });
+            markImageResolved(appIdStr, a.iconGrayUrl, "icon_gray");
+          } else {
+            cachedCount++;
+          }
+        }
+      } else if (a.iconGrayUrl) {
+        cachedCount++;
       }
     }
+
     if (items.length > 0) {
-      console.debug(`[ACH][IMG] enqueued ${items.length} images for appid=${appIdStr}`);
+      if (DEBUG_ACH_IMAGE_QUEUE) console.debug(`[ACH][IMG] enqueued ${items.length} images for appid=${appIdStr} visibleBatch=${VISIBLE_BATCH_SIZE}`);
       achievementImageQueue.enqueue(items);
+    }
+    const elapsedMs = Math.round(performance.now() - startTime);
+    if (DEBUG_ACH_IMAGE_QUEUE) {
+      console.debug(`[ACH][IMG_SUMMARY] appid=${appIdStr} requested=${visibleAchievements.length * 2} cachedHits=${cachedCount} queued=${items.length} skipped=${skippedCount} elapsedMs=${elapsedMs}`);
     }
   }, [achievementsSummary, appIdStr]);
 
@@ -1682,7 +1745,9 @@ export default function LibraryGameDetails({
                             achievementStore.setSummary(appIdStr, s);
                             const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
                             console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${s.achievements.length} summary=${unlocked}/${s.total}`);
-                            console.log(`[ACH][SUMMARY_PERSISTED] appid=${appIdStr} unlocked=${unlocked}/${s.total}`);
+                            console.log(`[ACH][MANUAL_REFRESH_APPLY] appid=${appIdStr} unlocked=${unlocked}/${s.total}`);
+                            // Phase 9: Schedule snapshot write so achievement summary persists after restart
+                            notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => {});
                           }
                         } catch (err) {
                           console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);

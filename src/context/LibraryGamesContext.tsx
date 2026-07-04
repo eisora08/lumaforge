@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LibraryGame } from "../types/libraryGame";
 import type { AppSettings } from "../types/settings";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
@@ -12,7 +12,7 @@ import {
   mergeLocalStatsIntoGames,
   setAchievementsSupportedFlag,
 } from "../services/gameStatsService";
-import { importExternalPlaytime } from "../services/playtimeService";
+import { importExternalPlaytime, getPlaytimeEntryByAppId, getLastSessionEndForAppId } from "../services/playtimeService";
 import { useSettings } from "./SettingsContext";
 import {
   waitForBootSnapshot,
@@ -20,11 +20,48 @@ import {
 } from "../services/appBootCoordinator";
 import {
   seedResolvedMediaCacheFromSnapshot,
+  dedupeLibraryGames,
 } from "../services/gameCacheService";
 import {
   scheduleSnapshotWrite,
 } from "../services/startupSnapshotService";
+import {
+  countLibraryApplied,
+  countLibrarySkipped,
+  countLibraryReconciledDiff,
+  countLibraryEmptyBlocked,
+} from "../services/perfCounters";
 
+// ── Library runtime state machine ──
+
+export type LibraryRuntimeStatus =
+  | "empty"
+  | "snapshot"
+  | "reconciling"
+  | "ready"
+  | "error";
+
+export type LibrarySource =
+  | "none"
+  | "snapshot"
+  | "cached"
+  | "reconciled"
+  | "manual-refresh";
+
+// Stable fingerprint based on fields that matter to Library/Sidebar rendering
+function computeLibraryFingerprint(games: LibraryGame[]): string {
+  return games.slice(0, 200).map(g =>
+    `${g.appId}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}`
+  ).join("|");
+}
+
+// Module-level fingerprint to skip scheduling full-rebuild snapshots when games haven't changed
+let _lastGamesFingerprint = "";
+function computeGamesFingerprint(games: LibraryGame[]): string {
+  return games.slice(0, 200).map(g =>
+    `${g.appId}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}`
+  ).join("|");
+}
 
 const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
 
@@ -73,6 +110,9 @@ type LibraryGamesState = {
   setSelectedGame: (game: LibraryGame | null) => void;
   refresh: () => Promise<void>;
   appInfoMap: LibraryAppInfoMap;
+  status: LibraryRuntimeStatus;
+  librarySource: LibrarySource;
+  libraryFingerprint: string | null;
 };
 
 const LibraryGamesContext = createContext<LibraryGamesState | null>(null);
@@ -94,19 +134,31 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [selectedId, setSelectedIdState] = useState<string | null>(loadStoredSelectedId);
   const [selectedGame, setSelectedGameState] = useState<LibraryGame | null>(null);
   const [appInfoMap, setAppInfoMap] = useState<LibraryAppInfoMap>({});
+  const [status, setStatus] = useState<LibraryRuntimeStatus>("empty");
+  const [librarySource, setLibrarySource] = useState<LibrarySource>("none");
+  const [libraryFingerprint, setLibraryFingerprintState] = useState<string | null>(null);
   const appInfoLoaded = useRef(false);
-  const initDone = useRef(false);
+  const gamesRef = useRef<LibraryGame[]>([]);
+  const lastSettingsKey = useRef<string>("");
+  const bootLoaded = useRef(false);
+  const lastLogStatus = useRef<string>("");
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
-  function setSelectedId(id: string | null) {
+  useEffect(() => {
+    gamesRef.current = games;
+  }, [games]);
+
+  const setSelectedId = useCallback((id: string | null) => {
     setSelectedIdState(id);
     storeSelectedId(id);
-  }
+  }, []);
 
-  function setSelectedGame(game: LibraryGame | null) {
+  const setSelectedGame = useCallback((game: LibraryGame | null) => {
     setSelectedGameState(game);
     setSelectedIdState(game?.id ?? null);
     storeSelectedId(game?.id ?? null);
-  }
+  }, []);
 
   useEffect(() => {
     if (games.length === 0 || !selectedId) return;
@@ -121,6 +173,164 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }, [games, selectedId, selectedGame]);
 
+  // Track whether we already have valid snapshot/reconciled games to skip fingerprint on first apply
+  const hasInitialData = useRef(false);
+
+  function logLibraryState(newStatus: LibraryRuntimeStatus, newSource: LibrarySource, gameCount: number): void {
+    const key = `${newStatus}:${newSource}:${gameCount}`;
+    if (key !== lastLogStatus.current) {
+      lastLogStatus.current = key;
+      console.log(`[LIBRARY_STATE] status=${newStatus} source=${newSource} games=${gameCount}`);
+    }
+  }
+
+  function applyGamesSafely(
+    nextGames: LibraryGame[],
+    source: string,
+    options?: { allowReplace?: boolean },
+  ): void {
+    const current = gamesRef.current;
+    // Phase 2: Block empty replacement of valid data unless explicit
+    if (nextGames.length === 0 && current.length > 0 && !options?.allowReplace) {
+      countLibraryEmptyBlocked();
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_BLOCKED] reason=empty source=${source} current=${current.length}`);
+      return;
+    }
+    // Phase 4: Block partial background scans
+    if (
+      source === "background-scan" &&
+      nextGames.length > 0 &&
+      current.length > 0 &&
+      nextGames.length < current.length * 0.5
+    ) {
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_BLOCKED] reason=partial source=${source} current=${current.length} incoming=${nextGames.length}`);
+      return;
+    }
+    // Phase 4+8: Compute fingerprint of incoming games and skip if same as current
+    const incomingFp = computeLibraryFingerprint(nextGames);
+    const currentFp = current.length > 0 ? computeLibraryFingerprint(current) : null;
+    if (currentFp !== null && incomingFp === currentFp) {
+      countLibrarySkipped();
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_SKIP] reason=same-fingerprint source=${source} games=${current.length}`);
+      // Still set status if not yet at "ready" (e.g., reconcile producing same data as snapshot)
+      if (status !== "ready" && source === "cached") {
+        setStatus("reconciling");
+        setLibrarySource(source as LibrarySource);
+        logLibraryState("reconciling", source as LibrarySource, current.length);
+      }
+      if (status !== "ready" && source === "reconciled-update") {
+        setStatus("ready");
+        setLibrarySource("reconciled");
+        logLibraryState("ready", "reconciled", current.length);
+      }
+      return;
+    }
+    // Phase 9: Preserve object identity — reuse existing objects when appId/title/source match
+    const currentById = new Map<string, LibraryGame>();
+    for (const g of current) {
+      if (g.appId) currentById.set(g.appId, g);
+    }
+    const merged = mergeGames(current, nextGames, source);
+    const deduped = dedupeLibraryGames(merged);
+
+    // Phase 6: Merge Activity playtime into LibraryGame runtime objects
+    for (const game of deduped) {
+      if (!game.appId) continue;
+      const ptEntry = getPlaytimeEntryByAppId(game.appId);
+      if (ptEntry) {
+        const totalMinutes = Math.round(ptEntry.totalPlaytimeSeconds / 60);
+        if (totalMinutes > 0) {
+          game.localPlaytimeMinutes = Math.max(game.localPlaytimeMinutes ?? 0, totalMinutes);
+        }
+        const sessionEnd = getLastSessionEndForAppId(game.appId);
+        if (sessionEnd) {
+          game.localLastPlayedAt = Math.max(game.localLastPlayedAt ?? 0, sessionEnd);
+        }
+        console.log(`[ACTIVITY][LIBRARY_MERGE] appid=${game.appId} totalSeconds=${ptEntry.totalPlaytimeSeconds} lastPlayedAt=${ptEntry.lastPlayedAt ?? sessionEnd ?? null}`);
+      }
+    }
+
+    // Reuse existing objects for unchanged games to minimize React re-render churn
+    const stable: LibraryGame[] = [];
+    let changedCount = 0;
+    let addedCount = 0;
+    for (const game of deduped) {
+      if (game.appId && currentById.has(game.appId)) {
+        const existing = currentById.get(game.appId)!;
+        if (existing.title === game.title && existing.source === game.source && existing.steamInstalled === game.steamInstalled && !!existing.isPlayable === !!game.isPlayable && !!existing.isFavorite === !!game.isFavorite) {
+          stable.push(existing);
+        } else {
+          stable.push(game);
+          changedCount++;
+        }
+      } else {
+        stable.push(game);
+        if (game.appId && !currentById.has(game.appId)) addedCount++;
+      }
+    }
+    const removedCount = current.length - stable.length + addedCount;
+    if (current.length > 0 && (addedCount > 0 || removedCount > 0 || changedCount > 0)) {
+      countLibraryReconciledDiff();
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_DIFF] source=${source} added=${addedCount} removed=${removedCount} changed=${changedCount} total=${stable.length}`);
+    } else {
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES] source=${source} previous=${current.length} incoming=${nextGames.length} merged=${merged.length} deduped=${deduped.length}`);
+    }
+    countLibraryApplied();
+    setGames(stable);
+    hasInitialData.current = true;
+
+    // Phase 1: Update runtime status based on source
+    if (source === "snapshot-fallback" || source === "snapshot") {
+      setStatus("snapshot");
+      setLibrarySource("snapshot");
+      setLibraryFingerprintState(incomingFp);
+      logLibraryState("snapshot", "snapshot", stable.length);
+    } else if (source === "cached") {
+      setStatus("reconciling");
+      setLibrarySource("cached");
+      setLibraryFingerprintState(incomingFp);
+      logLibraryState("reconciling", "cached", stable.length);
+    } else if (source === "reconciled-update" || source === "reconciled-fallback") {
+      setStatus("ready");
+      setLibrarySource("reconciled");
+      setLibraryFingerprintState(incomingFp);
+      logLibraryState("ready", "reconciled", stable.length);
+    } else {
+      setStatus("ready");
+      setLibrarySource(source as LibrarySource);
+      setLibraryFingerprintState(incomingFp);
+      logLibraryState("ready", source as LibrarySource, stable.length);
+    }
+  }
+
+  function mergeGames(current: LibraryGame[], incoming: LibraryGame[], source: string): LibraryGame[] {
+    if (current.length === 0) return incoming;
+    if (
+      source === "cached" ||
+      source === "reconciled-update" ||
+      source === "snapshot-fallback" ||
+      source === "reconciled-fallback"
+    ) {
+      const byAppId = new Map<string, LibraryGame>();
+      for (const g of current) {
+        if (g.appId) byAppId.set(g.appId, g);
+        else if (![...byAppId.values()].find((x) => x.id === g.id)) {
+          byAppId.set(`noappid-${g.id}`, g);
+        }
+      }
+      for (const game of incoming) {
+        if (game.appId) {
+          if (!byAppId.has(game.appId)) byAppId.set(game.appId, game);
+        } else if (![...byAppId.values()].find((x) => x.id === game.id)) {
+          byAppId.set(`noappid-${game.id}`, game);
+        }
+      }
+      return [...byAppId.values()].sort((a, b) => a.title.localeCompare(b.title));
+    }
+    const deduped = dedupeLibraryGames(incoming);
+    return deduped;
+  }
+
   async function enrichWithStats(games: LibraryGame[]): Promise<LibraryGame[]> {
     try {
       const appIds = games
@@ -133,7 +343,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         );
         mergeSteamStatsIntoGames(games, steamStats);
 
-        // Batch-import Steam playtime — 10 per batch with delay to avoid burst
         const playtimeGames = games.filter((g) => {
           if (!g.appId) return false;
           const appIdNum = Number(g.appId);
@@ -183,30 +392,52 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         app_id: game.appId,
         name: gameName,
         header_image: game.imageUrl || null,
-        cover_path: null,
-        grid_path: null,
-        hero_path: null,
-        logo_path: null,
-        icon_path: null,
+        cover_path: entry?.cover_path ?? null,
+        grid_path: entry?.grid_path ?? null,
+        hero_path: entry?.hero_path ?? null,
+        logo_path: entry?.logo_path ?? null,
+        icon_path: entry?.icon_path ?? null,
         updated_at: now,
       }).catch(() => {});
+      console.log(`[LIBRARY_CONTEXT][APPINFO_UPDATE_SAFE] appid=${game.appId} preserveMedia=true`);
     }
   }
 
+  function snapshotGameToLibraryGame(sg: { appId: string; title: string; source: string; installed?: boolean; playable?: boolean; lastPlayed?: number | null; playtime?: number | null }): LibraryGame {
+    return {
+      id: `snapshot-${sg.appId}`,
+      appId: sg.appId,
+      title: sg.title || "",
+      source: (sg.source === "lua" ? "lua" : "steam") as LibraryGame["source"],
+      isPlayable: sg.playable ?? false,
+      isInstallable: !sg.playable,
+      steamInstalled: sg.installed ?? false,
+      hasLua: sg.source === "lua",
+      isLuaActive: sg.source === "lua",
+      isLuaDisabled: false,
+      hasLuaSource: false,
+      luaScripts: [],
+      sources: [],
+      steamLastPlayedAt: sg.lastPlayed ?? undefined,
+      steamPlaytimeMinutes: sg.playtime ?? undefined,
+    };
+  }
+
   async function load(settings: AppSettings) {
-    // Seed media session cache from snapshot if available
     const snapshot = await waitForBootSnapshot();
     if (snapshot) {
       seedResolvedMediaCacheFromSnapshot(snapshot.library.games);
     }
 
-    // Load enriched games from SQLite cache (instant — no blocking)
     const cached = await loadCachedGames();
     const { getReconciledGames } = await import("../services/gameStore");
-    if (cached && cached.games.length > 0) {
-      let loadedGames = cached.games;
+    let loadedGames: LibraryGame[] | null = null;
+    let loadSource = "";
 
-      // Merge any reconciled games from Stage 4.5 boot (Lua-only additions)
+    if (cached && cached.games.length > 0) {
+      loadedGames = cached.games;
+      loadSource = "cached";
+
       const reconciled = getReconciledGames();
       if (reconciled.length > 0) {
         const reconciledById = new Map(reconciled.map((g) => [g.id, g]));
@@ -225,7 +456,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         }
       }
 
-      // Repair placeholder titles in cached games — try canonical appinfo/metadata/store
+      // Repair placeholder titles in cached games
       const { resolveCanonicalName } = await import("../services/gameCacheService");
       await Promise.allSettled(loadedGames.map(async (game) => {
         if (!game.appId) return;
@@ -237,25 +468,35 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           }
         }
       }));
-
-      setGames(loadedGames);
-      setWarnings(cached.warnings || []);
-      setInitialLoading(false);
     } else {
-      // Fallback: SQLite is empty — use reconciled games from gameStore
       const reconciled = getReconciledGames();
       if (reconciled.length > 0) {
+        loadedGames = reconciled;
+        loadSource = "reconciled-fallback";
         console.log(`[LIBRARY_CONTEXT][HYDRATE] source=reconciled-fallback games=${reconciled.length}`);
-        setGames(reconciled);
-        setInitialLoading(false);
+      } else if (snapshot && snapshot.library.games.length > 0) {
+        loadedGames = snapshot.library.games.map(snapshotGameToLibraryGame);
+        loadSource = "snapshot-fallback";
+        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=snapshot-fallback games=${loadedGames.length}`);
       } else {
-        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=empty (sqlite empty, reconciled empty)`);
-        setInitialLoading(false);
+        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=empty (sqlite empty, reconciled empty, snapshot empty)`);
+        loadSource = "empty";
       }
     }
 
-    // Schedule background Steam scan after main window is visible.
-    // This is non-blocking — cached games show immediately with correct stats.
+    if (loadedGames) {
+      // Phase 3: If loading from snapshot and no prior data, tag as "snapshot" so UI
+      // shows stable data immediately rather than waiting for SQLite/reconcile.
+      const effectiveSource = (loadSource === "snapshot-fallback" && gamesRef.current.length === 0) ? "snapshot" : loadSource;
+      applyGamesSafely(loadedGames, effectiveSource, { allowReplace: true });
+    }
+    if (cached) {
+      setWarnings(cached.warnings || []);
+    }
+    setInitialLoading(false);
+    bootLoaded.current = true;
+
+    // Schedule background Steam scan after main window is visible
     const needsScan = !cached || isCacheExpired(cached);
     if (needsScan) {
       scheduleAfterMain(async () => {
@@ -264,17 +505,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           const result = await resolveLibraryGames(settings);
           const enriched = await enrichWithStats(result.games);
           await saveCachedGames(enriched, result.warnings);
-          // Guard: if background scan returned empty but we already have games, don't wipe
-          if (enriched.length === 0 && games.length > 0) {
-            console.log(`[LIBRARY_CONTEXT][EMPTY_RESULT_IGNORED] incoming=0 current=${games.length}`);
-          } else {
-            setGames(enriched);
-          }
+          applyGamesSafely(enriched, "background-scan");
           setWarnings(result.warnings);
 
-          // Phase 3: background full dataset scan (batched metadata resolve)
-          // This populates the SQLite `games` table for instant startup on next boot.
-          // Heavy work runs in Rust in batches of 10, never blocks the UI.
           triggerBackgroundScan(settings).then((count) => {
             if (count > 0) {
               console.debug(`[LibraryGamesContext] Full dataset scan complete: ${count} games indexed`);
@@ -289,49 +522,113 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }
 
+  // Step 1: Settings fingerprint-based load
+  const settingsKey = [
+    settings.steamRoot,
+    settings.luaPath,
+    settings.depotcachePath,
+    settings.gameScanFolders?.join("|")
+  ].filter(Boolean).join("::");
+
+  useEffect(() => {
+    if (!settingsKey) {
+      console.log(`[LIBRARY_CONTEXT][LOAD_SKIP] reason=settings-not-ready`);
+      return;
+    }
+    if (lastSettingsKey.current === settingsKey) {
+      return;
+    }
+    lastSettingsKey.current = settingsKey;
+    console.log(`[LIBRARY_CONTEXT][LOAD_START] settingsReady=true key=${settingsKey.substring(0, 40)}...`);
+    setTimeout(() => load(settings), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsKey]);
+
+  // Step 2: Subscribe to gameStore reconciled updates
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    (async () => {
+      const { subscribe, getReconciledGames } = await import("../services/gameStore");
+      unsub = subscribe(() => {
+        const reconciled = getReconciledGames();
+        if (reconciled.length > 0) {
+          applyGamesSafely(reconciled, "reconciled-update");
+        } else {
+          console.log(`[LIBRARY_CONTEXT][EMPTY_RECONCILED_IGNORED] current=${gamesRef.current.length}`);
+        }
+      });
+    })();
+    return () => { unsub?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (appInfoLoaded.current) return;
     appInfoLoaded.current = true;
     loadLibraryAppInfo().then(setAppInfoMap).catch(() => {});
   }, []);
 
+  // Step 9: Snapshot writes only from stable state
   useEffect(() => {
-    if (initDone.current) return;
-    initDone.current = true;
-    setTimeout(() => load(settings), 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (games.length === 0) {
+      console.log(`[LIBRARY_CONTEXT][SNAPSHOT_SCHEDULE_SKIP] reason=no-games`);
+      return;
+    }
+    if (Object.keys(appInfoMap).length === 0) {
+      console.log(`[LIBRARY_CONTEXT][SNAPSHOT_SCHEDULE_SKIP] reason=no-appinfo`);
+      return;
+    }
+    if (!bootLoaded.current) {
+      console.log(`[LIBRARY_CONTEXT][SNAPSHOT_SCHEDULE_SKIP] reason=booting`);
+      return;
+    }
 
-  // Debounced snapshot write — deferred to 60s idle so boot remains zero-work
-  useEffect(() => {
-    if (games.length === 0) return;
-    if (Object.keys(appInfoMap).length === 0) return;
-    scheduleSnapshotWrite(games, appInfoMap, null, 60000);
+    // Skip scheduling if games data hasn't changed (e.g., re-render with identical data)
+    const fp = computeGamesFingerprint(games);
+    if (fp === _lastGamesFingerprint) {
+      console.log(`[LIBRARY_CONTEXT][SNAPSHOT_SCHEDULE_SKIP] reason=unchanged-games games=${games.length}`);
+      return;
+    }
+    _lastGamesFingerprint = fp;
+
+    console.log(`[LIBRARY_CONTEXT][SNAPSHOT_SCHEDULE] games=${games.length} delay=60000`);
+    scheduleSnapshotWrite(games, appInfoMap, null, 60000, "library-reconcile");
   }, [games, appInfoMap]);
 
-  async function refresh() {
+  // Step 8: Manual refresh must not wipe on failure
+  const refresh = useCallback(async () => {
+    const s = settingsRef.current;
     setLoading(true);
     try {
-      const result = await resolveLibraryGames(settings);
+      const result = await resolveLibraryGames(s);
       const enriched = await enrichWithStats(result.games);
       await saveCachedGames(enriched, result.warnings);
-      if (enriched.length === 0 && games.length > 0) {
-        console.log(`[LIBRARY_CONTEXT][EMPTY_RESULT_IGNORED] refresh incoming=0 current=${games.length}`);
-      } else {
-        setGames(enriched);
+      if (enriched.length === 0 && gamesRef.current.length > 0) {
+        console.log(`[LIBRARY_CONTEXT][REFRESH_EMPTY_IGNORED] current=${gamesRef.current.length}`);
+        return;
       }
+      applyGamesSafely(enriched, "manual-refresh", { allowReplace: true });
       setWarnings(result.warnings);
       await updateAppInfoFromGames(enriched).catch(() => {});
-      // Snapshot write picked up by the debounced effect on games/appInfoMap change
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  const ctxValue = useMemo(() => ({
+    games, warnings, loading, initialLoading,
+    selectedId, setSelectedId, selectedGame, setSelectedGame,
+    refresh, appInfoMap, status, librarySource, libraryFingerprint,
+  }), [
+    games, warnings, loading, initialLoading,
+    selectedId, selectedGame,
+    refresh, appInfoMap, status, librarySource, libraryFingerprint,
+  ]);
 
   return (
-    <LibraryGamesContext.Provider value={{ games, warnings, loading, initialLoading, selectedId, setSelectedId, selectedGame, setSelectedGame, refresh, appInfoMap }}>
+    <LibraryGamesContext.Provider value={ctxValue}>
       {children}
     </LibraryGamesContext.Provider>
   );

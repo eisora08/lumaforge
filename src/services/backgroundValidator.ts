@@ -1,7 +1,7 @@
 import type { LibraryGame } from "../types/libraryGame";
 import { loadStartupSnapshot, saveStartupSnapshot, buildStartupSnapshotFromCurrentState } from "./startupSnapshotService";
 import { getBootSnapshot } from "./appBootCoordinator";
-import { resolveGameMediaPaths } from "./tauri";
+import { resolveGameMediaPathsBatch } from "./tauri";
 import { enqueueMediaDownload } from "./mediaDownloadQueue";
 
 const ENABLE_VERBOSE_BOOT_LOGS = false;
@@ -65,25 +65,22 @@ export function scheduleBackgroundValidation(
 
     for (let i = 0; i < snapshotGames.length; i += BATCH_SIZE) {
       const batch = snapshotGames.slice(i, i + BATCH_SIZE);
+      const batchAppIds = batch.filter((sg) => {
+        return !!(sg.media.landscapePath || sg.media.coverPath || sg.media.backgroundPath || sg.media.logoPath || sg.media.iconPath);
+      }).map((sg) => sg.appId).filter(Boolean) as string[];
 
-      await Promise.allSettled(
-        batch.map(async (sg) => {
-          const hasMedia = !!(sg.media.landscapePath || sg.media.coverPath || sg.media.backgroundPath || sg.media.logoPath || sg.media.iconPath);
-          if (!hasMedia) return;
-
-          try {
-            const diskPaths = await resolveGameMediaPaths(sg.appId);
-            if (diskPaths) {
-              const pathsStillValid = !!(diskPaths.landscapePath || diskPaths.coverPath);
-              if (!pathsStillValid && hasMedia && ENABLE_VERBOSE_BOOT_LOGS) {
-                console.log(`[BootSnapshot] media missing for ${sg.appId}: ${sg.title}`);
-              }
+      if (batchAppIds.length > 0) {
+        const diskPathsMap = await resolveGameMediaPathsBatch(batchAppIds);
+        for (const sg of batch) {
+          const diskPaths = diskPathsMap[sg.appId];
+          if (diskPaths) {
+            const pathsStillValid = !!(diskPaths.landscapePath || diskPaths.coverPath);
+            if (!pathsStillValid && ENABLE_VERBOSE_BOOT_LOGS) {
+              console.log(`[BootSnapshot] media missing for ${sg.appId}: ${sg.title}`);
             }
-          } catch {
-            // non-critical
           }
-        })
-      );
+        }
+      }
 
       validated += batch.length;
 
