@@ -19,6 +19,31 @@ const failedAssetSrcSet = new Set<string>();
 const failedLocalPathSet = new Set<string>();
 const successfulDataUrlCache = new Map<string, string>();
 
+// ── Global image load status cache (survives remounts) ──
+// Prevents placeholder flash when navigating back to pages with loaded images.
+type ImageLoadStatus = {
+  status: "loaded" | "failed" | "loading";
+  lastUpdated: number;
+};
+const imageLoadCache = new Map<string, ImageLoadStatus>();
+const DEBUG_IMG_CACHE = false;
+const IMG_RETRY_FAILED_AFTER_MS = 30_000; // retry failed images after 30s
+
+function imgLog(...args: unknown[]) {
+  if (DEBUG_IMG_CACHE) {
+    console.log("[IMG]", ...args);
+  }
+}
+
+function urlHash(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h) + s.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h).toString(36);
+}
+
 function isAssetUrl(s: string): boolean {
   return s.startsWith("http://asset.localhost/") || s.startsWith("asset://");
 }
@@ -59,6 +84,34 @@ export default function AsyncImage({
     dataUrlAttemptedRef.current = false;
 
     if (!src) return;
+
+    // Check global imageLoadCache — if already loaded, render immediately
+    const cachedStatus = imageLoadCache.get(src);
+    if (cachedStatus) {
+      if (cachedStatus.status === "loaded") {
+        setDisplaySrc(src);
+        setLoaded(true);
+        imgLog("CACHE_HIT", `urlHash=${urlHash(src)} status=loaded`);
+        return;
+      }
+      if (cachedStatus.status === "failed") {
+        imgLog("CACHE_HIT", `urlHash=${urlHash(src)} status=failed`);
+        // Retry failed images after cooldown
+        if (Date.now() - cachedStatus.lastUpdated < IMG_RETRY_FAILED_AFTER_MS) {
+          // Still in cooldown — fall through to fallback
+        } else {
+          // Expired cooldown — retry
+          imageLoadCache.delete(src);
+        }
+      } else if (cachedStatus.status === "loading") {
+        // Already loading, don't re-set
+        imgLog("CACHE_HIT", `urlHash=${urlHash(src)} status=loading`);
+
+      }
+    }
+    if (!imageLoadCache.has(src)) {
+      imageLoadCache.set(src, { status: "loading", lastUpdated: Date.now() });
+    }
 
     if (fallbackLocalPath && !fallbackLocalPath.endsWith(".tmp")) {
       const cached = successfulDataUrlCache.get(fallbackLocalPath);
@@ -124,12 +177,23 @@ export default function AsyncImage({
   function handleLoad() {
     if (!mountedRef.current) return;
     setLoaded(true);
-    console.log(`[MEDIA][ASYNC_IMAGE] status=loaded displaySrcPrefix=${displaySrc ? displaySrc.slice(0, 60) : "null"}`);
+    if (srcRef.current) {
+      imageLoadCache.set(srcRef.current, { status: "loaded", lastUpdated: Date.now() });
+      imgLog("LOAD_DONE", `urlHash=${urlHash(srcRef.current)}`);
+    }
+    // Disabled by default. Set window.__DEBUG_ASYNC_IMAGE = true in dev console to enable.
+    if ((window as any).__DEBUG_ASYNC_IMAGE) {
+      console.log(`[MEDIA][ASYNC_IMAGE] status=loaded displaySrcPrefix=${displaySrc ? displaySrc.slice(0, 60) : "null"}`);
+    }
     onLoadRef.current?.();
   }
 
   function handleError(event: React.SyntheticEvent<HTMLImageElement, Event>) {
     if (!mountedRef.current) return;
+    if (srcRef.current) {
+      imageLoadCache.set(srcRef.current, { status: "failed", lastUpdated: Date.now() });
+      imgLog("LOAD_FAIL", `urlHash=${urlHash(srcRef.current)}`);
+    }
     console.log(`[MEDIA][ASYNC_IMAGE_ERROR] displaySrcPrefix=${displaySrc ? displaySrc.slice(0, 60) : "null"} dataUrlAttempted=${dataUrlAttemptedRef.current} hasFallbackPath=${!!fallbackLocalPathRef.current} event=${event.type}`);
     if (
       !dataUrlAttemptedRef.current &&

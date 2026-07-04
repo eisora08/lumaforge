@@ -908,6 +908,8 @@ export async function resolveSteamAchievements(params: {
   summary.newlyUnlocked = newlyUnlockedList;
 
   // Save to disk cache if we have achievements (progress or schema-only)
+  // Only write cache with icon migration when forceRefresh=true (explicit manual/developer action)
+  const _migrateIcons = params.forceRefresh === true;
   if (summary.achievements.length > 0) {
     // Protect against overwriting cache with schema-only when valid progress exists
     if (!params.forceRefresh && summary.source === "schema-only" && !summary.progressAvailable) {
@@ -945,12 +947,16 @@ export async function resolveSteamAchievements(params: {
       }
     }
     try {
+      if (!_migrateIcons) {
+        const { logMigrateIconsForcedOff } = await import("./achievementAutoFlags");
+        logMigrateIconsForcedOff(appIdStr, "resolveSteamAchievements");
+      }
       const { achievements, pcts, summaryData } = summaryToCacheData(summary);
       await writeAchievementCache(appIdNum, {
         achievements,
         achievement_percentages: pcts,
         summary: summaryData,
-      });
+      }, _migrateIcons);
       console.debug(`[ACH][CACHE] App ${appIdStr}: cached ${achievements.length} achievements to disk (progress=${summary.progressAvailable})`);
     } catch (err) {
       console.warn(`[ACH][CACHE] App ${appIdStr}: failed to write disk cache:`, err);

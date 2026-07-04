@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -35,6 +35,7 @@ import {
 import { getBestAvailableSource, getSourceKey } from "../utils/sourceHelpers";
 import { isHttpUrl } from "../services/libraryLocalCacheService";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import { parseReleaseDate } from "../services/globalCatalogService";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { searchSteamStore } from "../services/steamStoreSearchResolver";
 import { resolveProviderOverlaysForStoreGames, loadStoreProviderOverlayCache } from "../services/storeProviderOverlay";
@@ -48,8 +49,36 @@ import { getEnabledProviderIds } from "../services/providerSearch";
 import { consumePendingStoreDetailAppId } from "../services/storeNavigationService";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
+import {
+  getCachedStoreDiscover,
+  setCachedStoreDiscover,
+  buildCatalogFingerprint,
+  getCachedStoreUI,
+  setCachedStoreUI,
+  getCachedStoreMetadata,
+  setCachedStoreMetadata,
+} from "../services/storeDiscoverCache";
+import type { CacheEntry as StoreDiscoverCacheEntry } from "../services/storeDiscoverCache";
+import type { StoreDiscoverSection, StoreGame } from "../services/storeDiscoverCache";
+import {
+  getDiscoverState,
+  setDiscoverState,
+  isDiscoverStateValid,
+} from "../services/storeDiscoverStateCache";
+import {
+  resolveStoreDisplayImage,
+  getStoreDisplayImage,
+  getBestStoreImage,
+  getStoreImageCacheSize,
+  getStoreImageCacheVersion,
+} from "../services/storeImageCache";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
+const DEBUG_STORE_RENDER_VERBOSE = false;
+
+// Module-level flag: prevents auto-open of pending detail from re-firing
+// when the user navigates back to Store later in the same session.
+let _sessionAutoOpenDone = false;
 
 function log(origin: string, ...args: unknown[]) {
   if (ENABLE_VERBOSE_SOURCE_LOGS) {
@@ -80,12 +109,7 @@ const STORE_TABS: { id: StoreTab; label: string }[] = [
   { id: "news", label: "News" },
 ];
 
-type StoreSectionModel = {
-  id: string;
-  title: string;
-  description: string;
-  games: PackageGame[];
-};
+type StoreSectionModel = import("../services/storeDiscoverCache").StoreSectionModel;
 
 type StoreBadge = {
   type: "recommended" | "trending" | "top-rated" | "popular" | "new" | "has-sources";
@@ -94,8 +118,18 @@ type StoreBadge = {
 
 const METADATA_CONCURRENCY = 5;
 const REVIEW_CONCURRENCY = 3;
-const INITIAL_CATALOG_SIZE = 500;
+const INITIAL_VISIBLE_COUNT = 80;
+const CATALOG_PAGE_SIZE = 40;
+
+/**
+ * Maximum number of More to Explore cards to mount in the DOM.
+ * Logical visible count can be higher, but only this many are actually rendered.
+ * Keeps React reconciliation fast when scrolling through hundreds of catalog items.
+ */
+const MORE_TO_EXPLORE_MOUNT_LIMIT = 80;
 const PAGE_SIZE = 30;
+
+
 
 const RANKING_WEIGHTS = {
   popularity: 0.35,
@@ -227,7 +261,13 @@ export default function Store() {
 
   const [storeMetadataByAppId, setStoreMetadataByAppId] = useState<
     Record<number, SteamAppMetadata>
-  >({});
+  >(() => {
+    const cached = getCachedStoreMetadata();
+    if (cached && Object.keys(cached).length > 0) {
+      return cached as unknown as Record<number, SteamAppMetadata>;
+    }
+    return {};
+  });
 
   const [reviewSummaryByAppId, setReviewSummaryByAppId] = useState<
     Record<number, SteamReviewSummary>
@@ -262,8 +302,80 @@ export default function Store() {
     Record<string, boolean>
   >({});
 
-  const [steamCatalog, setSteamCatalog] = useState<{ appid: number; name: string }[]>([]);
-  const [visibleCount] = useState(INITIAL_CATALOG_SIZE);
+  const [steamCatalog, setSteamCatalog] = useState<{ appid: number; name: string }[]>(() => {
+    const cached = getCachedStoreDiscover();
+    if (cached) return cached.rankedSteamCatalog;
+    return [];
+  });
+  const [visibleCount] = useState(() => {
+    const ui = getCachedStoreUI();
+    return ui?.visibleCount ?? INITIAL_VISIBLE_COUNT;
+  });
+  const [discoverMoreVisibleCount, setDiscoverMoreVisibleCount] = useState(() => {
+    const ui = getCachedStoreUI();
+    return ui?.discoverMoreVisibleCount ?? 0;
+  });
+  const [storeImageCacheVer, setStoreImageCacheVer] = useState(getStoreImageCacheVersion);
+  const [selectedHeroIndex, setSelectedHeroIndex] = useState(() => {
+    const ui = getCachedStoreUI();
+    return ui?.selectedHeroIndex ?? 0;
+  });
+  const [cachedAllStoreSections, setCachedAllStoreSections] = useState<StoreSectionModel[]>(() => {
+    const cached = getCachedStoreDiscover();
+    if (cached && cached.allStoreSections) return cached.allStoreSections;
+    return [];
+  });
+
+  // ── Show More expansion for Discover tab "More to Explore" ──
+  // Dedup: guard against repeated calls within 150ms window.
+  const _showMoreLastTick = useRef(0);
+  const increaseDiscoverVisibleCount = useCallback((e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const now = Date.now();
+    if (now - _showMoreLastTick.current < 150) {
+      return; // dedup repeated calls within 150ms window
+    }
+    _showMoreLastTick.current = now;
+    setDiscoverMoreVisibleCount((prev) => {
+      const next = prev + CATALOG_PAGE_SIZE;
+      console.log(`[STORE][SHOW_MORE] old=${prev} added=${CATALOG_PAGE_SIZE} next=${next}`);
+      return next;
+    });
+  }, []);
+
+  const catalogFingerprint = steamCatalog.length > 0 ? buildCatalogFingerprint(steamCatalog) : "";
+  const cacheHitLogged = useRef(false);
+
+  // On unmount, persist Store UI state for instant restore on re-entry
+  const uiStateRef = useRef({
+    activeStoreTab: "discover" as StoreTab,
+    storeSearchQuery: "",
+    submittedSearchQuery: "",
+    browseFilters: DEFAULT_BROWSE_FILTERS,
+    visibleCount: INITIAL_VISIBLE_COUNT,
+    selectedHeroIndex: 0,
+    selectedDetailAppId: null as string | null,
+    browsePage: 1,
+    activeGenreSectionId: null as string | null,
+    discoverMoreVisibleCount: 0,
+  });
+  uiStateRef.current = {
+    activeStoreTab,
+    storeSearchQuery,
+    submittedSearchQuery,
+    browseFilters,
+    visibleCount,
+    selectedHeroIndex,
+    selectedDetailAppId: null,
+    browsePage,
+    activeGenreSectionId,
+    discoverMoreVisibleCount,
+  };
+  useEffect(() => {
+    return () => {
+      setCachedStoreUI(uiStateRef.current);
+    };
+  }, []);
 
   const [interactionScoreByAppId, setInteractionScoreByAppId] = useState<Record<string, number>>({});
   const [interactionEventsByAppId, setInteractionEventsByAppId] = useState<
@@ -337,19 +449,53 @@ export default function Store() {
     return () => { cancelled = true; };
   }, []);
 
-  // When steamCatalog is loaded and there's a pending appId, auto-open details
+  // Restore Store UI state from module-level cache on mount
+  useEffect(() => {
+    const ui = getCachedStoreUI();
+    if (ui) {
+      if (ui.selectedHeroIndex !== undefined) setSelectedHeroIndex(ui.selectedHeroIndex);
+      if (ui.activeStoreTab && ui.activeStoreTab !== activeStoreTab) {
+        setActiveStoreTab(ui.activeStoreTab as StoreTab);
+      }
+      if (ui.storeSearchQuery) setStoreSearchQuery(ui.storeSearchQuery);
+      if (ui.submittedSearchQuery) setSubmittedSearchQuery(ui.submittedSearchQuery);
+      if (ui.browsePage && ui.browsePage !== 1) setBrowsePage(ui.browsePage);
+      if (ui.activeGenreSectionId !== undefined) setActiveGenreSectionId(ui.activeGenreSectionId);
+      if (ui.discoverMoreVisibleCount !== undefined) setDiscoverMoreVisibleCount(ui.discoverMoreVisibleCount);
+      // Do NOT auto-restore selectedDetailAppId — it was set to null in uiStateRef
+      console.log(`[STORE][STATE_RESTORE] fromCache=true visibleCount=${ui.visibleCount} sections=${cachedAllStoreSections.length}`);
+    }
+
+    // Validate whether the unified Discover state is complete after restore
+    const discoverState = getDiscoverState();
+    const isValid = isDiscoverStateValid(discoverState);
+    if (discoverState && !isValid) {
+      console.warn(`[STORE][DISCOVER_STATE_INCOMPLETE] fingerprint=${discoverState.fingerprint} featured=${discoverState.featuredGames.length} dynamic=${discoverState.dynamicDiscoverSections.length} moreToExplore=${discoverState.moreToExploreGames.length}`);
+    } else if (isValid) {
+      console.log(`[STORE][DISCOVER_STATE_RESTORED] fingerprint=${discoverState!.fingerprint} featured=${discoverState!.featuredGames.length} sections=${discoverState!.allStoreSections.length} moreToExplore=${discoverState!.moreToExploreGames.length}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [steamCatalog.length]);
+
+  // When steamCatalog is loaded and there's a pending appId, auto-open details.
+  // Module-level flag survives mount/unmount so re-entering Store does not re-open.
   const openedPendingRef = useRef(false);
   useEffect(() => {
+    if (_sessionAutoOpenDone) {
+      console.log(`[STORE][DETAILS_AUTO_OPEN_SKIP] reason=already-done-this-session`);
+      return;
+    }
     if (steamCatalog.length === 0) return;
     if (openedPendingRef.current) return;
     const appIdStr = pendingAppIdRef.current;
     if (!appIdStr) return;
     openedPendingRef.current = true;
+    _sessionAutoOpenDone = true;
 
     const appIdNum = parseInt(appIdStr, 10);
     const entry = steamCatalog.find((e) => e.appid === appIdNum);
     if (entry) {
-      console.log(`[STORE][PENDING_NAV] opening appid=${appIdStr} title="${entry.name}"`);
+      console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${appIdStr} reason=pending-nav`);
       const game: PackageGame = {
         appId: appIdStr,
         title: entry.name,
@@ -361,6 +507,17 @@ export default function Store() {
       console.log(`[STORE][PENDING_NAV] appid=${appIdStr} not found in catalog`);
     }
   }, [steamCatalog]);
+
+  // React to store image cache changes — re-render when cache version bumps
+  useEffect(() => {
+    const id = setInterval(() => {
+      const ver = getStoreImageCacheVersion();
+      if (ver !== storeImageCacheVer) {
+        setStoreImageCacheVer(ver);
+      }
+    }, 500);
+    return () => clearInterval(id);
+  }, [storeImageCacheVer]);
 
   // Recalculate trending scores every 30s
   useEffect(() => {
@@ -378,11 +535,23 @@ export default function Store() {
   const rankedSteamCatalog = useMemo(() => {
     if (steamCatalog.length === 0) return [];
 
+    // Check module cache for instant restore on re-mount
+    const cached = getCachedStoreDiscover();
+    if (cached && cached.catalogFingerprint === catalogFingerprint) {
+      if (!cacheHitLogged.current) {
+        cacheHitLogged.current = true;
+        console.log(`[STORE][DISCOVER_CACHE_HIT] fingerprint=${catalogFingerprint} cachedAt=${new Date(cached.builtAt).toISOString()}`);
+      }
+      return cached.rankedSteamCatalog;
+    }
+
+    console.log(`[STORE][DISCOVER_BUILD_START] catalogSize=${steamCatalog.length}`);
+
     const sorted = [...steamCatalog];
     sorted.sort((a, b) => a.appid - b.appid);
 
     return sorted;
-  }, [steamCatalog]);
+  }, [steamCatalog, catalogFingerprint]);
 
   const genreConfidence = useMemo(() => {
     const scores: Record<string, number> = {};
@@ -406,6 +575,11 @@ export default function Store() {
 
   const highQualityPool = useMemo(() => {
     if (rankedSteamCatalog.length === 0) return [];
+
+    const cached = getCachedStoreDiscover();
+    if (cached && cached.catalogFingerprint === catalogFingerprint) {
+      return cached.highQualityPool;
+    }
 
     return rankedSteamCatalog.map((entry) => {
       const id = String(entry.appid);
@@ -434,7 +608,7 @@ export default function Store() {
         hasMeta: metaScore > 0,
       };
     }).sort((a, b) => b.score - a.score);
-  }, [rankedSteamCatalog, providerOverlayByAppId, storeMetadataByAppId, interactionScoreByAppId, genreConfidence]);
+  }, [rankedSteamCatalog, providerOverlayByAppId, storeMetadataByAppId, interactionScoreByAppId, genreConfidence, catalogFingerprint]);
 
   const trendingScoreByAppId = useMemo(() => {
     const scores: Record<string, number> = {};
@@ -455,17 +629,30 @@ export default function Store() {
     return scores;
   }, [interactionEventsByAppId, trendRecalcKey]);
 
+  // Full catalog base — independent of visibleCount for Browse filters
+  const catalogBaseGames = useMemo(() => {
+    return rankedSteamCatalog.map((entry) => {
+      const appId = String(entry.appid);
+      const meta = storeMetadataByAppId[entry.appid];
+      const cachedImage = getStoreDisplayImage(appId, "capsule") || getStoreDisplayImage(appId, "header");
+      return {
+        appId,
+        title: entry.name,
+        imageUrl: cachedImage || meta?.capsule_image_v5 || meta?.capsule_image || meta?.header_image || undefined,
+        platforms: meta?.platforms || [],
+        sources: [] as PackageSource[],
+      };
+    });
+    // NOTE: storeMetadataByAppId intentionally omitted from deps — imageUrl is best-effort
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rankedSteamCatalog]);
+
+  // Visible catalog window — used by non-Browse consumers (news, luaReady, etc.)
   const catalogGames = useMemo(() => {
-    const slice = rankedSteamCatalog.slice(0, visibleCount);
-    console.log(`[Store] catalogGames: ${slice.length} / ${rankedSteamCatalog.length} games rendered (visibleCount: ${visibleCount})`);
-    return slice.map((entry) => ({
-      appId: String(entry.appid),
-      title: entry.name,
-      imageUrl: undefined as string | undefined,
-      platforms: [] as string[],
-      sources: [] as PackageSource[],
-    }));
-  }, [rankedSteamCatalog, visibleCount]);
+    const slice = catalogBaseGames.slice(0, visibleCount);
+    if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[Store] catalogGames: ${slice.length} / ${catalogBaseGames.length} games rendered (visibleCount: ${visibleCount})`);
+    return slice;
+  }, [catalogBaseGames, visibleCount]);
 
   const installedStatusByAppId = useMemo(() => {
     const map = new Map<string, PackageInstallStatus>();
@@ -646,6 +833,11 @@ export default function Store() {
   }, [results, installedStatusByAppId]);
 
   const featuredGames = useMemo(() => {
+    const cached = getCachedStoreDiscover();
+    if (cached && cached.catalogFingerprint === catalogFingerprint) {
+      return cached.featuredGames;
+    }
+
     const pool = highQualityPool.slice(0, 60);
     if (pool.length === 0) return [];
 
@@ -660,19 +852,27 @@ export default function Store() {
     return slice.map((s) => ({
       appId: s.appId,
       title: s.title,
-      imageUrl: undefined as string | undefined,
+      imageUrl: getBestStoreImage(s.appId, ["hero", "header", "capsule"]) || undefined,
       platforms: [] as string[],
       sources: [] as PackageSource[],
     }));
-  }, [highQualityPool]);
+  }, [highQualityPool, catalogFingerprint]);
 
-  const dynamicDiscoverSections = useMemo(() => {
+  // ── Rich Discover sections (new model) ──
+  const discoverSections = useMemo(() => {
+    const cached = getCachedStoreDiscover();
+    // Bypass partial/incomplete cache — rebuild sections when metadata becomes available.
+    // This ensures genre sections appear after metadata loads, even if first render cached nothing.
+    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache) {
+      return cached.discoverSections;
+    }
+
     const usedIds = new Set<string>();
     lumaForgeSections.forEach((s) => s.games.forEach((g) => usedIds.add(g.appId)));
     featuredGames.forEach((g) => usedIds.add(g.appId));
 
-    function takeUnique(games: PackageGame[], limit: number) {
-      const out: PackageGame[] = [];
+    function takeUnique(games: StoreGame[], limit: number) {
+      const out: StoreGame[] = [];
       for (const g of games) {
         if (usedIds.has(g.appId)) continue;
         usedIds.add(g.appId);
@@ -682,20 +882,18 @@ export default function Store() {
       return out;
     }
 
-    const sections: StoreSectionModel[] = [];
-
+    const sections: StoreDiscoverSection[] = [];
     const topHQ = highQualityPool.slice(0, 500);
 
-    // Build PackageGame array from high quality pool
-    const topGames: PackageGame[] = topHQ.map((s) => ({
+    const topGames: StoreGame[] = topHQ.map((s) => ({
       appId: s.appId,
       title: s.title,
-      imageUrl: undefined as string | undefined,
+      imageUrl: getBestStoreImage(s.appId, ["capsule", "header", "hero"]) || undefined,
       platforms: [] as string[],
       sources: [] as PackageSource[],
     }));
 
-    // --- Recommended for You (ML-light: interaction-driven + genre overlap + score boost) ---
+    // --- For You (personalized genre overlap, was "Recommended for You") ---
     const preferredGenres = new Set<string>();
     for (const [appIdStr, score] of Object.entries(interactionScoreByAppId)) {
       if (score > 0) {
@@ -709,7 +907,6 @@ export default function Store() {
     }
 
     if (preferredGenres.size > 0 || Object.keys(interactionScoreByAppId).length > 0) {
-      // Score each candidate by genre overlap + interaction boost + prediction boost
       const scored = topGames.map((g) => {
         let matchScore = 0;
         const meta = storeMetadataByAppId[Number(g.appId)];
@@ -718,7 +915,6 @@ export default function Store() {
         matchScore += overlap * 3;
         const interaction = interactionScoreByAppId[g.appId] ?? 0;
         matchScore += interaction * 5;
-        // Add prediction boost for genres matching session intent
         const predBoost = gs.reduce((sum, gen) => sum + (genreConfidence[gen] ?? 0), 0) * PREDICTION_BOOST_MULTIPLIER;
         matchScore += predBoost;
         if (installedStatusByAppId.has(g.appId)) matchScore = -999;
@@ -727,41 +923,39 @@ export default function Store() {
       scored.sort((a, b) => b.score - a.score);
       const rec = takeUnique(scored.filter((s) => s.score >= 0).map((s) => s.game), 20);
       if (rec.length > 0) {
-        sections.push({ id: "recommended", title: "Recommended for You", description: "Personalized picks based on your activity.", games: rec });
+        sections.push({ id: "for-you", title: "For You", type: "rail", items: rec, source: "personalized" });
       }
     }
 
-    // --- Trending Now (ranked by real-time trending score + available sources) ---
-    const trendScored = topGames
+    // --- Top Picks (top scored from high quality pool) ---
+    const topPicks = topGames.slice(0, 20);
+    const topUsed = new Set(usedIds);
+    const topFiltered = topPicks.filter((g) => !topUsed.has(g.appId));
+    if (topFiltered.length >= 4) {
+      const items = takeUnique(topFiltered, 20);
+      if (items.length > 0) {
+        sections.push({ id: "top-picks", title: "Top Picks", type: "featured", items, source: "catalog" });
+      }
+    }
+
+    // --- New and Noteworthy (by release date) ---
+    const datedGames = topGames
       .map((g) => {
-        const overlay = providerOverlayByAppId[g.appId];
-        const hasSource = overlay && overlay.sources.some((s) => s.available);
-        const trend = trendingScoreByAppId[g.appId] ?? 0;
-        return { game: g, score: trend + (hasSource ? 2 : 0), hasSource };
+        const meta = storeMetadataByAppId[Number(g.appId)];
+        const ts = meta?.release_date ? parseReleaseDate(meta.release_date) : 0;
+        return { game: g, ts };
       })
-      .filter((s) => s.score > 0)
-      .sort((a, b) => b.score - a.score);
-    if (trendScored.length >= 4) {
-      const tr = takeUnique(trendScored.map((s) => s.game), 20);
-      if (tr.length > 0) {
-        sections.push({ id: "trending", title: "Trending Now", description: "Popular games with available download sources.", games: tr });
+      .filter((x) => x.ts > 0)
+      .sort((a, b) => b.ts - a.ts);
+    if (datedGames.length >= 4) {
+      const newest = takeUnique(datedGames.map((x) => x.game), 20);
+      if (newest.length > 0) {
+        sections.push({ id: "new-noteworthy", title: "New and Noteworthy", type: "rail", items: newest, source: "catalog" });
       }
     }
 
-    // --- Top Rated (games with metadata quality + review scores) ---
-    const withMeta = topGames.filter((g) => {
-      const meta = storeMetadataByAppId[Number(g.appId)];
-      return meta?.header_image || meta?.capsule_image_v5;
-    });
-    if (withMeta.length >= 4) {
-      const rated = takeUnique(withMeta, 20);
-      if (rated.length > 0) {
-        sections.push({ id: "top-rated", title: "Top Rated", description: "Highest quality games in the catalog.", games: rated });
-      }
-    }
-
-    // --- Genres (from metadata, limited to top games) ---
-    const genreGroups = new Map<string, PackageGame[]>();
+    // --- Genre groups (from metadata) ---
+    const genreGroups = new Map<string, StoreGame[]>();
     for (const game of topGames) {
       if (usedIds.has(game.appId)) continue;
       const meta = storeMetadataByAppId[Number(game.appId)];
@@ -774,33 +968,111 @@ export default function Store() {
         }
       }
     }
-    const TARGET_GENRES = ["Action", "RPG", "Shooter", "Indie", "Simulation", "Adventure", "Strategy"];
-    // Sort genres by session confidence so predicted preferences appear first
-    const sortedGenres = [...TARGET_GENRES].sort((a, b) => {
-      const confA = genreConfidence[a] ?? 0;
-      const confB = genreConfidence[b] ?? 0;
-      if (confB !== confA) return confB - confA;
-      return TARGET_GENRES.indexOf(a) - TARGET_GENRES.indexOf(b);
-    });
-    for (const genre of sortedGenres) {
+
+    // --- Genre rails (Action, Indie, Racing, Shooter) ---
+    const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter"];
+    for (const genre of DISPLAY_GENRES) {
       const games = genreGroups.get(genre);
       if (games && games.length >= 4) {
-        sections.push({ id: `genre-${genre.toLowerCase()}`, title: genre, description: `Popular ${genre} games`, games });
-        games.forEach((g) => usedIds.add(g.appId));
+        const items = takeUnique([...games], 20);
+        sections.push({ id: `genre-${genre.toLowerCase()}`, title: genre, type: "genre", items, source: "genre" });
+      }
+    }
+
+    // --- Popular Genres overview (genre navigation rail) ---
+    const availableGenres = DISPLAY_GENRES.filter((g) => genreGroups.has(g) && (genreGroups.get(g)?.length ?? 0) >= 4);
+    if (availableGenres.length > 0) {
+      const genreCards = availableGenres.slice(0, 7).flatMap((g) => (genreGroups.get(g) ?? []).slice(0, 2));
+      const unique = takeUnique(genreCards, 20);
+      if (unique.length > 0) {
+        sections.push({ id: "popular-genres", title: "Popular Genres", type: "rail", items: unique, source: "catalog" });
+      }
+    }
+
+    // --- Featured (high quality with media, was "Top Rated") ---
+    const featuredCandidates = topGames.filter((g) => {
+      const meta = storeMetadataByAppId[Number(g.appId)];
+      return meta?.header_image || meta?.capsule_image_v5;
+    });
+    if (featuredCandidates.length >= 4) {
+      const items = takeUnique(featuredCandidates, 20);
+      if (items.length > 0) {
+        sections.push({ id: "featured", title: "Featured", type: "featured", items, source: "catalog" });
+      }
+    }
+
+    // --- Lua Ready Picks (catalog games with available download sources) ---
+    const luaReady = topGames.filter((g) => {
+      const overlay = providerOverlayByAppId[g.appId];
+      return overlay && overlay.sources.some((s) => s.available);
+    });
+    if (luaReady.length >= 4) {
+      const items = takeUnique(luaReady, 20);
+      if (items.length > 0) {
+        sections.push({ id: "lua-ready-picks", title: "Lua Ready Picks", type: "rail", items, source: "lua" });
       }
     }
 
     return sections;
-  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence]);
+  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, catalogFingerprint]);
+
+  // Backward-compat StoreSectionModel[] for consumers that still need it
+  const sectionModels = useMemo<StoreSectionModel[]>(
+    () => discoverSections.map((s) => ({ id: s.id, title: s.title, description: "", games: s.items as PackageGame[] })),
+    [discoverSections],
+  );
+
+  // ── "More to Explore" games for Discover tab ──
+  // Uses discoverMoreVisibleCount (independent of catalogGames' visibleCount).
+  // Show More affects only discoverMoreVisibleCount, not Browse.
+  const moreToExploreGames = useMemo(() => {
+    const excludeIds = new Set<string>();
+    featuredGames.forEach((g) => excludeIds.add(g.appId));
+    sectionModels.forEach((s) => s.games.forEach((g) => excludeIds.add(g.appId)));
+    const seen = new Set<string>();
+    const effectiveDiscoverCount = discoverMoreVisibleCount > 0 ? discoverMoreVisibleCount : INITIAL_VISIBLE_COUNT;
+    const games = rankedSteamCatalog
+      .slice(0, effectiveDiscoverCount)
+      .filter((entry) => {
+        const appId = String(entry.appid);
+        if (excludeIds.has(appId)) return false;
+        if (seen.has(appId)) return false;
+        seen.add(appId);
+        return true;
+      })
+      .map((entry) => {
+        const appId = String(entry.appid);
+        const meta = storeMetadataByAppId[entry.appid];
+        return {
+          appId,
+          title: entry.name,
+          imageUrl: getBestStoreImage(appId, ["capsule", "header", "hero"], meta) || undefined,
+          platforms: meta?.platforms || [],
+          sources: [],
+        };
+      });
+    const mounted = Math.min(games.length, MORE_TO_EXPLORE_MOUNT_LIMIT);
+    console.log(`[STORE][MORE_RENDER] logicalVisible=${effectiveDiscoverCount} mounted=${mounted} totalPool=${games.length}`);
+    return games;
+  }, [rankedSteamCatalog, discoverMoreVisibleCount, featuredGames, sectionModels, storeMetadataByAppId]);
 
   const allStoreSections = useMemo(() => {
-    return [...lumaForgeSections, ...dynamicDiscoverSections];
-  }, [lumaForgeSections, dynamicDiscoverSections]);
+    const cached = getCachedStoreDiscover();
+    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.allStoreSections && cached.allStoreSections.length > 0) {
+      return cached.allStoreSections;
+    }
+    const computed = [...lumaForgeSections, ...sectionModels];
+    if (computed.length === 0 && cachedAllStoreSections.length > 0) {
+      return cachedAllStoreSections;
+    }
+    return computed;
+  }, [lumaForgeSections, sectionModels, catalogFingerprint, cachedAllStoreSections]);
 
   const browseGames = useMemo(() => {
     const gameMap = new Map<string, PackageGame>();
 
-    catalogGames.forEach((game) => {
+    // Use catalogBaseGames (full catalog) so Browse filters cover all games
+    catalogBaseGames.forEach((game) => {
       gameMap.set(game.appId, game);
     });
 
@@ -815,9 +1087,9 @@ export default function Store() {
     });
 
     const games = Array.from(gameMap.values());
-    console.log(`[Store] browseGames: ${games.length} total games`);
+    if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[Store] browseGames: ${games.length} total games`);
     return games;
-  }, [catalogGames, lumaForgeSections, results, providerOverlayByAppId]);
+  }, [catalogBaseGames, lumaForgeSections, results, providerOverlayByAppId]);
 
   const luaReadyGames = useMemo(() => {
     const seen = new Set<string>();
@@ -835,9 +1107,91 @@ export default function Store() {
     catalogGames.forEach(addIfReady);
     results.forEach(addIfReady);
 
-    console.log(`[Store] luaReadyGames: ${games.length} games`);
+    if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[Store] luaReadyGames: ${games.length} games`);
     return games;
   }, [catalogGames, results, providerOverlayByAppId]);
+
+  // ── Performance logs and cache save ──
+  const storeRenderLogRef = useRef({ sections: 0, cards: 0 });
+  const storeStartRef = useRef(Date.now());
+  useEffect(() => {
+    const totalCards = catalogGames.length;
+    const totalSections = allStoreSections.length;
+    const prev = storeRenderLogRef.current;
+    if (prev.sections !== totalSections || prev.cards !== totalCards || Math.abs(totalCards - prev.cards) > 20) {
+      // The browse tab paginates at PAGE_SIZE=30, so the actual DOM count is bounded
+      const domEstimate = activeStoreTab === "browse" ? Math.min(PAGE_SIZE, totalCards) : totalSections * 20;
+      console.log(`[STORE][WINDOW_RENDER] logicalVisible=${totalCards} domEstimate=${domEstimate} sections=${totalSections}`);
+      storeRenderLogRef.current = { sections: totalSections, cards: totalCards };
+    }
+
+    // Save to module-level cache for cross-navigation persistence
+    if (catalogFingerprint && rankedSteamCatalog.length > 0) {
+      const existing = getCachedStoreDiscover();
+      const isComplete =
+        featuredGames.length >= 4 &&
+        discoverSections.length >= 5 &&
+        moreToExploreGames.length >= 20;
+      const fingerprintChanged = !existing || existing.catalogFingerprint !== catalogFingerprint;
+
+      if (fingerprintChanged) {
+        if (!isComplete) {
+          // Incomplete — only save as partial if no valid existing cache exists
+          if (!existing || existing.isPartialCache) {
+            const elapsedMs = Date.now() - storeStartRef.current;
+            console.log(`[STORE][DISCOVER_CACHE_BUILD] partial=true featured=${featuredGames.length} sections=${discoverSections.length} more=${moreToExploreGames.length} elapsedMs=${elapsedMs}`);
+            setCachedStoreDiscover({
+              catalogFingerprint,
+              rankedSteamCatalog,
+              highQualityPool,
+              dynamicDiscoverSections: sectionModels,
+              discoverSections,
+              lumaForgeSections,
+              allStoreSections,
+              featuredGames,
+              browseGames: browseGames as unknown as StoreDiscoverCacheEntry["browseGames"],
+              luaReadyGames: luaReadyGames as unknown as StoreDiscoverCacheEntry["luaReadyGames"],
+              builtAt: Date.now(),
+              isPartialCache: true,
+            });
+          } else {
+            console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=incomplete featured=${featuredGames.length} sections=${discoverSections.length} more=${moreToExploreGames.length}`);
+          }
+        } else {
+          const elapsedMs = Date.now() - storeStartRef.current;
+          console.log(`[STORE][DISCOVER_CACHE_BUILD] complete=true featured=${featuredGames.length} sections=${discoverSections.length} more=${moreToExploreGames.length} elapsedMs=${elapsedMs}`);
+          setCachedStoreDiscover({
+            catalogFingerprint,
+            rankedSteamCatalog,
+            highQualityPool,
+            dynamicDiscoverSections: sectionModels,
+            discoverSections,
+            lumaForgeSections,
+            allStoreSections,
+            featuredGames,
+            browseGames: browseGames as unknown as StoreDiscoverCacheEntry["browseGames"],
+            luaReadyGames: luaReadyGames as unknown as StoreDiscoverCacheEntry["luaReadyGames"],
+            builtAt: Date.now(),
+          });
+        }
+        setCachedAllStoreSections(allStoreSections);
+      }
+
+      // Also save the unified Discover render state (includes moreToExploreGames, hero index)
+      if (allStoreSections.length > 0 || featuredGames.length > 0) {
+        setDiscoverState({
+          fingerprint: catalogFingerprint,
+          featuredGames,
+          dynamicDiscoverSections: sectionModels,
+          allStoreSections,
+          lumaForgeSections,
+          moreToExploreGames,
+          selectedHeroIndex,
+          builtAt: Date.now(),
+        });
+      }
+    }
+  });
 
   const newsItems = useMemo<StoreNewsItem[]>(() => {
     const items: StoreNewsItem[] = [];
@@ -859,18 +1213,28 @@ export default function Store() {
       });
     };
 
+    // 1. Recently discovered / newly available from provider search
+    for (const game of results.slice(0, 6)) {
+      const hasSources = game.sources.some((s) => s.available);
+      if (hasSources) {
+        tryAdd(game, "Lua Ready", "Today", `${game.title} is Lua Ready`, `${game.title} has compatible download sources available in LumaForge.`);
+      } else {
+        tryAdd(game, "Store", "Today", `${game.title} found in provider search`, `${game.title} was discovered through your configured providers.`);
+      }
+    }
+
+    // 2. Top browse games: installed, Lua-ready, DLC
     const topGames = browseGames.slice(0, 12);
     for (const game of topGames) {
+      if (usedAppIds.has(game.appId)) continue;
       const meta = storeMetadataByAppId[Number(game.appId)];
       const hasSources = game.sources.some((s) => s.available);
       const isInstalled = installedStatusByAppId.has(game.appId);
 
-      if (hasSources) {
-        tryAdd(game, "Lua Ready", "Today", `${game.title} is Lua Ready`, `${game.title} has compatible download sources available in LumaForge.`);
-      }
-
       if (isInstalled) {
         tryAdd(game, "Installed", "Today", `${game.title} is installed and ready`, `${game.title} is installed in your library and ready to use.`);
+      } else if (hasSources) {
+        tryAdd(game, "Lua Ready", "Today", `${game.title} is Lua Ready`, `${game.title} has compatible download sources available in LumaForge.`);
       }
 
       if (meta && meta.dlc_count > 0) {
@@ -879,13 +1243,42 @@ export default function Store() {
       }
     }
 
-    const extraGames = results.filter((g) => !usedAppIds.has(g.appId)).slice(0, 4);
-    for (const game of extraGames) {
-      tryAdd(game, "Store", "Earlier", `${game.title} found in provider search`, `${game.title} was found in search results from your configured providers.`);
+    // 3. New & noteworthy from catalog (high appId = recently added to Steam)
+    const catalogWithMeta = catalogGames.filter((g) => storeMetadataByAppId[Number(g.appId)]?.release_date || Number(g.appId) > 300000);
+    const sortedByNew = [...catalogWithMeta].sort((a, b) => Number(b.appId) - Number(a.appId));
+    for (const game of sortedByNew.slice(0, 4)) {
+      if (usedAppIds.has(game.appId)) continue;
+      tryAdd(game, "Store", "This Week", `${game.title} is now on the catalog`, `${game.title} was recently added to the catalog.`);
+    }
+
+    // 4. High-quality games with metadata but no source yet
+    const withMetaNoSource = catalogGames.filter((g) => {
+      if (usedAppIds.has(g.appId)) return false;
+      const meta = storeMetadataByAppId[Number(g.appId)];
+      return meta && (meta.header_image || meta.capsule_image_v5) && !installedStatusByAppId.has(g.appId);
+    });
+    // Pick a few that have review scores
+    const withReviews = withMetaNoSource.filter((g) => reviewSummaryByAppId[Number(g.appId)]?.total_reviews && reviewSummaryByAppId[Number(g.appId)].total_reviews > 500);
+    for (const game of withReviews.slice(0, 3)) {
+      if (usedAppIds.has(game.appId)) continue;
+      const meta = storeMetadataByAppId[Number(game.appId)];
+      const reviewPct = reviewSummaryByAppId[Number(game.appId)]?.positive_percent ?? 0;
+      tryAdd(game, "Store", "Earlier", `${game.title} — ${reviewPct}% positive reviews`, `${meta?.developer || "Unknown developer"}'s game has ${reviewPct}% positive reviews on Steam.`);
+    }
+
+    // 5. Trending based on interaction scores
+    const withInteraction = catalogGames.filter((g) => {
+      if (usedAppIds.has(g.appId)) return false;
+      return (interactionScoreByAppId[g.appId] ?? 0) >= 1;
+    });
+    const sortedByTrend = [...withInteraction].sort((a, b) => (interactionScoreByAppId[b.appId] ?? 0) - (interactionScoreByAppId[a.appId] ?? 0));
+    for (const game of sortedByTrend.slice(0, 3)) {
+      if (usedAppIds.has(game.appId)) continue;
+      tryAdd(game, "Store", "Earlier", `${game.title} is trending`, `Recently viewed and interacted with in the catalog.`);
     }
 
     return items;
-  }, [browseGames, results, providerOverlayByAppId, storeMetadataByAppId, installedStatusByAppId]);
+  }, [browseGames, results, catalogGames, providerOverlayByAppId, storeMetadataByAppId, reviewSummaryByAppId, installedStatusByAppId, interactionScoreByAppId]);
 
   const filteredBrowseGames = useMemo(() => {
     let games = browseGames;
@@ -982,15 +1375,29 @@ export default function Store() {
   const appIdScopeKeyRef = useRef("");
 
   // Visible appIds for metadata loading - does NOT depend on storeMetadataByAppId
+  // Window includes: INITIAL_VISIBLE_COUNT base + current browse page window when on browse tab
   const visibleAppIds = useMemo(() => {
     const appIds = new Set<number>();
 
-    catalogGames.forEach((game) => {
+    // Base window: first INITIAL_VISIBLE_COUNT catalog games (covers browse pages 1-2)
+    for (const game of catalogGames.slice(0, INITIAL_VISIBLE_COUNT)) {
       const appId = Number(game.appId);
       if (Number.isFinite(appId)) {
         appIds.add(appId);
       }
-    });
+    }
+
+    // On browse tab, also include current page + next page for deeper pagination
+    if (activeStoreTab === "browse" && catalogGames.length > INITIAL_VISIBLE_COUNT) {
+      const totalPages = Math.ceil(catalogGames.length / PAGE_SIZE) || 1;
+      const safePage = Math.min(browsePage, totalPages);
+      const startIdx = (safePage - 1) * PAGE_SIZE;
+      const windowEnd = Math.min(startIdx + PAGE_SIZE * 2, catalogGames.length);
+      for (const game of catalogGames.slice(startIdx, windowEnd)) {
+        const appId = Number(game.appId);
+        if (Number.isFinite(appId)) appIds.add(appId);
+      }
+    }
 
     results.forEach((game) => {
       const appId = Number(game.appId);
@@ -1031,11 +1438,11 @@ export default function Store() {
     }
 
     const ids = Array.from(appIds);
-    console.log(`[Store] visibleAppIds: ${ids.length} total unique app IDs`);
+    if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][METADATA_WINDOW_LOAD] requested=${ids.length}`);
     return ids;
     // NOTE: storeMetadataByAppId intentionally NOT in deps to avoid render loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalogGames, results, allStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame]);
+  }, [catalogGames, results, allStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame, activeStoreTab, browsePage]);
 
   const visibleAppIdsKey = visibleAppIds.join(",");
 
@@ -1061,7 +1468,7 @@ export default function Store() {
 
         if (!cancelled) {
           setStoreMetadataByAppId(metadata);
-          console.log(`[Store] metadata loaded: ${Object.keys(metadata).length} games resolved`);
+          if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[Store] metadata loaded: ${Object.keys(metadata).length} games resolved`);
         }
       } catch (error) {
         console.error(error);
@@ -1079,6 +1486,13 @@ export default function Store() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleAppIdsKey]);
+
+  // Persist metadata to module-level cache so it survives mount/unmount
+  useEffect(() => {
+    if (Object.keys(storeMetadataByAppId).length > 0) {
+      setCachedStoreMetadata(storeMetadataByAppId as unknown as Record<number, Record<string, unknown>>);
+    }
+  }, [storeMetadataByAppId]);
 
   // Smart preload: proactively load metadata for upcoming items
   useEffect(() => {
@@ -1118,6 +1532,41 @@ export default function Store() {
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highQualityPool, featuredGames, allStoreSections, steamCatalog.length]);
+
+  // Pre-populate Store image cache for visible app IDs (display-only, no local media index)
+  // Re-runs when metadata loads so URLs become available for cached Discover sections.
+  // resolveStoreDisplayImage is idempotent — calls for already-cached entries are no-ops.
+  useEffect(() => {
+    if (visibleAppIds.length === 0) return;
+    let seeded = 0;
+    for (const appIdNum of visibleAppIds) {
+      const appId = String(appIdNum);
+      const meta = storeMetadataByAppId[appIdNum];
+      const existingCapsule = getStoreDisplayImage(appId, "capsule");
+      if (!existingCapsule) {
+        resolveStoreDisplayImage(appId, "capsule", {
+          catalogCapsule: meta?.capsule_image_v5,
+          catalogHeader: meta?.capsule_image,
+          metadataCapsule: meta?.capsule_image_v5,
+          metadataHeader: meta?.header_image,
+        });
+      }
+      const existingHeader = getStoreDisplayImage(appId, "header");
+      if (!existingHeader) {
+        resolveStoreDisplayImage(appId, "header", {
+          catalogCapsule: meta?.capsule_image_v5,
+          catalogHeader: meta?.capsule_image,
+          metadataCapsule: meta?.capsule_image_v5,
+          metadataHeader: meta?.header_image,
+        });
+      }
+      if (!existingCapsule || !existingHeader) seeded++;
+    }
+    if (seeded > 0) {
+      console.log(`[STORE][IMAGE_CACHE_SEED] newlySeeded=${seeded}/${visibleAppIds.length} cacheSize=${getStoreImageCacheSize()}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleAppIdsKey, storeMetadataByAppId]);
 
   useEffect(() => {
     if (visibleAppIdsKey === appIdScopeKeyRef.current) return;
@@ -1693,7 +2142,6 @@ export default function Store() {
 
     return (
       <div
-        key={game.appId}
         className="lf-virtual-card"
         style={{ contentVisibility: "auto", containIntrinsicSize: "280px" }}
       >
@@ -1898,7 +2346,9 @@ export default function Store() {
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
-            {activeSection.games.map(renderStoreCard)}
+            {activeSection.games.map((game) => (
+              <div key={"store:section:" + game.appId}>{renderStoreCard(game)}</div>
+            ))}
           </div>
         </section>
       ) : isSearchResultsView ? (
@@ -1928,7 +2378,9 @@ export default function Store() {
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
-                {mergedResults.map(renderStoreCard)}
+                {mergedResults.map((game) => (
+                  <div key={"store:search:" + game.appId}>{renderStoreCard(game)}</div>
+                ))}
               </div>
             </section>
           );
@@ -1993,7 +2445,7 @@ export default function Store() {
                             const gameWithOverlay = providerOverlayByAppId[game.appId] ?? game;
                             return (
                               <div
-                                key={game.appId}
+                                key={"store:browse:steam:" + game.appId}
                                 className="lf-virtual-card"
                                 style={{ contentVisibility: "auto", containIntrinsicSize: "280px" }}
                               >
@@ -2081,7 +2533,9 @@ export default function Store() {
             <section className="space-y-5">
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
-                {luaReadyGames.map(renderStoreCard)}
+                {luaReadyGames.map((game) => (
+                  <div key={"store:lua:" + game.appId}>{renderStoreCard(game)}</div>
+                ))}
               </div>
             </section>
           )}
@@ -2096,21 +2550,52 @@ export default function Store() {
           <StoreDiscoverHeroCarousel
             games={featuredGames}
             storeMetadataByAppId={storeMetadataByAppId}
+            initialIndex={selectedHeroIndex}
+            onIndexChange={setSelectedHeroIndex}
             onOpenGame={openDetailsForGame}
             onDownload={handleGameDownload}
             onOpenSourceSelector={openSourceSelectorForGame}
           />
 
-          {dynamicDiscoverSections.map((section) => (
+          {discoverSections.map((section) => {
+            const desc = section.id === "for-you"
+              ? "Personalized picks based on your activity."
+              : section.id === "top-picks"
+                ? "Highest scored games in the catalog."
+                : section.id === "new-noteworthy"
+                  ? "Recently released games."
+                  : section.id === "popular-genres"
+                    ? "Browse games by genre."
+                    : section.id === "featured"
+                      ? "Curated high-quality games."
+                      : section.id === "lua-ready-picks"
+                        ? "Games with available download sources."
+                        : section.id.startsWith("genre-")
+                        ? `Popular ${section.title} games.`
+                        : "";
+            return (
+              <StoreHorizontalSection
+                key={section.id}
+                sectionKey={section.id}
+                title={section.title}
+                description={desc}
+                onViewAll={() => setActiveSectionId(section.id)}
+              >
+                {section.items.map(renderStoreCard)}
+              </StoreHorizontalSection>
+            );
+          })}
+
+          {moreToExploreGames.length > 0 && (
             <StoreHorizontalSection
-              key={section.id}
-              title={section.title}
-              description={section.description}
-              onViewAll={() => setActiveSectionId(section.id)}
+              key="more-to-explore"
+              sectionKey="more-to-explore"
+              title="More to Explore"
+              description={`${moreToExploreGames.length} games from the catalog`}
             >
-              {section.games.map(renderStoreCard)}
+              {moreToExploreGames.slice(0, MORE_TO_EXPLORE_MOUNT_LIMIT).map(renderStoreCard)}
             </StoreHorizontalSection>
-          ))}
+          )}
 
           {providerReports.length > 0 && (
             <details className="lf-surface rounded-2xl border p-4">
@@ -2122,6 +2607,19 @@ export default function Store() {
                 <ProviderSearchReport reports={providerReports} />
               </div>
             </details>
+          )}
+
+          {moreToExploreGames.length > 0 && rankedSteamCatalog.length > discoverMoreVisibleCount + CATALOG_PAGE_SIZE && (
+            <div className="flex justify-center pb-4">
+              <button
+                type="button"
+                onClick={increaseDiscoverVisibleCount}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="cursor-pointer rounded-full border border-(--surface-active-border) bg-white/5 px-6 py-2 text-sm text-(--color-muted) transition hover:border-(--color-accent) hover:text-(--color-accent)"
+              >
+                Show More Games
+              </button>
+            </div>
           )}
         </div></div>
       )}

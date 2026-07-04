@@ -228,7 +228,7 @@ export default function InstalledGameDetails({
 
         {/* Info sections */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Activity section */}
+          Activity section
           <section className="rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
             <h3 className="flex items-center gap-2 font-semibold text-(--color-text)">
               <Gamepad2 className="h-4 w-4 text-(--color-accent)" />

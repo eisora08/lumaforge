@@ -276,10 +276,19 @@ function GameAchievementCard({
     }
   }, [summary?.achievements, appId]);
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onOpen();
+    }
+  }, [onOpen]);
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={handleKeyDown}
       className="flex w-full cursor-pointer items-center gap-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-left transition hover:bg-white/[0.04] hover:border-(--color-accent)/20"
     >
       {/* Game icon */}
@@ -346,6 +355,6 @@ function GameAchievementCard({
 
       {/* Arrow */}
       <ChevronRight className="h-4 w-4 shrink-0 text-(--color-muted)/30" />
-    </button>
+    </div>
   );
 }

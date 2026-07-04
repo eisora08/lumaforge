@@ -12,6 +12,8 @@ import type { SteamAppMetadata } from "../../types/gameMetadata";
 type StoreDiscoverHeroCarouselProps = {
   games: PackageGame[];
   storeMetadataByAppId: Record<number, SteamAppMetadata>;
+  initialIndex?: number;
+  onIndexChange?: (index: number) => void;
   onOpenGame: (game: PackageGame) => void;
   onDownload?: (game: PackageGame) => void;
   onOpenSourceSelector?: (game: PackageGame) => void;
@@ -37,12 +39,22 @@ function getGameImage(
 export default function StoreDiscoverHeroCarousel({
   games,
   storeMetadataByAppId,
+  initialIndex = 0,
+  onIndexChange,
   onOpenGame,
   onDownload,
   onOpenSourceSelector,
 }: StoreDiscoverHeroCarouselProps) {
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
   const [isPaused, setIsPaused] = useState(false);
+  const indexRef = useRef(activeIndex);
+  indexRef.current = activeIndex;
+
+  useEffect(() => {
+    if (onIndexChange) {
+      onIndexChange(activeIndex);
+    }
+  }, [activeIndex, onIndexChange]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -221,7 +233,7 @@ export default function StoreDiscoverHeroCarousel({
 
               return (
                 <button
-                  key={game.appId}
+                  key={"store:hero-rail:steam:" + game.appId}
                   type="button"
                   onClick={() => setActiveIndex(idx)}
                   className={`flex w-full cursor-pointer items-center gap-3 rounded-xl p-2 text-left transition ${

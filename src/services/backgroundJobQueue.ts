@@ -12,7 +12,34 @@ export type JobType =
   | "validate-portable-paths"
   | "validate-cache-health";
 
+// Tiered priority system: P0 = highest, P6 = lowest
+export type JobTier =
+  | "P0-user-action"       // Manual Refresh Artwork, Download/Install, Uninstall
+  | "P1-visible-page"      // Current GameDetails media repair, current page data
+  | "P2-visible-image"     // Visible viewport images, lazy card thumbnails
+  | "P3-snapshot-write"    // Debounced snapshot updates, dirty appId writes
+  | "P4-background-repair" // Non-visible media repair, deferred maintenance
+  | "P5-achievement"       // Schema parse, image checks, migration
+  | "P6-cleanup";          // Old cache cleanup, path migration, legacy data
+
+// Legacy priority — kept for backward compat with existing queue
 export type JobPriority = "high" | "normal" | "low";
+
+export function tierToPriority(tier: JobTier): JobPriority {
+  switch (tier) {
+    case "P0-user-action": return "high";
+    case "P1-visible-page": return "high";
+    case "P2-visible-image": return "high";
+    case "P3-snapshot-write": return "normal";
+    case "P4-background-repair": return "normal";
+    case "P5-achievement": return "low";
+    case "P6-cleanup": return "low";
+  }
+}
+
+export function tierLabel(tier: JobTier): string {
+  return tier.replace(/^P\d-/, "");
+}
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "skipped";
 
@@ -22,6 +49,7 @@ export type BackgroundJob = {
   provider: string;
   appId?: string;
   priority: JobPriority;
+  tier?: JobTier;
   status: JobStatus;
   createdAt: number;
   startedAt?: number;
@@ -35,6 +63,16 @@ export type JobListener = (job: BackgroundJob) => void;
 function stableKey(type: JobType, provider: string, appId?: string): string {
   const parts = [type, provider, appId].filter(Boolean);
   return parts.join(":");
+}
+
+/** Dedup key for media repair: media:<provider>:<appId>:<role> */
+export function mediaRepairKey(provider: string, appId: string, role: string): string {
+  return `media:${provider}:${appId}:${role}`;
+}
+
+/** Dedup key for GameDetails batch: details-media:<provider>:<appId>:<sortedRoles> */
+export function gameDetailsRepairKey(provider: string, appId: string, roles: string[]): string {
+  return `details-media:${provider}:${appId}:${[...roles].sort().join(",")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,9 +97,11 @@ export const backgroundJobQueue = {
   enqueue(type: JobType, provider: string, options?: {
     appId?: string;
     priority?: JobPriority;
+    tier?: JobTier;
   }): string {
     const key = stableKey(type, provider, options?.appId);
-    const priority = options?.priority ?? "normal";
+    const tier = options?.tier;
+    const priority = options?.priority ?? (tier ? tierToPriority(tier) : "normal");
 
     // Dedup: recently completed
     if (recentlyCompleted.has(key)) {
@@ -98,6 +138,7 @@ export const backgroundJobQueue = {
       provider,
       appId: options?.appId,
       priority,
+      tier,
       status: "queued",
       createdAt: Date.now(),
     };
@@ -105,7 +146,7 @@ export const backgroundJobQueue = {
     queue.push(job);
     sortQueue();
     notifyListeners(job);
-    console.log(`[JOB] queued key=${key} priority=${priority}`);
+    console.log(`[JOB] queued key=${key} tier=${tier ?? priority} priority=${priority}`);
 
     scheduleDrain();
     return key;
@@ -284,7 +325,31 @@ function notifyListeners(job: BackgroundJob): void {
 // Job executors — delegates to existing services
 // ---------------------------------------------------------------------------
 
+// ── Block certain job types when user is browsing Store ──
+const STORE_BLOCKED_JOB_TYPES = new Set([
+  "repair-game-media",
+  "generate-achievement-schema",
+  "ensure-achievement-images",
+  "refresh-achievement-progress",
+  "scan-library",
+  "refresh-store-metadata",
+]);
+
 async function executeJob(job: BackgroundJob): Promise<void> {
+  // Skip heavy jobs when on Store route to prevent freeze
+  if (STORE_BLOCKED_JOB_TYPES.has(job.type)) {
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (hash.startsWith("#/store")) {
+      console.log(`[STORE][BACKGROUND_JOB_BLOCKED] job=${job.type} appId=${job.appId ?? "?"} reason=store-active`);
+      // Re-enqueue after a delay to avoid tight loop and keep the queue draining
+      setTimeout(() => {
+        queue.push(job);
+        scheduleDrain();
+      }, 2000);
+      return;
+    }
+  }
+
   switch (job.type) {
     case "scan-library":
       return executeScanLibrary(job);
@@ -321,45 +386,41 @@ async function executeRefreshStoreMetadata(job: BackgroundJob): Promise<void> {
 
 async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
   if (!job.appId) throw new Error("appId required for repair-game-media");
-  const { loadGameAppInfoWithMediaFallback } = await import("./gameCacheService");
+  const { loadGameAppInfoWithMediaFallback, CANONICAL_GAME_MEDIA_ROLES, isSystemToolApp, resolveGameMedia } = await import("./gameCacheService");
+
+  // Skip system/tool apps (Steamworks Redistributables, Proton, etc.)
+  if (isSystemToolApp(job.appId)) {
+    console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${job.appId} reason=system-tool`);
+    return;
+  }
   const appInfo = await loadGameAppInfoWithMediaFallback(job.appId);
   if (!appInfo) throw new Error(`No appinfo for appId=${job.appId}`);
-  const { resolveGameMedia } = await import("./gameCacheService");
   const media = await resolveGameMedia(job.appId, undefined, appInfo);
   if (!media) throw new Error(`No media sources for appId=${job.appId}`);
   // Enqueue individual media downloads for missing roles
   const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
-  const roles: Array<{ key: string; type: string }> = [
-    { key: "cover", type: "cover" },
-    { key: "landscape", type: "landscape" },
-    { key: "background", type: "background" },
-    { key: "logo", type: "logo" },
-    { key: "icon", type: "icon" },
-  ];
-  for (const role of roles) {
+  for (const role of CANONICAL_GAME_MEDIA_ROLES) {
     const srcKey = `${role.key}Src` as keyof typeof media;
     const url = media[srcKey];
-    if (url && typeof url === "string") {
-      if (url.startsWith("http")) {
-        console.log(`[MEDIA][REPAIR] appid=${job.appId} field=${role.key} saved=media/${role.key}.jpg`);
-        enqueueMediaDownload({
-          id: `repair-${job.appId}-${role.type}`,
-          appId: job.appId,
-          provider: "steam",
-          mediaType: role.type as any,
-          url,
-          target: "canonical",
-          priority: "low",
-        }).catch(() => {});
-      } else {
-        console.log(`[MEDIA][REPAIR] skipped field=${role.key} reason=already-on-disk`);
-      }
+    const httpUrl = (url && typeof url === "string" && url.startsWith("http")) ? url : null;
+
+    if (httpUrl) {
+      console.log(`[MEDIA][REPAIR] appid=${job.appId} field=${role.key} url=${httpUrl.substring(0, 60)}`);
+      enqueueMediaDownload({
+        id: `repair-${job.appId}-${role.type}`,
+        appId: job.appId,
+        provider: "steam",
+        mediaType: role.type as any,
+        url: httpUrl,
+        target: "canonical",
+        priority: "low",
+      }).catch(() => {});
     } else {
       // Check mediaSources for remote source to download
       if (appInfo.mediaSources) {
         const sourceUrl = (appInfo.mediaSources as Record<string, string | null>)[role.key];
         if (sourceUrl) {
-          console.log(`[MEDIA][REPAIR] appid=${job.appId} field=${role.key} saved=media/${role.key}.jpg (from mediaSources)`);
+          console.log(`[MEDIA][REPAIR] appid=${job.appId} field=${role.key} source=mediaSources`);
           enqueueMediaDownload({
             id: `repair-${job.appId}-${role.type}`,
             appId: job.appId,
@@ -393,6 +454,10 @@ async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
 
 async function executeGenerateAchievementSchema(job: BackgroundJob): Promise<void> {
   if (!job.appId) throw new Error("appId required for generate-achievement-schema");
+  const { ACHIEVEMENT_SCHEMA_MIGRATION_AUTO } = await import("./achievementStore");
+  if (!ACHIEVEMENT_SCHEMA_MIGRATION_AUTO) {
+    return;
+  }
   const { resolveSteamAchievements } = await import("./steamAchievementsResolver");
   const settings = (await loadSettingsOnce()) as any;
   await resolveSteamAchievements({

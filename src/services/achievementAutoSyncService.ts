@@ -2,6 +2,13 @@ import { resolveSteamAchievements } from "./steamAchievementsResolver";
 import { checkAchievementLibraryCacheMetadata } from "./tauri";
 import { achievementStore } from "./achievementStore";
 import type { GameAchievementsSummary } from "../types/gameAchievements";
+import {
+  ACHIEVEMENTS_AUTO_ENABLED,
+  ACHIEVEMENT_AUTO_SYNC_ENABLED,
+  logAutoSyncSkipOnce,
+  isStoreRoute,
+  logStoreSkipOnce,
+} from "./achievementAutoFlags";
 
 export type AutoSyncParams = {
   appId: string;
@@ -33,6 +40,8 @@ type WatcherState = {
   inFlight: boolean;
 };
 
+const _shouldAutoSync = ACHIEVEMENTS_AUTO_ENABLED && ACHIEVEMENT_AUTO_SYNC_ENABLED;
+
 class AchievementAutoSyncService {
   private watchers = new Map<string, WatcherState>();
   private subscribers = new Set<AutoSyncCallback>();
@@ -61,6 +70,8 @@ class AchievementAutoSyncService {
   }
 
   startWatching(params: AutoSyncParams): void {
+    if (isStoreRoute()) { logStoreSkipOnce(); return; }
+    if (!_shouldAutoSync) { logAutoSyncSkipOnce(); return; }
     if (!this.enabled) return;
     const appId = params.appId;
     if (this.watchers.has(appId)) {
@@ -69,7 +80,9 @@ class AchievementAutoSyncService {
     }
     this.watchers.set(appId, { params, inFlight: false });
     this.startWatcher(appId);
-    console.debug(`[ACH][AUTO_SYNC] watching appid=${appId}`);
+    if (import.meta.env.DEV) {
+      console.debug(`[ACH][AUTO_SYNC] watching appid=${appId}`);
+    }
     this.ensureFocusListener();
   }
 

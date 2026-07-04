@@ -198,7 +198,7 @@ export default function PackagesToolbarSearch({
               <div className="max-h-[420px] overflow-y-auto overscroll-contain [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-track]:bg-transparent">
                 <div className="p-2">
                   {visibleSearchItems.map((item, index) => (
-                    <div key={item.appId}>
+                    <div key={"search:results:steam:" + item.appId}>
                       <button
                         type="button"
                         onClick={() => handleSelectItem(item)}

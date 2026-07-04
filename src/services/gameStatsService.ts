@@ -2,6 +2,7 @@ import { scanSteamUserGameStats } from "./tauri";
 import { getGameStats } from "./gamePlayStats";
 import type { LibraryGame } from "../types/libraryGame";
 import type { SteamUserGameStats } from "../types/steamUserStats";
+import { STEAM_USER_STATS_AUTO_SCAN, logStatsScanSkipOnce } from "./achievementAutoFlags";
 
 const STEAM_CACHE_KEY = "lumaforge-steam-user-stats-cache-v1";
 let cachedSteamStats: SteamUserGameStats[] | null = null;
@@ -62,6 +63,14 @@ export async function loadSteamStats(
       if (ENABLE_VERBOSE_STATS_LOGS) {
         console.debug("[SteamStats] No appIds provided, skipping full scan");
       }
+      return new Map();
+    }
+
+    // Auto-scan gating: STEAM_USER_STATS_AUTO_SCAN=false prevents non-manual scans
+    if (!STEAM_USER_STATS_AUTO_SCAN) {
+      logStatsScanSkipOnce(String(appIds[0] ?? "?"), "loadSteamStats");
+      const cached = loadCachedSteamStats();
+      if (cached.size > 0) return cached;
       return new Map();
     }
 

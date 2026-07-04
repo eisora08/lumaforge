@@ -171,8 +171,8 @@ export default function Home({ onNavigate }: Props) {
 
         {dashboardDiscoveryReady && (
           <>
-            <NewNoteworthySection onNavigate={onNavigate} />
-            <FeaturedPicksSection onNavigate={onNavigate} />
+            {/* <NewNoteworthySection onNavigate={onNavigate} />
+            <FeaturedPicksSection onNavigate={onNavigate} /> */}
             <TrendingRightNowSection onNavigate={onNavigate} />
           </>
         )}

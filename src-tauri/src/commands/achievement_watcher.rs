@@ -11,6 +11,9 @@ use tauri::{AppHandle, Emitter};
 
 use super::steam_achievements::resolve_steam_root;
 
+// Disable verbose watcher event logs by default
+const DEBUG_ACH_WATCHER: bool = false;
+
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn next_trace_id() -> String {
@@ -116,15 +119,17 @@ impl AchievementWatcher {
                   (info.appid, info.source.clone()),
                   (path.clone(), Instant::now(), info.modified_at, info.size),
                 );
-                eprintln!(
-                  "[ACH][WATCHER][{}] rust event path={}",
-                  trace_id,
-                  path.display()
-                );
-                eprintln!(
-                  "[ACH][WATCHER][{}] parsed appid={} source={}",
-                  trace_id, info.appid, info.source
-                );
+                if DEBUG_ACH_WATCHER {
+                  eprintln!(
+                    "[ACH][WATCHER][{}] rust event path={}",
+                    trace_id,
+                    path.display()
+                  );
+                  eprintln!(
+                    "[ACH][WATCHER][{}] parsed appid={} source={}",
+                    trace_id, info.appid, info.source
+                  );
+                }
               }
             }
           }
@@ -146,17 +151,19 @@ impl AchievementWatcher {
 
             for (appid, source, path, modified_at, size) in emit {
               let trace_id = next_trace_id();
-              eprintln!(
-                "[ACH][WATCHER][{}] changed appid={} source={} path={}",
-                trace_id,
-                appid,
-                source,
-                path.display()
-              );
-              eprintln!(
-                "[ACH][WATCHER][{}] emitted frontend event",
-                trace_id
-              );
+                if DEBUG_ACH_WATCHER {
+                  eprintln!(
+                    "[ACH][WATCHER][{}] changed appid={} source={} path={}",
+                    trace_id,
+                    appid,
+                    source,
+                    path.display()
+                  );
+                  eprintln!(
+                    "[ACH][WATCHER][{}] emitted frontend event",
+                    trace_id
+                  );
+                }
               let payload = AchievementFileChangedPayload {
                 appid,
                 source,
@@ -212,14 +219,16 @@ fn extract_info(path: &Path, lib_path: &Path, stats_path: &Path) -> Option<FileI
   let raw_path = path.to_string_lossy().to_string();
   let fname = path.file_name()?.to_string_lossy().to_string();
 
-  if parent == lib_path {
+    if parent == lib_path {
     let stem = path.file_stem()?;
     let name = stem.to_str()?;
     let appid = name.parse::<u32>().ok()?;
-    eprintln!(
-      "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=librarycache",
-      raw_path, fname, appid
-    );
+    if DEBUG_ACH_WATCHER {
+      eprintln!(
+        "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=librarycache",
+        raw_path, fname, appid
+      );
+    }
     let meta = std::fs::metadata(path).ok()?;
     let modified = meta
       .modified()
@@ -305,16 +314,18 @@ pub fn start_achievement_watcher(
   let appcache_stats_path = steam_root.join("appcache").join("stats");
 
   eprintln!("[ACH][WATCHER] starting watcher");
-  eprintln!("[ACH][WATCHER] steamRoot={}", steam_root.display());
-  eprintln!("[ACH][WATCHER] accountId={}", steam_account_id);
-  eprintln!(
-    "[ACH][WATCHER] watchingLibrarycache={}",
-    librarycache_path.display()
-  );
-  eprintln!(
-    "[ACH][WATCHER] watchingAppcacheStats={}",
-    appcache_stats_path.display()
-  );
+  if DEBUG_ACH_WATCHER {
+    eprintln!("[ACH][WATCHER] steamRoot={}", steam_root.display());
+    eprintln!("[ACH][WATCHER] accountId={}", steam_account_id);
+    eprintln!(
+      "[ACH][WATCHER] watchingLibrarycache={}",
+      librarycache_path.display()
+    );
+    eprintln!(
+      "[ACH][WATCHER] watchingAppcacheStats={}",
+      appcache_stats_path.display()
+    );
+  }
 
   if !librarycache_path.exists() {
     eprintln!(

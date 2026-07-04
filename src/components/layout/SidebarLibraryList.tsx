@@ -39,6 +39,12 @@ type Props = {
   variant?: "full" | "header" | "list";
 };
 
+function logSidebarMedia(appId: string, msg: string): void {
+  if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) {
+    console.log(`[MEDIA][SIDEBAR] appid=${appId} ${msg}`);
+  }
+}
+
 function pickSidebarSrc(resolved: ResolvedSidebarMedia | null, appId?: string): string | null {
   if (!resolved) return null;
   const priorities: Array<{ key: keyof ResolvedSidebarMedia; label: string }> = [
@@ -50,14 +56,14 @@ function pickSidebarSrc(resolved: ResolvedSidebarMedia | null, appId?: string): 
   for (const { key, label } of priorities) {
     const item = resolved[key];
     if (item?.exists && item.src) {
-      if (appId) console.log(`[MEDIA][SIDEBAR] appid=${appId} selected=${label} path=${item.localPath} exists=true`);
+      if (appId) logSidebarMedia(appId, `selected=${label} path=${item.localPath} exists=true`);
       return item.src;
     }
   }
   if (appId) {
     const allFields = resolved.icon?.exists || resolved.cover?.exists || resolved.landscape?.exists || resolved.background?.exists;
     const reason = !resolved ? "no-resolved-object" : !allFields ? "no-media-fields" : "files-missing";
-    console.log(`[MEDIA][SIDEBAR] appid=${appId} selected=placeholder path=null exists=false placeholderReason=${reason}`);
+    logSidebarMedia(appId, `selected=placeholder path=null exists=false placeholderReason=${reason}`);
   }
   return null;
 }
@@ -78,7 +84,7 @@ function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry |
   if (appInfoEntry?.name) return appInfoEntry.name;
   if (game.title && !game.title.startsWith("Steam App ")) return game.title;
   if (game.appId) {
-    console.log(`[MEDIA][SIDEBAR] appid=${game.appId} placeholderReason=no-name-fallback title="Steam App ${game.appId}"`);
+    logSidebarMedia(game.appId, `placeholderReason=no-name-fallback title="Steam App ${game.appId}"`);
     return `Steam App ${game.appId}`;
   }
   return "Unknown Game";
@@ -243,8 +249,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       if (sidebarRepairEnqueued.current.has(id)) continue;
       sidebarRepairEnqueued.current.add(id);
       const key = backgroundJobQueue.enqueue("repair-game-media", "steam", { appId: id, priority: "high" });
-      console.log(`[MEDIA][SIDEBAR] visible=${uniqueIds.length} missing=${missingIds.length}`);
-      console.log(`[JOB] queued key=${key} priority=high`);
+      if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) {
+        console.log(`[MEDIA][SIDEBAR] visible=${uniqueIds.length} missing=${missingIds.length}`);
+        console.log(`[JOB] queued key=${key} priority=high`);
+      }
     }
   }, [filtered, sidebarMediaMap]);
 

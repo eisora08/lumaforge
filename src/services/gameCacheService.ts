@@ -57,6 +57,114 @@ export type {
 export { readGameMediaDataUrl };
 
 // ---------------------------------------------------------------------------
+// Shared constants
+// ---------------------------------------------------------------------------
+
+// ── Logging flags (all false by default for stabilization) ──
+export const DEBUG_MEDIA_DETAILS = false;
+export const DEBUG_MEDIA_RESOLVE = false;
+
+// ── Emergency stabilization: disable global auto media repair ──
+export const AUTO_MEDIA_REPAIR_GLOBAL = false;
+export const AUTO_MEDIA_REPAIR_VISIBLE_ONLY = true;
+let _globalRepairSkipLogged = false;
+
+function logGlobalRepairSkipOnce(): void {
+  if (!_globalRepairSkipLogged) {
+    _globalRepairSkipLogged = true;
+    console.log("[MEDIA][GLOBAL_REPAIR_SKIP] reason=disabled");
+  }
+}
+
+// ── Media health metadata with TTL ──
+export type MediaHealth = {
+  complete: boolean;
+  checkedAt: number;
+  missing: string[];
+  lastRepairAttemptAt?: number;
+  lastRepairError?: string;
+};
+
+const MEDIA_COMPLETE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MEDIA_INCOMPLETE_RETRY_MS = 10 * 60 * 1000;   // 10 minutes
+const MEDIA_FAILED_COOLDOWN_MS = 5 * 60 * 1000;     // 5 minutes after failed repair
+const MEDIA_NO_SOURCE_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes for no-source-url failures
+
+const _mediaHealthStore = new Map<string, MediaHealth>();
+
+export function getMediaHealth(appId: string): MediaHealth | undefined {
+  return _mediaHealthStore.get(appId);
+}
+
+export function setMediaHealth(appId: string, health: MediaHealth): void {
+  _mediaHealthStore.set(appId, health);
+}
+
+export function isMediaHealthStale(appId: string): boolean {
+  const h = _mediaHealthStore.get(appId);
+  if (!h) return true;
+  const ttl = h.complete ? MEDIA_COMPLETE_TTL_MS : MEDIA_INCOMPLETE_RETRY_MS;
+  return Date.now() - h.checkedAt > ttl;
+}
+
+export function isMediaRepairOnCooldown(appId: string): boolean {
+  const h = _mediaHealthStore.get(appId);
+  if (!h) return false;
+  if (!h.lastRepairAttemptAt) return false;
+  const cooldown = h.lastRepairError === "no-source-url" ? MEDIA_NO_SOURCE_COOLDOWN_MS : MEDIA_FAILED_COOLDOWN_MS;
+  return Date.now() - h.lastRepairAttemptAt < cooldown;
+}
+
+export function isNoSourceCooldown(appId: string): boolean {
+  const h = _mediaHealthStore.get(appId);
+  if (!h) return false;
+  if (h.lastRepairError !== "no-source-url") return false;
+  if (!h.lastRepairAttemptAt) return false;
+  return Date.now() - h.lastRepairAttemptAt < MEDIA_NO_SOURCE_COOLDOWN_MS;
+}
+
+/** Known Steam system/tool appIds that should not have media repair applied. */
+const SYSTEM_TOOL_APP_IDS = new Set([
+  "228980", // Steamworks Common Redistributables
+  "1070560", // Steam Linux Runtime
+  "1391110", // Steamworks Shared
+  "1798010", // Proton Experimental
+  "1493710", // Proton 5.0
+  "1580130", // Proton 6.0
+  "1883940", // Proton 7.0
+  "2348590", // Proton 8.0
+  "858280", // Steamworks Example
+  "1273400", // Steam Network Access
+  "15540", // Half-Life 2: Update (tool)
+]);
+
+export function isSystemToolApp(appId: string | number): boolean {
+  return SYSTEM_TOOL_APP_IDS.has(String(appId));
+}
+
+/** The 5 canonical media roles that LumaForge manages per game. */
+export const CANONICAL_GAME_MEDIA_ROLES: Array<{ key: string; type: string }> = [
+  { key: "cover", type: "cover" },
+  { key: "landscape", type: "landscape" },
+  { key: "background", type: "background" },
+  { key: "logo", type: "logo" },
+  { key: "icon", type: "icon" },
+];
+
+/** Deduplicate an array of items by their `appId` field, keeping first occurrence. */
+export function deduplicateByAppId<T extends { appId?: string | undefined | null }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    if (!item.appId) continue;
+    if (seen.has(item.appId)) continue;
+    seen.add(item.appId);
+    out.push(item);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // MediaIndex — formal runtime media entry
 // *Path fields are relative (from appinfo)
 // *Url fields are runtime-only (never persisted)
@@ -82,6 +190,7 @@ export type MediaIndexEntry = {
   iconUrl: string | null;
   hasIcon: boolean;
   updatedAt: number;
+  mediaHealth?: MediaHealth;
 };
 
 const mediaIndexStore = new Map<string, MediaIndexEntry>();
@@ -860,6 +969,447 @@ export async function resolveGameMedia(
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// detectAndQueueMissingMedia — scan actual disk files and queue low-priority
+// downloads for roles whose files are missing from disk but have a source URL
+// available (from resolveGameMedia remote fallback or mediaSources).
+// Returns the list of roles that were queued for download.
+// ---------------------------------------------------------------------------
+
+export type MediaRepairSource = 
+  | "local-media-repair"
+  | "manual-refresh-artwork"
+  | "game-details-visible-repair"
+  | "store-display"
+  | "dashboard-display"
+  | "browse-display"
+  | "metadata-display"
+  | "boot-hydration"
+  // Legacy aliases kept for backward compat
+  | "visible-details"
+  | "refresh-artwork"
+  | "global"
+  | "boot";
+
+export type RefreshArtworkOptions = {
+  roles: string[];
+  force: boolean;
+  tier: import("./backgroundJobQueue").JobTier;
+  source: MediaRepairSource;
+};
+
+export type RefreshArtworkResult = {
+  queued: string[];
+  failed: string[];
+  skipped: string[];
+};
+
+// ---------------------------------------------------------------------------
+// Type definitions for MediaIndex source tracking
+// ---------------------------------------------------------------------------
+
+export type MediaIndexSource = 
+  | "local-media-repair"
+  | "manual-refresh-artwork"
+  | "game-details-visible-repair"
+  | "store-display"
+  | "dashboard-display"
+  | "browse-display"
+  | "metadata-display"
+  | "boot-hydration"
+  | "unknown";
+
+export type MediaIndexUpdate = {
+  appId: string;
+  changed: boolean;
+  changedFields: number;
+  source: MediaIndexSource;
+};
+
+export function createMediaIndexUpdate(
+  appId: string,
+  changedFields: number,
+  source: MediaIndexSource,
+): MediaIndexUpdate {
+  return {
+    appId,
+    changed: changedFields > 0,
+    changedFields,
+    source,
+  };
+}
+
+/**
+ * Unified artwork repair entry point for both manual Refresh Artwork and
+ * visible GameDetails repair. Both paths share the same source resolution
+ * and download pipeline.
+ *
+ * Manual Refresh Artwork:
+ *   refreshArtwork(appId, {
+ *     roles: CANONICAL_GAME_MEDIA_ROLES.map(r => r.key),
+ *     force: true,
+ *     tier: "P0-user-action",
+ *     source: "refresh-artwork"
+ *   })
+ *
+ * GameDetails auto-repair:
+ *   refreshArtwork(appId, {
+ *     roles: ["cover","landscape","background","logo","icon"],
+ *     force: false,
+ *     tier: "P1-visible-page",
+ *     source: "visible-details"
+ *   })
+ */
+export async function refreshArtwork(appId: string, options: RefreshArtworkOptions): Promise<RefreshArtworkResult> {
+  const result: RefreshArtworkResult = { queued: [], failed: [], skipped: [] };
+
+  // Skip if Store is active — prevents triggering media index updates during Store navigation
+  const storeHash = typeof window !== "undefined" ? window.location.hash : "";
+  if (storeHash.startsWith("#/store") && options.source !== "refresh-artwork") {
+    return result;
+  }
+
+  if (isSystemToolApp(appId)) {
+    console.log(`[MEDIA][REFRESH_SKIP] appid=${appId} reason=system-tool`);
+    return result;
+  }
+
+  // Skip global repair for non-visible sources
+  if (options.source !== "visible-details" && options.source !== "refresh-artwork") {
+    logGlobalRepairSkipOnce();
+    return result;
+  }
+
+    // Block display-only sources from updating MediaIndex
+  const displaySources = new Set(["store-display", "dashboard-display", "browse-display", "metadata-display", "boot-hydration"]);
+  if (displaySources.has(options.source)) {
+    console.log(`[MEDIA][REFRESH_SKIP] appid=${appId} reason=display-source source=${options.source}`);
+    return result;
+  }
+
+  // TTL check (bypassed when force=true or manual refresh)
+  if (!options.force && options.source !== "refresh-artwork") {
+    if (!isMediaHealthStale(appId) && !isMediaRepairOnCooldown(appId)) {
+      return result;
+    }
+  }
+
+  // No-source-url cooldown — skip repair if recently found no source URLs
+  if (!options.force && options.source !== "refresh-artwork" && isNoSourceCooldown(appId)) {
+    result.skipped = options.roles;
+    console.log(`[MEDIA][REFRESH_COOLDOWN] appid=${appId} roles=${options.roles.join(",")} reason=no-source-url`);
+    return result;
+  }
+
+  const { resolveGameMediaPaths } = await import("./tauri");
+  const diskPaths = await resolveGameMediaPaths(appId).catch(() => null);
+  if (!diskPaths) return result;
+
+  const rolesNeedingRepair: string[] = [];
+
+  if (options.force) {
+    // Force mode: repair all requested roles
+    rolesNeedingRepair.push(...options.roles);
+  } else {
+    // Normal mode: repair only missing roles
+    for (const role of options.roles) {
+      const pathKey = `${role}Path` as keyof typeof diskPaths;
+      if (!diskPaths[pathKey]) {
+        rolesNeedingRepair.push(role);
+      }
+    }
+  }
+
+  if (rolesNeedingRepair.length === 0) {
+    // Mark health as complete
+    setMediaHealth(appId, { complete: true, checkedAt: Date.now(), missing: [] });
+    return result;
+  }
+
+  console.log(`[MEDIA][REFRESH_SCAN] appid=${appId} roles=${rolesNeedingRepair.join(",")} force=${options.force} source=${options.source}`);
+
+  // ── Resolve source URLs (same pipeline as detectAndQueueMissingMedia) ──
+  const appIdNum = Number(appId);
+  const hasValidId = appIdNum && !isNaN(appIdNum);
+  let gameMeta: Record<string, any> | undefined;
+  if (hasValidId) {
+    try {
+      const { resolveGameMetadata } = await import("./gameMetadataResolver");
+      const metaMap = await resolveGameMetadata([appIdNum]);
+      const meta = metaMap[appIdNum];
+      if (meta?.resolved) gameMeta = meta as unknown as Record<string, any>;
+    } catch {}
+  }
+
+  let sgdbArtwork: Record<string, string | undefined> | undefined;
+  try {
+    const { loadSettings } = await import("../context/SettingsContext");
+    const settings = await loadSettings() as Record<string, any>;
+    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
+    if (sgdbEnabled && hasValidId) {
+      const { resolveArtworkForAppIds } = await import("./storeArtworkResolver");
+      const entry = (await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey))[appId];
+      if (entry) {
+        sgdbArtwork = {
+          landscape: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl,
+          cover: entry.sgdbCoverUrl,
+          background: entry.sgdbHeroUrl,
+          logo: entry.sgdbLogoUrl,
+          icon: entry.sgdbIconUrl,
+        };
+      }
+    }
+  } catch {}
+
+  const gameObj = gameMeta ? {
+    metadata: gameMeta,
+    headerImage: gameMeta.header_image as string | undefined,
+    imageUrl: gameMeta.capsule_image as string | undefined,
+  } : undefined;
+
+  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  const resolvedMedia = await resolveGameMedia(appId, gameObj, appInfo).catch(() => null);
+  const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
+
+  for (const role of rolesNeedingRepair) {
+    let sourceUrl: string | null = null;
+    let sourceReason = "";
+
+    const srcKey = `${role}Src` as keyof typeof resolvedMedia;
+    if (resolvedMedia && resolvedMedia[srcKey] && typeof resolvedMedia[srcKey] === "string") {
+      const url = resolvedMedia[srcKey] as string;
+      if (url.startsWith("http")) { sourceUrl = url; sourceReason = "resolveGameMedia-remote"; }
+    }
+
+    if (!sourceUrl && gameMeta) {
+      if (role === "logo" && (gameMeta.library_logo_image || gameMeta.logo_image)) {
+        sourceUrl = (gameMeta.library_logo_image || gameMeta.logo_image) as string;
+        sourceReason = "game-metadata";
+      }
+    }
+
+    if (!sourceUrl && sgdbArtwork?.[role]) {
+      sourceUrl = sgdbArtwork[role] ?? null;
+      sourceReason = "sgdb";
+    }
+
+    if (!sourceUrl && appInfo?.mediaSources) {
+      const msUrl = (appInfo.mediaSources as Record<string, string | null>)[role];
+      if (msUrl) { sourceUrl = msUrl; sourceReason = "mediaSources"; }
+    }
+
+    if (sourceUrl) {
+      result.queued.push(role);
+      const jobTier = options.tier || "P1-visible-page";
+      console.log(`[MEDIA][REFRESH_QUEUE] appid=${appId} role=${role} source=${sourceReason} tier=${jobTier}`);
+      await enqueueMediaDownload({
+        id: `refresh-${appId}-${role}-${Date.now()}`,
+        appId,
+        provider: "steam",
+        mediaType: role as any,
+        url: sourceUrl,
+        target: "canonical",
+        priority: jobTier === "P0-user-action" ? "high" : "low",
+      }).catch(() => { result.failed.push(role); });
+    } else {
+      result.failed.push(role);
+      console.log(`[MEDIA][REFRESH_FAILED] appid=${appId} role=${role} reason=no-source-url`);
+    }
+  }
+
+  // Update media health
+  const health: MediaHealth = {
+    complete: result.queued.length === 0,
+    checkedAt: Date.now(),
+    missing: result.failed,
+    lastRepairAttemptAt: Date.now(),
+  };
+  if (result.failed.length > 0) health.lastRepairError = "no-source-url";
+  setMediaHealth(appId, health);
+
+  if (result.queued.length > 0) {
+    console.log(`[MEDIA][REFRESH_DONE] appid=${appId} queued=${result.queued.join(",")}`);
+  }
+  return result;
+}
+
+export async function detectAndQueueMissingMedia(appId: string, source: MediaRepairSource = "visible-details"): Promise<string[]> {
+  // Skip if Store is active — prevents triggering media index updates during Store navigation
+  const storeHash = typeof window !== "undefined" ? window.location.hash : "";
+  if (storeHash.startsWith("#/store")) {
+    return [];
+  }
+
+  // Skip system/tool apps (Steamworks Redistributables, Proton, etc.)
+  if (isSystemToolApp(appId)) {
+    console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${appId} reason=system-tool`);
+    return [];
+  }
+
+  // Block display-only sources from updating MediaIndex
+  const displaySources = new Set(["store-display", "dashboard-display", "browse-display", "metadata-display"]);
+  if (displaySources.has(source)) {
+    console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${appId} reason=display-source source=${source}`);
+    return [];
+  }
+
+  // Emergency stabilization: only visible-details and manual refresh-artwork
+  // should auto-repair. Global/boot repair is disabled.
+  if (source !== "visible-details" && source !== "refresh-artwork") {
+    logGlobalRepairSkipOnce();
+    return [];
+  }
+
+  const missing: string[] = [];
+  const roles = ["cover", "landscape", "background", "logo", "icon"] as const;
+
+  const { resolveGameMediaPaths } = await import("./tauri");
+  const diskPaths = await resolveGameMediaPaths(appId).catch(() => null);
+
+  if (!diskPaths) return missing;
+
+  // Determine which roles are missing from disk
+  for (const role of roles) {
+    const pathKey = `${role}Path` as keyof typeof diskPaths;
+    if (!diskPaths[pathKey]) {
+      missing.push(role);
+    }
+  }
+
+  if (missing.length === 0) return missing;
+
+  console.log(`[MEDIA][AUTO_REPAIR_SCAN] appid=${appId} missing=${missing.join(",")}`);
+
+  // ── Source resolution ─────────────────────────────────────────────────────
+  // 1. Load game metadata (Steam Store API) for remote URLs (background, logo)
+  // 2. Try SGDB artwork if settings configured
+  // 3. Build game-like object and pass to resolveGameMedia with appinfo
+
+  const appIdNum = Number(appId);
+  const hasValidId = appIdNum && !isNaN(appIdNum);
+
+  // Resolve game metadata from Steam Store (cached in-memory + disk)
+  let gameMeta: Record<string, any> | undefined;
+  if (hasValidId) {
+    try {
+      const { resolveGameMetadata } = await import("./gameMetadataResolver");
+      const metaMap = await resolveGameMetadata([appIdNum]);
+      const meta = metaMap[appIdNum];
+      if (meta?.resolved) {
+        gameMeta = meta as unknown as Record<string, any>;
+      }
+    } catch {}
+  }
+
+  // Try SGDB artwork if settings available
+  let sgdbArtwork: Record<string, string | undefined> | undefined;
+  try {
+    const { loadSettings } = await import("../context/SettingsContext");
+    const settings = await loadSettings() as Record<string, any>;
+    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
+    if (sgdbEnabled && hasValidId) {
+      const { resolveArtworkForAppIds } = await import("./storeArtworkResolver");
+      const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
+      const entry = result[appId];
+      if (entry) {
+        sgdbArtwork = {
+          landscape: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl,
+          cover: entry.sgdbCoverUrl,
+          background: entry.sgdbHeroUrl,
+          logo: entry.sgdbLogoUrl,
+          icon: entry.sgdbIconUrl,
+        };
+      }
+    }
+  } catch {}
+
+  // Build game-like object from metadata for resolveGameMedia fallback
+  const gameObj = gameMeta ? {
+    metadata: gameMeta,
+    headerImage: gameMeta.header_image as string | undefined,
+    imageUrl: gameMeta.capsule_image as string | undefined,
+  } : undefined;
+
+  const appInfo = await getGameAppInfo(appId).catch(() => null);
+  const resolvedMedia = await resolveGameMedia(appId, gameObj, appInfo).catch(() => null);
+
+  const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
+  const queuedRoles: string[] = [];
+
+  for (const role of missing) {
+    // Priority chain: resolveGameMedia → SGDB artwork → mediaSources
+    let sourceUrl: string | null = null;
+    let sourceReason = "";
+
+    const srcKey = `${role}Src` as keyof typeof resolvedMedia;
+
+    // Priority 1: resolveGameMedia (appinfo paths + store metadata fallback)
+    if (resolvedMedia && resolvedMedia[srcKey] && typeof resolvedMedia[srcKey] === "string") {
+      const url = resolvedMedia[srcKey] as string;
+      if (url.startsWith("http")) {
+        sourceUrl = url;
+        sourceReason = "resolveGameMedia-remote";
+      }
+    }
+
+    // Priority 1b: game metadata directly for roles resolveGameMedia doesn't cover
+    if (!sourceUrl && gameMeta) {
+      if (role === "logo" && (gameMeta.library_logo_image || gameMeta.logo_image)) {
+        sourceUrl = (gameMeta.library_logo_image || gameMeta.logo_image) as string;
+        sourceReason = "game-metadata";
+      }
+    }
+
+    // Priority 2: SGDB artwork
+    if (!sourceUrl && sgdbArtwork?.[role]) {
+      sourceUrl = sgdbArtwork[role] ?? null;
+      sourceReason = "sgdb";
+    }
+
+    // Priority 3: mediaSources (user-configured)
+    if (!sourceUrl && appInfo?.mediaSources) {
+      const msUrl = (appInfo.mediaSources as Record<string, string | null>)[role];
+      if (msUrl) {
+        sourceUrl = msUrl;
+        sourceReason = "mediaSources";
+      }
+    }
+
+    if (sourceUrl) {
+      queuedRoles.push(role);
+      console.log(`[MEDIA][AUTO_REPAIR_QUEUE] appid=${appId} role=${role} source=${sourceReason} priority=low`);
+      enqueueMediaDownload({
+        id: `auto-repair-${appId}-${role}`,
+        appId,
+        provider: "steam",
+        mediaType: role as any,
+        url: sourceUrl,
+        target: "canonical",
+        priority: "low",
+      }).catch(() => {});
+    } else {
+      console.log(`[MEDIA][AUTO_REPAIR_FAILED] appid=${appId} role=${role} reason=no-source-url`);
+    }
+  }
+
+  // ── Update media health metadata ──
+  const health: MediaHealth = {
+    complete: missing.length === 0 || queuedRoles.length === 0,
+    checkedAt: Date.now(),
+    missing: queuedRoles.length > 0 ? queuedRoles : missing.filter((r) => !queuedRoles.includes(r)),
+  };
+  if (queuedRoles.length > 0) {
+    health.lastRepairAttemptAt = Date.now();
+    console.log(`[MEDIA][AUTO_REPAIR_DONE] appid=${appId} queued=${queuedRoles.join(",")}`);
+  } else if (missing.length > 0 && queuedRoles.length === 0) {
+    // Failed to find source URLs for missing roles
+    health.lastRepairError = "no-source-url";
+  }
+  setMediaHealth(appId, health);
+
+  return queuedRoles;
 }
 
 // ---------------------------------------------------------------------------

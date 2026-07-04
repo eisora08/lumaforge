@@ -15,6 +15,9 @@ use crate::models::steam_appcache_achievements::{
   UserGameStatsRawResult,
 };
 
+// Disable verbose librarycache debug logs by default
+const DEBUG_ACH_LIBRARYCACHE: bool = false;
+
 fn build_client() -> Result<reqwest::blocking::Client, String> {
   reqwest::blocking::Client::builder()
     .user_agent("LumaForge/0.1.0")
@@ -103,10 +106,60 @@ pub fn fetch_steam_achievement_schema(
 }
 
 // ---------------------------------------------------------------------------
-// Diagnostics log
+// Debug logging flags (all default false in production)
 // ---------------------------------------------------------------------------
+const DEBUG_ACH_CACHE_IO: bool = false;
+const DEBUG_ACH_SCHEMA: bool = false;
+const DEBUG_ACH_MIGRATION: bool = false;
+
+// Diag log gated behind cache IO flag
 fn diag_log(msg: impl std::fmt::Display) {
-  eprintln!("[ACH] {}", msg);
+  if DEBUG_ACH_CACHE_IO {
+    eprintln!("[ACH] {}", msg);
+  }
+}
+
+// Category-specific log macros — all gated behind per-category flags.
+macro_rules! schema_log {
+    ($($arg:tt)*) => {
+        if DEBUG_ACH_SCHEMA { eprintln!($($arg)*); }
+    };
+}
+
+macro_rules! migration_log {
+    ($($arg:tt)*) => {
+        if DEBUG_ACH_MIGRATION { eprintln!($($arg)*); }
+    };
+}
+
+macro_rules! progress_log {
+    ($($arg:tt)*) => {
+        if DEBUG_ACH_SCHEMA { eprintln!($($arg)*); }
+    };
+}
+
+macro_rules! librarycache_log {
+    ($($arg:tt)*) => {
+        if DEBUG_ACH_SCHEMA { eprintln!($($arg)*); }
+    };
+}
+
+macro_rules! rarity_log {
+    ($($arg:tt)*) => {
+        if DEBUG_ACH_SCHEMA { eprintln!($($arg)*); }
+    };
+}
+
+macro_rules! cache_log {
+    ($($arg:tt)*) => {
+        if DEBUG_ACH_CACHE_IO { eprintln!($($arg)*); }
+    };
+}
+
+macro_rules! repair_log {
+    ($($arg:tt)*) => {
+        if DEBUG_ACH_SCHEMA { eprintln!($($arg)*); }
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -563,7 +616,7 @@ fn parse_schema_from_submsg(data: &[u8]) -> Option<SteamAppcacheSchemaEntry> {
   }
 
   if stat_id.is_some() || bit.is_some() {
-    eprintln!("[ACH][SCHEMA] entry: api_name={}, stat_id={:?}, bit={:?}", api_name, stat_id, bit);
+    schema_log!("[ACH][SCHEMA] entry: api_name={}, stat_id={:?}, bit={:?}", api_name, stat_id, bit);
   }
 
   Some(SteamAppcacheSchemaEntry {
@@ -602,7 +655,7 @@ fn try_parse_schema_proto(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry>, 
   }
 
   if skipped_token > 0 {
-    eprintln!("[ACH][SCHEMA] skippedTokenOnly={} accepted={}", skipped_token, entries.len());
+    schema_log!("[ACH][SCHEMA] skippedTokenOnly={} accepted={}", skipped_token, entries.len());
   }
 
   Ok(entries)
@@ -745,7 +798,7 @@ fn try_parse_schema_fallback(data: &[u8]) -> Result<Vec<SteamAppcacheSchemaEntry
 
   // Summary instead of per-entry logs
   if skipped_token_count > 0 {
-    eprintln!("[ACH][SCHEMA] skippedTokenOnly={} accepted={}", skipped_token_count, entries.len());
+    schema_log!("[ACH][SCHEMA] skippedTokenOnly={} accepted={}", skipped_token_count, entries.len());
   }
 
   Ok(entries)
@@ -769,17 +822,17 @@ fn read_and_parse_stats(path: &Path) -> Result<Vec<SteamAppcacheAchievement>, St
   // Try protobuf-aware parser first
   match try_parse_stats_proto(&data) {
     Ok(achievements) => {
-      eprintln!("[ACH][PROGRESS] proto parser: {} achievements", achievements.len());
+      progress_log!("[ACH][PROGRESS] proto parser: {} achievements", achievements.len());
       return Ok(achievements);
     }
     Err(e) => {
-      eprintln!("[ACH][PROGRESS] proto parser failed, trying text fallback: {}", e);
+      progress_log!("[ACH][PROGRESS] proto parser failed, trying text fallback: {}", e);
     }
   }
 
   // Fallback to text-based parser
   let result = try_parse_stats_fallback(&data)?;
-  eprintln!("[ACH][PROGRESS] text fallback: {} achievements", result.len());
+  progress_log!("[ACH][PROGRESS] text fallback: {} achievements", result.len());
   Ok(result)
 }
 
@@ -796,16 +849,16 @@ fn read_and_parse_schema(path: &Path) -> Result<Vec<SteamAppcacheSchemaEntry>, S
 
   match try_parse_schema_proto(&data) {
     Ok(entries) => {
-      eprintln!("[ACH][SCHEMA] proto parser: {} entries", entries.len());
+      schema_log!("[ACH][SCHEMA] proto parser: {} entries", entries.len());
       return Ok(entries);
     }
     Err(e) => {
-      eprintln!("[ACH][SCHEMA] proto parser failed, trying text fallback: {}", e);
+      schema_log!("[ACH][SCHEMA] proto parser failed, trying text fallback: {}", e);
     }
   }
 
   let result = try_parse_schema_fallback(&data)?;
-  eprintln!("[ACH][SCHEMA] text fallback: {} entries", result.len());
+  schema_log!("[ACH][SCHEMA] text fallback: {} entries", result.len());
   Ok(result)
 }
 
@@ -819,13 +872,13 @@ pub fn scan_steam_appcache_achievements(
   steam_account_id: Option<String>,
   app_id: u32,
 ) -> Result<SteamAppcacheScanResult, String> {
-  eprintln!("[ACH][SCHEMA] === scan app_id={} account_id={:?} ===", app_id, steam_account_id);
+  schema_log!("[ACH][SCHEMA] === scan app_id={} account_id={:?} ===", app_id, steam_account_id);
 
   let steam_root = resolve_steam_root(steam_path.as_deref())?;
   let stats_dir = find_appcache_stats_dir(&steam_root);
 
   if !stats_dir.is_dir() {
-    eprintln!("[ACH][SCHEMA] stats dir not found: {}", stats_dir.display());
+    schema_log!("[ACH][SCHEMA] stats dir not found: {}", stats_dir.display());
     return Ok(SteamAppcacheScanResult {
       stats_file_found: false,
       schema_file_found: false,
@@ -1101,8 +1154,8 @@ pub fn parse_user_game_stats_raw(
     }
   }
 
-  eprintln!("[ACH][PROGRESS] appid={} statsFileFound=true size={}", app_id, file_size);
-  eprintln!("[ACH][PROGRESS] parsedStats={} achievementEntries={}", stat_pairs.len(), achievement_entries.len());
+  progress_log!("[ACH][PROGRESS] appid={} statsFileFound=true size={}", app_id, file_size);
+  progress_log!("[ACH][PROGRESS] parsedStats={} achievementEntries={}", stat_pairs.len(), achievement_entries.len());
 
   Ok(UserGameStatsRawResult {
     file_found: true,
@@ -1288,10 +1341,14 @@ pub fn parse_librarycache_achievements(
   let lib_path = steam_root.join("userdata").join(&steam_account_id).join("config").join("librarycache").join(format!("{}.json", app_id));
   let path_str = lib_path.to_string_lossy().to_string();
 
-  eprintln!("[ACH][LIBRARYCACHE] path={}", path_str);
+  if DEBUG_ACH_LIBRARYCACHE {
+    librarycache_log!("[ACH][LIBRARYCACHE] path={}", path_str);
+  }
 
   if !lib_path.is_file() {
-    eprintln!("[ACH][LIBRARYCACHE] exists=false");
+    if DEBUG_ACH_LIBRARYCACHE {
+      librarycache_log!("[ACH][LIBRARYCACHE] exists=false");
+    }
     return Ok(LibraryCacheProgress {
       file_found: false,
       file_path: path_str,
@@ -1321,7 +1378,9 @@ pub fn parse_librarycache_achievements(
   };
 
   let file_size = Some(meta.len());
-  eprintln!("[ACH][LIBRARYCACHE] exists=true size={}", meta.len());
+  if DEBUG_ACH_LIBRARYCACHE {
+    librarycache_log!("[ACH][LIBRARYCACHE] exists=true size={}", meta.len());
+  }
 
   let raw = match fs::read_to_string(&lib_path) {
     Ok(s) => s,
@@ -1380,24 +1439,26 @@ pub fn parse_librarycache_achievements(
             result.file_path = path_str;
             result.file_size = file_size;
 
-            eprintln!("[ACH][LIBRARYCACHE] appid={} found=true", app_id);
-            eprintln!("[ACH][LIBRARYCACHE] nTotal={:?}", result.n_total);
-            eprintln!("[ACH][LIBRARYCACHE] nAchieved={:?}", result.n_achieved);
-            eprintln!("[ACH][LIBRARYCACHE] progressEntries={}", result.entries.len());
-            eprintln!("[ACH][LIBRARYCACHE] progressAvailable={}", result.progress_available);
+            if DEBUG_ACH_LIBRARYCACHE {
+              librarycache_log!("[ACH][LIBRARYCACHE] appid={} found=true", app_id);
+              librarycache_log!("[ACH][LIBRARYCACHE] nTotal={:?}", result.n_total);
+              librarycache_log!("[ACH][LIBRARYCACHE] nAchieved={:?}", result.n_achieved);
+              librarycache_log!("[ACH][LIBRARYCACHE] progressEntries={}", result.entries.len());
+              librarycache_log!("[ACH][LIBRARYCACHE] progressAvailable={}", result.progress_available);
 
-            // Log first 10 entries
-            for ach in result.entries.iter().take(10) {
-              eprintln!(
-                "[ACH][LIBRARYCACHE_ENTRY] apiName={:?} name={:?} achieved={:?} unlockTime={:?} rarity={:?}",
-                ach.str_id, ach.str_name, ach.b_achieved, ach.rt_unlocked, ach.fl_achieved,
-              );
-            }
+              // Log first 10 entries
+              for ach in result.entries.iter().take(10) {
+                librarycache_log!(
+                  "[ACH][LIBRARYCACHE_ENTRY] apiName={:?} name={:?} achieved={:?} unlockTime={:?} rarity={:?}",
+                  ach.str_id, ach.str_name, ach.b_achieved, ach.rt_unlocked, ach.fl_achieved,
+                );
+              }
 
-            if let Some(ref data) = value.data {
-              eprintln!("[ACH][LIBRARYCACHE] vecHighlight={}", data.vec_highlight.len());
-              eprintln!("[ACH][LIBRARYCACHE] vecAchievedHidden={}", data.vec_achieved_hidden.len());
-              eprintln!("[ACH][LIBRARYCACHE] vecUnachieved={}", data.vec_unachieved.len());
+              if let Some(ref data) = value.data {
+                librarycache_log!("[ACH][LIBRARYCACHE] vecHighlight={}", data.vec_highlight.len());
+                librarycache_log!("[ACH][LIBRARYCACHE] vecAchievedHidden={}", data.vec_achieved_hidden.len());
+                librarycache_log!("[ACH][LIBRARYCACHE] vecUnachieved={}", data.vec_unachieved.len());
+              }
             }
 
             return Ok(result);
@@ -1481,7 +1542,7 @@ pub fn debug_achievement_progress(
   app_id: u32,
   achievement_schema_path: Option<String>,
 ) -> Result<DebugAchievementReport, String> {
-  eprintln!("[ACH][DEBUG_REPORT] === debug_achievement_progress app_id={} ===", app_id);
+  schema_log!("[ACH][DEBUG_REPORT] === debug_achievement_progress app_id={} ===", app_id);
 
   let steam_root = match resolve_steam_root(steam_path.as_deref()) {
     Ok(r) => r,
@@ -1576,7 +1637,7 @@ pub fn debug_achievement_progress(
         kv = build_kv_tree(&raw);
         match read_and_parse_schema(&schema_path) {
           Ok(e) => entries = e,
-          Err(e) => eprintln!("[ACH][DEBUG_REPORT] schema parse error: {}", e),
+          Err(e) => schema_log!("[ACH][DEBUG_REPORT] schema parse error: {}", e),
         }
       }
     }
@@ -1627,7 +1688,7 @@ pub fn debug_achievement_progress(
     match read_achievements_app_schema_folder(path, app_id) {
       Ok(result) => Some(result),
       Err(e) => {
-        eprintln!("[ACH][DEBUG_REPORT] app schema error: {}", e);
+        schema_log!("[ACH][DEBUG_REPORT] app schema error: {}", e);
         None
       }
     }
@@ -1640,17 +1701,17 @@ pub fn debug_achievement_progress(
       match parse_librarycache_achievements(steam_path.clone(), steam_account_id.clone(), app_id) {
         Ok(p) => Some(p),
         Err(e) => {
-          eprintln!("[ACH][DEBUG_REPORT] librarycache error: {}", e);
+          schema_log!("[ACH][DEBUG_REPORT] librarycache error: {}", e);
           None
         }
       }
     } else {
-      eprintln!("[ACH][DEBUG_REPORT] librarycache not found: {}", lib_path.display());
+      schema_log!("[ACH][DEBUG_REPORT] librarycache not found: {}", lib_path.display());
       None
     }
   };
 
-  eprintln!("[ACH][DEBUG_REPORT] === report ready: stats={} schema={} statPairs={} v1Entries={} schemaEntries={} appSchema={} libcache={} ===",
+  schema_log!("[ACH][DEBUG_REPORT] === report ready: stats={} schema={} statPairs={} v1Entries={} schemaEntries={} appSchema={} libcache={} ===",
     stats_file_info.found, schema_file_info.found, stat_pairs.len(), achievement_entries.len(),
     schema_entries.len(), app_schema.is_some(), library_cache.is_some());
 
@@ -1860,7 +1921,7 @@ pub fn ensure_achievement_images(
     }
   }
 
-  eprintln!("[ACH][IMG] appid={} mode={} downloaded={} failed={}", app_id, mode, downloaded, failed);
+  librarycache_log!("[ACH][IMG] appid={} mode={} downloaded={} failed={}", app_id, mode, downloaded, failed);
   Ok((downloaded, failed))
 }
 
@@ -1882,7 +1943,7 @@ fn get_achievement_cache_dir(app_handle: &AppHandle, app_id: u32) -> Result<Path
   if provider_dir.exists() {
     Ok(provider_dir)
   } else if legacy_dir.exists() {
-    eprintln!("[ACH][PATH] using legacy achievements path appid={}", app_id);
+    librarycache_log!("[ACH][PATH] using legacy achievements path appid={}", app_id);
     Ok(legacy_dir)
   } else {
     // Create new provider-aware path
@@ -1893,18 +1954,20 @@ fn get_achievement_cache_dir(app_handle: &AppHandle, app_id: u32) -> Result<Path
 }
 
 #[tauri::command]
-pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchievementCache) -> Result<(), String> {
+pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchievementCache, migrate_icons: bool) -> Result<(), String> {
   let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
 
-  diag_log(format!("Writing achievement cache for app_id={} to {:?}", app_id, cache_dir));
+  diag_log(format!("Writing achievement cache for app_id={} migrate_icons={} to {:?}", app_id, migrate_icons, cache_dir));
 
   // Save originals before moving for image_sources.json comparison
   let original_achievements = data.achievements.clone();
 
-  // Normalize icon URLs to relative paths before writing
+  // Normalize icon URLs to relative paths before writing (expensive — only done when migrate_icons is true)
   let normalized_achievements: Vec<AppAchievementCacheEntry> = data.achievements.into_iter().map(|mut entry| {
-    entry.icon_url = normalize_icon_url_for_cache(&app_handle, app_id, &entry.icon_url, false);
-    entry.icon_gray_url = normalize_icon_url_for_cache(&app_handle, app_id, &entry.icon_gray_url, true);
+    if migrate_icons {
+      entry.icon_url = normalize_icon_url_for_cache(&app_handle, app_id, &entry.icon_url, false);
+      entry.icon_gray_url = normalize_icon_url_for_cache(&app_handle, app_id, &entry.icon_gray_url, true);
+    }
     entry
   }).collect();
 
@@ -1982,11 +2045,15 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
   let pcts_path = cache_dir.join("achievementpercentages.json");
 
   if !summary_path.exists() || !achievements_path.exists() {
-    diag_log(format!("No achievement cache found for app_id={}", app_id));
+    if DEBUG_ACH_LIBRARYCACHE {
+      diag_log(format!("No achievement cache found for app_id={}", app_id));
+    }
     return Ok(None);
   }
 
-  diag_log(format!("read cache appid={}", app_id));
+  if DEBUG_ACH_LIBRARYCACHE {
+    diag_log(format!("read cache appid={}", app_id));
+  }
 
   let mut summary: crate::models::steam_appcache_achievements::AppAchievementSummary =
     serde_json::from_str(
@@ -2013,7 +2080,7 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
   }
 
   if migrated {
-    eprintln!("[ACH][CACHE] migrated old summary appid={}", app_id);
+    cache_log!("[ACH][CACHE] migrated old summary appid={}", app_id);
     let summary_content =
       serde_json::to_string_pretty(&summary).map_err(|e| format!("Failed to serialize migrated summary: {}", e))?;
     fs::write(&summary_path, &summary_content)
@@ -2050,7 +2117,7 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
           }
         } else {
           // Truncated CDN folder URL (no hash) → strip it
-          eprintln!("[ACH][SCHEMA_REPAIR] appid={} apiName={} stripping invalid icon_url (truncated CDN folder): {}", app_id, entry.api_name, icon);
+          repair_log!("[ACH][SCHEMA_REPAIR] appid={} apiName={} stripping invalid icon_url (truncated CDN folder): {}", app_id, entry.api_name, icon);
           entry.icon_url = None;
           repaired_icons += 1;
         }
@@ -2080,7 +2147,7 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
           }
         } else {
           // Truncated CDN folder URL (no hash) → strip it
-          eprintln!("[ACH][SCHEMA_REPAIR] appid={} apiName={} stripping invalid icon_gray_url (truncated CDN folder): {}", app_id, entry.api_name, icon_gray);
+          repair_log!("[ACH][SCHEMA_REPAIR] appid={} apiName={} stripping invalid icon_gray_url (truncated CDN folder): {}", app_id, entry.api_name, icon_gray);
           entry.icon_gray_url = None;
           repaired_gray += 1;
         }
@@ -2089,7 +2156,7 @@ pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Opti
   }
 
   if migrated_icons > 0 || migrated_gray > 0 || repaired_icons > 0 || repaired_gray > 0 {
-    eprintln!("[ACH][SCHEMA_REPAIR] appid={} migratedIcons={} migratedGrayIcons={} repairedIcons={} repairedGrayIcons={} total={}", app_id, migrated_icons, migrated_gray, repaired_icons, repaired_gray, achievements.len());
+    repair_log!("[ACH][SCHEMA_REPAIR] appid={} migratedIcons={} migratedGrayIcons={} repairedIcons={} repairedGrayIcons={} total={}", app_id, migrated_icons, migrated_gray, repaired_icons, repaired_gray, achievements.len());
     // Write repaired/migrated achievements.json
     let achievements_content =
       serde_json::to_string_pretty(&achievements).map_err(|e| format!("Failed to serialize migrated achievements: {}", e))?;
@@ -2243,7 +2310,7 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
   diag_log(format!("[AchievementsSchema] Parsed {} entries", raw_entries.len()));
 
   // Log how many schema entries were parsed
-  eprintln!("[ACH][RUST_SCHEMA] appid={} entries={}", app_id, raw_entries.len());
+  schema_log!("[ACH][RUST_SCHEMA] appid={} entries={}", app_id, raw_entries.len());
 
   // Read achievementpercentages.json (optional) from same base_dir
   let pcts_path = base_dir.join("achievementpercentages.json");
@@ -2257,7 +2324,7 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
           .into_iter()
           .map(|e| (e.name, e.percent))
           .collect();
-        eprintln!("[ACH][RARITY] appid={} entries={}", app_id, map.len());
+        rarity_log!("[ACH][RARITY] appid={} entries={}", app_id, map.len());
         map
       }
       Err(e) => {
@@ -2293,7 +2360,7 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
             cdn_url_to_relative_icon_path(&val, false)
           } else {
             // Truncated CDN folder URL (no hash) → reject entirely
-            eprintln!("[ACH][SCHEMA_VALIDATE] appid={} invalidIconUrl reason=missing-hash url={}", app_id, val);
+            schema_log!("[ACH][SCHEMA_VALIDATE] appid={} invalidIconUrl reason=missing-hash url={}", app_id, val);
             None
           }
         } else {
@@ -2306,7 +2373,7 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
             cdn_url_to_relative_icon_path(&val, true)
           } else {
             // Truncated CDN folder URL (no hash) → reject entirely
-            eprintln!("[ACH][SCHEMA_VALIDATE] appid={} invalidGrayUrl reason=missing-hash url={}", app_id, val);
+            schema_log!("[ACH][SCHEMA_VALIDATE] appid={} invalidGrayUrl reason=missing-hash url={}", app_id, val);
             None
           }
         } else {
@@ -2330,14 +2397,14 @@ pub fn read_achievements_app_schema_folder(path: String, app_id: u32) -> Result<
     })
     .collect();
 
-  eprintln!("[ACH][RUST_SCHEMA] appid={} entries={}", app_id, achievements.len());
+  schema_log!("[ACH][RUST_SCHEMA] appid={} entries={}", app_id, achievements.len());
 
   // Build percentages
   let achievement_percentages: Vec<AppAchievementPercentagesEntry> = achievements
     .iter()
     .filter_map(|a| {
       pct_map.get(&a.api_name).map(|&pct| {
-        eprintln!("[ACH][RARITY] normalized percent name={} percent={}", a.api_name, pct);
+        rarity_log!("[ACH][RARITY] normalized percent name={} percent={}", a.api_name, pct);
         AppAchievementPercentagesEntry {
           name: a.api_name.clone(),
           percent: pct,
@@ -2417,7 +2484,7 @@ pub fn cleanup_achievement_orphan_images(
     .collect();
   let orphaned_count = orphaned.len();
 
-  eprintln!(
+  librarycache_log!(
     "[ACH][IMG_CLEANUP] appid={} dryRun={} expectedMax={} expectedReferenced={} actual={} orphaned={}",
     app_id, dry_run, expected_max, expected_referenced, actual_count, orphaned_count
   );
@@ -2427,9 +2494,9 @@ pub fn cleanup_achievement_orphan_images(
     for fname in &orphaned {
       let path = img_dir.join(fname);
       let _ = fs::remove_file(&path);
-      eprintln!("[ACH][IMG_CLEANUP] deleted appid={} file={}", app_id, fname);
+      librarycache_log!("[ACH][IMG_CLEANUP] deleted appid={} file={}", app_id, fname);
     }
-    eprintln!("[ACH][IMG_CLEANUP] appid={} deleted={}", app_id, orphaned_count);
+    librarycache_log!("[ACH][IMG_CLEANUP] appid={} deleted={}", app_id, orphaned_count);
   }
 
   Ok(OrphanCleanupResult {
@@ -2526,7 +2593,7 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
   if is_valid_cdn_achievement_url(url) {
     if let Some(rel) = cdn_url_to_relative_icon_path(url, is_gray) {
       if cfg!(debug_assertions) {
-        eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url -> {} (from CDN URL)", app_id, rel);
+        migration_log!("[ACH][SCHEMA_MIGRATE] appid={} icon_url -> {} (from CDN URL)", app_id, rel);
       }
       return Some(rel);
     }
@@ -2535,7 +2602,7 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
   // URL matches CDN path pattern but has no valid hash → truncated folder URL, reject
   if url.contains("/steamcommunity/public/images/apps/") {
     if cfg!(debug_assertions) {
-      eprintln!("[ACH][SCHEMA_VALIDATE] appid={} invalidIconUrl reason=missing-hash url={}", app_id, url);
+      schema_log!("[ACH][SCHEMA_VALIDATE] appid={} invalidIconUrl reason=missing-hash url={}", app_id, url);
     }
     return None;
   }
@@ -2559,7 +2626,7 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
         let suffix = path_str[base_str.len()..].trim_start_matches('/');
         let rel_str = format!("img/{}", suffix);
         if cfg!(debug_assertions) {
-          eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+          migration_log!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
         }
         return Some(rel_str);
       }
@@ -2571,7 +2638,7 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
           if suffix.starts_with("img/") || suffix.starts_with("img\\") {
             let rel_str = suffix.replace('\\', "/");
             if cfg!(debug_assertions) {
-              eprintln!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
+              migration_log!("[ACH][SCHEMA_MIGRATE] appid={} icon_url {} -> {}", app_id, url, rel_str);
             }
             return Some(rel_str);
           }
@@ -2585,7 +2652,7 @@ fn normalize_icon_url_for_cache(app_handle: &AppHandle, app_id: u32, url: &Optio
   // Any other remote HTTP/HTTPS URL → reject (do not keep remote URLs in cache)
   if url.starts_with("http://") || url.starts_with("https://") {
     if cfg!(debug_assertions) {
-      eprintln!("[ACH][SCHEMA_VALIDATE] appid={} rejectedRemoteIconUrl reason=non-cdn-url url={}", app_id, url);
+      schema_log!("[ACH][SCHEMA_VALIDATE] appid={} rejectedRemoteIconUrl reason=non-cdn-url url={}", app_id, url);
     }
     return None;
   }
@@ -2614,7 +2681,7 @@ pub fn migrate_achievements_to_provider_folders(app_handle: AppHandle) -> Result
   let migration_marker = achievements_dir.join(".provider_migration_v1");
 
   if migration_marker.exists() {
-    eprintln!("[ACH][MIGRATE] migration already completed, skipping");
+    migration_log!("[ACH][MIGRATE] migration already completed, skipping");
     return Ok(serde_json::json!({ "found": 0, "migrated": 0, "errors": [], "already_migrated": true }));
   }
 
@@ -2633,10 +2700,10 @@ pub fn migrate_achievements_to_provider_folders(app_handle: AppHandle) -> Result
     if !dir_name.chars().all(|c| c.is_ascii_digit()) { continue; }
 
     found += 1;
-    eprintln!("[ACH][MIGRATE] old folder appid={}", dir_name);
+    migration_log!("[ACH][MIGRATE] old folder appid={}", dir_name);
     let steam_dir = achievements_dir.join("steam").join(&dir_name);
     if steam_dir.exists() {
-      eprintln!("[ACH][MIGRATE] appid={} target already exists, skipping", dir_name);
+      migration_log!("[ACH][MIGRATE] appid={} target already exists, skipping", dir_name);
       continue;
     }
     if let Err(e) = fs::create_dir_all(steam_dir.parent().unwrap()) {
@@ -2646,7 +2713,7 @@ pub fn migrate_achievements_to_provider_folders(app_handle: AppHandle) -> Result
     match fs::rename(&path, &steam_dir) {
       Ok(()) => {
         migrated += 1;
-        eprintln!("[ACH][MIGRATE] moved achievements/{} -> achievements/steam/{}", dir_name, dir_name);
+        migration_log!("[ACH][MIGRATE] moved achievements/{} -> achievements/steam/{}", dir_name, dir_name);
       }
       Err(e) => {
         errors.push(format!("appid={} rename failed: {}", dir_name, e));
@@ -2660,7 +2727,7 @@ pub fn migrate_achievements_to_provider_folders(app_handle: AppHandle) -> Result
     .map(|d| d.as_secs())
     .unwrap_or(0);
   let _ = fs::write(&migration_marker, format!("migrated {} folders at {}", migrated, now_secs));
-  eprintln!("[ACH][MIGRATE] complete count={}", migrated);
+  migration_log!("[ACH][MIGRATE] complete count={}", migrated);
 
   Ok(serde_json::json!({ "found": found, "migrated": migrated, "errors": errors }))
 }
@@ -2787,11 +2854,11 @@ pub fn validate_portable_paths(app_handle: AppHandle) -> Result<Value, String> {
     }
   }
 
-  eprintln!("[PATH][VALIDATE] absolutePaths={}", appdata_abs);
-  eprintln!("[PATH][VALIDATE] assetUrlsPersisted={}", asset_urls_persisted);
-  eprintln!("[PATH][VALIDATE] remoteIconFields={}", remote_icon);
-  eprintln!("[PATH][VALIDATE] providerlessAchievementFolders={}", providerless);
-  eprintln!("[PATH][VALIDATE] missingFiles={}", missing_local);
+  schema_log!("[PATH][VALIDATE] absolutePaths={}", appdata_abs);
+  schema_log!("[PATH][VALIDATE] assetUrlsPersisted={}", asset_urls_persisted);
+  schema_log!("[PATH][VALIDATE] remoteIconFields={}", remote_icon);
+  schema_log!("[PATH][VALIDATE] providerlessAchievementFolders={}", providerless);
+  schema_log!("[PATH][VALIDATE] missingFiles={}", missing_local);
 
   if appdata_abs == 0 && remote_icon == 0 && providerless == 0 && asset_urls_persisted == 0 && missing_local == 0 {
     details.push("All paths are portable. No absolute paths, asset URLs, remote icon fields, or providerless folders found.".to_string());
@@ -2876,11 +2943,11 @@ pub fn validate_generated_achievement_schema(app_handle: AppHandle, app_id: u32)
     }
   }
 
-  eprintln!("[ACH][SCHEMA_VALIDATE] appid={}", app_id);
-  eprintln!("[ACH][SCHEMA_VALIDATE] total={}", total);
-  eprintln!("[ACH][SCHEMA_VALIDATE] remoteIconFields={}", remote_icon_fields);
-  eprintln!("[ACH][SCHEMA_VALIDATE] localIconFields={}", local_icon_fields);
-  eprintln!("[ACH][SCHEMA_VALIDATE] missingLocalFiles={}", missing_local_files);
+  schema_log!("[ACH][SCHEMA_VALIDATE] appid={}", app_id);
+  schema_log!("[ACH][SCHEMA_VALIDATE] total={}", total);
+  schema_log!("[ACH][SCHEMA_VALIDATE] remoteIconFields={}", remote_icon_fields);
+  schema_log!("[ACH][SCHEMA_VALIDATE] localIconFields={}", local_icon_fields);
+  schema_log!("[ACH][SCHEMA_VALIDATE] missingLocalFiles={}", missing_local_files);
 
   Ok(serde_json::json!({
     "appId": app_id,

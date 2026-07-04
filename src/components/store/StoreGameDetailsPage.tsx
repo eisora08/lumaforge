@@ -6,6 +6,7 @@ import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SourceCheckStatus } from "../../services/sourceAvailabilityCacheService";
+import type { StoreDetailsSourceState } from "../../services/storeDetailsSourceState";
 import { openExternalUrl } from "../../services/externalLinks";
 import {
   getSteamDbUrl,
@@ -14,9 +15,13 @@ import {
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
-import { enqueueMediaDownload } from "../../services/mediaDownloadQueue";
 import { resolveProviderOverlaysForStoreGames } from "../../services/storeProviderOverlay";
 import { resolveStoreDetailsPreviewImage, logDetailsMedia } from "../../services/storeDetailsMediaResolver";
+import {
+  getStoreDetailsState,
+  setStoreDetailsState,
+  buildStoreDetailsState,
+} from "../../services/storeDetailsSourceState";
 import {
   getSourceAvailability,
   updateSourceAvailability,
@@ -349,6 +354,26 @@ export default function StoreGameDetailsPage({
     isChecking,
   });
 
+  // Store details source state cache — persists across mount/unmount
+  // On mount, restore cached state and detect saved/selected provider mismatches
+  useEffect(() => {
+    const appId = game.appId;
+    const cached = getStoreDetailsState(appId);
+    if (cached) {
+      const savedProvider = cached.savedSelectedProvider;
+      const currProvider = effectiveSelectedSource?.providerName || null;
+      if (savedProvider && currProvider !== savedProvider) {
+        console.log(
+          `[STORE][DETAILS_SOURCE_MISMATCH_FIXED] appid=${appId} saved=${savedProvider} selected=${currProvider}`,
+        );
+      }
+      console.log(
+        `[STORE][DETAILS_STATE_RESTORE] appid=${appId} selectedProvider=${cached.selectedProvider} status=${cached.status} hasMedia=${cached.hasCatalogMedia || cached.hasSelectedMedia}`,
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.appId]);
+
   // Diagnostic — source state on mount/change (change-only)
   useEffect(() => {
     const hasSavedSource = !!(effectiveSelectedSource || (game.sources && game.sources.length > 0));
@@ -361,6 +386,25 @@ export default function StoreGameDetailsPage({
       logDetailsMedia(game.appId, previewResult, isChecking);
     }
   });
+
+  // Update source state cache when effective state changes
+  useEffect(() => {
+    if (!game.appId) return;
+    const status: StoreDetailsSourceState["status"] =
+      isChecking ? "checking"
+        : game.sources.some(s => s.available) ? "ready"
+        : game.sources.length > 0 ? "missing"
+        : "idle";
+    setStoreDetailsState(game.appId, buildStoreDetailsState(game.appId, {
+      selectedProvider: effectiveSelectedSource?.providerName || null,
+      savedSelectedProvider: (effectiveSelectedSource && game.sources.length > 0) ? effectiveSelectedSource.providerName : null,
+      providerResults: game.sources.length,
+      hasCatalogMedia: !!imageUrl,
+      hasSelectedMedia: !!previewResult.url,
+      status,
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.appId, effectiveSelectedSource?.providerName, game.sources.length, imageUrl, previewResult.url, isChecking]);
   const galleryImages = useMemo(
     () =>
       [
@@ -390,41 +434,14 @@ export default function StoreGameDetailsPage({
   const reviewSubLabel = getReviewSubLabel(reviewSummary);
 
   // Save main game metadata to store cache when resolved — stable deps only
+  // NOTE: does NOT enqueue media downloads — Store display images must NOT
+  // update local MediaIndex, appinfo, or BootSnapshot. See mediaDownloadQueue
+  // Store guard and startupSnapshotService Store guard for enforcement.
   const prevAppIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (metadata?.resolved && metadata.app_id !== prevAppIdRef.current) {
       prevAppIdRef.current = metadata.app_id;
       saveStoreMetadataToStoreCache(metadata);
-
-      // Populate canonical game cache for the opened game from store metadata.
-      // Enqueue landscape from header_image and optionally background from background/background_raw.
-      // Do NOT overwrite SGDB artwork — only fill gaps for the currently opened game.
-      const appId = String(metadata.app_id);
-      if (metadata.header_image) {
-        enqueueMediaDownload({
-          id: `store-header-${appId}-landscape`,
-          appId,
-          provider: "steam",
-          mediaType: "landscape",
-          url: metadata.header_image,
-          target: "canonical",
-          priority: "low",
-        }).catch(() => {});
-      }
-      if (metadata.background_image || (metadata as any).background_raw) {
-        const bgUrl = metadata.background_image || (metadata as any).background_raw;
-        if (bgUrl) {
-          enqueueMediaDownload({
-            id: `store-bg-${appId}-background`,
-            appId,
-            provider: "steam",
-            mediaType: "background",
-            url: bgUrl,
-            target: "canonical",
-            priority: "low",
-          }).catch(() => {});
-        }
-      }
     }
   }, [metadata?.resolved, metadata?.app_id]);
 

@@ -304,15 +304,24 @@ export async function runBootTasks(): Promise<void> {
                 const { setReconciledGames, clearReconciledGames } = await import("./gameStore");
                 const { scanInstalledLuaScripts, scanSteamInstalledGames } = await import("./tauri");
                 const { loadCachedGames } = await import("./gameDetectionCache");
+                const { checkSteamScanAllowed, markSteamScanComplete } = await import("./libraryGameResolver");
 
-                const [luaScripts, steamGames, sqliteCache] = await Promise.all([
-                  settings.luaPath ? scanInstalledLuaScripts(settings.luaPath).catch(() => []) : Promise.resolve([]),
-                  scanSteamInstalledGames({
+                // Use TTL-guarded steam scan to avoid repeated scans on boot re-runs
+                let steamGames: Awaited<ReturnType<typeof scanSteamInstalledGames>> = [];
+                if (checkSteamScanAllowed()) {
+                  steamGames = await scanSteamInstalledGames({
                     steamPath: settings.steamRoot || undefined,
                     luaPath: settings.luaPath || undefined,
                     depotcachePath: settings.depotcachePath || undefined,
                     gameScanFolders: settings.gameScanFolders.length > 0 ? settings.gameScanFolders : undefined,
-                  }).catch(() => []),
+                  }).catch(() => []);
+                  markSteamScanComplete();
+                } else {
+                  console.log("[steam-scan][SKIP] reason=boot-reconcile-ttl");
+                }
+
+                const [luaScripts, sqliteCache] = await Promise.all([
+                  settings.luaPath ? scanInstalledLuaScripts(settings.luaPath).catch(() => []) : Promise.resolve([]),
                   loadCachedGames().catch(() => null),
                 ]);
 
@@ -353,9 +362,12 @@ export async function runBootTasks(): Promise<void> {
                 let reconciledGames: import("../types/libraryGame").LibraryGame[] | null = null;
 
                 if (missingFromSqlite.length > 0) {
-                  // Build LibraryGames for missing entries by running the resolver
+                  // Build LibraryGames for missing entries by running the resolver.
+                  // Use { force: true } to bypass TTL guard — the steam scan above
+                  // already ran, but resolveLibraryGames needs its own scan
+                  // to build the full game list with Lua overlay.
                   const { resolveLibraryGames } = await import("./libraryGameResolver");
-                  const result = await resolveLibraryGames(settings);
+                  const result = await resolveLibraryGames(settings, { force: true });
                   reconciledGames = result.games;
                   logBoot(`reconciled games count=${result.games.length}`);
 
@@ -364,6 +376,61 @@ export async function runBootTasks(): Promise<void> {
                     const { saveCachedGames } = await import("./gameDetectionCache");
                     await saveCachedGames(result.games, result.warnings).catch(() => {});
                     logBoot(`saved reconciled games to cache`);
+
+                    // Also queue background SQLite upsert for the games table
+                    scheduleAfterMain(async () => {
+                      try {
+                        const { batchUpsertGames } = await import("./tauri");
+                        const entries = result.games
+                          .filter((g) => g.appId)
+                          .map((g) => ({
+                            appId: g.appId!,
+                            title: g.title || "",
+                            installed: g.steamInstalled || false,
+                            playtime: g.steamPlaytimeMinutes ?? 0,
+                            lastPlayed: g.steamLastPlayedAt ?? 0,
+                            metadataJson: JSON.stringify(g.metadata ?? {}),
+                            updatedAt: Math.floor(Date.now() / 1000),
+                          }));
+                        if (entries.length > 0) {
+                          await batchUpsertGames(entries).catch(() => {});
+                          logBoot(`sqlite upserted ${entries.length} games in background`);
+                        }
+                      } catch { /* non-critical */ }
+                    }, 5000);
+                  }
+
+                  // [STEP 2] Snapshot fallback: if reconcile returned 0 but snapshot has games,
+                  // build LibraryGame[] from snapshot data so runtime state is non-empty.
+                  const useSnapshot = reconciledGames === null || reconciledGames.length === 0;
+                  if (useSnapshot) {
+                    const { setReconciledGames, setReconciledGamesFromSnapshot } = await import("./gameStore");
+                    if (_snapshotLoaded?.library?.games && _snapshotLoaded.library.games.length > 0) {
+                      setReconciledGamesFromSnapshot(_snapshotLoaded.library.games);
+                      reconciledGames = _snapshotLoaded.library.games.map((sg) => ({
+                        id: `snapshot-${sg.appId}`,
+                        appId: sg.appId,
+                        title: sg.title || "",
+                        source: (sg.source === "lua" ? "lua" : "steam") as import("../types/libraryGame").LibraryGameSource,
+                        isPlayable: sg.playable ?? false,
+                        isInstallable: !sg.playable,
+                        steamInstalled: sg.installed,
+                        lastPlayed: sg.lastPlayed ?? undefined,
+                        playtime: sg.playtime ?? undefined,
+                        luaScripts: [],
+                        hasLua: sg.source === "lua",
+                        isLuaActive: sg.source === "lua",
+                        isLuaDisabled: false,
+                        hasLuaSource: false,
+                        sources: [],
+                        steamLastPlayedAt: sg.lastPlayed ?? undefined,
+                        steamPlaytimeMinutes: sg.playtime ?? undefined,
+                      })) as unknown as import("../types/libraryGame").LibraryGame[];
+                      logBoot(`[BOOT][SQLITE_EMPTY_FALLBACK] using=snapshot games=${reconciledGames!.length}`);
+                      setReconciledGames(reconciledGames!);
+                    } else {
+                      console.log(`[BOOT][SQLITE_EMPTY_FALLBACK] using=empty (snapshot also empty)`);
+                    }
                   }
                 } else {
                   clearReconciledGames();
@@ -376,6 +443,20 @@ export async function runBootTasks(): Promise<void> {
                     for (const id of luaAppIds) luaOverlay[id] = true;
                     reconciledGames = index.map((e) => indexEntryToLibraryGame(e, luaOverlay));
                   }
+                  // Persist to gameStore so validateStartupCacheHealth shows correct count
+                  if (reconciledGames && reconciledGames.length > 0) {
+                    const { setReconciledGames } = await import("./gameStore");
+                    setReconciledGames(reconciledGames);
+                    console.log(`[GAMESTORE][HYDRATE] source=reconciled games=${reconciledGames.length}`);
+                  }
+                }
+
+                // Source selection log
+                {
+                  const runtimeSource = reconciledGames && reconciledGames.length > 0
+                    ? (sqliteAppIds.size > 0 ? "reconciled" : "snapshot")
+                    : "sqlite";
+                  console.log(`[BOOT][SOURCE_SELECT] runtimeSource=${runtimeSource} snapshot=${_snapshotLoaded?.library?.games?.length ?? 0} lua=${luaAppIds.size} steam=${steamAppIds.size} sqlite=${sqliteAppIds.size}`);
                 }
 
                 // Resolve names for games with placeholder/empty titles and
@@ -464,47 +545,51 @@ export async function runBootTasks(): Promise<void> {
             logBoot("reconcile lua games end");
           });
 
-          // Stage 5: Load cached achievement summaries into store
+          // Stage 5: Load cached achievement summaries into store (only if auto-enabled)
           await track("load-achievement-summaries", async () => {
             logBoot("load achievement summaries start");
             try {
-              const { achievementStore } = await import("./achievementStore");
-              const { readAchievementCache } = await import("./tauri");
-              if (_snapshotLoaded) {
-                const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
-                let loaded = 0;
-                // Load up to 20 summaries during splash — enough for instant UI
-                const batch = appIds.slice(0, 20);
-                for (const appId of batch) {
-                  try {
-                    const cache = await readAchievementCache(Number(appId));
-                    if (cache) {
-                      // Convert AppAchievementCache to GameAchievementsSummary
-                      const summary = {
-                        appId,
-                        total: cache.achievements.length,
-                        unlocked: cache.achievements.filter((a: { unlocked: boolean }) => a.unlocked).length,
-                        progressAvailable: cache.summary.progress_available,
-                        achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; rarity_level?: string | null }) => ({
-                          apiName: a.api_name,
-                          name: a.name,
-                          description: a.description ?? "",
-                          iconUrl: a.icon ?? a.icon_url ?? null,
-                          iconGrayUrl: a.icon_gray ?? a.icon_gray_url ?? null,
-                          unlocked: a.unlocked,
-                          unlockTime: a.unlock_time ?? null,
-                          rarityPercent: a.rarity_percent ?? null,
-                          rarityLevel: a.rarity_level ?? null,
-                        })),
-                        newlyUnlocked: [],
-                      };
-                      achievementStore.setSummary(appId, summary as any);
-                      loaded++;
-                    }
-                  } catch { /* skip games without achievement cache */ }
-                }
-                if (loaded > 0) {
-                  logBoot(`loaded ${loaded} achievement summaries into store`);
+              const { ACHIEVEMENT_READ_CACHE_ON_BOOT, logCacheReadBootSkipOnce } = await import("./achievementAutoFlags");
+              if (!ACHIEVEMENT_READ_CACHE_ON_BOOT) {
+                logCacheReadBootSkipOnce();
+              } else {
+                const { achievementStore } = await import("./achievementStore");
+                const { readAchievementCache } = await import("./tauri");
+                if (_snapshotLoaded) {
+                  const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
+                  let loaded = 0;
+                  // Load up to 20 summaries during splash — enough for instant UI
+                  const batch = appIds.slice(0, 20);
+                  for (const appId of batch) {
+                    try {
+                      const cache = await readAchievementCache(Number(appId));
+                      if (cache) {
+                        const summary = {
+                          appId,
+                          total: cache.achievements.length,
+                          unlocked: cache.achievements.filter((a: { unlocked: boolean }) => a.unlocked).length,
+                          progressAvailable: cache.summary.progress_available,
+                          achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; rarity_level?: string | null }) => ({
+                            apiName: a.api_name,
+                            name: a.name,
+                            description: a.description ?? "",
+                            iconUrl: a.icon ?? a.icon_url ?? null,
+                            iconGrayUrl: a.icon_gray ?? a.icon_gray_url ?? null,
+                            unlocked: a.unlocked,
+                            unlockTime: a.unlock_time ?? null,
+                            rarityPercent: a.rarity_percent ?? null,
+                            rarityLevel: a.rarity_level ?? null,
+                          })),
+                          newlyUnlocked: [],
+                        };
+                        achievementStore.setSummary(appId, summary as any);
+                        loaded++;
+                      }
+                    } catch { /* skip games without achievement cache */ }
+                  }
+                  if (loaded > 0) {
+                    logBoot(`loaded ${loaded} achievement summaries into store`);
+                  }
                 }
               }
             } catch (err) {
@@ -543,7 +628,28 @@ export async function runBootTasks(): Promise<void> {
             logBoot("cached media index done");
           });
 
-          // Stage 7: Start background job queue idle processing
+          // Stage 7: Start achievement watcher (file watching only, no scanning)
+          await track("start-achievement-watcher", async () => {
+            logBoot("achievement watcher setup start");
+            try {
+              const { ACHIEVEMENT_WATCHER_ENABLED } = await import("./achievementWatcherService");
+              if (ACHIEVEMENT_WATCHER_ENABLED && _cachedSettings) {
+                const { achievementWatcherService } = await import("./achievementWatcherService");
+                await achievementWatcherService.start(
+                  _cachedSettings.steamRoot,
+                  _cachedSettings.steamAccountId,
+                );
+                logBoot("achievement watcher started");
+              } else {
+                logBoot("achievement watcher disabled");
+              }
+            } catch (err) {
+              console.warn("[BOOT] achievement watcher start failed:", String(err));
+            }
+            logBoot("achievement watcher setup end");
+          });
+
+          // Stage 8 (formerly Stage 7): Start background job queue idle processing
           await track("start-background-job-queue", async () => {
             logBoot("background job queue ready");
             // The queue was imported at module level; it's ready to accept jobs.
@@ -551,7 +657,7 @@ export async function runBootTasks(): Promise<void> {
             logBoot("background job queue initialized");
           });
 
-          // Stage 8: Schedule background repair jobs (after main UI opens)
+          // Stage 9 (formerly Stage 8): Schedule background repair jobs (after main UI opens)
           await track("schedule-background-repair", async () => {
             logBoot("scheduling background repair");
             try {
@@ -560,8 +666,9 @@ export async function runBootTasks(): Promise<void> {
                 // Enqueue low-priority validation
                 backgroundJobQueue.enqueue("validate-portable-paths", "steam", { priority: "low" });
 
-                // Enqueue achievement schema generation for games that have achievements
+                // Emergency stabilization: achievement migration disabled
                 if (_snapshotLoaded) {
+                  const { ACHIEVEMENT_SCHEMA_MIGRATION_AUTO, ACHIEVEMENT_IMAGE_MIGRATION_AUTO } = await import("./achievementStore");
                   const { achievementStore } = await import("./achievementStore");
                   const appIds = _snapshotLoaded.library.games
                     .filter((g) => g.appId && g.source === "steam")
@@ -574,20 +681,24 @@ export async function runBootTasks(): Promise<void> {
                     }
                   }
 
-                  // Part 5: Repair existing cache entries with wrong icon_gray paths
-                  // (img/<hash>.jpg instead of img/<hash>_gray.jpg)
-                  const firstBatch = appIds.slice(0, 5);
-                  await Promise.allSettled(
-                    firstBatch.map((aid) => achievementStore.repairGrayIconPaths(aid, "boot"))
-                  );
+                  // Schemas and image jobs only if auto-migration is enabled
+                  if (ACHIEVEMENT_SCHEMA_MIGRATION_AUTO) {
+                    // Repair existing cache entries with wrong icon_gray paths
+                    const firstBatch = appIds.slice(0, 5);
+                    await Promise.allSettled(
+                      firstBatch.map((aid) => achievementStore.repairGrayIconPaths(aid, "boot"))
+                    );
 
-                  // Batch to avoid overwhelming the queue
-                  const batch = missing.slice(0, 10);
-                  if (batch.length > 0) {
-                    const { enqueueAchievementSchemaJobs, enqueueAchievementImageJobs } = await import("./backgroundJobQueue");
-                    enqueueAchievementSchemaJobs(batch, "low");
-                    enqueueAchievementImageJobs(batch, "low");
-                    logBoot(`scheduled background achievement jobs for ${batch.length} games`);
+                    // Batch to avoid overwhelming the queue
+                    const batch = missing.slice(0, 10);
+                    if (batch.length > 0) {
+                      const { enqueueAchievementSchemaJobs, enqueueAchievementImageJobs } = await import("./backgroundJobQueue");
+                      enqueueAchievementSchemaJobs(batch, "low");
+                      if (ACHIEVEMENT_IMAGE_MIGRATION_AUTO) {
+                        enqueueAchievementImageJobs(batch, "low");
+                      }
+                      logBoot(`scheduled background achievement jobs for ${batch.length} games`);
+                    }
                   }
                 }
                 // Startup media hydration — fill missing appinfo fields
@@ -616,7 +727,7 @@ export async function runBootTasks(): Promise<void> {
             logBoot("background repair scheduled");
           });
 
-          // Stage 9: Confirm main window is mounted
+          // Stage 10 (formerly Stage 9): Confirm main window is mounted
           await track("confirm-mounted", async () => {
             logBoot("route shell ready");
           });

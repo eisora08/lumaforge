@@ -1,4 +1,4 @@
-import { Children, ReactNode, useRef } from "react";
+import { Children, ReactNode, useEffect, useRef } from "react";
 import {
   ArrowRight,
   ChevronLeft,
@@ -10,6 +10,10 @@ type StoreHorizontalSectionProps = {
   description?: string;
   children: ReactNode;
   onViewAll?: () => void;
+  /** When this value changes, auto-scroll to the far right of the container. */
+  autoScrollToEndKey?: string | number | null;
+  /** Optional prefix for composite keys: `${sectionKey}:steam:${index}` */
+  sectionKey?: string;
 };
 
 export default function StoreHorizontalSection({
@@ -17,8 +21,16 @@ export default function StoreHorizontalSection({
   description,
   children,
   onViewAll,
+  autoScrollToEndKey,
+  sectionKey,
 }: StoreHorizontalSectionProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ left: el.scrollWidth, behavior: "smooth" });
+  }, [autoScrollToEndKey]);
 
   function handleScroll(direction: "left" | "right") {
     const element = scrollRef.current;
@@ -83,7 +95,7 @@ export default function StoreHorizontalSection({
         >
           {items.map((item, index) => (
             <div
-              key={index}
+              key={sectionKey ? `${sectionKey}:steam:${index}` : index}
               className="w-[min(82vw,420px)] shrink-0 snap-start md:w-95 xl:w-105 lf-fade-in"
               style={{ animationDelay: `${index * 30}ms` }}
             >

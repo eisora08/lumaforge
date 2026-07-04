@@ -13,7 +13,10 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getCachedPlaytimeStore } from "../../services/playtimeService";
 import { getRecommendedWithGlobalFill } from "../../services/recommendationService";
-import { localPathToUrl } from "../../services/gameCacheService";
+
+const DEBUG_DASH_RECOMMEND = false;
+const DEBUG_DASH_RECOMMEND_PER_GAME = false;
+import { localPathToUrl, deduplicateByAppId } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
 import AsyncImage from "../common/AsyncImage";
@@ -103,10 +106,10 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
     );
   }, [catalogEntries, catalogLogKey]);
 
-  const displayGames = useMemo(
-    () => getRecommendedWithGlobalFill(libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, 10),
-    [libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds],
-  );
+  const displayGames = useMemo(() => {
+    const result = getRecommendedWithGlobalFill(libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, 10);
+    return result;
+  }, [libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds]);
 
   useEffect(() => {
     for (const game of displayGames) {
@@ -127,11 +130,13 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
     const ids = displayGames.map(g => g.appId).filter(Boolean).join(",");
     if (recLogRef.current !== `${source}|${ids}`) {
       recLogRef.current = `${source}|${ids}`;
-      const tags = displayGames.slice(0, 3).map(g => g.metadata?.genres?.slice(0, 2).join(",") || "none").join(";");
-      console.log(`[DASH][RECOMMEND] source=${source} count=${displayGames.length} personal=${personalCount} global=${displayGames.length - personalCount} appids=${ids} tags=${tags}`);
+      if (DEBUG_DASH_RECOMMEND) {
+        const tags = displayGames.slice(0, 3).map(g => g.metadata?.genres?.slice(0, 2).join(",") || "none").join(";");
+        console.log(`[DASH][RECOMMEND] source=${source} count=${displayGames.length} personal=${personalCount} global=${displayGames.length - personalCount} appids=${ids} tags=${tags}`);
+      }
     }
     // Per-game source log (once per mount)
-    if (!perGameLogRef.current) {
+    if (!perGameLogRef.current && DEBUG_DASH_RECOMMEND_PER_GAME) {
       perGameLogRef.current = true;
       for (const game of displayGames) {
         if (!game.appId) continue;
@@ -225,14 +230,14 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
           ref={scrollRef}
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
-          {displayGames.map((game) => {
+          {deduplicateByAppId(displayGames).map((game) => {
             const imgSrc = resolveImageSrc(
               game.imageUrl || game.metadata?.header_image || game.metadata?.capsule_image || undefined,
             );
 
             return (
               <div
-                key={game.appId}
+                key={"dashboard:recommended:steam:" + game.appId}
                 className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56"
               >
                 <div

@@ -374,8 +374,8 @@ export async function readAchievementCache(appId: number): Promise<AppAchievemen
   return await invoke<AppAchievementCache | null>("read_achievement_cache", { appId });
 }
 
-export async function writeAchievementCache(appId: number, data: AppAchievementCache): Promise<void> {
-  return await invoke<void>("write_achievement_cache", { appId, data });
+export async function writeAchievementCache(appId: number, data: AppAchievementCache, migrateIcons = true): Promise<void> {
+  return await invoke<void>("write_achievement_cache", { appId, data, migrateIcons });
 }
 
 export type AchievementsAppSchemaResult = {

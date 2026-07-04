@@ -119,12 +119,52 @@ function mergeLuaIntoGame(
   }
 }
 
+// ── Steam scan TTL guard ──
+// Prevents repeated scans on every navigation/reconciliation.
+const STEAM_SCAN_TTL_MS = 10 * 60 * 1000; // 10 minutes
+let _lastSteamScanAt = 0;
+
+/** Check if a steam scan is allowed (TTL + Store route guard). Returns true if scanning is OK. */
+export function checkSteamScanAllowed(options?: { force?: boolean }): boolean {
+  if (options?.force) return true;
+  const hash = typeof window !== "undefined" ? window.location.hash : "";
+  if (hash.startsWith("#/store")) {
+    return false;
+  }
+  const now = Date.now();
+  if (_lastSteamScanAt > 0 && now - _lastSteamScanAt < STEAM_SCAN_TTL_MS) {
+    return false;
+  }
+  return true;
+}
+
+/** Mark steam scan timestamp (call after a successful scan). */
+export function markSteamScanComplete(): void {
+  _lastSteamScanAt = Date.now();
+}
+
 export async function resolveLibraryGames(
   settings: AppSettings,
+  options?: { force?: boolean },
 ): Promise<{ games: LibraryGame[]; warnings: string[] }> {
   const warnings: string[] = [];
 
+  // TTL + Store route guard
+  if (!checkSteamScanAllowed(options)) {
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (hash.startsWith("#/store")) {
+      console.log("[steam-scan][SKIP] reason=store-active");
+      warnings.push("Skipped: store active");
+    } else {
+      const now = Date.now();
+      console.log(`[steam-scan][SKIP] reason=ttl-valid elapsedMs=${now - _lastSteamScanAt}`);
+      warnings.push("Skipped: TTL valid");
+    }
+    return { games: [], warnings };
+  }
+
   // 1. Steam installed scan — this provides the PRIMARY game list
+  markSteamScanComplete();
   let steamGames: SteamInstalledGame[] = [];
   try {
     steamGames = await scanSteamInstalledGames({

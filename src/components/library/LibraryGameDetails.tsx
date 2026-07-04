@@ -97,25 +97,31 @@ type LibraryGameDetailsProps = {
 
 const ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS = false;
 
+function logDetailsCanonical(appId: string, msg: string): void {
+  if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
+    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${appId} ${msg}`);
+  }
+}
+
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
   // Hero priority: backgroundPath > landscapePath > coverPath > remote metadata > placeholder
   if (canonicalAppInfo?.media?.backgroundPath) {
-    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`);
+    logDetailsCanonical(game.appId ?? "", `heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`);
     return canonicalAppInfo.media.backgroundPath;
   }
   if (canonicalAppInfo?.media?.landscapePath) {
-    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`);
+    logDetailsCanonical(game.appId ?? "", `heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`);
     return canonicalAppInfo.media.landscapePath;
   }
   if (canonicalAppInfo?.media?.coverPath) {
-    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=cover path=${canonicalAppInfo.media.coverPath}`);
+    logDetailsCanonical(game.appId ?? "", `heroSelected=cover path=${canonicalAppInfo.media.coverPath}`);
     return canonicalAppInfo.media.coverPath;
   }
-  if (mediaEntry?.hero_path) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=mediaEntry.hero_path path=${mediaEntry.hero_path}`); return mediaEntry.hero_path; }
-  if (mediaEntry?.grid_path) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=mediaEntry.grid_path path=${mediaEntry.grid_path}`); return mediaEntry.grid_path; }
-  if (appInfoEntry?.header_image) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=appInfoEntry.header_image path=${appInfoEntry.header_image}`); return appInfoEntry.header_image; }
-  if (artwork?.sgdbHeroUrl) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
-  if (artwork?.sgdbGridUrl) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
+  if (mediaEntry?.hero_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.hero_path path=${mediaEntry.hero_path}`); return mediaEntry.hero_path; }
+  if (mediaEntry?.grid_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.grid_path path=${mediaEntry.grid_path}`); return mediaEntry.grid_path; }
+  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image path=${appInfoEntry.header_image}`); return appInfoEntry.header_image; }
+  if (artwork?.sgdbHeroUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
+  if (artwork?.sgdbGridUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
   const remoteSrc = game.metadata?.library_hero_image
     || game.metadata?.background_image
     || game.metadata?.hero_image
@@ -126,12 +132,12 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.capsule_image_v5
     || game.imageUrl;
   if (remoteSrc) {
-    console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=remoteMetadata`);
+    logDetailsCanonical(game.appId ?? "", `heroSelected=remoteMetadata`);
     return remoteSrc;
   }
-  if (mediaEntry?.cover_path) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=mediaEntry.cover_path path=${mediaEntry.cover_path}`); return mediaEntry.cover_path; }
-  if (canonicalDiskFallback) { console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=canonicalDiskFallback path=${canonicalDiskFallback}`); return canonicalDiskFallback; }
-  console.log(`[MEDIA][DETAILS_CANONICAL] appid=${game.appId} heroSelected=placeholder path=null exists=false`);
+  if (mediaEntry?.cover_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.cover_path path=${mediaEntry.cover_path}`); return mediaEntry.cover_path; }
+  if (canonicalDiskFallback) { logDetailsCanonical(game.appId ?? "", `heroSelected=canonicalDiskFallback path=${canonicalDiskFallback}`); return canonicalDiskFallback; }
+  logDetailsCanonical(game.appId ?? "", `heroSelected=placeholder path=null exists=false`);
   return undefined;
 }
 
@@ -349,14 +355,21 @@ export default function LibraryGameDetails({
     ? (hasPlaytimeStore ? formatPlaytimeSeconds(totalSeconds) : formatPlaytime(playTimeValue))
     : "Not tracked";
 
+  // Derive progress from loaded achievement list if summary doesn't have it
+  const derivedUnlocked = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
+  const canDeriveProgress = (achievementsSummary?.achievements?.length ?? 0) > 0
+    && !achievementsSummary?.progressAvailable;
+  const effectiveUnlocked = achievementsSummary?.unlocked ?? derivedUnlocked;
+  const effectiveTotal = achievementsSummary?.total ?? achievementsSummary?.achievements?.length ?? 0;
+  const effectiveProgressAvailable = achievementsSummary?.progressAvailable || canDeriveProgress;
   const achievementsStatus = achievementsSummary?.source === "disabled"
     ? (game.achievementsSupported ? "Supported" : "Unavailable")
     : achievementsSummary?.source === "setup-required"
       ? "Setup required"
       : achievementsSummary?.errorReason === "missing-appid"
         ? "Unavailable"
-        : achievementsSummary?.progressAvailable
-          ? `${achievementsSummary.unlocked} / ${achievementsSummary.total}`
+        : effectiveProgressAvailable && effectiveTotal > 0
+          ? `${effectiveUnlocked} / ${effectiveTotal}`
           : achievementsSummary && achievementsSummary.achievements.length > 0
             ? "Progress unavailable"
             : game.achievementsSupported
@@ -484,15 +497,101 @@ export default function LibraryGameDetails({
       return;
     }
     const stored = achievementStore.getSummary(appIdStr) ?? null;
+    if (stored) {
+      console.log(`[ACH][STATE_PRESERVE] appid=${appIdStr} reason=route-change unlocked=${stored.unlocked}/${stored.total}`);
+    }
     setAchievementsSummary(prev => {
       if (prev?.appId === stored?.appId && prev?.source === stored?.source && prev?.unlocked === stored?.unlocked && prev?.total === stored?.total) return prev;
       return stored;
     });
   }, [appIdStr]);
 
-  // Load achievements
+  // Load achievements — only on explicit refresh, NOT on mount (auto-disabled)
+  // Safe: reads existing disk cache for current visible appId only.
+  // No stats/schema scan, no migration, no cache write, no full library scan.
+  const shouldAutoLoadAchievements = false; // ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS — hard-disabled
+  const ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP = true;
+  const cacheReadLoggedRef = useRef(false);
+  const diskCacheReadRef = useRef(false);
   useEffect(() => {
     if (!appIdStr) return;
+    if (!shouldAutoLoadAchievements) {
+      let cancelled = false;
+      // 1. Check in-memory store first
+      const stored = achievementStore.getSummary(appIdStr);
+      if (stored) {
+        setAchievementsSummary(stored);
+        if (!cacheReadLoggedRef.current) {
+          cacheReadLoggedRef.current = true;
+          const unlockedCount = stored.achievements?.filter((a: any) => a.unlocked).length ?? stored.unlocked ?? 0;
+          console.log(`[ACH][VISIBLE_CACHE_HIT] appid=${appIdStr} unlocked=${unlockedCount}/${stored.total}`);
+        }
+        setAchievementsLoading(false);
+        return;
+      }
+      // 2. If ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP, try disk cache (no write/no migration)
+      if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP && !diskCacheReadRef.current) {
+        diskCacheReadRef.current = true;
+        const appIdNum = Number(appIdStr);
+        if (Number.isFinite(appIdNum)) {
+          import("../../services/tauri").then(({ readAchievementCache }) => {
+              if (cancelled) return;
+              readAchievementCache(appIdNum).then((diskCache) => {
+                if (cancelled || !diskCache) {
+                  console.log(`[ACH][VISIBLE_CACHE_MISS] appid=${appIdStr} action=show-placeholder`);
+                  setAchievementsLoading(false);
+                  return;
+                }
+                if (!cancelled && diskCache.achievements?.length) {
+                  const total = diskCache.achievements.length;
+                  const unlocked = diskCache.achievements.filter((a: any) => a.unlocked).length;
+                  const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
+                  const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
+                  const summary = {
+                    appId: appIdStr,
+                    source: "local-cache" as const,
+                    total,
+                    unlocked,
+                    percent,
+                    progressAvailable: hasRealProgress,
+                    updatedAt: diskCache.summary?.updated_at ?? Date.now(),
+                    achievements: diskCache.achievements.map((a: any) => ({
+                      id: a.api_name ?? a.id ?? "",
+                      apiName: a.api_name ?? a.name ?? "",
+                      name: a.display_name ?? a.name ?? a.api_name ?? "",
+                      description: a.description ?? "",
+                      iconUrl: a.icon_url ?? a.icon ?? undefined,
+                      iconGrayUrl: a.icon_gray_url ?? a.icon_gray ?? undefined,
+                      unlocked: !!a.unlocked,
+                      unlockTime: a.unlock_time ?? undefined,
+                      progress: a.progress ?? undefined,
+                      progressMax: a.progress_max ?? undefined,
+                      rarityPercent: a.rarity_percent ?? undefined,
+                    })),
+                  };
+                  achievementStore.setSummary(appIdStr, summary);
+                  setAchievementsSummary(summary);
+                  console.log(`[ACH][VISIBLE_CACHE_READ] appid=${appIdStr} count=${total}`);
+                  console.log(`[ACH][SUMMARY_DERIVED_FROM_LIST] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
+                } else {
+                  console.log(`[ACH][VISIBLE_CACHE_MISS] appid=${appIdStr} action=show-placeholder`);
+                }
+                setAchievementsLoading(false);
+              }).catch(() => {
+                if (!cancelled) {
+                  console.log(`[ACH][VISIBLE_CACHE_MISS] appid=${appIdStr} action=show-placeholder reason=disk-read-failed`);
+                  setAchievementsLoading(false);
+                }
+              });
+          });
+        } else {
+          setAchievementsLoading(false);
+        }
+        return;
+      }
+      setAchievementsLoading(false);
+      return;
+    }
     let cancelled = false;
     setAchievementsLoading(true);
     resolveSteamAchievements({
@@ -541,6 +640,27 @@ export default function LibraryGameDetails({
     });
     return unsub;
   }, [appIdStr]);
+
+  // Derive progress from loaded achievement list if summary has list but no progress
+  useEffect(() => {
+    if (!appIdStr || !achievementsSummary) return;
+    if (achievementsSummary.progressAvailable) return;
+    const list = achievementsSummary.achievements;
+    if (!list || list.length === 0) return;
+    const unlocked = list.filter(a => a.unlocked).length;
+    const total = list.length;
+    const percent = Math.round((unlocked / total) * 100);
+    const patched = {
+      ...achievementsSummary,
+      unlocked,
+      total,
+      percent,
+      progressAvailable: true,
+    };
+    console.log(`[ACH][SUMMARY_DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
+    achievementStore.setSummary(appIdStr, patched);
+    setAchievementsSummary(patched);
+  }, [appIdStr, achievementsSummary]);
 
   // Store: subscribe to central store for fast patches from watcher
   useEffect(() => {
@@ -763,7 +883,9 @@ export default function LibraryGameDetails({
   );
 }
 
-  console.log(`[MEDIA][DETAILS_RENDER] appid=${game.appId} title=${detailTitle} imageUrl=${imageUrl ? "set" : "null"} logoUrl=${logoUrl ? "set" : "null"} canonicalMedia=${canonicalAppInfo?.media ? "set" : "null"}`);
+  if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
+    console.log(`[MEDIA][DETAILS_RENDER] appid=${game.appId} title=${detailTitle} imageUrl=${imageUrl ? "set" : "null"} logoUrl=${logoUrl ? "set" : "null"} canonicalMedia=${canonicalAppInfo?.media ? "set" : "null"}`);
+  }
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -1197,7 +1319,7 @@ export default function LibraryGameDetails({
                 )}
               </section>
 
-              {/* Activity */}
+              {/* Activity
               <section>
                 <h2 className="mb-3 text-base font-bold text-(--color-text)">
                   <Activity className="mr-2 inline h-4 w-4 text-(--color-accent)" />
@@ -1226,7 +1348,7 @@ export default function LibraryGameDetails({
                     </p>
                   </div>
                 )}
-              </section>
+              </section> */}
             </div>
 
             {/* Right: Side panel */}
@@ -1351,7 +1473,7 @@ export default function LibraryGameDetails({
                       Open Settings
                     </p>
                   </div>
-                ) : achievementsSummary && achievementsSummary.progressAvailable && achievementsSummary.total > 0 ? (
+                ) : achievementsSummary && effectiveProgressAvailable && effectiveTotal > 0 ? (
                   <div className="mt-3 space-y-3">
                     {/* Progress bar */}
                     <div>
@@ -1448,7 +1570,7 @@ export default function LibraryGameDetails({
                       )}
                     </div>
                   </div>
-                ) : achievementsSummary && !achievementsSummary.progressAvailable && achievementsSummary.achievements.length > 0 ? (
+                ) : achievementsSummary && !effectiveProgressAvailable && achievementsSummary.achievements.length > 0 ? (
                   <div className="mt-3 space-y-3">
                     <p className="text-xs text-(--color-muted)">
                       Achievement list available. Progress unavailable.
@@ -1530,10 +1652,54 @@ export default function LibraryGameDetails({
                       Configure in Settings
                     </p>
                   </div>
+                ) : game.achievementsSupported ? (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs text-(--color-muted)">
+                      Achievements not loaded
+                    </p>
+                    <p className="text-[10px] text-(--color-muted)/60">
+                      Manual refresh checks local Steam data for this game.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                        if (!appIdStr) return;
+                        setAchievementsLoading(true);
+                        try {
+                          const s = await resolveSteamAchievements({
+                            appId: appIdStr,
+                            steamWebApiKey: settings.steamWebApiKey || undefined,
+                            steamId64: settings.steamId64 || undefined,
+                            accountId: settings.steamAccountId || undefined,
+                            steamPath: settings.steamRoot || undefined,
+                            forceRefresh: true,
+                            steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                            achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                          });
+                          if (appIdStr) {
+                            setAchievementsSummary(s);
+                            achievementStore.setSummary(appIdStr, s);
+                            const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
+                            console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${s.achievements.length} summary=${unlocked}/${s.total}`);
+                            console.log(`[ACH][SUMMARY_PERSISTED] appid=${appIdStr} unlocked=${unlocked}/${s.total}`);
+                          }
+                        } catch (err) {
+                          console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                          toast.error("Failed to refresh achievements");
+                        } finally {
+                          setAchievementsLoading(false);
+                        }
+                      }}
+                      className="mt-1 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
+                    >
+                      {achievementsLoading ? "Loading..." : "Refresh Achievements"}
+                    </button>
+                  </div>
                 ) : (
                   <div className="mt-3">
                     <p className="text-xs text-(--color-muted)">
-                      Achievements are not available for this game.
+                      Achievements are not supported for this game.
                     </p>
                   </div>
                 )}
@@ -1658,6 +1824,11 @@ export default function LibraryGameDetails({
                 } else {
                   setAchievementsSummary(s);
                   if (appIdStr) achievementStore.setSummary(appIdStr, s);
+                }
+                if (appIdStr) {
+                  const summary = achievementStore.getSummary(appIdStr);
+                  console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${summary?.achievements?.length ?? 0} summary=${summary?.unlocked}/${summary?.total}`);
+                  console.log(`[ACH][SUMMARY_PERSISTED] appid=${appIdStr} unlocked=${summary?.unlocked}/${summary?.total}`);
                 }
                 console.debug(`[ACH][REFRESH] done`);
                 setAchievementsRefreshing(false);

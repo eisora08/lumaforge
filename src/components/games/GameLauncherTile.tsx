@@ -140,8 +140,9 @@ export default function GameLauncherTile({
   );
 
   // Source trace log — emitted once per instance per game
+  const DEBUG_NAME_SOURCE_TRACE = false;
   const displayTraced = useRef(false);
-  if (!displayTraced.current && game.appId) {
+  if (DEBUG_NAME_SOURCE_TRACE && !displayTraced.current && game.appId) {
     displayTraced.current = true;
     const sources = [
       { key: "canonical", val: canonicalInfo?.name },
@@ -171,10 +172,10 @@ export default function GameLauncherTile({
       .then((url) => {
         if (cancelled) return;
         if (url) {
-          console.log(`[MEDIA][GRID] appid=${logId} selected=${artworkMode === "poster" ? "cover" : "landscape"} source=canonical url=true displayTitle=${displayTitle}`);
+          if (DEBUG_NAME_SOURCE_TRACE) console.log(`[MEDIA][GRID] appid=${logId} selected=${artworkMode === "poster" ? "cover" : "landscape"} source=canonical url=true displayTitle=${displayTitle}`);
           setResolvedSrc(url);
         } else {
-          console.log(`[MEDIA][GRID] appid=${logId} selected=placeholder reason=resolve-failed path=${displayImage}`);
+          if (DEBUG_NAME_SOURCE_TRACE) console.log(`[MEDIA][GRID] appid=${logId} selected=placeholder reason=resolve-failed path=${displayImage}`);
           setResolvedSrc(undefined);
         }
       })
@@ -185,9 +186,11 @@ export default function GameLauncherTile({
   }, [game.appId, displayImage, artworkMode]);
 
   // Render-time diagnostics — log once on state change, not every render
+  // Disabled by default to reduce log spam. Set DEBUG_MEDIA_GRID=true in dev console to enable.
+  const DEBUG_MEDIA_GRID = false;
   const renderLogRef = useRef<string | null>(null);
   const renderStateKey = `${game.appId}|${mediaLoading}|${!!resolvedSrc}|${!!displayImage}`;
-  if (renderLogRef.current !== renderStateKey) {
+  if (DEBUG_MEDIA_GRID && renderLogRef.current !== renderStateKey) {
     renderLogRef.current = renderStateKey;
     console.log(`[MEDIA][GRID_RENDER] appid=${game.appId} mediaLoading=${mediaLoading} hasResolvedSrc=${!!resolvedSrc} hasDisplayImage=${!!displayImage}`);
   }

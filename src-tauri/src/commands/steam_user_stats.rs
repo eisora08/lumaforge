@@ -4,8 +4,12 @@ use std::path::{Path, PathBuf};
 
 use crate::models::steam_user_game_stats::SteamUserGameStats;
 
+const DEBUG_ACH_STATS: bool = false;
+
 fn debug_log(msg: impl std::fmt::Display) {
-    eprintln!("[steam-user-stats] {}", msg);
+    if DEBUG_ACH_STATS {
+        eprintln!("[steam-user-stats] {}", msg);
+    }
 }
 
 fn find_userdata_dirs(steam_root: &Path) -> Vec<PathBuf> {

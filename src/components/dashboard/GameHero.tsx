@@ -7,6 +7,9 @@ import { useGameSession } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getCachedPlaytimeStore } from "../../services/playtimeService";
 import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
+
+const DEBUG_NAME_HERO = false;
+const DEBUG_MEDIA_HERO = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showWarning } from "../toast/GameToast";
 import AsyncImage from "../common/AsyncImage";
@@ -261,12 +264,12 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           const entry = r[heroAppId!];
           const resolved = entry?.title;
           setHeroTitle(resolved ?? heroGame!.title);
-          console.log(`[NAME][HERO] appid=${heroAppId} source=${entry?.source ?? "snapshot"} title=${resolved ?? heroGame!.title}`);
+          if (DEBUG_NAME_HERO) console.log(`[NAME][HERO] appid=${heroAppId} source=${entry?.source ?? "snapshot"} title=${resolved ?? heroGame!.title}`);
         }
       });
     }
     const selection = heroGame?.media?.backgroundPath ? "background" : "landscape";
-    console.log(`[MEDIA][HERO] appid=${heroAppId} selected=${selection} bgExists=${!!bgPath} title=${heroTitle || heroGame?.title}`);
+    if (DEBUG_MEDIA_HERO) console.log(`[MEDIA][HERO] appid=${heroAppId} selected=${selection} bgExists=${!!bgPath} title=${heroTitle || heroGame?.title}`);
     return () => { cancelled = true; };
   }, [heroGame, heroAppId]);
 

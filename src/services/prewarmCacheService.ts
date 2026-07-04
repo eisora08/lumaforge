@@ -30,7 +30,7 @@ const listeners = new Set<PrewarmListener>();
 let currentProgress: PrewarmProgress = { total: 0, completed: 0, skipped: 0, failed: 0, status: "idle" };
 let cancelledFlag = false;
 
-const ENABLE_VERBOSE_PREWARM_LOGS = true;
+const ENABLE_VERBOSE_PREWARM_LOGS = false;
 
 export function subscribeToPrewarm(listener: PrewarmListener): () => void {
   listeners.add(listener);

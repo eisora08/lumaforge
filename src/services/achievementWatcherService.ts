@@ -7,6 +7,36 @@ import type { AppAchievementCache } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
 import { sendAchievementNativeNotification } from "./achievementNotificationService";
 import { showAchievementToast, showGroupedAchievementToast } from "../components/library/AchievementToast";
+import {
+  ACHIEVEMENTS_AUTO_ENABLED,
+  ACHIEVEMENT_WATCHER_PROCESS_EVENTS,
+  logWatcherProcessSkipOnce,
+  logStoreSkipOnce,
+  isStoreRoute,
+} from "./achievementAutoFlags";
+
+// ---------------------------------------------------------------------------
+// Startup flags — all default to minimal work
+// ---------------------------------------------------------------------------
+
+export const ACHIEVEMENT_WATCHER_ENABLED = true;
+export const ACHIEVEMENT_WATCHER_FULL_SCAN_ON_STARTUP = false;
+export const ACHIEVEMENT_LIBRARYCACHE_SCAN_ON_BOOT = false;
+export const ACHIEVEMENT_PROCESS_MISSING_CACHE_ON_BOOT = false;
+export const DEBUG_ACH_LIBRARYCACHE = false;
+export const DEBUG_ACH_WATCHER = false;
+
+let _fullScanSkipLogged = false;
+
+function logFullScanSkipOnce(): void {
+  if (!_fullScanSkipLogged) {
+    _fullScanSkipLogged = true;
+    console.log("[ACH][WATCHER] full-scan skipped reason=disabled");
+  }
+}
+
+// If master switch is off, override event processing
+const _shouldProcessEvents = ACHIEVEMENTS_AUTO_ENABLED && ACHIEVEMENT_WATCHER_PROCESS_EVENTS;
 
 // ---------------------------------------------------------------------------
 // Settings reading helpers (no React context needed)
@@ -148,8 +178,11 @@ function saveGlobalSnapshot(snapshot: GlobalSnapshot): void {
 class AchievementWatcherService {
   private unlisten: UnlistenFn | null = null;
   private _started = false;
+  private _alreadyStartedOnce = false;
   private _steamPath = "";
   private _steamAccountId = "";
+  // Debounce: set of appIds currently being processed via watcher events
+  private _debouncedAppIds = new Set<string>();
 
   // Focus listener
   private _focusHandler: (() => void) | null = null;
@@ -213,6 +246,16 @@ class AchievementWatcherService {
       return;
     }
 
+    // Singleton: already started once this session — skip restart
+    if (this._alreadyStartedOnce) {
+      if (this._steamPath === steamPath && this._steamAccountId === steamAccountId) {
+        console.log("[ACH][WATCHER] already-running skip");
+        return;
+      }
+      // Settings changed — allow restart
+      console.log("[ACH][WATCHER] restarting reason=settings-changed");
+    }
+
     if (this._started) {
       await this.stop();
     }
@@ -246,35 +289,56 @@ class AchievementWatcherService {
       this.unlisten = await listen<AchievementFileChangedPayload>(
         "achievement-progress-file-changed",
         (event) => {
+          if (isStoreRoute()) {
+            logStoreSkipOnce();
+            return;
+          }
+
+          if (!_shouldProcessEvents) {
+            logWatcherProcessSkipOnce();
+            return;
+          }
+
           const { appid, source, path, modified_at, size, trace_id } = event.payload;
           const traceId = trace_id || nextTraceId();
           const appIdStr = String(appid);
 
-          // Part 1: frontend event received log
-          console.debug(`[ACH][BG][${traceId}] frontend event received appid=${appIdStr} source=${source} path=${path}`);
+          if (DEBUG_ACH_WATCHER) {
+            console.debug(`[ACH][BG][${traceId}] frontend event received appid=${appIdStr} source=${source} path=${path}`);
+          }
 
           const fp = makeFingerprint(path, modified_at, size);
           const prev = lastFingerprints.get(path);
           if (prev && prev.fingerprint === fp && prev.processed) {
-            console.debug(`[ACH][BG][${traceId}] ignored reason=duplicate-fingerprint fingerprint=${fp}`);
+            if (DEBUG_ACH_WATCHER) {
+              console.debug(`[ACH][BG][${traceId}] ignored reason=duplicate-fingerprint fingerprint=${fp}`);
+            }
             return;
           }
-          console.debug(`[ACH][BG][${traceId}] fingerprint=${fp} duplicate=false`);
 
           lastFingerprints.set(path, { fingerprint: fp, processed: false });
 
           // Update poll metadata
           this._lastFileMeta.set(path, { size, modified: modified_at });
 
-          // Part 2: Process librarycache events globally — NO filter for route, focus, GameDetails, etc.
+          // Process only the changed appId — no scanning of all appIds
           if (source === "librarycache") {
-            console.debug(`[ACH][BG][${traceId}] processingGlobally=true`);
+            // Debounce: skip if already queued for same appId
+            if (this._debouncedAppIds.has(appIdStr)) {
+              if (DEBUG_ACH_WATCHER) {
+                console.debug(`[ACH][WATCHER_DEDUPE] appid=${appIdStr} reason=already-queued`);
+              }
+              return;
+            }
+            this._debouncedAppIds.add(appIdStr);
+            console.log(`[ACH][WATCHER_EVENT] appid=${appIdStr} source=librarycache queued=true`);
             this.processLibrarycacheChange(appIdStr, path, "watcher", traceId).then((ok) => {
+              this._debouncedAppIds.delete(appIdStr);
               if (ok && lastFingerprints.has(path)) {
                 lastFingerprints.set(path, { fingerprint: fp, processed: true });
               }
             });
-          } else {
+          } else if (DEBUG_ACH_WATCHER) {
             console.debug(`[ACH][BG][${traceId}] ignored reason=non-librarycache-source source=${source}`);
           }
         },
@@ -327,24 +391,42 @@ class AchievementWatcherService {
       }
     });
 
-    // Window focus: show queued toasts and rescan librarycache
+    // Window focus: drain pending unlocks and optionally rescan librarycache
     this._focusHandler = () => {
       if (!this._started) return;
-      console.debug("[ACH][WATCHER] window focus - draining pending unlocks and scanning cache");
-      // Drain pending unfocus unlocks
+      if (DEBUG_ACH_WATCHER) {
+        console.debug("[ACH][WATCHER] window focus - draining pending unlocks");
+      }
       this.drainPendingUnlocks();
-      this.scanLibraryCacheChanges();
+      // Scan librarycache on focus only if enabled (disabled by default)
+      if (ACHIEVEMENT_LIBRARYCACHE_SCAN_ON_BOOT) {
+        if (DEBUG_ACH_WATCHER) {
+          console.debug("[ACH][WATCHER] window focus - scanning librarycache");
+        }
+        this.scanLibraryCacheChanges();
+      }
     };
     window.addEventListener("focus", this._focusHandler);
 
-    // Start polling fallback every 1 second (Part A3)
-    this.startPollingFallback();
+    // Polling fallback: disabled by default to avoid full librarycache scans
+    if (ACHIEVEMENT_LIBRARYCACHE_SCAN_ON_BOOT) {
+      this.startPollingFallback();
+    } else if (DEBUG_ACH_WATCHER) {
+      console.debug("[ACH][WATCHER] polling fallback skipped reason=disabled");
+    }
 
-    // Baseline scan: seed snapshots for all existing librarycache files, show no toasts
-    await this.runBaselineScan();
+    // Baseline scan: disabled by default — watcher reacts to file changes only
+    if (ACHIEVEMENT_WATCHER_FULL_SCAN_ON_STARTUP) {
+      await this.runBaselineScan();
+    } else {
+      logFullScanSkipOnce();
+    }
 
     this._started = true;
-    console.debug("[ACH][WATCHER] started background=true");
+    this._alreadyStartedOnce = true;
+    if (DEBUG_ACH_WATCHER) {
+      console.debug("[ACH][WATCHER] started background=true");
+    }
   }
 
   async stop(): Promise<void> {
@@ -422,24 +504,36 @@ class AchievementWatcherService {
     });
     this._cachedAppIds = appids;
     this._cachedAppIdsAt = Date.now();
-    console.log(`[ACH][WATCHER] librarycache index loaded count=${appids.length}`);
+    if (ACHIEVEMENT_LIBRARYCACHE_SCAN_ON_BOOT) {
+      console.log(`[ACH][WATCHER] librarycache index loaded count=${appids.length}`);
+    }
     return appids;
   }
 
   private async pollLibraryCacheChanges(): Promise<void> {
     if (!this._steamPath || !this._steamAccountId) return;
+    // Only poll appIds that have been seen before (via file events), not all 236
+    // This avoids scanning the entire librarycache directory every second
+    const knownAppIds = new Set<string>();
+    for (const key of this._lastFileMeta.keys()) {
+      if (key.startsWith("librarycache:")) {
+        knownAppIds.add(key.replace("librarycache:", ""));
+      }
+    }
+    if (knownAppIds.size === 0) return;
     try {
-      const appids = await this.getCachedAppIds();
-      for (const appid of appids) {
-        const meta = await getFileSizeModified(String(appid), this._steamPath, this._steamAccountId);
+      for (const appIdStr of knownAppIds) {
+        const meta = await getFileSizeModified(appIdStr, this._steamPath, this._steamAccountId);
         if (!meta) continue;
-        const key = `librarycache:${appid}`;
+        const key = `librarycache:${appIdStr}`;
         const prev = this._lastFileMeta.get(key);
         if (!prev || prev.size !== meta.size || prev.modified !== meta.modified) {
           this._lastFileMeta.set(key, { size: meta.size, modified: meta.modified });
           const traceId = nextTraceId();
-          console.debug(`[ACH][POLL][${traceId}] changed appid=${appid}`);
-          this.processLibrarycacheChange(String(appid), `poll://${appid}`, "poll", traceId);
+          if (DEBUG_ACH_WATCHER) {
+            console.debug(`[ACH][POLL][${traceId}] changed appid=${appIdStr}`);
+          }
+          this.processLibrarycacheChange(appIdStr, `poll://${appIdStr}`, "poll", traceId);
         }
       }
     } catch {
@@ -452,18 +546,29 @@ class AchievementWatcherService {
   private async scanLibraryCacheChanges(): Promise<void> {
     if (!this._steamPath || !this._steamAccountId) return;
     const traceId = nextTraceId();
-    console.debug(`[ACH][FOCUS][${traceId}] scanning librarycache`);
+    if (DEBUG_ACH_WATCHER) {
+      console.debug(`[ACH][FOCUS][${traceId}] scanning librarycache`);
+    }
+    // Only scan appIds that have been seen via file events
+    const knownAppIds = new Set<string>();
+    for (const key of this._lastFileMeta.keys()) {
+      if (key.startsWith("librarycache:")) {
+        knownAppIds.add(key.replace("librarycache:", ""));
+      }
+    }
+    if (knownAppIds.size === 0) return;
     try {
-      const appids = await this.getCachedAppIds();
-      for (const appid of appids) {
-        const meta = await getFileSizeModified(String(appid), this._steamPath, this._steamAccountId);
+      for (const appIdStr of knownAppIds) {
+        const meta = await getFileSizeModified(appIdStr, this._steamPath, this._steamAccountId);
         if (!meta) continue;
-        const key = `librarycache:${appid}`;
+        const key = `librarycache:${appIdStr}`;
         const prev = this._lastFileMeta.get(key);
         if (!prev || prev.size !== meta.size || prev.modified !== meta.modified) {
           this._lastFileMeta.set(key, { size: meta.size, modified: meta.modified });
-          console.debug(`[ACH][FOCUS][${traceId}] change detected appid=${appid}`);
-          this.processLibrarycacheChange(String(appid), `focus://${appid}`, "focus", traceId);
+          if (DEBUG_ACH_WATCHER) {
+            console.debug(`[ACH][FOCUS][${traceId}] change detected appid=${appIdStr}`);
+          }
+          this.processLibrarycacheChange(appIdStr, `focus://${appIdStr}`, "focus", traceId);
         }
       }
     } catch {
@@ -680,6 +785,54 @@ class AchievementWatcherService {
     console.debug(`[ACH][SIMULATE][${traceId}] completed patched=${ok}`);
   }
 
+  /**
+   * Manual full librarycache scan — for dev/maintenance use only.
+   * Scans all librarycache files and seeds snapshots. Does NOT show toasts.
+   * Not called automatically during normal startup/navigation.
+   */
+  async runFullScan(): Promise<{ scanned: number; baselines: number; errors: number }> {
+    if (!this._steamPath || !this._steamAccountId) {
+      console.log("[ACH][FULL_SCAN] skipped reason=missing-steam-root-or-account-id");
+      return { scanned: 0, baselines: 0, errors: 0 };
+    }
+    const traceId = nextTraceId();
+    console.log(`[ACH][FULL_SCAN][${traceId}] started`);
+    try {
+      const appids = await this.getCachedAppIds();
+      let baselines = 0;
+      let errors = 0;
+      const snapshot = loadGlobalSnapshot();
+      for (const appid of appids) {
+        const appIdStr = String(appid);
+        try {
+          const patch = await buildProgressPatchFromLibraryCache(
+            appIdStr, this._steamPath, this._steamAccountId, traceId,
+          );
+          if (patch && patch.progressMap.size > 0) {
+            const appSnap: AppSnapshot = {};
+            for (const [apiName, progress] of patch.progressMap) {
+              appSnap[apiName] = progress.unlocked;
+            }
+            snapshot[appIdStr] = appSnap;
+            baselines++;
+          }
+        } catch {
+          errors++;
+        }
+        const meta = await getFileSizeModified(appIdStr, this._steamPath, this._steamAccountId);
+        if (meta) {
+          this._lastFileMeta.set(`librarycache:${appid}`, meta);
+        }
+      }
+      saveGlobalSnapshot(snapshot);
+      console.log(`[ACH][FULL_SCAN][${traceId}] complete apps=${appids.length} baselines=${baselines} errors=${errors}`);
+      return { scanned: appids.length, baselines, errors };
+    } catch (err) {
+      console.warn(`[ACH][FULL_SCAN][${traceId}] failed: ${err}`);
+      return { scanned: 0, baselines: 0, errors: 1 };
+    }
+  }
+
   private cacheToSummary(appId: string, cache: AppAchievementCache): GameAchievementsSummary {
     const achievements: GameAchievement[] = cache.achievements.map((entry) => ({
       id: entry.api_name,
@@ -710,10 +863,13 @@ class AchievementWatcherService {
 
 export const achievementWatcherService = new AchievementWatcherService();
 
-// Dev console: expose simulate command
+// Dev console: expose commands
 if (import.meta.env.DEV) {
   (window as any).__simulateLibrarycacheChange = (appId: string) => {
     achievementWatcherService.simulateLibrarycacheChange(appId);
+  };
+  (window as any).__rebuildAchievementCache = () => {
+    return achievementWatcherService.runFullScan();
   };
 }
 

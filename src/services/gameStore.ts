@@ -13,6 +13,11 @@ export function getReconciledAt(): number | null {
 }
 
 export function setReconciledGames(games: LibraryGame[]): void {
+  // Guard: never overwrite a non-empty game list with an empty one
+  if (games.length === 0 && _reconciledGames.length > 0) {
+    console.log(`[GAMESTORE][EMPTY_OVERWRITE_BLOCKED] current=${_reconciledGames.length} incoming=0`);
+    return;
+  }
   _reconciledGames = games;
   _reconciledAt = Date.now();
   notify();
@@ -32,6 +37,39 @@ function notify(): void {
 export function clearReconciledGames(): void {
   _reconciledGames = [];
   _reconciledAt = null;
+  notify();
+}
+
+/**
+ * setReconciledGamesFromSnapshot — converts SnapshotGame[] to LibraryGame[]
+ * and stores them as the reconciled games list. Used when SQLite is empty
+ * and the full resolver returned no games, but snapshot data exists.
+ */
+export function setReconciledGamesFromSnapshot(
+  snapshotGames: Array<{ appId: string; title: string; source: string; playable?: boolean; installed?: boolean; lastPlayed?: number | null; playtime?: number | null }>,
+): void {
+  const games: LibraryGame[] = snapshotGames.map((sg) => ({
+    id: `snapshot-${sg.appId}`,
+    appId: sg.appId,
+    title: sg.title || "",
+    source: (sg.source === "lua" ? "lua" : "steam") as LibraryGame["source"],
+    isPlayable: sg.playable ?? false,
+    isInstallable: !sg.playable,
+    steamInstalled: sg.installed ?? false,
+    hasLua: sg.source === "lua",
+    isLuaActive: sg.source === "lua",
+    isLuaDisabled: false,
+    hasLuaSource: false,
+    luaScripts: [],
+    sources: [],
+    lastPlayed: sg.lastPlayed ?? undefined,
+    playtime: sg.playtime ?? undefined,
+    steamLastPlayedAt: sg.lastPlayed ?? undefined,
+    steamPlaytimeMinutes: sg.playtime ?? undefined,
+  }));
+  _reconciledGames = games;
+  _reconciledAt = Date.now();
+  console.log(`[GAMESTORE][HYDRATE] set reconciled games from snapshot count=${games.length}`);
   notify();
 }
 
@@ -279,6 +317,8 @@ export async function validateStartupCacheHealth(): Promise<{
   mediaIndexEntries: number;
   mediaWithCover: number;
   mediaWithLandscape: number;
+  mediaWithBackground: number;
+  mediaWithLogo: number;
   mediaWithIcon: number;
 }> {
   let snapshotGames = 0;
@@ -288,6 +328,8 @@ export async function validateStartupCacheHealth(): Promise<{
   let mediaIndexEntries = 0;
   let mediaWithCover = 0;
   let mediaWithLandscape = 0;
+  let mediaWithBackground = 0;
+  let mediaWithLogo = 0;
   let mediaWithIcon = 0;
   let jobsQueued = 0;
 
@@ -323,6 +365,8 @@ export async function validateStartupCacheHealth(): Promise<{
     mediaIndexEntries = entries.length;
     mediaWithCover = entries.filter((e) => e.hasCover).length;
     mediaWithLandscape = entries.filter((e) => e.hasLandscape).length;
+    mediaWithBackground = entries.filter((e) => e.hasBackground).length;
+    mediaWithLogo = entries.filter((e) => e.hasLogo).length;
     mediaWithIcon = entries.filter((e) => e.hasIcon).length;
   } catch { /* ignore */ }
 
@@ -340,9 +384,11 @@ export async function validateStartupCacheHealth(): Promise<{
   console.log(`[BOOT][HEALTH] mediaIndexEntries=${mediaIndexEntries}`);
   console.log(`[BOOT][HEALTH] mediaWithCover=${mediaWithCover}`);
   console.log(`[BOOT][HEALTH] mediaWithLandscape=${mediaWithLandscape}`);
+  console.log(`[BOOT][HEALTH] mediaWithBackground=${mediaWithBackground}`);
+  console.log(`[BOOT][HEALTH] mediaWithLogo=${mediaWithLogo}`);
   console.log(`[BOOT][HEALTH] mediaWithIcon=${mediaWithIcon}`);
 
-  return { snapshotGames, sqliteGames, storeGames, luaGames, jobsQueued, mediaIndexEntries, mediaWithCover, mediaWithLandscape, mediaWithIcon };
+  return { snapshotGames, sqliteGames, storeGames, luaGames, jobsQueued, mediaIndexEntries, mediaWithCover, mediaWithLandscape, mediaWithBackground, mediaWithLogo, mediaWithIcon };
 }
 
 // ── Dev validation: validateAppInfoMedia ──
@@ -523,3 +569,5 @@ export async function rebuildLibraryIndex(
   console.log(`[LIBRARY][REBUILD] complete upserted=${games.length}`);
   return { luaGames: luaGameCount, upserted: games.length };
 }
+
+

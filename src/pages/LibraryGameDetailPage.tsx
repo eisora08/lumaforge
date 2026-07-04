@@ -17,7 +17,6 @@ import type { GameAppInfo } from "../services/gameCacheService";
 import { loadGameAppInfoWithMediaFallback, resolveCanonicalDisplayTitle } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
 import { enqueueMediaDownload, cancelMediaJobsForApp } from "../services/mediaDownloadQueue";
-import { backgroundJobQueue } from "../services/backgroundJobQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
 import { useSettings } from "../context/SettingsContext";
@@ -54,6 +53,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
   const currentRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
+  const _prevAppIdRef = useRef<string | null>(null);
 
   const gameKey = selectedGame ? computeGameKey(selectedGame) : "";
   const { launchInfo, launchGame, cancelLaunch } = useGameLaunchState(gameKey);
@@ -119,14 +119,20 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   // Load local cache (media cache + canonical appinfo + details/{appid}.json) immediately
+  // Clear ALL state on any appId change to prevent stale cross-appId data during async fetch.
   useEffect(() => {
-    if (!selectedGame?.appId) {
-      setMediaEntry(null);
-      setCanonicalAppInfo(null);
-      setCanonicalDiskFallback(null);
-      setLocalDetailsData(null);
-      return;
+    // Cancel pending media downloads for any previously-active appId
+    if (_prevAppIdRef.current) {
+      cancelMediaJobsForApp(_prevAppIdRef.current);
     }
+    _prevAppIdRef.current = selectedGame?.appId ?? null;
+    setMediaEntry(null);
+    setCanonicalAppInfo(null);
+    setCanonicalDiskFallback(null);
+    setLocalDetailsData(null);
+
+    if (!selectedGame?.appId) return;
+
     let cancelled = false;
     getMediaCacheForAppId(selectedGame.appId).then(setMediaEntry).catch(() => setMediaEntry(null));
     loadGameAppInfoWithMediaFallback(selectedGame.appId).then((info) => {
@@ -195,7 +201,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       });
   }, [selectedGame]);
 
-  // Check if media is already complete — if not, queue a background repair job
+  // Check if media files actually exist on disk — if not, queue targeted repair
   // Resets when appId changes so a new game gets its own repair check.
   const mediaCheckDoneRef = useRef(false);
   useEffect(() => {
@@ -207,21 +213,16 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     mediaCheckDoneRef.current = true;
 
     const appIdStr = resolvedGame.appId;
-    const hasLandscape = !!canonicalAppInfo?.media?.landscapePath;
-    const hasCover = !!canonicalAppInfo?.media?.coverPath;
-    const hasBackground = !!canonicalAppInfo?.media?.backgroundPath;
-    const hasLogo = !!canonicalAppInfo?.media?.logoPath;
-    const hasIcon = !!canonicalAppInfo?.media?.iconPath;
 
-    if (hasLandscape && hasCover && hasBackground && hasLogo && hasIcon) {
-      return;
-    }
-
-    // Queue a background repair job with proper dedup
-    backgroundJobQueue.enqueue("repair-game-media", "steam", {
-      appId: appIdStr,
-      priority: "high",
-    });
+    // Check actual files on disk (not just appinfo paths)
+    const checkMedia = async () => {
+      const { detectAndQueueMissingMedia } = await import("../services/gameCacheService");
+      const queued = await detectAndQueueMissingMedia(appIdStr);
+      if (queued.length > 0) {
+        console.log(`[MEDIA][DETAILS_REPAIR] appid=${appIdStr} missing=${queued.join(",")} queued=true`);
+      }
+    };
+    checkMedia();
   }, [resolvedGame, canonicalAppInfo?.media?.landscapePath, canonicalAppInfo?.media?.coverPath, canonicalAppInfo?.media?.backgroundPath, canonicalAppInfo?.media?.logoPath, canonicalAppInfo?.media?.iconPath]);
 
   // Lazy per-game stats refresh
@@ -370,11 +371,15 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     canonicalAppInfo,
   );
 
-  console.log(`[NAME][DISPLAY] appid=${displayGame.appId} title=${detailTitle}`);
+  // Disabled by default. Set window.__DEBUG_NAME_TRACE = true in dev console to enable.
+  if ((window as any).__DEBUG_NAME_TRACE) {
+    console.log(`[NAME][DISPLAY] appid=${displayGame.appId} title=${detailTitle}`);
+  }
 
   return (
     <>
       <LibraryGameDetails
+        key={"library:game-details:steam:" + displayGame.appId}
         game={displayGame}
         artwork={artwork}
         appInfoEntry={appInfoEntry}

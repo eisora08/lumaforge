@@ -6,6 +6,23 @@ import type {
 import { parseLibraryCacheAchievements, writeAchievementCache, readAchievementCache } from "./tauri";
 
 // ---------------------------------------------------------------------------
+// Emergency stabilization flags
+// ---------------------------------------------------------------------------
+
+export const ACHIEVEMENT_SCHEMA_MIGRATION_AUTO = false;
+export const ACHIEVEMENT_IMAGE_MIGRATION_AUTO = false;
+export const DEBUG_ACH_MIGRATION = false;
+export const DEBUG_ACH_VERBOSE = false;
+let _migrationSkipLogged = false;
+
+function logMigrationSkipOnce(): void {
+  if (!_migrationSkipLogged) {
+    _migrationSkipLogged = true;
+    console.log("[ACH][SCHEMA_MIGRATE_SKIP] reason=auto-disabled");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Source priority — lower number = higher priority (takes precedence)
 // ---------------------------------------------------------------------------
 
@@ -417,6 +434,9 @@ class AchievementStoreImpl {
     summary: GameAchievementsSummary,
     traceId?: string,
   ): Promise<void> {
+    if (!ACHIEVEMENT_SCHEMA_MIGRATION_AUTO) {
+      return;
+    }
     const tid = traceId ?? "no-trace";
     try {
       const appIdNum = Number(appId);
@@ -446,7 +466,7 @@ class AchievementStoreImpl {
           },
           achievements: patchedAchievements,
           achievement_percentages: existing.achievement_percentages,
-        });
+        }, false);
       }
       console.debug(`[ACH][CACHE][${tid}] background write complete`);
     } catch {
@@ -497,6 +517,10 @@ class AchievementStoreImpl {
   // instead of img/<hash>_gray.jpg ──
 
   async repairGrayIconPaths(appId: string, _traceId?: string): Promise<void> {
+    if (!ACHIEVEMENT_SCHEMA_MIGRATION_AUTO) {
+      logMigrationSkipOnce();
+      return;
+    }
     try {
       const { readAchievementCache, writeAchievementCache } = await import("./tauri");
       const cached = await readAchievementCache(Number(appId));
@@ -520,7 +544,7 @@ class AchievementStoreImpl {
           achievements: patched,
           achievement_percentages: cached.achievement_percentages,
           summary: cached.summary,
-        });
+        }, true);
         console.debug(`[ACH][SCHEMA_REPAIR_GRAY] appid=${appId} repaired=${repaired} entries`);
         // Also update in-memory summary if present
         const summary = this.summariesByAppId.get(appId);

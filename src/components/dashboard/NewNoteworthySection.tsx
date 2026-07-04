@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+
+const DEBUG_DASH_GLOBAL_MEDIA = false;
+const DEBUG_DASH_NEW = false;
 import type { NormalizedCatalogGame, CatalogStatus } from "../../services/globalCatalogService";
 import {
   subscribeCatalogState,
@@ -7,6 +10,7 @@ import {
   getCatalogState,
   loadNormalizedCatalog,
 } from "../../services/globalCatalogService";
+import { deduplicateByAppId } from "../../services/gameCacheService";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
@@ -117,21 +121,25 @@ export default function NewNoteworthySection({ onNavigate }: Props) {
     if (withReleaseDate === 0 && withNewFlag === 0) {
       if (newLogRef.current !== `skip|${key}`) {
         newLogRef.current = `skip|${key}`;
-        console.log(
-          `[DASH][SECTION_SKIP] section=NewNoteworthy reason=no-date-or-new-fields total=${state.total}`,
-        );
-        console.log(
-          `[DASH][NEW] catalogTotal=${state.total} candidates=${candidates} withReleaseDate=${withReleaseDate} withCatalogDate=0 withNewFlag=${withNewFlag} rendered=${rendered}`,
-        );
+        if (DEBUG_DASH_NEW) {
+          console.log(
+            `[DASH][SECTION_SKIP] section=NewNoteworthy reason=no-date-or-new-fields total=${state.total}`,
+          );
+          console.log(
+            `[DASH][NEW] catalogTotal=${state.total} candidates=${candidates} withReleaseDate=${withReleaseDate} withCatalogDate=0 withNewFlag=${withNewFlag} rendered=${rendered}`,
+          );
+        }
       }
       return;
     }
 
     if (newLogRef.current !== key) {
       newLogRef.current = key;
-      console.log(
-        `[DASH][NEW] catalogTotal=${state.total} candidates=${candidates} withReleaseDate=${withReleaseDate} withCatalogDate=0 withNewFlag=${withNewFlag} rendered=${rendered}`,
-      );
+      if (DEBUG_DASH_NEW) {
+        console.log(
+          `[DASH][NEW] catalogTotal=${state.total} candidates=${candidates} withReleaseDate=${withReleaseDate} withCatalogDate=0 withNewFlag=${withNewFlag} rendered=${rendered}`,
+        );
+      }
     }
   }, [displayGames, entries, status]);
 
@@ -189,14 +197,14 @@ export default function NewNoteworthySection({ onNavigate }: Props) {
           ref={scrollRef}
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
-          {displayGames.map((game) => {
+          {deduplicateByAppId(displayGames).map((game) => {
             const imgSrc = resolveBestMedia(game);
-            if (imgSrc) {
+            if (imgSrc && DEBUG_DASH_GLOBAL_MEDIA) {
               console.log(`[DASH][GLOBAL_MEDIA] section=NewNoteworthy appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
             }
             return (
               <div
-                key={game.appId}
+                key={"dashboard:newnoteworthy:steam:" + game.appId}
                 className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56"
               >
                 <div

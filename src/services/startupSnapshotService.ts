@@ -423,9 +423,37 @@ export function hasCanonicalMediaCacheEntry(appId: string): boolean {
  * This ensures the startup snapshot stays in sync without repeated
  * disk writes for each individual field update.
  */
-export async function notifyMediaUpdated(appId: string): Promise<void> {
+export async function notifyMediaUpdated(appId: string, options?: { source?: string }): Promise<void> {
   canonicalMediaCache.delete(appId);
+
+  // Block snapshot writes originating from Store display-only operations
+  const storeDisplaySources = new Set(["store-display-image", "browse-image", "discover-image", "news-image", "store-details-image", "dashboard-remote-image"]);
+  if (options?.source && storeDisplaySources.has(options.source)) {
+    console.log(`[BootSnapshot][WRITE_SKIP] reason=display-only-change appid=${appId} source=${options.source}`);
+    return;
+  }
+
+  // Block snapshot writes from display-only MediaIndex sources
+  const displaySources = new Set(["store-display", "dashboard-display", "browse-display", "metadata-display"]);
+  if (options?.source && displaySources.has(options.source)) {
+    console.log(`[BootSnapshot][WRITE_SKIP] reason=display-only-source appid=${appId} source=${options.source}`);
+    return;
+  }
+
+  // Skip snapshot write when source is local-media-repair — the MediaIndex was
+  // already updated with the new paths from appinfo.json, so re-reading appinfo
+  // would find the same data and produce a no-effective-change skip.
+  if (options?.source === "local-media-repair") {
+    console.log(`[BootSnapshot][WRITE_SKIP] reason=media-index-already-synced appid=${appId} source=local-media-repair`);
+    return;
+  }
+
   _dirtyAppIds.add(appId);
+  const hash = typeof window !== "undefined" ? window.location.hash : "";
+  if (hash.startsWith("#/store")) {
+    console.log(`[BootSnapshot][WRITE_SKIP] reason=store-active-no-local-change appid=${appId}`);
+    return; // NO snapshot write when Store is active
+  }
   _scheduleMediaUpdateWrite("media-update", appId);
 }
 
@@ -441,7 +469,7 @@ function _scheduleMediaUpdateWrite(reason: string, appId?: string): void {
     return;
   }
   console.log(`[BootSnapshot][SCHEDULE] reason=${reason} appid=${appId ?? "?"} dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
-  _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 1000);
+  _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 2000);
 }
 
 async function _processDirtyAppIds(): Promise<void> {
@@ -451,7 +479,13 @@ async function _processDirtyAppIds(): Promise<void> {
   const appIds = [..._dirtyAppIds];
   const dirtyCount = appIds.length;
 
-  console.log(`[BootSnapshot][WRITE_START] dirtyAppIds=${dirtyCount}`);
+  if (dirtyCount === 0) {
+    console.log(`[BootSnapshot][WRITE_SKIP] reason=no-dirty-appids`);
+    _writeInProgress = false;
+    return;
+  }
+
+  console.log(`[BootSnapshot][WRITE_START] reason=media-update dirtyAppIds=${dirtyCount}`);
 
   if (!cachedSnapshot) {
     _writeInProgress = false;
@@ -460,20 +494,32 @@ async function _processDirtyAppIds(): Promise<void> {
   }
 
   const now = Math.floor(Date.now() / 1000);
+  let effectiveChanges = 0;
 
   // Process each dirty appId: resolve fresh media, update in-memory snapshot
   for (const appId of appIds) {
     try {
       const { media, validated, hasMedia } = await resolveMediaForSnapshot(appId);
 
-      // Update library game entry
+      let changed = false;
+
+      // Update library game entry — compare media fields for no-op detection
       for (const game of cachedSnapshot.library.games) {
         if (game.appId === appId) {
-          const originalMedia = { ...game.media };
+          const origMedia = game.media;
+          // Check if media actually changed
+          const mediaChanged =
+            origMedia.landscapePath !== media.landscapePath ||
+            origMedia.coverPath !== media.coverPath ||
+            origMedia.backgroundPath !== media.backgroundPath ||
+            origMedia.logoPath !== media.logoPath ||
+            origMedia.iconPath !== media.iconPath;
+          if (mediaChanged) {
+            changed = true;
+            game.updatedAt = now;
+          }
           game.media = media;
-          game.updatedAt = now;
-          // Pass pre-validated result to avoid duplicate validation
-          await setMediaStatusOnGame(game, originalMedia, validated);
+          await setMediaStatusOnGame(game, origMedia, validated);
           break;
         }
       }
@@ -481,6 +527,9 @@ async function _processDirtyAppIds(): Promise<void> {
       // Update sidebar entry
       for (const item of cachedSnapshot.sidebar.items) {
         if (item.appId === appId) {
+          if (item.media.landscapePath !== media.landscapePath || item.media.coverPath !== media.coverPath) {
+            changed = true;
+          }
           item.media.landscapePath = media.landscapePath;
           item.media.coverPath = media.coverPath;
           break;
@@ -488,16 +537,32 @@ async function _processDirtyAppIds(): Promise<void> {
       }
 
       // Update mediaReadyAppIds
-      if (hasMedia) {
-        if (!cachedSnapshot.indexes.mediaReadyAppIds.includes(appId)) {
-          cachedSnapshot.indexes.mediaReadyAppIds.push(appId);
-        }
-      } else {
+      const wasReady = cachedSnapshot.indexes.mediaReadyAppIds.includes(appId);
+      if (hasMedia && !wasReady) {
+        cachedSnapshot.indexes.mediaReadyAppIds.push(appId);
+        changed = true;
+      } else if (!hasMedia && wasReady) {
         cachedSnapshot.indexes.mediaReadyAppIds = cachedSnapshot.indexes.mediaReadyAppIds.filter((id) => id !== appId);
+        changed = true;
+      }
+
+      if (changed) {
+        effectiveChanges++;
       }
     } catch (err) {
       console.warn(`[BootSnapshot] failed to process dirty appId=${appId}:`, err);
     }
+  }
+
+  if (effectiveChanges === 0) {
+    console.log(`[BootSnapshot][WRITE_SKIP] reason=no-effective-change dirtyAppIds=${dirtyCount}`);
+    _dirtyAppIds.clear();
+    _writeInProgress = false;
+    if (_pendingAfterWrite) {
+      _pendingAfterWrite = false;
+      _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 1000);
+    }
+    return;
   }
 
   // Persist once for all dirty appIds
@@ -505,7 +570,7 @@ async function _processDirtyAppIds(): Promise<void> {
     await saveStartupSnapshot(cachedSnapshot);
     const gamesCount = cachedSnapshot.library.games.length;
     const sidebarCount = cachedSnapshot.sidebar.items.length;
-    console.log(`[BootSnapshot][WRITE_DONE] games=${gamesCount} sidebarItems=${sidebarCount} dirtyAppIds=${dirtyCount}`);
+    console.log(`[BootSnapshot][WRITE_DONE] games=${gamesCount} sidebarItems=${sidebarCount} dirtyAppIds=${dirtyCount} effectiveChanges=${effectiveChanges}`);
     if (_coalescedScheduleCount > 0) {
       console.log(`[BootSnapshot][WRITE_COALESCED] skippedExtraSchedules=${_coalescedScheduleCount}`);
       _coalescedScheduleCount = 0;
@@ -836,7 +901,29 @@ export function getCachedSnapshot(): StartupSnapshot | null {
   return cachedSnapshot;
 }
 
+let _lastWriteFingerprint = "";
+
+function computeSnapshotFingerprint(snapshot: StartupSnapshot): string {
+  // Lightweight fingerprint — exclude updatedAt (transient, changes every write)
+  const relevant = snapshot.library.games.slice(0, 200).map((g) => ({
+    a: g.appId,
+    m: g.media,
+    s: g.achievementSummary ? `${g.achievementSummary.total}:${g.achievementSummary.unlocked}:${g.achievementSummary.percent}` : null,
+    f: g.favorite,
+    h: g.hidden,
+  }));
+  return JSON.stringify(relevant);
+}
+
 export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<void> {
+  // No-op guard: skip write if effective content hasn't changed
+  const fp = computeSnapshotFingerprint(snapshot);
+  if (fp === _lastWriteFingerprint) {
+    console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change`);
+    return;
+  }
+  _lastWriteFingerprint = fp;
+
   cachedSnapshot = snapshot;
   const withFavField = snapshot.library.games.filter(g => g.favorite != null).length;
   const favTrue = snapshot.library.games.filter(g => g.favorite === true).length;
@@ -942,7 +1029,7 @@ export async function buildStartupSnapshotFromCurrentState(
         debugAppLog(game.appId, `canonical media: cover=${!!normalized.coverPath} landscape=${!!normalized.landscapePath} bg=${!!normalized.backgroundPath} logo=${!!normalized.logoPath} icon=${!!normalized.iconPath}`);
         validatedForStatus = await validateSnapshotMediaPaths(game.appId, normalized);
         hasMedia = !!(validatedForStatus.landscapePath || validatedForStatus.coverPath || validatedForStatus.backgroundPath || validatedForStatus.logoPath || validatedForStatus.iconPath);
-        debugAppLog(game.appId, `validated media: hasMedia=${hasMedia} cover=${!!validatedForStatus.coverPath} landscape=${!!validatedForStatus.landscapePath}`);
+        debugAppLog(game.appId, `validated media: hasMedia=${hasMedia} cover=${!!validatedForStatus.coverPath} landscape=${!!validatedForStatus.landscapePath} background=${!!validatedForStatus.backgroundPath} logo=${!!validatedForStatus.logoPath} icon=${!!validatedForStatus.iconPath}`);
         media = {
           landscapePath: validatedForStatus.landscapePath,
           coverPath: validatedForStatus.coverPath,
@@ -1016,6 +1103,16 @@ export async function buildStartupSnapshotFromCurrentState(
         percent: game.achievementTotal > 0 ? ((game.achievementUnlocked ?? 0) / game.achievementTotal) * 100 : 0,
         progressAvailable: game.achievementsSupported ?? false,
       };
+    }
+
+    // Preservation: if we still have no summary, keep the existing snapshot's value.
+    // This prevents null from replacing a previously cached summary during full rebuilds
+    // when achievementStore hasn't been loaded yet (ACHIEVEMENT_READ_CACHE_ON_BOOT=false).
+    if (!achievementSummary && cachedSnapshot) {
+      const existing = cachedSnapshot.library.games.find(g => g.appId === game.appId);
+      if (existing?.achievementSummary) {
+        achievementSummary = existing.achievementSummary;
+      }
     }
 
     snapshotGames.push({

@@ -3,7 +3,10 @@ import { ChevronLeft, ChevronRight, Play, Clock } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
+
+const DEBUG_MEDIA_DASH = false;
+const DEBUG_NAME_DASH = false;
 import { getCachedPlaytimeStore } from "../../services/playtimeService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
@@ -125,9 +128,9 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
         titles[appId] = resolvedTitles[appId]?.title ?? game.title;
         if (imgPath && !cancelled) {
           const selection = game.media?.landscapePath ? "landscape" : "background";
-          console.log(`[MEDIA][DASH] section=ContinuePlaying appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+          if (DEBUG_MEDIA_DASH) console.log(`[MEDIA][DASH] section=ContinuePlaying appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
         }
-        console.log(`[NAME][DASH] section=ContinuePlaying appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
+        if (DEBUG_NAME_DASH) console.log(`[NAME][DASH] section=ContinuePlaying appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setMediaUrlMap(prev => {
@@ -190,7 +193,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
           ref={scrollRef}
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
-          {games.map((game) => {
+          {deduplicateByAppId(games).map((game) => {
             const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
             const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
             const lastPlayedStr = formatLastPlayed(game.lastPlayed);
@@ -200,7 +203,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
 
             return (
               <div
-                key={game.appId}
+                key={"dashboard:continue:steam:" + game.appId}
                 className="w-[min(80vw,340px)] shrink-0 snap-start"
               >
                 <div className="group/card relative cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">

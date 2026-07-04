@@ -94,8 +94,30 @@ function mediaTypeToField(mediaType: string): keyof import("./tauri").GameMediaP
 const pendingAppInfoUpdates = new Map<string, Record<string, string | null>>();
 let appInfoFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Track last route change time for navigation guard
+let _lastRouteChange = 0;
+if (typeof window !== "undefined") {
+  window.addEventListener("hashchange", () => { _lastRouteChange = Date.now(); });
+}
+
 async function flushAppInfoUpdates() {
   appInfoFlushTimer = null;
+
+  // Defer if a navigation happened within the last 2 seconds
+  const msSinceRouteChange = Date.now() - _lastRouteChange;
+  if (msSinceRouteChange < 2000) {
+    console.log(`[MEDIA_REPAIR][DEFER] reason=navigation-active msSince=${msSinceRouteChange}`);
+    appInfoFlushTimer = setTimeout(flushAppInfoUpdates, 2000 - msSinceRouteChange);
+    return;
+  }
+
+  // Skip media index updates while Store is active to avoid triggering snapshot writes
+  const hash = typeof window !== "undefined" ? window.location.hash : "";
+  if (hash.startsWith("#/store")) {
+    console.log(`[MEDIA_INDEX][UPDATE_SKIP] reason=store-active updates=${pendingAppInfoUpdates.size}`);
+    pendingAppInfoUpdates.clear();
+    return;
+  }
   const [{ getMediaEntry, setMediaEntry }, { notifyMediaUpdated }] = await Promise.all([
     import("./gameCacheService"),
     import("./startupSnapshotService"),
@@ -112,7 +134,7 @@ async function flushAppInfoUpdates() {
     // Invalidate in-memory cache so UI picks up new paths
     invalidateResolvedMediaCache(appId);
 
-    // Update MediaIndex with new paths
+    // Update MediaIndex with new paths (skip if no effective change)
     const entry = getMediaEntry(appId);
     if (entry) {
       const updated = { ...entry };
@@ -121,24 +143,28 @@ async function flushAppInfoUpdates() {
         const relPath = path as string | null;
         const key = field.replace("Path", "") as keyof typeof updated;
         const hasKey = `has${key.charAt(0).toUpperCase() + key.slice(1)}` as keyof typeof updated;
-        if (relPath) {
-          (updated as any)[field] = `media/${relPath.split(/[/\\]/).pop()}`;
-          (updated as any)[hasKey] = true;
-        } else {
-          (updated as any)[field] = null;
-          (updated as any)[hasKey] = false;
-        }
+        const newPath = relPath ? `media/${relPath.split(/[/\\\\]/).pop()}` : null;
+        const newHas = !!relPath;
+        const oldPath = (updated as any)[field] as string | null;
+        const oldHas = (updated as any)[hasKey] as boolean;
+        if (oldPath === newPath && oldHas === newHas) continue;
+        (updated as any)[field] = newPath;
+        (updated as any)[hasKey] = newHas;
         changed++;
       }
       if (changed > 0) {
         updated.updatedAt = Date.now();
         setMediaEntry(updated);
-        console.log(`[MEDIA_INDEX] update key=steam:${appId} changedFields=${changed}`);
+        console.log(`[MEDIA_INDEX] update key=steam:${appId} changedFields=${changed} source=local-media-repair`);
+        // Notify snapshot so UI picks up changes (debounced in startupSnapshotService)
+        // Pass source=local-media-repair so notifyMediaUpdated can decide whether
+        // to schedule a write (local-media-repair already updated appinfo.json + MediaIndex,
+        // so a snapshot re-read would find no effective change → skip scheduling)
+        notifyMediaUpdated(appId, { source: "local-media-repair" }).catch(() => {});
+      } else {
+        console.log(`[MEDIA_INDEX][UPDATE_SKIP] appid=${appId} reason=no-effective-change`);
       }
     }
-
-    // Notify snapshot so UI picks up changes (debounced in startupSnapshotService)
-    notifyMediaUpdated(appId).catch(() => {});
   }
   pendingAppInfoUpdates.clear();
 }
@@ -234,6 +260,13 @@ async function performDownload(entry: InternalJob, key: string) {
 }
 
 export function enqueueMediaDownload(job: MediaDownloadJob): Promise<MediaDownloadResult> {
+  // Block media downloads during Store navigation to prevent MediaClassify and freezes
+  const hash = typeof window !== "undefined" ? window.location.hash : "";
+  if (hash.startsWith("#/store") && !job.forceRefresh) {
+    log("blocked from store", job.id ?? `${job.appId}/${job.mediaType}`);
+    return Promise.resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Blocked: Store active" });
+  }
+
   const key = dedupKey(job);
 
   if (!job.forceRefresh) {

@@ -202,11 +202,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
     // Load enriched games from SQLite cache (instant — no blocking)
     const cached = await loadCachedGames();
+    const { getReconciledGames } = await import("../services/gameStore");
     if (cached && cached.games.length > 0) {
       let loadedGames = cached.games;
 
       // Merge any reconciled games from Stage 4.5 boot (Lua-only additions)
-      const { getReconciledGames } = await import("../services/gameStore");
       const reconciled = getReconciledGames();
       if (reconciled.length > 0) {
         const reconciledById = new Map(reconciled.map((g) => [g.id, g]));
@@ -242,7 +242,16 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       setWarnings(cached.warnings || []);
       setInitialLoading(false);
     } else {
-      setInitialLoading(false);
+      // Fallback: SQLite is empty — use reconciled games from gameStore
+      const reconciled = getReconciledGames();
+      if (reconciled.length > 0) {
+        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=reconciled-fallback games=${reconciled.length}`);
+        setGames(reconciled);
+        setInitialLoading(false);
+      } else {
+        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=empty (sqlite empty, reconciled empty)`);
+        setInitialLoading(false);
+      }
     }
 
     // Schedule background Steam scan after main window is visible.
@@ -255,7 +264,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           const result = await resolveLibraryGames(settings);
           const enriched = await enrichWithStats(result.games);
           await saveCachedGames(enriched, result.warnings);
-          setGames(enriched);
+          // Guard: if background scan returned empty but we already have games, don't wipe
+          if (enriched.length === 0 && games.length > 0) {
+            console.log(`[LIBRARY_CONTEXT][EMPTY_RESULT_IGNORED] incoming=0 current=${games.length}`);
+          } else {
+            setGames(enriched);
+          }
           setWarnings(result.warnings);
 
           // Phase 3: background full dataset scan (batched metadata resolve)
@@ -301,7 +315,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       const result = await resolveLibraryGames(settings);
       const enriched = await enrichWithStats(result.games);
       await saveCachedGames(enriched, result.warnings);
-      setGames(enriched);
+      if (enriched.length === 0 && games.length > 0) {
+        console.log(`[LIBRARY_CONTEXT][EMPTY_RESULT_IGNORED] refresh incoming=0 current=${games.length}`);
+      } else {
+        setGames(enriched);
+      }
       setWarnings(result.warnings);
       await updateAppInfoFromGames(enriched).catch(() => {});
       // Snapshot write picked up by the debounced effect on games/appInfoMap change

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Gamepad2 } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
+
+const DEBUG_MEDIA_DASH = false;
+const DEBUG_NAME_DASH = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
@@ -66,9 +69,9 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
         titles[appId] = resolvedTitles[appId]?.title ?? game.title;
         if (imgPath && !cancelled) {
           const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : game.media?.backgroundPath ? "background" : "icon";
-          console.log(`[MEDIA][DASH] section=Library appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+          if (DEBUG_MEDIA_DASH) console.log(`[MEDIA][DASH] section=Library appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
         }
-        console.log(`[NAME][DASH] section=Library appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
+        if (DEBUG_NAME_DASH) console.log(`[NAME][DASH] section=Library appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setResolvedUrls(prev => {
@@ -137,13 +140,13 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
           ref={scrollRef}
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
-          {displayGames.map((game) => {
+          {deduplicateByAppId(displayGames).map((game) => {
             const imgUrl = game.appId ? (resolvedUrls[game.appId] ?? null) : null;
             const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
 
             return (
               <div
-                key={game.appId}
+                key={"dashboard:library:steam:" + (game.appId ?? "unknown")}
                 className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56"
               >
                 <div

@@ -53,7 +53,7 @@ pub fn read_canonical_appinfos(
 // ---------------------------------------------------------------------------
 
 const ENABLE_VERBOSE_GAME_CACHE_LOGS: bool = false;
-const ENABLE_VERBOSE_MEDIA_CACHE_LOGS: bool = true;
+const ENABLE_VERBOSE_MEDIA_CACHE_LOGS: bool = false;
 
 #[inline]
 fn log(msg: &str) {

@@ -1,6 +1,17 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { downloadAchievementImage } from "./tauri";
 
+export const ACHIEVEMENT_IMAGE_MIGRATION_AUTO = false;
+export const DEBUG_ACH_MIGRATION = false;
+let _imgMigrationSkipLogged = false;
+
+function logImgMigrationSkipOnce(): void {
+  if (!_imgMigrationSkipLogged) {
+    _imgMigrationSkipLogged = true;
+    console.log("[ACH][IMG_MIGRATE_SKIP] reason=auto-disabled");
+  }
+}
+
 export type ImageType = "icon" | "icon_gray";
 export type Priority = "high" | "normal" | "low";
 export type ImageSourceKind = "remote-url" | "steam-hash" | "local-absolute-path" | "local-file-url" | "tauri-asset-url" | "relative-schema-path" | "invalid";
@@ -302,6 +313,10 @@ class AchievementImageQueueImpl {
   }
 
   async enqueue(items: ImageQueueItem[]) {
+    if (!ACHIEVEMENT_IMAGE_MIGRATION_AUTO) {
+      logImgMigrationSkipOnce();
+      return;
+    }
     const filtered: ImageQueueItem[] = [];
     for (const item of items) {
       const grayAsIcon = item.type === "icon" && item.sourceUrl.toLowerCase().includes("icongray");

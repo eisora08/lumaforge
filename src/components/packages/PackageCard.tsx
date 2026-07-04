@@ -56,28 +56,16 @@ type PackageCardProps = {
   onDownloadSource?: (game: PackageGame, source: PackageSource) => void;
 };
 
-function getBestCardImage(
+/** Return all candidate image URLs in priority order for fallback. */
+function getBestCardImageChain(
   game: PackageGame,
   metadata?: SteamAppMetadata,
   variant?: "landscape" | "poster",
-): string | undefined {
-  if (variant === "poster") {
-    return (
-      metadata?.capsule_image_v5 ||
-      metadata?.capsule_image ||
-      game.imageUrl ||
-      metadata?.header_image ||
-      undefined
-    );
-  }
-
-  return (
-    metadata?.header_image ||
-    game.imageUrl ||
-    metadata?.capsule_image ||
-    metadata?.capsule_image_v5 ||
-    undefined
-  );
+): string[] {
+  const candidates = variant === "poster"
+    ? [metadata?.capsule_image_v5, metadata?.capsule_image, game.imageUrl, metadata?.header_image]
+    : [metadata?.header_image, game.imageUrl, metadata?.capsule_image, metadata?.capsule_image_v5];
+  return candidates.filter((u): u is string => typeof u === "string");
 }
 
 function getStoreTitle(game: PackageGame, metadata?: SteamAppMetadata) {
@@ -127,6 +115,7 @@ export default function PackageCard({
 
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const [imageFallbackIndex, setImageFallbackIndex] = useState(0);
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
 
   const _mountedRef = useRef(true);
@@ -140,7 +129,12 @@ export default function PackageCard({
 
   const displayTitle = getStoreTitle(game, storeMetadata);
   const displayDeveloper = getStoreDeveloper(game, storeMetadata);
-  const displayImageUrl = getBestCardImage(game, storeMetadata, variant);
+  const imageFallbackChain = useMemo(
+    () => getBestCardImageChain(game, storeMetadata, variant),
+    [game, storeMetadata, variant],
+  );
+  const displayImageUrl: string | undefined = imageFallbackChain[imageFallbackIndex];
+  const hasMoreFallbacks = imageFallbackIndex + 1 < imageFallbackChain.length;
 
   const hasLuaReady = availableSources.length > 0;
 
@@ -341,7 +335,13 @@ export default function PackageCard({
                 src={displayImageUrl}
                 alt={displayTitle}
                 objectClass="object-cover"
-                onError={() => setImageFailed(true)}
+                onError={() => {
+                  if (hasMoreFallbacks) {
+                    setImageFallbackIndex((i) => i + 1);
+                  } else {
+                    setImageFailed(true);
+                  }
+                }}
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -416,7 +416,13 @@ export default function PackageCard({
             src={displayImageUrl}
             alt={displayTitle}
             objectClass="object-cover"
-            onError={() => setImageFailed(true)}
+            onError={() => {
+              if (hasMoreFallbacks) {
+                setImageFallbackIndex((i) => i + 1);
+              } else {
+                setImageFailed(true);
+              }
+            }}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-white/5">

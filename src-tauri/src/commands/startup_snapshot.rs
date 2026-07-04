@@ -203,10 +203,13 @@ pub fn validate_snapshot_media_paths(
                 // and media_path_exists_for_app in game_cache.rs.
                 let resolved = resolve_snapshot_media_path(&app_handle, &app_id, p);
                 let exists = resolved.exists();
-                println!(
-                    "[BootSnapshot][VALIDATE_PATH] appid={} provider={} role={} input={} resolved={} exists={}",
-                    app_id, provider, role, p, resolved.display(), exists
-                );
+                const DEBUG_BOOTSNAPSHOT_VALIDATE: bool = false;
+                if DEBUG_BOOTSNAPSHOT_VALIDATE {
+                    println!(
+                        "[BootSnapshot][VALIDATE_PATH] appid={} provider={} role={} input={} resolved={} exists={}",
+                        app_id, provider, role, p, resolved.display(), exists
+                    );
+                }
                 if exists {
                     (Some(p.clone()), true)
                 } else {
