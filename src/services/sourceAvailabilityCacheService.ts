@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PackageSource } from "../types/package";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
+const SOURCE_AVAILABILITY_CACHE_TTL_S = 86400; // 24 hours
+const SOURCE_AVAILABILITY_CACHE_MAX = 1000;
 
 export type SourceCheckStatus =
   | "idle"
@@ -73,10 +75,38 @@ export async function loadSourceAvailabilityIndex(): Promise<SourceAvailabilityI
   return loadPromise;
 }
 
+function pruneCache(): number {
+  if (!cachedIndex) return 0;
+  const games = cachedIndex.games;
+  const entries = Object.entries(games);
+  const now = Math.floor(Date.now() / 1000);
+  const expiredThreshold = now - SOURCE_AVAILABILITY_CACHE_TTL_S;
+
+  const active = entries.filter(([_, v]) => v.updatedAt >= expiredThreshold);
+  if (active.length > SOURCE_AVAILABILITY_CACHE_MAX) {
+    active.sort((a, b) => b[1].updatedAt - a[1].updatedAt);
+    active.length = SOURCE_AVAILABILITY_CACHE_MAX;
+  }
+
+  const removed = entries.length - active.length;
+  if (removed > 0) {
+    cachedIndex.games = Object.fromEntries(active);
+    console.log(`[SOURCE_AVAIL][CACHE_PRUNE] removed=${removed} size=${active.length}`);
+  }
+  return removed;
+}
+
 export function getSourceAvailability(
   appId: string
 ): SourceAvailabilityGameEntry | undefined {
-  return cachedIndex?.games[appId];
+  const entry = cachedIndex?.games[appId];
+  if (!entry) return undefined;
+  const now = Math.floor(Date.now() / 1000);
+  if (entry.updatedAt < now - SOURCE_AVAILABILITY_CACHE_TTL_S) {
+    delete cachedIndex!.games[appId];
+    return undefined;
+  }
+  return entry;
 }
 
 export function getCachedSourceAvailabilityIndex(): SourceAvailabilityIndex | null {
@@ -91,6 +121,7 @@ export async function updateSourceAvailability(
   if (!cachedIndex) return;
   cachedIndex.games[appId] = entry;
   cachedIndex.updatedAt = Math.floor(Date.now() / 1000);
+  pruneCache();
   scheduleSave();
   log(`updated ${appId} (${entry.title})`);
 }

@@ -11,6 +11,20 @@ const SNAPSHOT_VERSION = 1;
 let cachedSnapshot: StartupSnapshot | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Boot-time appinfo cache — populated by hydrateStartupSnapshotMedia (Stage 3),
+// consumed by Stage 4.5 title enrichment to avoid re-reading appinfo.json from disk.
+let _bootAppInfoCache: Record<string, GameAppInfo> | null = null;
+
+export function getCachedBootAppInfos(): Record<string, GameAppInfo> | null {
+  return _bootAppInfoCache;
+}
+
+export function clearCachedBootAppInfos(): void {
+  if (_bootAppInfoCache) {
+    _bootAppInfoCache = null;
+  }
+}
+
 // Debug log flag — set to true during testing, false by default
 const ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS = false;
 
@@ -20,6 +34,12 @@ let _dirtyAppIds = new Set<string>();
 let _writeInProgress = false;
 let _pendingAfterWrite = false;
 let _coalescedScheduleCount = 0;
+
+// S3: Max defer duration — after this many ms of continuous interaction deferral,
+// snapshot writes proceed even if isInteractionBusy() is still true.
+const MAX_DEFER_DURATION_MS = 30_000;
+let _mediaUpdateDeferStart: number | null = null;  // first defer timestamp for media-update path
+let _fullRebuildDeferStart: number | null = null;  // first defer timestamp for full-rebuild path
 
 // Specific appIds for targeted debug logging regardless of ENABLE_VERBOSE flag
 const DEBUG_APP_IDS = new Set(["678950", "851850", "601150", "3017860"]);
@@ -479,12 +499,27 @@ async function _processDirtyAppIds(): Promise<void> {
   _mediaUpdateTimer = null;
   _writeInProgress = true;
 
-  // Phase 9: Defer snapshot write during active interaction (scroll/click/nav)
+  // Phase 9 + S3: Defer snapshot write during active interaction (scroll/click/nav),
+  // with a maximum defer limit of MAX_DEFER_DURATION_MS to prevent indefinite deferral.
   if (isInteractionBusy()) {
-    console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy dirtyAppIds=${_dirtyAppIds.size}`);
-    _writeInProgress = false;
-    _mediaUpdateTimer = setTimeout(_processDirtyAppIds, 2000);
-    return;
+    if (_mediaUpdateDeferStart === null) {
+      _mediaUpdateDeferStart = Date.now();
+      console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy dirtyAppIds=${_dirtyAppIds.size}`);
+      _writeInProgress = false;
+      _mediaUpdateTimer = setTimeout(_processDirtyAppIds, 2000);
+      return;
+    }
+    const elapsed = Date.now() - _mediaUpdateDeferStart;
+    if (elapsed >= MAX_DEFER_DURATION_MS) {
+      console.log(`[BootSnapshot][WRITE_FORCED_AFTER_MAX_DEFER] reason=interaction-timeout elapsedMs=${elapsed} dirtyAppIds=${_dirtyAppIds.size}`);
+      _mediaUpdateDeferStart = null;
+      // Fall through — proceed with the write despite interaction being busy
+    } else {
+      console.log(`[BootSnapshot][WRITE_DEFERRED_INTERACTION] elapsedMs=${elapsed} dirtyAppIds=${_dirtyAppIds.size}`);
+      _writeInProgress = false;
+      _mediaUpdateTimer = setTimeout(_processDirtyAppIds, 2000);
+      return;
+    }
   }
 
   const appIds = [..._dirtyAppIds];
@@ -492,6 +527,7 @@ async function _processDirtyAppIds(): Promise<void> {
 
   if (dirtyCount === 0) {
     console.log(`[BootSnapshot][WRITE_SKIP] reason=no-dirty-appids`);
+    _mediaUpdateDeferStart = null;
     _writeInProgress = false;
     return;
   }
@@ -499,6 +535,7 @@ async function _processDirtyAppIds(): Promise<void> {
   console.log(`[BootSnapshot][WRITE_START] reason=media-update dirtyAppIds=${dirtyCount}`);
 
   if (!cachedSnapshot) {
+    _mediaUpdateDeferStart = null;
     _writeInProgress = false;
     _dirtyAppIds.clear();
     return;
@@ -568,6 +605,7 @@ async function _processDirtyAppIds(): Promise<void> {
   if (effectiveChanges === 0) {
     console.log(`[BootSnapshot][WRITE_SKIP] reason=no-effective-change dirtyAppIds=${dirtyCount}`);
     _dirtyAppIds.clear();
+    _mediaUpdateDeferStart = null;
     _writeInProgress = false;
     if (_pendingAfterWrite) {
       _pendingAfterWrite = false;
@@ -592,6 +630,7 @@ async function _processDirtyAppIds(): Promise<void> {
 
   // Clear dirty set only after successful write
   _dirtyAppIds.clear();
+  _mediaUpdateDeferStart = null;
   _writeInProgress = false;
 
   // If writes came in while we were writing, schedule one more debounced write
@@ -751,6 +790,9 @@ export async function hydrateStartupSnapshotMedia(
   // Batch-read all canonical appinfos in one Rust invocation
   const allAppIds = snapshot.library.games.map((g) => g.appId).filter(Boolean);
   const canonicalInfos = await readCanonicalAppinfosBatch(allAppIds);
+
+  // Store in boot cache for reuse by Stage 4.5 title enrichment
+  _bootAppInfoCache = canonicalInfos as Record<string, GameAppInfo>;
 
   const canonicalReadCount = Object.keys(canonicalInfos).length;
   if (ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS) {
@@ -950,7 +992,6 @@ function computeSnapshotFingerprint(snapshot: StartupSnapshot): string {
 }
 
 export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<void> {
-  // No-op guard: skip write if effective content hasn't changed
   const fp = computeSnapshotFingerprint(snapshot);
   if (fp === _lastWriteFingerprint) {
     console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change`);
@@ -958,7 +999,26 @@ export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<vo
   }
   _lastWriteFingerprint = fp;
 
-  cachedSnapshot = snapshot;
+  const isMediaUpdatePath = snapshot === cachedSnapshot;
+
+  // Write to disk first so a failed write never creates phantom in-memory state
+  try {
+    await invoke("write_startup_snapshot", { snapshot });
+    console.log(`[BootSnapshot] save ok`);
+  } catch {
+    // non-critical
+  }
+
+  // Only replace in-memory cachedSnapshot if no active media-update write
+  // (_processDirtyAppIds) is in progress. The media-update path mutates
+  // cachedSnapshot in-place and must keep a stable reference across awaits.
+  // For the media-update path (snapshot === cachedSnapshot) the assignment
+  // is always a no-op since it is the same object reference.
+  if (!(_writeInProgress && !isMediaUpdatePath)) {
+    cachedSnapshot = snapshot;
+  }
+
+  // Shape logging reads snapshot, not cachedSnapshot — safe after write
   const withFavField = snapshot.library.games.filter(g => g.favorite != null).length;
   const favTrue = snapshot.library.games.filter(g => g.favorite === true).length;
   const withHiddenField = snapshot.library.games.filter(g => g.hidden != null).length;
@@ -967,12 +1027,6 @@ export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<vo
   const achNull = snapshot.library.games.filter(g => g.achievementSummary == null).length;
   const withUpdatedField = snapshot.library.games.filter(g => g.updatedAt != null).length;
   console.log(`[BootSnapshot][SHAPE] games=${snapshot.library.games.length} withFavoriteField=${withFavField} favoriteTrue=${favTrue} withHiddenField=${withHiddenField} hiddenTrue=${hiddenTrue} withAchievementSummaryField=${snapshot.library.games.length} achievementSummaryObject=${achObject} achievementSummaryNull=${achNull} withUpdatedAt=${withUpdatedField}`);
-  try {
-    await invoke("write_startup_snapshot", { snapshot });
-    console.log(`[BootSnapshot] save ok`);
-  } catch {
-    // non-critical
-  }
 }
 
 export async function clearStartupSnapshot(): Promise<void> {
@@ -1266,10 +1320,33 @@ export function scheduleSnapshotWrite(
   }
   console.log(`[BootSnapshot][SCHEDULE] reason=${reason ?? "full-rebuild"} caller=${reason ?? "unknown"} games=${deduped.length} delayMs=${delayMs}`);
   debounceTimer = setTimeout(async () => {
-    // Phase 7: Defer full rebuild during active interaction (scroll/click/nav)
+    // Phase 7 + S3: Defer full rebuild during active interaction (scroll/click/nav),
+    // with a maximum defer limit of MAX_DEFER_DURATION_MS to prevent indefinite deferral.
     if (isInteractionBusy()) {
-      console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy caller=${reason ?? "unknown"} full-rebuild=true`);
-      // Re-schedule with same params after cooldown
+      if (_fullRebuildDeferStart === null) {
+        _fullRebuildDeferStart = Date.now();
+        console.log(`[BootSnapshot][WRITE_DEFER] reason=interaction-busy caller=${reason ?? "unknown"} full-rebuild=true`);
+        const cbArgs: Parameters<typeof scheduleSnapshotWrite> = [games, appInfoMap, statsMap, delayMs, reason];
+        debounceTimer = setTimeout(() => scheduleSnapshotWrite(...cbArgs), 1500);
+        return;
+      }
+      const elapsed = Date.now() - _fullRebuildDeferStart;
+      if (elapsed >= MAX_DEFER_DURATION_MS) {
+        console.log(`[BootSnapshot][WRITE_FORCED_AFTER_MAX_DEFER] reason=interaction-timeout elapsedMs=${elapsed} caller=${reason ?? "unknown"}`);
+        _fullRebuildDeferStart = null;
+        // Fall through — proceed with the build despite interaction being busy
+      } else {
+        console.log(`[BootSnapshot][WRITE_DEFERRED_INTERACTION] elapsedMs=${elapsed} caller=${reason ?? "unknown"}`);
+        const cbArgs: Parameters<typeof scheduleSnapshotWrite> = [games, appInfoMap, statsMap, delayMs, reason];
+        debounceTimer = setTimeout(() => scheduleSnapshotWrite(...cbArgs), 1500);
+        return;
+      }
+    }
+
+    // Phase 17: Defer full-rebuild when a media-update write (_processDirtyAppIds)
+    // is in progress to prevent cross-path cachedSnapshot reference swap.
+    if (_writeInProgress) {
+      console.log(`[BootSnapshot][WRITE_DEFERRED_ACTIVE_WRITE] reason=active-media-write caller=${reason ?? "unknown"}`);
       const cbArgs: Parameters<typeof scheduleSnapshotWrite> = [games, appInfoMap, statsMap, delayMs, reason];
       debounceTimer = setTimeout(() => scheduleSnapshotWrite(...cbArgs), 1500);
       return;
@@ -1283,6 +1360,7 @@ export function scheduleSnapshotWrite(
       const newFp = computeSnapshotFingerprint(snapshot);
       if (newFp === _lastWriteFingerprint) {
         console.log(`[BootSnapshot][WRITE_SKIP] reason=no-content-change-full-rebuild games=${snapshot.library.games.length} sidebarItems=${snapshot.sidebar.items.length}`);
+        _fullRebuildDeferStart = null;
         return;
       }
 
@@ -1311,6 +1389,7 @@ export function scheduleSnapshotWrite(
         console.log(`[BootSnapshot][WRITE_COALESCED] skippedExtraSchedules=${_coalescedScheduleCount}`);
         _coalescedScheduleCount = 0;
       }
+      _fullRebuildDeferStart = null;
     } catch {
       console.warn("[BootSnapshot][WRITE] full-rebuild failed");
     }

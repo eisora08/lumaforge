@@ -16,8 +16,9 @@ pub fn check_provider_availability(
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("LumaForge/0.1.0")
-        .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(Duration::from_secs(8))
+        .connect_timeout(Duration::from_secs(6))
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
 

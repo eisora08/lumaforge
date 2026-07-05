@@ -967,6 +967,7 @@ fn safe_single_download(
 ) -> Result<Option<String>, String> {
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .connect_timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
         .user_agent("LumaForge/0.2.0")
         .build()

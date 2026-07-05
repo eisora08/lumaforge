@@ -1076,6 +1076,10 @@ export function clearResolvedMediaSessionCache(): void {
 // Invalidate cache for a specific appId (e.g. after a media download updates appinfo)
 export function invalidateResolvedMediaCache(appId: string): void {
   clearCachedGameMediaPaths(appId);
+  // resolvedSrcCache keys are raw filesystem paths (not appIds), so we must
+  // clear the entire cache. convertFileSrc() is cheap so this is safe.
+  resolvedSrcCache.clear();
+  if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log(`[MEDIA][SRC_CACHE_CLEAR] reason=media-invalidated appid=${appId}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,6 +1247,27 @@ export async function cacheMediaForGame(
   // Notify snapshot service so startup-snapshot.json picks up new paths
   invalidateCanonicalMediaCache(appId);
   notifyMediaUpdated(appId).catch(() => { });
+
+  // Re-seed resolved media session cache with current appinfo paths so that
+  // subsequent reads during the snapshot write window see fresh data rather
+  // than re-populating from an intermediate disk state.
+  try {
+    const freshAppInfo = await getCachedGameAppInfo(appId);
+    if (freshAppInfo?.media) {
+      const resolved = await resolveMediaPaths(appId, freshAppInfo.media);
+      if (resolved) {
+        setCachedResolvedMedia(appId, resolved);
+        if (ENABLE_VERBOSE_GAME_CACHE_LOGS) {
+          const roleCount = Object.values(resolved).filter(Boolean).length;
+          console.log(`[MEDIA][SESSION_CACHE_RESEED] appid=${appId} roles=${roleCount}`);
+        }
+      }
+    }
+  } catch {
+    if (ENABLE_VERBOSE_GAME_CACHE_LOGS) {
+      console.log(`[MEDIA][SESSION_CACHE_RESEED_SKIP] appid=${appId} reason=resolve-failed`);
+    }
+  }
 
   // Update artwork.json
   if (sgdbRef) {

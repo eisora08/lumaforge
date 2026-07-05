@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -399,6 +400,13 @@ pub fn cache_store_remote_media(
         ("logo.png", &logo_url, "logo"),
     ];
 
+    let http_client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(8))
+        .user_agent("LumaForge/0.1.0")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build();
+
     for (filename, url_opt, field) in &downloads {
         if let Some(url) = url_opt {
             let dest_path = game_dir.join(filename);
@@ -415,8 +423,9 @@ pub fn cache_store_remote_media(
                 continue;
             }
 
-            match reqwest::blocking::get(url) {
-                Ok(response) => {
+            if let Ok(client) = &http_client {
+                match client.get(url).send() {
+                    Ok(response) => {
                     if let Ok(bytes) = response.bytes() {
                         if fs::write(&dest_path, &bytes).is_ok() {
                             let path_str = dest_path.to_string_lossy().to_string();
@@ -432,6 +441,7 @@ pub fn cache_store_remote_media(
                     }
                 }
                 Err(_) => {}
+            }
             }
         }
     }

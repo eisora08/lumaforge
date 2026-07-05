@@ -8,8 +8,9 @@ use crate::models::hubcap::{
 fn build_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent("LumaForge/0.1.0")
-        .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| format!("Error creando cliente HTTP: {}", e))
 }

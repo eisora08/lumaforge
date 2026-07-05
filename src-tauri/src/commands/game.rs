@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::models::game_name::GameNameResult;
 use crate::models::local_game::LocalDiscoveredGame;
@@ -14,9 +15,11 @@ pub fn resolve_steam_app_names(app_ids: Vec<u32>) -> Result<Vec<GameNameResult>,
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("LumaForge/0.1.0")
+        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
-        .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
+        .map_err(|error| format!("[HTTP][TIMEOUT] Error creando cliente HTTP: {}", error))?;
 
     let mut results: HashMap<u32, GameNameResult> = HashMap::new();
 

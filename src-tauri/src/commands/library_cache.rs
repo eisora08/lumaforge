@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-use reqwest::blocking::get;
 
 use crate::models::library_cache::{
     GameMediaCacheEntry, LibraryAppInfoEntry, LibraryAppInfoMap,
@@ -477,7 +477,17 @@ pub fn cache_library_game_media(
                 continue;
             }
 
-            match get(url) {
+            let http_client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .connect_timeout(Duration::from_secs(8))
+                .user_agent("LumaForge/0.1.0")
+                .redirect(reqwest::redirect::Policy::limited(5))
+                .build();
+            let http_client = match http_client {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            match http_client.get(url).send() {
                 Ok(response) => {
                     if let Ok(bytes) = response.bytes() {
                         if fs::write(&dest_path, &bytes).is_ok() {
@@ -511,12 +521,20 @@ pub fn cache_library_game_media(
                 .or(cover_url.as_ref())
                 .or(hero_url.as_ref());
             if let Some(url) = quick_url {
-                if let Ok(response) = get(url) {
-                    if let Ok(bytes) = response.bytes() {
-                        if fs::write(&quick_cover_path, &bytes).is_ok() {
-                            let path_str = quick_cover_path.to_string_lossy().to_string();
-                            entry.quick_cover_path = Some(path_str);
-                            log_media(&format!("saved quick cover for {}", aid));
+                let qc_client = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_secs(15))
+                    .connect_timeout(Duration::from_secs(8))
+                    .user_agent("LumaForge/0.1.0")
+                    .redirect(reqwest::redirect::Policy::limited(5))
+                    .build();
+                if let Ok(client) = qc_client {
+                    if let Ok(response) = client.get(url).send() {
+                        if let Ok(bytes) = response.bytes() {
+                            if fs::write(&quick_cover_path, &bytes).is_ok() {
+                                let path_str = quick_cover_path.to_string_lossy().to_string();
+                                entry.quick_cover_path = Some(path_str);
+                                log_media(&format!("saved quick cover for {}", aid));
+                            }
                         }
                     }
                 }

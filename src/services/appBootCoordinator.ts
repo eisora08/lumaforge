@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { backgroundJobQueue } from "./backgroundJobQueue";
 import { loadSettings } from "../context/SettingsContext";
 import type { AppSettings } from "../types/settings";
+import type { SteamGameIndexEntry } from "./fullSteamGameIndex";
 import { initPerfCounters, setBootPhaseLabel } from "./perfCounters";
 
 export type BootStatus =
@@ -50,6 +51,8 @@ let _snapshotReady: Promise<void> = new Promise((resolve) => {
 });
 let _splashClosed = false;
 let _cachedSettings: AppSettings | null = null;
+let _cachedGameIndex: SteamGameIndexEntry[] | null = null;
+let _enrichedTitleAppIds: Map<string, string> = new Map();
 
 export function getBootSnapshot(): StartupSnapshot | null {
   return _snapshotLoaded;
@@ -241,9 +244,10 @@ export async function runBootTasks(): Promise<void> {
           await track("enrich-snapshot-titles", async () => {
             logBoot("enrich snapshot titles start");
             if (_snapshotLoaded?.library?.games) {
-              const { isPlaceholderSteamTitle } = await import("./gameCacheService");
+              const { isPlaceholderSteamTitle, updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
               const { getStoreDetails } = await import("./tauri");
               const { resolveGameMetadata } = await import("./gameMetadataResolver");
+              const { getCachedBootAppInfos } = await import("./startupSnapshotService");
               const placeholderGames = _snapshotLoaded.library.games.filter(
                 (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
               );
@@ -264,6 +268,20 @@ export async function runBootTasks(): Promise<void> {
                     game.title = meta.name;
                     enrichedCount++;
                     logBoot(`enriched title: appid=${game.appId} name=${meta.name} source=metadata`);
+                      _enrichedTitleAppIds.set(game.appId, meta.name);
+                    console.log(`[BOOT][TITLE_ENRICHED] stage=3.5 appid=${game.appId} source=metadata`);
+                    // Persist canonical name to appinfo (preserving existing media)
+                    try {
+                      const bootCache = getCachedBootAppInfos();
+                      const bootEntry = bootCache?.[game.appId] as { media?: Record<string, string | null> } | undefined;
+                      const m = bootEntry?.media ?? {} as Record<string, string | null>;
+                      await updateGameAppinfoMediaIfChanged(
+                        game.appId, meta.name,
+                        { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
+                        null, undefined, "bootStage35Enrichment",
+                      ).catch(() => {});
+                      console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=metadata`);
+                    } catch { /* non-critical */ }
                     continue;
                   }
                   try {
@@ -273,6 +291,20 @@ export async function runBootTasks(): Promise<void> {
                       game.title = sdData.name;
                       enrichedCount++;
                       logBoot(`enriched title: appid=${game.appId} name=${sdData.name} source=store`);
+                      _enrichedTitleAppIds.set(game.appId, sdData.name);
+                      console.log(`[BOOT][TITLE_ENRICHED] stage=3.5 appid=${game.appId} source=store`);
+                      // Persist canonical name to appinfo (preserving existing media)
+                      try {
+                        const bootCache = getCachedBootAppInfos();
+                        const bootEntry = bootCache?.[game.appId] as { media?: Record<string, string | null> } | undefined;
+                        const m = bootEntry?.media ?? {} as Record<string, string | null>;
+                        await updateGameAppinfoMediaIfChanged(
+                          game.appId, sdData.name,
+                          { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
+                          null, undefined, "bootStage35Enrichment",
+                        ).catch(() => {});
+                        console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=store`);
+                      } catch { /* non-critical */ }
                     }
                   } catch { /* ignore */ }
                 }
@@ -292,6 +324,7 @@ export async function runBootTasks(): Promise<void> {
             try {
               const { loadSteamGameIndex } = await import("./fullSteamGameIndex");
               const index = await loadSteamGameIndex();
+              _cachedGameIndex = index;
               if (index && index.length > 0) {
                 logBoot(`game index loaded: ${index.length} games`);
               } else {
@@ -443,12 +476,19 @@ export async function runBootTasks(): Promise<void> {
                 } else {
                   // Use the cached games from SQLite for name enrichment
                   if (sqliteCache && sqliteCache.games.length > 0) {
-                    const { loadSteamGameIndex } = await import("./fullSteamGameIndex");
-                    const index = await loadSteamGameIndex();
                     const { indexEntryToLibraryGame } = await import("./fullSteamGameIndex");
                     const luaOverlay = {} as Record<string, boolean>;
                     for (const id of luaAppIds) luaOverlay[id] = true;
-                    reconciledGames = index.map((e) => indexEntryToLibraryGame(e, luaOverlay));
+                    if (_cachedGameIndex && _cachedGameIndex.length > 0) {
+                      // Reuse Stage 4's cached game index to avoid a second readAllGames() call
+                      reconciledGames = _cachedGameIndex.map((e) => indexEntryToLibraryGame(e, luaOverlay));
+                      console.log(`[BOOT][SQLITE_REUSED] source=stage4 target=stage4.5 count=${_cachedGameIndex.length}`);
+                    } else {
+                      // Fallback: Stage 4 may have failed — load again directly
+                      const { loadSteamGameIndex } = await import("./fullSteamGameIndex");
+                      const index = await loadSteamGameIndex();
+                      reconciledGames = index.map((e) => indexEntryToLibraryGame(e, luaOverlay));
+                    }
                   }
                   // Persist to gameStore so validateStartupCacheHealth shows correct count
                   // Always call setReconciledGames; empty-overwrite guard in gameStore prevents wipe
@@ -480,7 +520,30 @@ export async function runBootTasks(): Promise<void> {
                   );
                   if (emptyTitleGames.length > 0) {
                     const appIds = emptyTitleGames.map((g) => g.appId!);
-                    const appinfos = await readCanonicalAppinfos(appIds).catch(() => ({} as Record<string, any>));
+                    // Try boot cache first — populated by Stage 3 hydrateStartupSnapshotMedia
+                    const { getCachedBootAppInfos, clearCachedBootAppInfos } = await import("./startupSnapshotService");
+                    const bootCache = getCachedBootAppInfos();
+                    let appinfos: Record<string, any>;
+                    if (bootCache) {
+                      appinfos = {} as Record<string, any>;
+                      for (const id of appIds) {
+                        if (bootCache[id]) {
+                          appinfos[id] = bootCache[id];
+                        }
+                      }
+                      const cachedCount = Object.keys(appinfos).length;
+                      if (cachedCount > 0) {
+                        console.log(`[BOOT][APPINFO_CACHE] hit appIds=${appIds.length} cached=${cachedCount}`);
+                      }
+                      const missingIds = appIds.filter(id => !appinfos[id]);
+                      if (missingIds.length > 0) {
+                        const missingInfos = await readCanonicalAppinfos(missingIds).catch(() => ({} as Record<string, any>));
+                        Object.assign(appinfos, missingInfos);
+                      }
+                    } else {
+                      appinfos = await readCanonicalAppinfos(appIds).catch(() => ({} as Record<string, any>));
+                      console.log(`[BOOT][APPINFO_CACHE] miss appIds=${appIds.length}`);
+                    }
                     // Also resolve metadata — may find names that canonical/store don't have yet
                     const numIds = appIds.map(Number).filter((n) => !isNaN(n));
                     let metadataResolution: Record<number, import("../types/gameMetadata").SteamAppMetadata> = {};
@@ -489,6 +552,15 @@ export async function runBootTasks(): Promise<void> {
                     }
                     for (const game of emptyTitleGames) {
                       if (!game.appId) continue;
+                      // Skip if Stage 3.5 already enriched this game
+                      if (_enrichedTitleAppIds.has(game.appId)) {
+                        const realName = _enrichedTitleAppIds.get(game.appId);
+                        if (realName) {
+                          game.title = realName;
+                          console.log(`[BOOT][TITLE_ENRICH_SKIP] stage=4.5 appid=${game.appId} reason=already-enriched`);
+                        }
+                        continue;
+                      }
                       const appinfo = appinfos[game.appId];
                       const meta = metadataResolution[Number(game.appId)];
                       let resolvedName: string | null = null;
@@ -554,6 +626,8 @@ export async function runBootTasks(): Promise<void> {
                         logBoot(`snapshot titles updated count=${emptyTitleGames.filter(g => g.appId && !isPlaceholderSteamTitle(g.title, g.appId)).length}`);
                       }
                     }
+                    // Invalidate boot cache — disk was updated by updateGameAppinfoMediaIfChanged above
+                    clearCachedBootAppInfos();
                   }
                 }
 

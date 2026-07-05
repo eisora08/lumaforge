@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::models::steam_app_metadata::SteamAppMetadata;
 
 #[tauri::command]
@@ -10,9 +12,11 @@ pub fn resolve_steam_app_metadata(
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("LumaForge/0.1.0")
+        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
-        .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
+        .map_err(|error| format!("[HTTP][TIMEOUT] Error creando cliente HTTP: {}", error))?;
 
     let mut output = Vec::new();
 

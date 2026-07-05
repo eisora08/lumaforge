@@ -72,6 +72,7 @@ const pendingQueue: InternalJob[] = [];
 const inFlightAppIds = new Set<string>();
 const recentlyCompleted = new Set<string>();
 const recentlyFailed = new Set<string>();
+const cancelledKeys = new Set<string>();
 const listeners = new Set<QueueListener>();
 
 const dedupKey = (job: MediaDownloadJob) =>
@@ -138,7 +139,7 @@ async function flushAppInfoUpdates() {
     return;
   }
 
-  const [{ getMediaEntry, setMediaEntry }, { notifyMediaUpdated }] = await Promise.all([
+  const [{ getMediaEntry, setMediaEntry }, { notifyMediaUpdated, completePendingAppInfoUpdate }] = await Promise.all([
     import("./gameCacheService"),
     import("./startupSnapshotService"),
   ]);
@@ -198,6 +199,7 @@ async function flushAppInfoUpdates() {
   if (!hasEffectiveChange) {
     if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA][APPINFO_SKIP] appid=${appId} reason=already-synced-before-rust caller=flushAppInfoUpdates`);
     pendingAppInfoUpdates.delete(appId);
+    completePendingAppInfoUpdate();
     // Schedule next if more pending
     if (pendingAppInfoUpdates.size > 0) {
       appInfoFlushTimer = setTimeout(flushAppInfoUpdates, 300);
@@ -253,6 +255,7 @@ async function flushAppInfoUpdates() {
   }
 
   pendingAppInfoUpdates.delete(appId);
+  completePendingAppInfoUpdate();
   flushRunning = false;
 
   // Schedule next chunk if more appIds pending
@@ -308,6 +311,8 @@ async function queueAppInfoUpdate(appId: string, field: string, path: string | n
 
   // New appId or first field — schedule flush
   pendingAppInfoUpdates.set(appId, { [field]: path });
+  const { trackPendingAppInfoUpdate } = await import("./startupSnapshotService");
+  trackPendingAppInfoUpdate();
   if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_QUEUE][ENQUEUE_APPINFO] appid=${appId} field=${field} source=${caller} changed=true`);
 
   if (flushRunning || appInfoFlushTimer) {
@@ -359,6 +364,14 @@ async function performDownload(entry: InternalJob, key: string) {
       }
       throw err;
     });
+
+    // If this job was cancelled while invoke was in flight, ignore the result.
+    // The caller already received success:false from cancelMediaJobsForApp.
+    if (cancelledKeys.has(key)) {
+      cancelledKeys.delete(key);
+      console.log(`[MEDIA_QUEUE][CANCELLED_COMPLETION_IGNORED] appid=${job.appId} job=${key}`);
+      return;
+    }
 
     if (result !== null) {
       recentlyCompleted.add(key);
@@ -418,6 +431,22 @@ export function enqueueMediaDownload(job: MediaDownloadJob): Promise<MediaDownlo
     if (recentlyFailed.has(key)) {
       log("skip already failed", key);
       return Promise.resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Previously failed" });
+    }
+    // Check for orphaned in-flight jobs that were cancelled but whose Rust
+    // invoke may still be running.  The key lives in cancelledKeys until the
+    // orphaned invoke completes and performDownload clears it.  Poll until
+    // the key is gone, then return a cancelled result so the caller knows
+    // the previous attempt did not succeed.
+    if (cancelledKeys.has(key)) {
+      log("defer (cancelled in-flight)", key);
+      return new Promise((resolve) => {
+        const poll = setInterval(() => {
+          if (!cancelledKeys.has(key)) {
+            clearInterval(poll);
+            resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Previously cancelled" });
+          }
+        }, 100);
+      });
     }
   }
 
@@ -491,6 +520,9 @@ export async function enqueueGameMediaBatch(
 export function cancelMediaJobsForApp(appId: string) {
   for (const [id, entry] of activeJobs) {
     if (entry.job.appId === appId) {
+      const key = dedupKey(entry.job);
+      cancelledKeys.add(key);
+      console.log(`[MEDIA_QUEUE][CANCEL_MARKED] appid=${appId} job=${key}`);
       activeJobs.delete(id);
       inFlightAppIds.delete(appId);
       entry.resolve({ success: false, appId, mediaType: entry.job.mediaType, error: "Cancelled" });
@@ -534,10 +566,18 @@ export function isAppIdInFlight(appId: string): boolean {
 }
 
 export function clearMediaQueueState() {
-  recentlyCompleted.clear();
-  recentlyFailed.clear();
+  if (activeJobs.size === 0 && cancelledKeys.size === 0) {
+    recentlyCompleted.clear();
+    recentlyFailed.clear();
+    log("cleared dedup state");
+  } else {
+    // Active or orphaned in-flight jobs still exist — preserve dedup state
+    // to prevent duplicate re-enqueue when the same media is queued again.
+    console.log(`[MEDIA_QUEUE][CLEAR_DEFERRED] active=${activeJobs.size} orphaned=${cancelledKeys.size}`);
+  }
   pendingAppInfoUpdates.clear();
   if (appInfoFlushTimer) clearTimeout(appInfoFlushTimer);
   appInfoFlushTimer = null;
-  log("cleared dedup state");
+  // Intentionally NOT clearing cancelledKeys — active invokes may still be in
+  // flight and need the cancelled guard when they resolve.
 }

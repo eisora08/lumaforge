@@ -15,8 +15,9 @@ pub fn resolve_steamgriddb_artwork(
 
     let client = reqwest::blocking::Client::builder()
         .user_agent(USER_AGENT)
-        .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|error| format!("Failed to create HTTP client: {}", error))?;
 

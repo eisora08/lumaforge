@@ -16,9 +16,72 @@ type AsyncImageProps = {
   fallbackLocalPath?: string | null;
 };
 
-const failedAssetSrcSet = new Set<string>();
-const failedLocalPathSet = new Set<string>();
+const MAX_DATA_URL_CACHE = 100;
+const FAILED_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_FAILED_ENTRIES = 500;
+
+const failedAssetSrcMap = new Map<string, number>();
+const failedLocalPathMap = new Map<string, number>();
 const successfulDataUrlCache = new Map<string, string>();
+
+function isFailedAsset(src: string): boolean {
+  const ts = failedAssetSrcMap.get(src);
+  if (ts === undefined) return false;
+  if (Date.now() - ts > FAILED_CACHE_TTL_MS) {
+    failedAssetSrcMap.delete(src);
+    return false;
+  }
+  return true;
+}
+
+function markFailedAsset(src: string): void {
+  failedAssetSrcMap.set(src, Date.now());
+  if (failedAssetSrcMap.size > MAX_FAILED_ENTRIES) {
+    const removed = failedAssetSrcMap.size;
+    failedAssetSrcMap.clear();
+    console.log(`[IMG][CACHE_PRUNE] cache=failedAssetSrcSet removed=${removed} size=0`);
+  }
+}
+
+function isFailedLocalPath(path: string): boolean {
+  const ts = failedLocalPathMap.get(path);
+  if (ts === undefined) return false;
+  if (Date.now() - ts > FAILED_CACHE_TTL_MS) {
+    failedLocalPathMap.delete(path);
+    return false;
+  }
+  return true;
+}
+
+function markFailedLocalPath(path: string): void {
+  failedLocalPathMap.set(path, Date.now());
+  if (failedLocalPathMap.size > MAX_FAILED_ENTRIES) {
+    const removed = failedLocalPathMap.size;
+    failedLocalPathMap.clear();
+    console.log(`[IMG][CACHE_PRUNE] cache=failedLocalPathSet removed=${removed} size=0`);
+  }
+}
+
+function getCachedDataUrl(key: string): string | undefined {
+  const val = successfulDataUrlCache.get(key);
+  if (val !== undefined) {
+    successfulDataUrlCache.delete(key);
+    successfulDataUrlCache.set(key, val);
+  }
+  return val;
+}
+
+function setCachedDataUrl(key: string, dataUrl: string): void {
+  successfulDataUrlCache.delete(key);
+  successfulDataUrlCache.set(key, dataUrl);
+  if (successfulDataUrlCache.size > MAX_DATA_URL_CACHE) {
+    const firstKey = successfulDataUrlCache.keys().next().value;
+    if (firstKey !== undefined) {
+      successfulDataUrlCache.delete(firstKey);
+      console.log(`[IMG][CACHE_PRUNE] cache=successfulDataUrlCache removed=1 size=${successfulDataUrlCache.size}`);
+    }
+  }
+}
 
 // ── Global image load status cache (survives remounts) ──
 // Prevents placeholder flash when navigating back to pages with loaded images.
@@ -116,12 +179,12 @@ export default function AsyncImage({
     }
 
     if (fallbackLocalPath && !fallbackLocalPath.endsWith(".tmp")) {
-      const cached = successfulDataUrlCache.get(fallbackLocalPath);
+      const cached = getCachedDataUrl(fallbackLocalPath);
       if (cached) {
         setDisplaySrc(cached);
         return;
       }
-      if (isAssetUrl(src) && failedAssetSrcSet.has(src)) {
+      if (isAssetUrl(src) && isFailedAsset(src)) {
         triggerDataUrlFallback(src, fallbackLocalPath);
         return;
       }
@@ -144,7 +207,7 @@ export default function AsyncImage({
     }
 
     // Skip already-failed paths
-    if (failedLocalPathSet.has(localPath)) {
+    if (isFailedLocalPath(localPath)) {
       setFailed(true);
       onErrorRef.current?.();
       return;
@@ -160,14 +223,14 @@ export default function AsyncImage({
           onErrorRef.current?.();
           return;
         }
-        successfulDataUrlCache.set(localPath, dataUrl);
+        setCachedDataUrl(localPath, dataUrl);
         setFailed(false);
         setDisplaySrc(dataUrl);
       })
       .catch((err) => {
         const errStr = String(err);
         if (errStr.includes("os error 2") || errStr.includes("Invalid path") || errStr.includes("file not found") || errStr.includes("No such file")) {
-          failedLocalPathSet.add(localPath);
+          markFailedLocalPath(localPath);
         }
         if (mountedRef.current) {
           setFailed(true);
@@ -216,7 +279,7 @@ export default function AsyncImage({
       !fallbackLocalPathRef.current.endsWith(".tmp") &&
       srcRef.current
     ) {
-      failedAssetSrcSet.add(srcRef.current);
+      markFailedAsset(srcRef.current);
       triggerDataUrlFallback(srcRef.current, fallbackLocalPathRef.current);
     } else {
       if (dataUrlAttemptedRef.current) {

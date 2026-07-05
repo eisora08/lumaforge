@@ -1355,3 +1355,200 @@ Root causes identified:
 ### Build
 - `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
 - `vite build` ✅ (only pre-existing chunk warnings)
+
+## Session — Cache Consistency & Memory Fixes (M2, S2, M3, S3, M4)
+
+### Goal
+Fix memory and consistency issues across media download queue, snapshot writes, resolved path cache, and media cache invalidation.
+
+### Part 1: M2 — Cancel-vs-completion race in mediaDownloadQueue
+- Added module-level `cancelledKeys` Set in `mediaDownloadQueue.ts`.
+- `cancelMediaJobsForApp` marks the dedup key before resolving the cancel promise.
+- `performDownload` checks `cancelledKeys` after the Rust invoke completes — if cancelled, skips success/failure side effects (no `recentlyCompleted`, no `queueAppInfoUpdate`, no notify).
+- `clearMediaQueueState` does **not** clear `cancelledKeys` to avoid reintroducing the race.
+- 4 edits across 1 file. `tsc --noEmit` ✅, `vite build` ✅.
+
+### Part 2: S2 — Stale snapshot overwrites fresh in-memory media
+- Wired up `trackPendingAppInfoUpdate` / `completePendingAppInfoUpdate` in `mediaDownloadQueue.ts` (3 edits).
+- `buildStartupSnapshotFromCurrentState`'s `flushPendingAppInfoUpdates(2000)` now actually waits for in-flight appinfo writes before reading `appinfo.json`.
+- Previously the counter was always 0 (exported but never imported — dead code).
+- `tsc --noEmit` ✅, `vite build` ✅.
+
+### Part 3: M3 — `resolvedSrcCache` never invalidated on media change
+- Added `resolvedSrcCache.clear()` to `invalidateResolvedMediaCache(appId)` in `gameCacheService.ts`.
+- Keys are raw filesystem paths (not appIds), so whole-cache clear is required.
+- `convertFileSrc()` is cheap (~0.001ms), making this safe.
+- 1 edit. `tsc --noEmit` ✅, `vite build` ✅.
+
+### Part 4: S3 — Snapshot writes deferred indefinitely during interaction
+- Added `MAX_DEFER_DURATION_MS = 30_000` + `_mediaUpdateDeferStart` / `_fullRebuildDeferStart` timestamps in `startupSnapshotService.ts`.
+- After 30s of continuous `isInteractionBusy()` deferral, `_processDirtyAppIds` and `scheduleSnapshotWrite` proceed despite interaction.
+- Defer timestamps reset after successful writes.
+- Existing `_writeInProgress` guard is not bypassed.
+- 5 edits. `tsc --noEmit` ✅, `vite build` ✅.
+
+### Part 5: M4 — `cacheMediaForGame` leaves stale session cache
+- `gameCacheService.ts`: after `invalidateResolvedMediaCache(appId)` and `notifyMediaUpdated(appId)`, re-seeds `resolvedMediaSessionCache` with current appinfo paths.
+- Calls `getCachedGameAppInfo(appId)` (reads fresh `appinfo.json` from disk since session appinfo cache was invalidated by the write), resolves paths via `resolveMediaPaths`, and calls `setCachedResolvedMedia`.
+- If resolve fails, the cache stays empty (no stale data).
+- `[MEDIA][SESSION_CACHE_RESEED]` / `[MEDIA][SESSION_CACHE_RESEED_SKIP]` diagnostic logs.
+- 1 edit. `tsc --noEmit` ✅, `vite build` ✅.
+
+### Key Files Changed
+- `src/services/mediaDownloadQueue.ts` — M2: `cancelledKeys` Set + guard in `performDownload`. S2: `trackPendingAppInfoUpdate` / `completePendingAppInfoUpdate` wiring (3 edits).
+- `src/services/gameCacheService.ts` — M3: `resolvedSrcCache.clear()` in `invalidateResolvedMediaCache`. M4: re-seed block after `notifyMediaUpdated` in `cacheMediaForGame`.
+- `src/services/startupSnapshotService.ts` — S3: max defer timestamps + threshold check in `_processDirtyAppIds` and `scheduleSnapshotWrite` (5 edits).
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (no Rust changes)
+
+## Session — M5: clearMediaQueueState wipes dedup state while active downloads may be in flight
+
+### Goal
+Prevent duplicate downloads when `clearMediaQueueState()` is called while active Rust `safe_download_image` invokes are still running (either in `activeJobs` or orphaned in `cancelledKeys`).
+
+### Root cause
+`clearMediaQueueState()` unconditionally cleared `recentlyCompleted`/`recentlyFailed`, removing dedup protection for previously-completed jobs. After `cancelMediaJobsForApp` removes jobs from `activeJobs` and adds keys to `cancelledKeys`, `enqueueMediaDownload` had no way to detect orphaned in-flight Rust invokes — the key was not in `recentlyCompleted`, `recentlyFailed`, `activeJobs`, or `pendingQueue`. Re-enqueuing the same job created a second `safe_download_image` invoke for the same URL.
+
+### Part 1: clearMediaQueueState — conditional dedup clear
+- `clearMediaQueueState()` now preserves `recentlyCompleted`/`recentlyFailed` when `activeJobs.size > 0 || cancelledKeys.size > 0`.
+- Logs `[MEDIA_QUEUE][CLEAR_DEFERRED] active=N orphaned=N` when skipping clearance.
+- `pendingAppInfoUpdates` and `appInfoFlushTimer` are still always cleared (safe to clear — completions re-add their pending updates).
+- `cancelledKeys` is still NOT cleared (M2 preservation).
+
+### Part 2: enqueueMediaDownload — cancelledKeys dedup check
+- After `recentlyCompleted`/`recentlyFailed` checks, added `cancelledKeys.has(key)` check.
+- When found, polls at 100ms intervals until the orphaned Rust invoke completes and `performDownload` removes the key from `cancelledKeys`.
+- Resolves with `{ success: false, error: "Previously cancelled" }` so the caller knows the previous attempt did not succeed.
+- Only fires when `!job.forceRefresh`, matching the other dedup checks.
+
+### Key Changes
+- `src/services/mediaDownloadQueue.ts` — `clearMediaQueueState()` conditional dedup clear (line 568-583); `enqueueMediaDownload()` cancelledKeys dedup check (line 435-451).
+
+### Scenario coverage
+- **A — clear while active job in flight**: `activeJobs.size > 0` → `recentlyCompleted`/`recentlyFailed` preserved. Re-enqueue hits `activeJobs` loop → deduped.
+- **B — cancel prewarm then restart**: `cancelMediaJobsForApp` removes from `activeJobs`, adds to `cancelledKeys`. `clearMediaQueueState` sees `cancelledKeys.size > 0` → preserves `recentlyCompleted`/`recentlyFailed`. Re-enqueue hits `cancelledKeys` check → polls until orphaned job resolves → returns cancelled result.
+- **C — clear when idle**: `activeJobs.size === 0 && cancelledKeys.size === 0` → clears dedup state as before.
+- **D — normal success/failure**: No changes to `performDownload` or `tryProcessNext` — behavior unchanged.
+
+### M2 preservation
+- `cancelledKeys` is never cleared by `clearMediaQueueState`.
+- Orphaned job completions still check `cancelledKeys.has(key)` in `performDownload` and return without side effects.
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (no Rust changes)
+
+## Session — B2: Duplicate readAllGames during boot
+
+### Goal
+Eliminate duplicate `readAllGames()` calls during boot by reusing Stage 4's SQLite game index in Stage 4.5.
+
+### Root cause
+Stage 4 (`appBootCoordinator.ts:294`) calls `loadSteamGameIndex()` → `readAllGames()` to count and log the game index. Stage 4.5's else branch (`appBootCoordinator.ts:447`) calls `loadSteamGameIndex()` again for name enrichment — causing a second full SQLite scan of the `games` table.
+
+### Part 1: Boot-local cache
+- Added `_cachedGameIndex` module-level variable (`SteamGameIndexEntry[] | null`) set by Stage 4, read by Stage 4.5.
+- Stage 4 now stores `_cachedGameIndex = index` after loading (line 297).
+- Stage 4.5 else branch: checks `_cachedGameIndex` first, falls back to `loadSteamGameIndex()` only if null.
+- Consolidated two dynamic imports from `fullSteamGameIndex` into one.
+- `[BOOT][SQLITE_REUSED]` diagnostic log when cache is used.
+- No global cache — module-level variable scoped to boot lifecycle, same pattern as `_cachedSettings`.
+
+### Key Changes
+- `src/services/appBootCoordinator.ts` — type import for `SteamGameIndexEntry`, module-level `_cachedGameIndex`, store in Stage 4, reuse in Stage 4.5 (4 edits).
+
+### Scenario coverage
+- **A — warm boot (SQLite populated)**: Stage 4 loads index, Stage 4.5 reuses it. `[BOOT][SQLITE_REUSED]` logged. No second `readAllGames()` call.
+- **B — first boot (SQLite empty)**: Stage 4 returns empty array, `_cachedGameIndex` set to empty array. Stage 4.5 still enters the else branch (if `sqliteCache` is populated from detection cache), uses empty index → `reconciledGames` stays null. Fallback paths unchanged.
+- **C — Stage 4 fails**: `_cachedGameIndex` stays null. Stage 4.5 falls through to `loadSteamGameIndex()` fallback — behavior identical to before.
+- **D — validateStartupCacheHealth**: Post-boot diagnostic, still reads SQLite directly (single read, not a duplicate — intentionally kept).
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (no Rust changes)
+
+## Session — B3: Duplicate title enrichment during boot
+
+### Goal
+Avoid duplicate metadata/store/appinfo resolution for the same placeholder appIds between Stage 3.5 (enrich-snapshot-titles) and Stage 4.5 (reconcile-lua-games title enrichment).
+
+### Root cause
+- Stage 3.5 (appBootCoordinator.ts:243-289) resolves placeholder snapshot titles via `resolveGameMetadata` → `getStoreDetails`, mutates `_snapshotLoaded` in memory, and saves the snapshot.
+- Stage 4.5 (appBootCoordinator.ts:483-592) separately resolves placeholder titles for `reconciledGames` via the same `resolveGameMetadata` → `getStoreDetails` chain, plus writes to canonical appinfo.
+- On a warm boot, nearly all snapshot games overlap with reconciled games — causing duplicate metadata calls, duplicate store detail calls, duplicate appinfo writes (Stage 4.5 only), and duplicate snapshot saves.
+
+### Part 1: Module-level Map tracking
+- Added `_enrichedTitleAppIds: Map<string, string>` (appId → resolvedName) module-level variable, same pattern as `_cachedSettings` and `_cachedGameIndex`.
+- Stage 3.5 adds to the Map after each successful enrichment (both metadata and store paths).
+- Stage 4.5 checks the Map at the top of the per-game loop before attempting resolution.
+
+### Part 2: Stage 3.5 persists canonical names
+- Stage 3.5 now also writes the resolved name to canonical appinfo via `updateGameAppinfoMediaIfChanged` after each successful enrichment.
+- Reads existing media from the B1 boot appinfo cache (`getCachedBootAppInfos`) to preserve all 5 media paths (coverPath, backgroundPath, logoPath, iconPath, landscapePath), remote, and mediaSources.
+- Uses source tag `"bootStage35Enrichment"` to distinguish from Stage 4.5 writes.
+- Safe non-critical try/catch — failure doesn't block enrichment or skip the Map entry.
+
+### Part 3: Stage 4.5 skip logic
+- At the top of the per-game loop (after `if (!game.appId) continue;`), checks `_enrichedTitleAppIds.has(game.appId)`.
+- When enriched: reads the resolved name from the Map, updates `game.title`, logs `[BOOT][TITLE_ENRICH_SKIP] stage=4.5 appid=... reason=already-enriched`, and continues.
+- Non-enriched games proceed through the existing full resolution chain unchanged.
+
+### Part 4: Diagnostic logs added
+- `[BOOT][TITLE_ENRICHED] stage=3.5 appid=... source=metadata|store` — per successful enrichment in Stage 3.5.
+- `[BOOT][TITLE_APPINFO_WRITE] appid=... source=metadata|store` — when Stage 3.5 writes to appinfo.
+- `[BOOT][TITLE_ENRICH_SKIP] stage=4.5 appid=... reason=already-enriched` — when Stage 4.5 skips a game.
+
+### Key Changes
+- `src/services/appBootCoordinator.ts` — `_enrichedTitleAppIds` Map, Stage 3.5 Map writes + appinfo persistence, Stage 4.5 skip check (3 edit blocks).
+
+### Scenario coverage
+- **A — warm boot with placeholder titles**: Stage 3.5 resolves and writes to Map + appinfo. Stage 4.5 skips those appIds. Logs show `[BOOT][TITLE_ENRICH_SKIP]` for enriched games.
+- **B — Stage 3.5 cannot resolve a title**: Map has no entry. Stage 4.5 runs full resolution as before. No regression.
+- **C — appinfo already has real name**: Stage 3.5 reads metadata/store, finds name, writes to Map + appinfo (no-op rewrite). Stage 4.5 skips.
+- **D — media preservation**: Stage 3.5 appinfo write reads existing media from boot cache and preserves all 5 paths. No artwork fields wiped.
+- **E — no snapshot / first boot**: `_snapshotLoaded` is null, Stage 3.5 skips entirely. Map stays empty. Stage 4.5 runs normally. No crash.
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (no Rust changes)
+
+## Session — Audit #10: sourceAvailability cache grows without bound
+
+### Goal
+Add bounded cache behavior to `sourceAvailabilityCacheService.ts` so the `cachedIndex.games` record cannot grow indefinitely.
+
+### Root cause
+`cachedIndex.games` is a `Record<string, SourceAvailabilityGameEntry>` with no TTL, no max size, and no eviction. Entries are added by `updateSourceAvailability()` and persist forever. The cache is persisted to disk and loaded on boot, so stale entries accumulate across sessions.
+
+### Implementation
+- Added `SOURCE_AVAILABILITY_CACHE_TTL_S = 86400` (24 hours)
+- Added `SOURCE_AVAILABILITY_CACHE_MAX = 1000` entry limit
+- Added `pruneCache()` helper that:
+  1. Filters entries older than 24h (by `updatedAt` field, already present in the type)
+  2. If still over 1000, sorts by `updatedAt` descending and keeps the newest 1000
+  3. Replaces `cachedIndex.games` with the pruned set
+  4. Logs `[SOURCE_AVAIL][CACHE_PRUNE] removed=N size=N`
+- `getSourceAvailability(appId)`: checks TTL before returning; deletes and returns `undefined` if expired
+- `updateSourceAvailability()`: calls `pruneCache()` after inserting the new entry
+- No changes to data shape, no new fields, no load-from-disk changes
+- Existing callers receive the same `SourceAvailabilityGameEntry` shape unchanged
+
+### Key Changes
+- `src/services/sourceAvailabilityCacheService.ts` — 2 constants + `pruneCache()` function + TTL check in `getSourceAvailability()` + `pruneCache()` call in `updateSourceAvailability()` (3 edits)
+
+### Scenarios
+- **Normal cache hit**: TTL check passes, entry returned as before
+- **Expired entry**: TTL check fails, entry deleted, `undefined` returned → refresh path repopulates
+- **Overflow**: After inserting the 1001st unique appId, `pruneCache()` removes oldest entries until ≤1000 remain
+- **Store browsing**: No behavior change; stale entries are transparently evicted
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (no Rust changes)

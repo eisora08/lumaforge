@@ -3,7 +3,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::AppHandle;
 
@@ -24,9 +24,11 @@ pub fn download_file_to_temp(
 ) -> Result<DownloadedFile, String> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("LumaForge/0.1.0")
+        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
-        .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
+        .map_err(|error| format!("[HTTP][TIMEOUT] Error creando cliente HTTP: {}", error))?;
 
     let mut request = client.get(download_url);
 

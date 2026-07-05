@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
@@ -70,8 +71,18 @@ pub fn cache_remote_artwork(
         return Ok(dest_path.to_string_lossy().to_string());
     }
 
-    let response = reqwest::blocking::get(&url)
-        .map_err(|e| format!("Failed to download artwork: {}", e))?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(8))
+        .user_agent("LumaForge/0.1.0")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .map_err(|e| format!("[HTTP][TIMEOUT] Failed to download artwork: {}", e))?;
 
     let bytes = response
         .bytes()
