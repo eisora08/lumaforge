@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { GameAppInfo, GameMediaPaths } from "./tauri";
-import { invalidateResolvedMediaCache, normalizeMediaPathForIndex, updateGameAppinfoMediaIfChanged, getCachedGameAppInfo, getMediaEntry } from "./gameCacheService";
+import { invalidateResolvedMediaCache, normalizeMediaPathForIndex, updateGameAppinfoMediaIfChanged, getCachedGameAppInfo, getMediaEntry, generateMediaManifest } from "./gameCacheService";
 import { isInteractionBusy } from "./perfCounters";
 
 const FLUSH_IDLE_RETRY_MS = 2000; // Phase 3: retry delay when paused
@@ -140,7 +140,7 @@ async function flushAppInfoUpdates() {
     return;
   }
 
-  const [{ getMediaEntry, setMediaEntry }, { notifyMediaUpdated, completePendingAppInfoUpdate }] = await Promise.all([
+  const [{ getMediaEntry, setMediaEntry, generateMediaManifest }, { notifyMediaUpdated, completePendingAppInfoUpdate }] = await Promise.all([
     import("./gameCacheService"),
     import("./startupSnapshotService"),
   ]);
@@ -254,6 +254,9 @@ async function flushAppInfoUpdates() {
       if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA_INDEX][UPDATE_SKIP] appid=${appId} reason=no-effective-change`);
     }
   }
+
+  // Update media_manifest.json to reflect new files on disk
+  generateMediaManifest(appId, merged).catch(() => {});
 
   pendingAppInfoUpdates.delete(appId);
   completePendingAppInfoUpdate();
@@ -389,6 +392,20 @@ async function performDownload(entry: InternalJob, key: string) {
       notify({ type: "success", job, result: { success: true, appId: job.appId, mediaType: job.mediaType }, queueSize: pendingQueue.length });
       entry.resolve({ success: true, appId: job.appId, mediaType: job.mediaType });
     }
+
+    // Update media_manifest.json to reflect current files on disk after this download.
+    // This ensures the manifest is created/updated even when queueAppInfoUpdate dedup skips
+    // the flush (e.g., when MediaIndex already tracks the same path) or when flushAppInfoUpdates
+    // early-returns on unchanged paths.
+    const miEntry = getMediaEntry(job.appId);
+    const manifestPaths: GameMediaPaths = {
+      coverPath: job.mediaType === "cover" ? (result ?? miEntry?.coverPath ?? null) : (miEntry?.coverPath ?? null),
+      landscapePath: job.mediaType === "landscape" ? (result ?? miEntry?.landscapePath ?? null) : (miEntry?.landscapePath ?? null),
+      backgroundPath: job.mediaType === "background" ? (result ?? miEntry?.backgroundPath ?? null) : (miEntry?.backgroundPath ?? null),
+      logoPath: job.mediaType === "logo" ? (result ?? miEntry?.logoPath ?? null) : (miEntry?.logoPath ?? null),
+      iconPath: job.mediaType === "icon" ? (result ?? miEntry?.iconPath ?? null) : (miEntry?.iconPath ?? null),
+    };
+    generateMediaManifest(job.appId, manifestPaths, job.provider).catch(() => {});
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 

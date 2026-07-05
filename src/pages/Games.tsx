@@ -104,7 +104,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                 enqueueMediaDownload({
                   id: `sgdb-${game.appId}-${mediaType}`,
                   appId: game.appId!,
-                  provider: "steamgriddb",
+                  provider: "steam",
                   mediaType: mediaType as any,
                   url,
                   target: "canonical",

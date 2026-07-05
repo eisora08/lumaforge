@@ -157,7 +157,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                 enqueueMediaDownload({
                   id: `sgdb-${game.appId}-${mediaType}`,
                   appId: game.appId!,
-                  provider: "steamgriddb",
+                  provider: "steam",
                   mediaType: mediaType as any,
                   url,
                   target: "canonical",

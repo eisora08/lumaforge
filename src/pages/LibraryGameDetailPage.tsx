@@ -13,9 +13,9 @@ import {
   getMediaCacheForAppId,
   getLibraryGameDetails,
 } from "../services/libraryLocalCacheService";
-import type { GameMediaCacheEntry } from "../services/tauri";
+import { readMediaManifest, type GameMediaCacheEntry, type GameMediaPaths, type MediaManifest } from "../services/tauri";
 import type { GameAppInfo } from "../services/gameCacheService";
-import { loadGameAppInfoWithMediaFallback, resolveCanonicalDisplayTitle } from "../services/gameCacheService";
+import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
 import { enqueueMediaDownload, cancelMediaJobsForApp } from "../services/mediaDownloadQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
@@ -120,7 +120,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     }
   }
 
-  // Load local cache (media cache + canonical appinfo + details/{appid}.json) immediately
+  // Load local cache (media cache + canonical appinfo + media manifest + details/{appid}.json) immediately
   // Clear ALL state on any appId change to prevent stale cross-appId data during async fetch.
   useEffect(() => {
     // Cancel pending media downloads for any previously-active appId
@@ -136,18 +136,80 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     if (!selectedGame?.appId) return;
 
     let cancelled = false;
-    getMediaCacheForAppId(selectedGame.appId).then(setMediaEntry).catch(() => setMediaEntry(null));
-    loadGameAppInfoWithMediaFallback(selectedGame.appId).then((info) => {
-      if (!cancelled) {
-        setCanonicalAppInfo(info);
-        if (!info?.media?.landscapePath && !info?.media?.coverPath) {
-          resolveGameMediaImageSrc(selectedGame.appId!).then((src) => {
-            if (!cancelled && src) setCanonicalDiskFallback(src);
-          }).catch(() => {});
+    const appId = selectedGame.appId;
+
+    getMediaCacheForAppId(appId).then(setMediaEntry).catch(() => setMediaEntry(null));
+
+    // Load canonicalAppInfo AND media manifest simultaneously.
+    // Manifest paths (where exists=true) override canonicalAppInfo.media.* fields
+    // because the manifest is the authoritative record of what files actually exist on disk.
+    Promise.all([
+      loadGameAppInfoWithMediaFallback(appId),
+      readMediaManifest(appId).catch(() => null as MediaManifest | null),
+    ]).then(async ([info, manifest]) => {
+      if (cancelled) return;
+
+      let mergedInfo = info;
+      if (info?.media && manifest) {
+        const manifestMedia: GameMediaPaths = {
+          coverPath: manifest.files.cover.exists ? manifest.files.cover.path : null,
+          landscapePath: manifest.files.landscape.exists ? manifest.files.landscape.path : null,
+          backgroundPath: manifest.files.background.exists ? manifest.files.background.path : null,
+          logoPath: manifest.files.logo.exists ? manifest.files.logo.path : null,
+          iconPath: manifest.files.icon.exists ? manifest.files.icon.path : null,
+        };
+        const resolvedManifestPaths = await resolveMediaPaths(appId, manifestMedia, "steam");
+        if (cancelled) return;
+        if (resolvedManifestPaths) {
+          const merged = { ...info.media };
+          let changed = false;
+
+          const mergeField = (key: keyof GameMediaPaths) => {
+            const manifestVal = resolvedManifestPaths[key];
+            if (manifestVal && merged[key] !== manifestVal) {
+              merged[key] = manifestVal;
+              changed = true;
+            }
+          };
+          mergeField("coverPath");
+          mergeField("landscapePath");
+          mergeField("backgroundPath");
+          mergeField("logoPath");
+          mergeField("iconPath");
+
+          if (changed) {
+            console.log(`[MEDIA][MANIFEST_MERGE] appid=${appId} merged=true`);
+            mergedInfo = { ...info, media: merged };
+          }
+        }
+        if (resolvedManifestPaths && import.meta.env.DEV) {
+          ["background", "logo"].forEach((role) => {
+            const key = `${role}Path` as keyof GameMediaPaths;
+            const resolvedPath = resolvedManifestPaths[key] ?? null;
+            const manifestPath = (manifest as any)?.files?.[role]?.path ?? "(no-manifest)";
+            console.log(`[MEDIA][MANIFEST_RESOLVE] appid=${appId} role=${role} manifestPath=${manifestPath} resolvedPath=${resolvedPath ?? "(null)"} exists=${!!resolvedPath}`);
+          });
         }
       }
+
+      if (import.meta.env.DEV && mergedInfo?.media) {
+        const logDisplay = (role: string) => {
+          const key = `${role}Path` as keyof GameMediaPaths;
+          const path = mergedInfo.media?.[key] ?? null;
+          console.log(`[MEDIA][DISPLAY_PATH] appid=${appId} role=${role} finalPath=${path ?? "(null)"}`);
+        };
+        logDisplay("background");
+        logDisplay("logo");
+      }
+      setCanonicalAppInfo(mergedInfo);
+      if (!mergedInfo?.media?.landscapePath && !mergedInfo?.media?.coverPath) {
+        resolveGameMediaImageSrc(appId).then((src) => {
+          if (!cancelled && src) setCanonicalDiskFallback(src);
+        }).catch(() => {});
+      }
     }).catch(() => { if (!cancelled) setCanonicalAppInfo(null); });
-    getLibraryGameDetails(selectedGame.appId).then((entry) => {
+
+    getLibraryGameDetails(appId).then((entry) => {
       if (entry?.data) setLocalDetailsData(entry.data);
     }).catch(() => {});
     return () => { cancelled = true; };
@@ -316,7 +378,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           enqueueMediaDownload({
             id: `refresh-${appIdStr}-${mediaType}-${Date.now()}`,
             appId: appIdStr,
-            provider: "steamgriddb",
+            provider: "steam",
             mediaType: mediaType as any,
             url,
             target: "canonical",
