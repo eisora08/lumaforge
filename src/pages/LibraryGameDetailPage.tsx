@@ -233,15 +233,25 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const appIdNum = Number(resolvedGame.appId);
     if (!Number.isFinite(appIdNum)) return;
 
-    loadSteamStats(settings.steamRoot || undefined, [appIdNum])
+    loadSteamStats(settings.steamRoot || undefined, [appIdNum], { forceRefresh: true })
       .then((statsMap) => {
+        const stat = statsMap.get(appIdNum);
+        if (resolvedGame.appId === "268910") {
+          console.log(`[ACTIVITY][TRACE_STEAM_STATS] appid=268910 statFound=${!!stat} lastPlayed=${stat?.lastPlayed ?? "null"} playtimeMinutes=${stat?.playtimeMinutes ?? "null"}`);
+          console.log(`[ACTIVITY][TRACE_SQLITE] appid=268910 preMergeSteamLastPlayed=${resolvedGame.steamLastPlayedAt ?? "null"} steamPlaytimeMinutes=${resolvedGame.steamPlaytimeMinutes ?? "null"}`);
+        }
         const games = [resolvedGame];
         mergeSteamStatsIntoGames(games, statsMap);
         setResolvedGame({ ...games[0] });
+        if (resolvedGame.appId === "268910") {
+          console.log(`[ACTIVITY][TRACE_STEAM_STATS] appid=268910 postMergeSteamLastPlayed=${games[0].steamLastPlayedAt ?? "null"} postMergeSteamPlaytimeMinutes=${games[0].steamPlaytimeMinutes ?? "null"}`);
+        }
 
         // Import Steam playtime when available
-        const stat = statsMap.get(appIdNum);
         if (stat?.playtimeMinutes && stat.playtimeMinutes > 0) {
+          if (resolvedGame.appId === "268910") {
+            console.log(`[ACTIVITY][TRACE_PLAYTIME_IMPORT] appid=268910 playtimeMinutes=${stat.playtimeMinutes} calling importExternalPlaytime`);
+          }
           importExternalPlaytime({
             gameKey: `app-${resolvedGame.appId}`,
             appId: resolvedGame.appId,

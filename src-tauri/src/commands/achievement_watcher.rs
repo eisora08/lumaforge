@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 use super::steam_achievements::resolve_steam_root;
 
 // Disable verbose watcher event logs by default
-const DEBUG_ACH_WATCHER: bool = false;
+const DEBUG_ACH_WATCHER: bool = true;
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 

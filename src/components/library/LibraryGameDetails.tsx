@@ -58,7 +58,7 @@ import {
 } from "../../services/libraryLocalCacheService";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
-import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel, subscribePlaytimeStore } from "../../services/playtimeService";
 import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
@@ -69,7 +69,7 @@ import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGeneratio
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
 import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
-import { notifyMediaUpdated } from "../../services/startupSnapshotService";
+import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession } from "../../context/GameSessionContext";
@@ -250,7 +250,26 @@ export default function LibraryGameDetails({
   const appIdStr = game.appId;
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
     if (!appIdStr) return null;
-    return achievementStore.getSummary(appIdStr) ?? null;
+    // 1. Check in-memory store first
+    const fromStore = achievementStore.getSummary(appIdStr);
+    if (fromStore) return fromStore;
+    // 2. Fallback to snapshot's achievementSummary (updated by full rebuild after refresh)
+    const snap = getCachedSnapshot();
+    const snapGame = snap?.library?.games?.find(g => g.appId === appIdStr);
+    if (snapGame?.achievementSummary && snapGame.achievementSummary.total > 0) {
+      const a = snapGame.achievementSummary;
+      return {
+        appId: appIdStr,
+        source: "local-cache" as const,
+        total: a.total,
+        unlocked: a.unlocked ?? 0,
+        percent: a.percent ?? 0,
+        progressAvailable: a.progressAvailable ?? false,
+        updatedAt: snapGame.updatedAt ?? 0,
+        achievements: [],
+      };
+    }
+    return null;
   });
   const [achievementsLoading, setAchievementsLoading] = useState(false);
   const [achievementsRefreshing, setAchievementsRefreshing] = useState(false);
@@ -345,6 +364,13 @@ export default function LibraryGameDetails({
       ? "Supported"
       : "Not tracked";
 
+  // Subscribe to playtime store changes for re-render
+  const [, setPlaytimeVersion] = useState(0);
+  useEffect(() => {
+    const unsub = subscribePlaytimeStore(() => setPlaytimeVersion(v => v + 1));
+    return unsub;
+  }, []);
+
   // Phase 1: Audit Activity playtime
   const ptEntry = getPlaytimeEntryByAppId(game.appId);
   const totalSeconds = ptEntry ? computeTotalPlaytime(ptEntry) : 0;
@@ -363,6 +389,12 @@ export default function LibraryGameDetails({
   if (hasPlaytimeStore && ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
     console.log(`[ACTIVITY][PLAYTIME_DISPLAY] appid=${game.appId} totalSeconds=${totalSeconds} source=${sourceLabel} label=${playTimeDisplay}`);
   }
+  if (game.appId === "268910") {
+    console.log(`[ACTIVITY][TRACE_RENDER_SOURCE] appid=268910 source=${sourceLabel} ptEntry=${!!ptEntry} totalSeconds=${totalSeconds} lastPlayedFromActivity=${lastPlayedFromActivity ?? "null"}`);
+    console.log(`[ACTIVITY][TRACE_PLAYTIME_STORE] appid=268910 key=${ptEntry?.gameKey ?? "null"} lastPlayed=${ptEntry?.lastPlayedAt ?? "null"} totalSeconds=${totalSeconds}`);
+    console.log(`[ACTIVITY][TRACE_STEAM_STATS] appid=268910 steamLastPlayedAt=${game.steamLastPlayedAt ?? "null"} steamPlaytimeMinutes=${game.steamPlaytimeMinutes ?? "null"}`);
+    console.log(`[ACTIVITY][TRACE_SNAPSHOT] appid=268910 lastPlayedFromActivity=${lastPlayedFromActivity ?? "null"} gameSteamLastPlayed=${game.steamLastPlayedAt ?? "null"}`);
+  }
 
   // Phase 4: Last played — prefer Activity (updated on launch), fallback to Steam/local
   const lastPlayedSource = lastPlayedFromActivity ?? game.localLastPlayedAt ?? game.steamLastPlayedAt ?? 0;
@@ -372,6 +404,13 @@ export default function LibraryGameDetails({
         return formatTimestamp(lastPlayedSource);
       })()
     : "Never";
+
+  // Trace achievement render source for Cuphead debugging
+  if (game.appId === "268910") {
+    const derived = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
+    console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=header source=${achievementsSummary?.source ?? "none"} unlocked=${achievementsSummary?.unlocked ?? "undefined"}/${achievementsSummary?.total ?? "undefined"} derivedFromList=${derived} progressAvailable=${achievementsSummary?.progressAvailable}`);
+    console.log(`[ACH][SUMMARY_AVAILABLE] appid=268910 source=${achievementsSummary?.source ?? "null"} unlocked=${achievementsSummary?.unlocked ?? "null"} total=${achievementsSummary?.total ?? "null"}`);
+  }
 
   // Derive progress from loaded achievement list if summary doesn't have it
   const derivedUnlocked = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
@@ -564,8 +603,8 @@ export default function LibraryGameDetails({
                   return;
                 }
                 diskCacheRef.current = { updatedAt: diskUpdatedAt };
-                const total = diskCache.achievements.length;
-                const unlocked = diskCache.achievements.filter((a: any) => a.unlocked).length;
+                const total = diskCache.summary?.total ?? diskCache.achievements.length;
+                const unlocked = diskCache.summary?.unlocked ?? diskCache.achievements.filter((a: any) => a.unlocked).length;
                 const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
                 const hasRealProgress = unlocked > 0 || diskCache.summary?.progress_available === true;
                 const summary = {
@@ -1538,24 +1577,26 @@ export default function LibraryGameDetails({
                   </div>
                 ) : achievementsSummary && effectiveProgressAvailable && effectiveTotal > 0 ? (
                   <div className="mt-3 space-y-3">
+                    {/* Trace: log panel count source for Cuphead */}
+                    {game.appId === "268910" && (console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=panel source=${achievementsSummary.source} effectiveUnlocked=${effectiveUnlocked}/${effectiveTotal} summaryUnlocked=${achievementsSummary.unlocked}/${achievementsSummary.total} listDerived=${derivedUnlocked}`), null)}
                     {/* Progress bar */}
                     <div>
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-(--color-text) font-medium">
-                          {achievementsSummary.unlocked} / {achievementsSummary.total}
+                          {effectiveUnlocked} / {effectiveTotal}
                         </span>
                         <span className="text-(--color-muted)">
-                          {achievementsSummary.percent}%
+                          {effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%
                         </span>
                       </div>
                       <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
                         <div
                           className="h-full rounded-full bg-(--color-accent) transition-all duration-500"
-                          style={{ width: `${achievementsSummary.percent}%` }}
+                          style={{ width: `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%` }}
                         />
                       </div>
                       <p className="mt-1 text-[10px] text-(--color-muted)/60">
-                        {achievementsSummary.percent}% complete
+                        {effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}% complete
                         {achievementsSyncing && (
                           <span className="ml-2 italic">Syncing...</span>
                         )}
@@ -1729,6 +1770,15 @@ export default function LibraryGameDetails({
                         const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
                         if (!appIdStr) return;
                         setAchievementsLoading(true);
+                        if (appIdStr === "268910") {
+                          console.log(`[ACH][TRACE_REFRESH_START] appid=268910`);
+                        }
+                        // CRITICAL: delete existing store entry BEFORE resolving.
+                        // resolveSteamAchievements has a post-call store-freshness check (line ~968)
+                        // that returns store data if it has higher source priority.
+                        // Without this delete, a "librarycache" entry (priority 0) would
+                        // cause the resolver to return stale 13/42 instead of fresh 15/42.
+                        achievementStore.deleteSummary(appIdStr);
                         try {
                           const s = await resolveSteamAchievements({
                             appId: appIdStr,
@@ -1741,9 +1791,16 @@ export default function LibraryGameDetails({
                             achievementSchemaPath: settings.achievementSchemaPath || undefined,
                           });
                           if (appIdStr) {
+                            if (appIdStr === "268910") {
+                              const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
+                              console.log(`[ACH][TRACE_RESOLVED] appid=268910 source=${s.source} unlocked=${unlocked}/${s.total} progressAvailable=${s.progressAvailable} updatedAt=${s.updatedAt}`);
+                            }
                             setAchievementsSummary(s);
                             achievementStore.setSummary(appIdStr, s);
                             const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
+                            if (appIdStr === "268910") {
+                              console.log(`[ACH][TRACE_STORE_SET] appid=268910 source=${s.source} unlocked=${unlocked}/${s.total} updatedAt=${s.updatedAt}`);
+                            }
                             console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${s.achievements.length} summary=${unlocked}/${s.total}`);
                             console.log(`[ACH][MANUAL_REFRESH_APPLY] appid=${appIdStr} unlocked=${unlocked}/${s.total}`);
                             // Phase 9: Schedule snapshot write so achievement summary persists after restart

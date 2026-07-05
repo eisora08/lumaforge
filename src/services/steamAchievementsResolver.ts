@@ -958,6 +958,10 @@ export async function resolveSteamAchievements(params: {
         achievement_percentages: pcts,
         summary: summaryData,
       }, _migrateIcons);
+      if (appIdStr === "268910") {
+        const unlocked = achievements.filter((a: any) => a.unlocked).length;
+        console.log(`[ACH][TRACE_DISK_WRITE] appid=268910 unlocked=${unlocked}/${achievements.length} progressAvailable=${summary.progressAvailable} updatedAt=${summaryData.updated_at}`);
+      }
       console.debug(`[ACH][CACHE] App ${appIdStr}: cached ${achievements.length} achievements to disk (progress=${summary.progressAvailable})`);
     } catch (err) {
       console.warn(`[ACH][CACHE] App ${appIdStr}: failed to write disk cache:`, err);

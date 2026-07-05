@@ -91,12 +91,38 @@ export function getPlaytimeEntry(gameKey: string): PlaytimeEntry | null {
   return cachedStore.games[gameKey] ?? null;
 }
 
+// Subscription for React re-render notifications
+type PlaytimeStoreListener = () => void;
+const _playtimeListeners = new Set<PlaytimeStoreListener>();
+
+export function subscribePlaytimeStore(fn: PlaytimeStoreListener): () => void {
+  _playtimeListeners.add(fn);
+  return () => { _playtimeListeners.delete(fn); };
+}
+
+function notifyPlaytimeStored(): void {
+  _playtimeListeners.forEach(fn => fn());
+}
+
+/** Mark the appId dirty for snapshot persistence after any playtime update. */
+async function markPlaytimeDirty(appId: string | null | undefined): Promise<void> {
+  if (!appId) return;
+  try {
+    const { notifyMediaUpdated } = await import("./startupSnapshotService");
+    await notifyMediaUpdated(appId, { source: "playtime-changed" }).catch(() => {});
+  } catch {
+    // startupSnapshotService not available during early boot
+  }
+}
+
 export async function importExternalPlaytime(input: ExternalPlaytimeImport): Promise<PlaytimeEntry> {
   const entry = await invoke<PlaytimeEntry>("import_external_playtime", { input });
   if (cachedStore) {
     cachedStore.games[input.gameKey] = entry;
     cachedStore.updatedAt = Date.now();
   }
+  notifyPlaytimeStored();
+  markPlaytimeDirty(input.appId);
   return entry;
 }
 
@@ -104,6 +130,8 @@ export async function startPlaySession(input: PlaySessionStart): Promise<ActiveP
   const result = await invoke<ActivePlaySession>("record_play_session_start", { input });
   // Refresh cache
   await loadPlaytimeStore(true);
+  notifyPlaytimeStored();
+  markPlaytimeDirty(input.appId);
   return result;
 }
 
@@ -113,6 +141,8 @@ export async function endPlaySession(input: PlaySessionEnd): Promise<PlaytimeEnt
     cachedStore.games[input.gameKey] = entry;
     cachedStore.updatedAt = Date.now();
   }
+  notifyPlaytimeStored();
+  markPlaytimeDirty(entry.appId);
   return entry;
 }
 

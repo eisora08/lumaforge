@@ -5,11 +5,24 @@ import { getGameAppInfo, resolveGameMediaPaths, resolveGameMediaPathsBatch, read
 import type { GameMediaPaths, GameAppInfo, SnapshotGameMediaForValidation, ValidatedMediaPaths } from "./tauri";
 import { dedupeLibraryGames, isSidebarInstalledGame } from "./gameCacheService";
 import { isRecentlyNavigated, isInteractionBusy } from "./perfCounters";
-import { getPlaytimeSecondsForAppId } from "./playtimeService";
+import { getPlaytimeSecondsForAppId, getPlaytimeEntryByAppId, getLastSessionEndForAppId } from "./playtimeService";
 
 const SNAPSHOT_VERSION = 1;
 let cachedSnapshot: StartupSnapshot | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Subscription for React re-render notifications after snapshot writes
+type SnapshotWriteListener = () => void;
+const _snapshotListeners = new Set<SnapshotWriteListener>();
+
+export function subscribeSnapshotUpdated(fn: SnapshotWriteListener): () => void {
+  _snapshotListeners.add(fn);
+  return () => { _snapshotListeners.delete(fn); };
+}
+
+function notifySnapshotWritten(): void {
+  _snapshotListeners.forEach(fn => fn());
+}
 
 // Boot-time appinfo cache — populated by hydrateStartupSnapshotMedia (Stage 3),
 // consumed by Stage 4.5 title enrichment to avoid re-reading appinfo.json from disk.
@@ -472,6 +485,9 @@ export async function notifyMediaUpdated(appId: string, options?: { source?: str
   }
 
   _dirtyAppIds.add(appId);
+  if (appId === "268910") {
+    console.log(`[ACH][TRACE_SNAPSHOT_DIRTY] appid=268910 source=${options?.source ?? "unspecified"}`);
+  }
   const hash = typeof window !== "undefined" ? window.location.hash : "";
   if (hash.startsWith("#/store")) {
     console.log(`[BootSnapshot][WRITE_SKIP] reason=store-active-no-local-change appid=${appId}`);
@@ -568,6 +584,43 @@ async function _processDirtyAppIds(): Promise<void> {
           }
           game.media = media;
           await setMediaStatusOnGame(game, origMedia, validated);
+
+          // Update lastPlayed and playtime from playtime store
+          // (handles session-end updates that aren't covered by media repair)
+          const ptEntry = getPlaytimeEntryByAppId(appId);
+          const newPlaytime = ptEntry?.totalPlaytimeSeconds && ptEntry.totalPlaytimeSeconds > 0
+            ? Math.round(ptEntry.totalPlaytimeSeconds / 60)
+            : null;
+          const newLastPlayed = ptEntry?.lastPlayedAt ?? getLastSessionEndForAppId(appId) ?? null;
+          if (newPlaytime !== null && newPlaytime !== game.playtime) {
+            game.playtime = newPlaytime;
+            changed = true;
+          }
+          if (newLastPlayed !== null && newLastPlayed !== game.lastPlayed) {
+            game.lastPlayed = newLastPlayed;
+            changed = true;
+          }
+
+          // Update achievementSummary from in-memory achievement store
+          try {
+            const { achievementStore } = await import("./achievementStore");
+            const stored = achievementStore.getSummary(appId);
+            if (stored) {
+              const newSummary: SnapshotAchievementSummary = {
+                total: stored.total,
+                unlocked: stored.unlocked ?? 0,
+                percent: stored.percent ?? 0,
+                progressAvailable: stored.progressAvailable,
+              };
+              const oldSummary = game.achievementSummary;
+              if (!oldSummary || oldSummary.total !== newSummary.total || oldSummary.unlocked !== newSummary.unlocked || oldSummary.percent !== newSummary.percent || oldSummary.progressAvailable !== newSummary.progressAvailable) {
+                game.achievementSummary = newSummary;
+                changed = true;
+              }
+            }
+          } catch {
+            // achievementStore not available — skip
+          }
           break;
         }
       }
@@ -629,6 +682,9 @@ async function _processDirtyAppIds(): Promise<void> {
     _dirtyAppIds.clear();
     _mediaUpdateDeferStart = null;
     _writeInProgress = false;
+
+    // Notify React subscribers that snapshot was updated
+    notifySnapshotWritten();
 
     // If writes came in while we were writing, schedule one more debounced write
     if (_pendingAfterWrite) {
@@ -1213,7 +1269,17 @@ export async function buildStartupSnapshotFromCurrentState(
       // achievementStore not available or not loaded — leave null
     }
 
-    // Fallback: derive basic summary from LibraryGame fields if available
+    // Fallback: prefer existing snapshot's achievementSummary over stale LibraryGame fields.
+    // The snapshot value (e.g. 15/42 from a prior refresh) is more recent than the
+    // LibraryGame's achievementUnlocked (e.g. 13/42) which may be from an older boot snapshot.
+    if (!achievementSummary && cachedSnapshot) {
+      const existing = cachedSnapshot.library.games.find(g => g.appId === game.appId);
+      if (existing?.achievementSummary && existing.achievementSummary.total > 0) {
+        achievementSummary = existing.achievementSummary;
+      }
+    }
+
+    // Last-resort fallback: derive basic summary from LibraryGame fields if available
     if (!achievementSummary && game.achievementTotal != null) {
       achievementSummary = {
         total: game.achievementTotal,
@@ -1221,16 +1287,6 @@ export async function buildStartupSnapshotFromCurrentState(
         percent: game.achievementTotal > 0 ? ((game.achievementUnlocked ?? 0) / game.achievementTotal) * 100 : 0,
         progressAvailable: game.achievementsSupported ?? false,
       };
-    }
-
-    // Preservation: if we still have no summary, keep the existing snapshot's value.
-    // This prevents null from replacing a previously cached summary during full rebuilds
-    // when achievementStore hasn't been loaded yet (ACHIEVEMENT_READ_CACHE_ON_BOOT=false).
-    if (!achievementSummary && cachedSnapshot) {
-      const existing = cachedSnapshot.library.games.find(g => g.appId === game.appId);
-      if (existing?.achievementSummary) {
-        achievementSummary = existing.achievementSummary;
-      }
     }
 
     snapshotGames.push({
@@ -1400,6 +1456,7 @@ export function scheduleSnapshotWrite(
         _coalescedScheduleCount = 0;
       }
       _fullRebuildDeferStart = null;
+      notifySnapshotWritten();
     } catch {
       console.warn("[BootSnapshot][WRITE] full-rebuild failed");
     }

@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { achievementStore, buildProgressPatchFromLibraryCache } from "./achievementStore";
+import type { ProgressPatch } from "./achievementStore";
 import { checkAchievementLibraryCacheMetadata, readAchievementCache, listLibraryCacheAppIds } from "./tauri";
 import type { AppAchievementCache } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
@@ -14,6 +15,27 @@ import {
   logStoreSkipOnce,
   isStoreRoute,
 } from "./achievementAutoFlags";
+
+// ---------------------------------------------------------------------------
+// Realtime Achievement Scope
+// ---------------------------------------------------------------------------
+// Realtime updates are guaranteed for:
+//   - Games launched from LumaForge (GameSessionContext tracks the active appId)
+//   - Games currently visible/active in GameDetails
+//   - Any appId where an in-memory canonical base exists
+//
+// Realtime updates are NOT guaranteed for (use Manual Refresh Achievements):
+//   - Games launched externally from Steam or another launcher
+//   - Games launched before LumaForge started
+//   - Any scenario where LumaForge does not know the active appId
+//
+// The Rust watcher fires for ALL librarycache/usergamestats file changes,
+// but the downgrade guard + resolver refresh (processLibrarycacheChange +
+// _scheduleResolverRefresh) requires an in-memory canonical base to detect
+// stale/partial reads. Without that base, the event is silently skipped.
+//
+// Future feature: process detection / external launch detection to expand scope.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Startup flags — all default to minimal work
@@ -183,6 +205,8 @@ class AchievementWatcherService {
   private _steamAccountId = "";
   // Debounce: set of appIds currently being processed via watcher events
   private _debouncedAppIds = new Set<string>();
+  // Cooldown for usergamestats events (10s) — these fire frequently during gameplay
+  private _usergamestatsCooldown = new Map<string, number>();
 
   // Focus listener
   private _focusHandler: (() => void) | null = null;
@@ -302,6 +326,9 @@ class AchievementWatcherService {
           const { appid, source, path, modified_at, size, trace_id } = event.payload;
           const traceId = trace_id || nextTraceId();
           const appIdStr = String(appid);
+          const RT = appIdStr === "268910";
+
+          if (RT) console.log(`[ACH][RT_LISTENER] appid=${appIdStr} source=${source} path=${path} received=true`);
 
           if (DEBUG_ACH_WATCHER) {
             console.debug(`[ACH][BG][${traceId}] frontend event received appid=${appIdStr} source=${source} path=${path}`);
@@ -321,17 +348,30 @@ class AchievementWatcherService {
           // Update poll metadata
           this._lastFileMeta.set(path, { size, modified: modified_at });
 
-          // Process only the changed appId — no scanning of all appIds
-          if (source === "librarycache") {
+          // Process both librarycache and usergamestats events
+          const isAcceptedSource = source === "librarycache" || source === "usergamestats";
+          if (RT) console.log(`[ACH][RT_SOURCE] appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
+          if (isAcceptedSource) {
             // Debounce: skip if already queued for same appId
             if (this._debouncedAppIds.has(appIdStr)) {
+              if (RT) console.log(`[ACH][RT_DEBOUNCE] appid=${appIdStr} skipped=already-queued`);
               if (DEBUG_ACH_WATCHER) {
                 console.debug(`[ACH][WATCHER_DEDUPE] appid=${appIdStr} reason=already-queued`);
               }
               return;
             }
+            // Usergamestats cooldown: skip if processed within last 10s
+            if (source === "usergamestats") {
+              const last = this._usergamestatsCooldown.get(appIdStr);
+              if (last && Date.now() - last < 10000) {
+                if (RT) console.log(`[ACH][RT_COOLDOWN] appid=${appIdStr} msSince=${Date.now() - last}`);
+                return;
+              }
+              this._usergamestatsCooldown.set(appIdStr, Date.now());
+            }
             this._debouncedAppIds.add(appIdStr);
-            console.log(`[ACH][WATCHER_EVENT] appid=${appIdStr} source=librarycache queued=true`);
+            if (RT) console.log(`[ACH][RT_DEBOUNCE] appid=${appIdStr} source=${source} queued=true`);
+            console.log(`[ACH][WATCHER_EVENT] appid=${appIdStr} source=${source} queued=true`);
             this.processLibrarycacheChange(appIdStr, path, "watcher", traceId).then((ok) => {
               this._debouncedAppIds.delete(appIdStr);
               if (ok && lastFingerprints.has(path)) {
@@ -427,6 +467,8 @@ class AchievementWatcherService {
     if (DEBUG_ACH_WATCHER) {
       console.debug("[ACH][WATCHER] started background=true");
     }
+    console.log("[ACH][WATCHER] realtime scope: active/visible/LumaForge-launched appIds only");
+    console.log("[ACH][WATCHER] external-launch realtime: not yet supported — use Manual Refresh");
   }
 
   async stop(): Promise<void> {
@@ -673,8 +715,13 @@ class AchievementWatcherService {
   private _syncPendingAppIds = new Set<string>();
 
   /**
-   * Process a librarycache file change globally.
+   * Process a librarycache file change for a specific appId.
    * Called from the Tauri watcher event, polling fallback, focus rescan, and dev simulate.
+   *
+   * Realtime scope: active/visible/LumaForge-launched appIds where an
+   * in-memory canonical base exists. Externally launched games without
+   * an in-memory base are skipped — use Manual Refresh Achievements.
+   *
    * Does NOT require GameDetails, modal, or any mounted component.
    */
   async processLibrarycacheChange(
@@ -683,10 +730,13 @@ class AchievementWatcherService {
     source: string,
     traceId: string,
   ): Promise<boolean> {
+    const RT = appId === "268910" || appId === "4069520";
+    if (RT) console.log(`[ACH][RT_PROCESS_START] appid=${appId} source=${source}`);
     console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange start appid=${appId} source=${source}`);
 
     // Coalescing: if already running, mark pending and return
     if (this._syncRunning) {
+      if (RT) console.log(`[ACH][RT_SYNC_RUNNING] appid=${appId} coalesced=true`);
       this._syncPending = true;
       this._syncPendingAppIds.add(appId);
       console.log(`[SYNC] coalesced while running pending=${this._syncPendingAppIds.size}`);
@@ -699,24 +749,44 @@ class AchievementWatcherService {
     try {
       // Stable file check
       const stable = await waitStableFile(appId, this._steamPath, this._steamAccountId, traceId);
+      if (RT) console.log(`[ACH][RT_STABLE] appid=${appId} stable=${stable}`);
       if (!stable) {
+        if (RT) console.log(`[ACH][RT_STABLE_FAIL] appid=${appId} reason=file-not-stable`);
         console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange skipped appid=${appId} reason=file-not-stable`);
         return false;
       }
 
-      // Pre-load cache from disk if store doesn't have this appId yet
-      if (!achievementStore.getSummary(appId)) {
+      // Pre-load canonical base from disk cache
+      const hasMem = !!achievementStore.getSummary(appId);
+      if (RT) console.log(`[ACH][RT_CANONICAL] appid=${appId} hasInMemory=${hasMem}`);
+      if (!hasMem) {
+        let loaded = false;
         try {
           const cached = await readAchievementCache(Number(appId));
+          if (RT) console.log(`[ACH][RT_CANONICAL_DISK] appid=${appId} found=${!!cached}`);
           if (cached) {
             const cachedSummary = this.cacheToSummary(appId, cached);
             if (DEBUG_ACH_WATCHER) console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=cache(watcher) unlocked=${cachedSummary.unlocked}/${cachedSummary.total} updatedAt=${cachedSummary.updatedAt} progressAvailable=${cachedSummary.progressAvailable}`);
             achievementStore.setSummary(appId, cachedSummary);
+            loaded = true;
+            if (RT) console.log(`[ACH][RT_CANONICAL_LOADED] appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
             console.debug(`[ACH][BG][${traceId}] loadedCacheFallback=true appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
           }
         } catch {
-          // Cache load failed, will create minimal summary in applyProgressPatch
+          if (RT) console.log(`[ACH][RT_CANONICAL_ERR] appid=${appId} reason=cache-load-exception`);
         }
+
+        if (!loaded) {
+          if (RT) console.log(`[ACH][RT_SKIP] appid=${appId} reason=no-canonical-base`);
+          console.debug(`[ACH][WATCHER][${traceId}] skipped appid=${appId} reason=no-canonical-base`);
+          return false;
+        }
+      }
+
+      // If usergamestats-triggered, wait extra time for librarycache to catch up
+      if (source === "usergamestats") {
+        if (RT) console.log(`[ACH][RT_WAIT] appid=${appId} waiting=2000ms source=usergamestats`);
+        await new Promise(r => setTimeout(r, 2000));
       }
 
       const patch = await buildProgressPatchFromLibraryCache(
@@ -726,8 +796,19 @@ class AchievementWatcherService {
         traceId,
       );
 
+      if (RT) console.log(`[ACH][RT_PATCH] appid=${appId} patch=${!!patch} total=${patch?.total ?? "N/A"} unlocked=${patch?.unlocked ?? "N/A"}`);
       if (!patch) {
+        if (RT) console.log(`[ACH][RT_SKIP] appid=${appId} reason=patch-is-null`);
         console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange skipped appid=${appId} reason=patch-is-null`);
+        return false;
+      }
+
+      // Downgrade guard: reject partial/stale librarycache data that is lower than current known count
+      const currentSummary = achievementStore.getSummary(appId);
+      if (currentSummary && patch.unlocked < (currentSummary.unlocked ?? 0)) {
+        console.log(`[ACH][RT_PARTIAL_SKIP] appid=${appId} current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${patch.unlocked}/${patch.total} reason=stale-librarycache`);
+        // Schedule resolver refresh as fallback to get authoritative data
+        this._scheduleResolverRefresh(appId, traceId).catch(() => {});
         return false;
       }
 
@@ -746,11 +827,14 @@ class AchievementWatcherService {
       }
 
       const result = achievementStore.applyProgressPatch(appId, patch, traceId);
+      if (RT) console.log(`[ACH][RT_APPLY_RESULT] appid=${appId} result=${!!result}`);
       if (!result) {
+        if (RT) console.log(`[ACH][RT_SKIP] appid=${appId} reason=applyProgressPatch-returned-null`);
         console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange skipped appid=${appId} reason=applyProgressPatch-returned-null`);
         return false;
       }
 
+      if (RT) console.log(`[ACH][RT_DONE] appid=${appId} source=${source}`);
       console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange done appid=${appId}`);
       // Fill missing icons from disk cache in background
       achievementStore.fillMissingIconsFromCache(appId, traceId).catch(() => {});
@@ -783,6 +867,70 @@ class AchievementWatcherService {
     console.debug(`[ACH][SIMULATE][${traceId}] started appid=${appId}`);
     const ok = await this.processLibrarycacheChange(appId, `simulated://${appId}`, "manual", traceId);
     console.debug(`[ACH][SIMULATE][${traceId}] completed patched=${ok}`);
+  }
+
+  // ── Resolver refresh fallback for stale/partial librarycache data ──
+
+  private _pendingResolverAppIds = new Set<string>();
+
+  private async _scheduleResolverRefresh(appId: string, traceId: string): Promise<void> {
+    if (this._pendingResolverAppIds.has(appId)) {
+      console.debug(`[ACH][RT_RESOLVER_SKIP] appid=${appId} reason=already-pending`);
+      return;
+    }
+    this._pendingResolverAppIds.add(appId);
+
+    try {
+      // Wait 3s for librarycache to stabilize before using resolver
+      await sleep(3000);
+
+      const { resolveSteamAchievements } = await import("./steamAchievementsResolver");
+      const summary = await resolveSteamAchievements({
+        appId: Number(appId),
+        steamPath: this._steamPath,
+        accountId: this._steamAccountId,
+      });
+
+      if (!summary || !summary.achievements) {
+        console.log(`[ACH][RT_RESOLVER_FAILED] appid=${appId} reason=no-summary`);
+        return;
+      }
+
+      // Build a ProgressPatch from the authoritative resolver result
+      const resolverPatch: ProgressPatch = {
+        appid: appId,
+        total: summary.total,
+        unlocked: summary.unlocked ?? 0,
+        progressMap: new Map(),
+      };
+      for (const ach of summary.achievements) {
+        resolverPatch.progressMap.set(ach.apiName, {
+          unlocked: ach.unlocked,
+          unlockTime: ach.unlockTime,
+        });
+      }
+
+      // Double-check: don't persist if resolver also returned stale data
+      const currentSummary = achievementStore.getSummary(appId);
+      if (currentSummary && resolverPatch.unlocked < (currentSummary.unlocked ?? 0)) {
+        console.log(`[ACH][RT_RESOLVER_SKIP] appid=${appId} current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} resolver=${resolverPatch.unlocked}/${resolverPatch.total} reason=stale-resolver`);
+        return;
+      }
+
+      console.log(`[ACH][RT_RESOLVER_REFRESH] appid=${appId} total=${resolverPatch.total} unlocked=${resolverPatch.unlocked}`);
+
+      // applyProgressPatch handles: merge, toast detection, snapshot save, cache write
+      const result = achievementStore.applyProgressPatch(appId, resolverPatch, traceId);
+      if (result) {
+        console.log(`[ACH][RT_RESOLVER_DONE] appid=${appId} unlocked=${result.unlocked}/${result.total}`);
+      } else {
+        console.debug(`[ACH][RT_RESOLVER_NOOP] appid=${appId} reason=applyProgressPatch-null`);
+      }
+    } catch (err) {
+      console.warn(`[ACH][RT_RESOLVER_FAILED] appid=${appId} reason=${err}`);
+    } finally {
+      this._pendingResolverAppIds.delete(appId);
+    }
   }
 
   /**

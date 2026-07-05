@@ -4,6 +4,7 @@ import type {
   UnlockEvent,
 } from "../types/gameAchievements";
 import { parseLibraryCacheAchievements, writeAchievementCache, readAchievementCache } from "./tauri";
+import { ACHIEVEMENTS_AUTO_ENABLED } from "./achievementAutoFlags";
 
 // ---------------------------------------------------------------------------
 // Emergency stabilization flags
@@ -142,6 +143,11 @@ class AchievementStoreImpl {
     return new Map(this.summariesByAppId);
   }
 
+  /** Remove a store entry so the next setSummary is always accepted (used by manual refresh) */
+  deleteSummary(appId: string): void {
+    this.summariesByAppId.delete(appId);
+  }
+
   // ── Write full summary (from resolver) ──
 
   setSummary(appId: string, summary: GameAchievementsSummary): void {
@@ -189,6 +195,8 @@ class AchievementStoreImpl {
     traceId?: string,
   ): GameAchievementsSummary | null {
     const tid = traceId ?? "no-trace";
+    const RT = appId === "268910";
+    if (RT) console.log(`[ACH][RT_STORE_ENTRY] appid=${appId} total=${patch.total} unlocked=${patch.unlocked} mapSize=${patch.progressMap.size} summaryLoaded=${this.summariesByAppId.has(appId)}`);
 
     // Don't downgrade — only apply if progress is available
     if (!patch.progressMap.size && patch.total === 0) {
@@ -205,6 +213,7 @@ class AchievementStoreImpl {
     let current = this.summariesByAppId.get(appId);
     let createdMinimalSummary = false;
     const summaryLoaded = !!current;
+    if (RT) console.log(`[ACH][RT_STORE_BASE] appid=${appId} hasExistingSummary=${summaryLoaded} existingUnlocked=${current?.unlocked ?? "N/A"}/${current?.total ?? "N/A"}`);
 
     console.debug(`[ACH][STORE_PATCH][${tid}] summaryLoaded=${summaryLoaded}`);
 
@@ -265,6 +274,7 @@ class AchievementStoreImpl {
 
     // If current has progress but patch says no progress, keep current
     if (current.progressAvailable && (!patch.progressMap.size || patch.total === 0)) {
+      if (RT) console.log(`[ACH][RT_STORE_SKIP] appid=${appId} reason=no-downgrade`);
       console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} reason=no-downgrade`);
       return null;
     }
@@ -277,7 +287,7 @@ class AchievementStoreImpl {
       if (!progress) return ach;
       return {
         ...ach,
-        unlocked: progress.unlocked,
+        unlocked: progress.unlocked || ach.unlocked,
         unlockTime: progress.unlockTime ?? ach.unlockTime,
         rarityPercent: patch.rarityMap?.get(ach.apiName) ?? ach.rarityPercent,
       };
@@ -311,7 +321,7 @@ class AchievementStoreImpl {
     }
 
     const newUnlockedCount = mergedAchievements.filter((a) => a.unlocked).length;
-    const total = patch.total > 0 ? patch.total : current.total;
+    const total = Math.max(patch.total, current.total);
     const percent = total > 0 ? Math.round((newUnlockedCount / total) * 100) : 0;
 
     const patched: GameAchievementsSummary = {
@@ -389,12 +399,15 @@ class AchievementStoreImpl {
       patched.source, patched.updatedAt,
       storeCurrent.source, storeCurrent.updatedAt,
     );
+    if (RT) console.log(`[ACH][RT_STORE_WRITE_PATCH] appid=${appId} accepted=${patchAccepted} new=${patched.unlocked}/${patched.total} old=${storeCurrent?.unlocked ?? "N/A"}/${storeCurrent?.total ?? "N/A"}`);
     if (!patchAccepted) {
+      if (RT) console.log(`[ACH][RT_STORE_SKIP] appid=${appId} reason=existing-newer`);
       console.debug(`[ACH][STORE_PATCH][${tid}] skipped-write reason=existing-newer source=${storeCurrent?.source} updatedAt=${storeCurrent?.updatedAt}`);
       this.notify(appId, storeCurrent!); // re-notify with current state
       return null;
     }
     this.summariesByAppId.set(appId, patched);
+    if (RT) console.log(`[ACH][RT_STORE_SET] appid=${appId} unlocked=${patched.unlocked}/${patched.total}`);
     console.debug(`[ACH][STORE_PATCH][${tid}] subscribersNotified=true`);
 
     // Notify UI subscribers
@@ -402,6 +415,7 @@ class AchievementStoreImpl {
 
     // ── Fire unlock callbacks (toast, native notification) ──
     if (newUnlocks.length > 0) {
+      if (RT) console.log(`[ACH][RT_TOAST] appid=${appId} count=${newUnlocks.length} first=${newUnlocks[0]?.apiName ?? "?"}`);
       console.debug(`[ACH][TOAST][${tid}] newUnlocks=${newUnlocks.length}`);
       for (const cb of this.unlockCallbacks) {
         try {
@@ -419,10 +433,14 @@ class AchievementStoreImpl {
     }
     snapshots[appId] = newAppSnap;
     saveSnapshots(snapshots);
+    if (RT) console.log(`[ACH][RT_SNAPSHOT] appid=${appId} entries=${Object.keys(newAppSnap).length}`);
 
     // ── Write cache in background (fire-and-forget, after snapshot save) ──
+    if (RT) console.log(`[ACH][RT_CACHE_WRITE_START] appid=${appId} createdMinimal=${createdMinimalSummary}`);
     console.debug(`[ACH][CACHE][${tid}] background write scheduled`);
-    this.writeCacheInBackground(appId, patched, tid).catch(() => {});
+    if (!createdMinimalSummary) {
+      this.writeCacheInBackground(appId, patched, tid).catch(() => {});
+    }
 
     return patched;
   }
@@ -434,7 +452,7 @@ class AchievementStoreImpl {
     summary: GameAchievementsSummary,
     traceId?: string,
   ): Promise<void> {
-    if (!ACHIEVEMENT_SCHEMA_MIGRATION_AUTO) {
+    if (!ACHIEVEMENTS_AUTO_ENABLED) {
       return;
     }
     const tid = traceId ?? "no-trace";

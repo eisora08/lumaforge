@@ -57,6 +57,7 @@ const ENABLE_VERBOSE_STATS_LOGS = false;
 export async function loadSteamStats(
   steamPath?: string,
   appIds?: number[],
+  options?: { forceRefresh?: boolean },
 ): Promise<SteamStatsMap> {
   try {
     if (!appIds || appIds.length === 0) {
@@ -67,7 +68,9 @@ export async function loadSteamStats(
     }
 
     // Auto-scan gating: STEAM_USER_STATS_AUTO_SCAN=false prevents non-manual scans
-    if (!STEAM_USER_STATS_AUTO_SCAN) {
+    // Targeted calls with forceRefresh=true bypass this gate.
+    const isManualRefresh = options?.forceRefresh === true;
+    if (!isManualRefresh && !STEAM_USER_STATS_AUTO_SCAN) {
       logStatsScanSkipOnce(String(appIds[0] ?? "?"), "loadSteamStats");
       const cached = loadCachedSteamStats();
       if (cached.size > 0) return cached;

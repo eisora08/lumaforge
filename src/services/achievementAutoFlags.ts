@@ -5,10 +5,10 @@
 // ---------------------------------------------------------------------------
 
 /** Master switch: if false, all achievement auto work is disabled */
-export const ACHIEVEMENTS_AUTO_ENABLED = false;
+export const ACHIEVEMENTS_AUTO_ENABLED = true;
 
 /** Watcher may start and subscribe to paths, but not process events */
-export const ACHIEVEMENT_WATCHER_PROCESS_EVENTS = false;
+export const ACHIEVEMENT_WATCHER_PROCESS_EVENTS = true;
 
 /** Read achievement cache during boot for first N games */
 export const ACHIEVEMENT_READ_CACHE_ON_BOOT = false;

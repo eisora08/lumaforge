@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gamepad2, Loader2, Play, Square, Sparkles, Store } from "lucide-react";
-import { getCachedSnapshot } from "../../services/startupSnapshotService";
+import { getCachedSnapshot, subscribeSnapshotUpdated } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
@@ -153,6 +153,13 @@ function EmptyHero({ onNavigate }: GameHeroProps) {
 
 export default function GameHero({ onNavigate }: GameHeroProps) {
   const snapshot = getCachedSnapshot();
+  const [, setSnapshotWriteVersion] = useState(0);
+
+  // Re-read snapshot after background snapshot writes (playtime/lastPlayed updates)
+  useEffect(() => {
+    const unsub = subscribeSnapshotUpdated(() => setSnapshotWriteVersion(v => v + 1));
+    return unsub;
+  }, []);
 
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds } = useFavorites();
