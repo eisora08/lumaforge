@@ -6,11 +6,14 @@ import type { ProgressPatch } from "./achievementStore";
 import { checkAchievementLibraryCacheMetadata, readAchievementCache, listLibraryCacheAppIds } from "./tauri";
 import type { AppAchievementCache } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
-import { sendAchievementNativeNotification } from "./achievementNotificationService";
+import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "./achievementNotificationService";
 import { showAchievementToast, showGroupedAchievementToast } from "../components/library/AchievementToast";
 import {
   ACHIEVEMENTS_AUTO_ENABLED,
   ACHIEVEMENT_WATCHER_PROCESS_EVENTS,
+  ACHIEVEMENT_AUTO_SYNC_ENABLED,
+  ACHIEVEMENT_READ_CACHE_ON_BOOT,
+  ACHIEVEMENT_SCHEMA_MIGRATION_AUTO,
   logWatcherProcessSkipOnce,
   logStoreSkipOnce,
   isStoreRoute,
@@ -77,6 +80,14 @@ function readSettings(): Record<string, any> {
 
 function isNativeNotificationsEnabled(): boolean {
   return readSettings().achievementNativeNotificationsEnabled === true;
+}
+
+function isToastEnabled(): boolean {
+  return readSettings().achievementToastEnabled === true;
+}
+
+function isOverlayEnabled(): boolean {
+  return readSettings().achievementOverlayNotificationsEnabled === true;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +227,8 @@ class AchievementWatcherService {
   private _lastFileMeta = new Map<string, { size: number; modified: number }>();
   // Unlock callback subscription
   private _unlockUnsub: (() => void) | null = null;
-  // Pending unlocks gathered while app was unfocused
-  private _pendingUnfocusUnlocks: Array<{ unlock: UnlockEvent; appId: string }> = [];
+  // Pending unlocks gathered while app was unfocused (in-app toast fallback only)
+  private _pendingUnfocusUnlocks: Array<{ unlock: UnlockEvent; appId: string; source: string }> = [];
   // Toast dedup: track recently-shown (appId:apiName) keys within a 3s window
   private _toastDedupTimers = new Map<string, number>();
 
@@ -235,11 +246,15 @@ class AchievementWatcherService {
 
   private drainPendingUnlocks(): void {
     if (this._pendingUnfocusUnlocks.length === 0) return;
-    const traceId = nextTraceId();
-    // Deduplicate by apiName
+    const toastEnabled = isToastEnabled();
+    // Deduplicate by apiName, skip non-in-app sources
     const seen = new Set<string>();
     const unique: Array<{ unlock: UnlockEvent; appId: string }> = [];
     for (const item of this._pendingUnfocusUnlocks) {
+      if (item.source !== "in-app" && item.source !== "in-app-fallback") {
+        console.log(`[ACH][NOTIFY_DRAIN_SKIP] reason=overlay-should-not-be-queued apiName=${item.unlock.apiName} source=${item.source}`);
+        continue;
+      }
       const key = `${item.appId}:${item.unlock.apiName}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -247,14 +262,16 @@ class AchievementWatcherService {
     }
     const maxShow = 3;
     for (let i = 0; i < Math.min(unique.length, maxShow); i++) {
-      showAchievementToast(unique[i].unlock, unique[i].appId, undefined);
-      console.debug(`[ACH][NOTIFY][${traceId}] drain show apiName=${unique[i].unlock.apiName}`);
+      if (toastEnabled) {
+        showAchievementToast(unique[i].unlock, unique[i].appId, undefined);
+      }
+      console.log(`[ACH][NOTIFY_DRAIN] route=in-app-drain apiName=${unique[i].unlock.apiName}`);
     }
-    if (unique.length > maxShow) {
+    if (unique.length > maxShow && toastEnabled) {
       showGroupedAchievementToast(unique.length - maxShow);
     }
     this._pendingUnfocusUnlocks = [];
-    console.debug(`[ACH][NOTIFY][${traceId}] drained total=${unique.length} shown=${Math.min(unique.length, maxShow)}`);
+    console.log(`[ACH][NOTIFY_DRAIN] drained total=${unique.length} shown=${Math.min(unique.length, maxShow)}`);
   }
 
   get started(): boolean {
@@ -326,20 +343,13 @@ class AchievementWatcherService {
           const { appid, source, path, modified_at, size, trace_id } = event.payload;
           const traceId = trace_id || nextTraceId();
           const appIdStr = String(appid);
-          const RT = appIdStr === "268910";
 
-          if (RT) console.log(`[ACH][RT_LISTENER] appid=${appIdStr} source=${source} path=${path} received=true`);
-
-          if (DEBUG_ACH_WATCHER) {
-            console.debug(`[ACH][BG][${traceId}] frontend event received appid=${appIdStr} source=${source} path=${path}`);
-          }
+          console.log(`[ACH][PIPELINE] event_received appid=${appIdStr} source=${source} path=${path} shouldProcess=${_shouldProcessEvents}`);
 
           const fp = makeFingerprint(path, modified_at, size);
           const prev = lastFingerprints.get(path);
           if (prev && prev.fingerprint === fp && prev.processed) {
-            if (DEBUG_ACH_WATCHER) {
-              console.debug(`[ACH][BG][${traceId}] ignored reason=duplicate-fingerprint fingerprint=${fp}`);
-            }
+            console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=duplicate-fingerprint`);
             return;
           }
 
@@ -350,39 +360,37 @@ class AchievementWatcherService {
 
           // Process both librarycache and usergamestats events
           const isAcceptedSource = source === "librarycache" || source === "usergamestats";
-          if (RT) console.log(`[ACH][RT_SOURCE] appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
+          console.log(`[ACH][PIPELINE] source_check appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
           if (isAcceptedSource) {
             // Debounce: skip if already queued for same appId
             if (this._debouncedAppIds.has(appIdStr)) {
-              if (RT) console.log(`[ACH][RT_DEBOUNCE] appid=${appIdStr} skipped=already-queued`);
-              if (DEBUG_ACH_WATCHER) {
-                console.debug(`[ACH][WATCHER_DEDUPE] appid=${appIdStr} reason=already-queued`);
-              }
+              console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=already-queued`);
               return;
             }
             // Usergamestats cooldown: skip if processed within last 10s
             if (source === "usergamestats") {
               const last = this._usergamestatsCooldown.get(appIdStr);
               if (last && Date.now() - last < 10000) {
-                if (RT) console.log(`[ACH][RT_COOLDOWN] appid=${appIdStr} msSince=${Date.now() - last}`);
+                console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=cooldown msSince=${Date.now() - last}`);
                 return;
               }
               this._usergamestatsCooldown.set(appIdStr, Date.now());
             }
             this._debouncedAppIds.add(appIdStr);
-            if (RT) console.log(`[ACH][RT_DEBOUNCE] appid=${appIdStr} source=${source} queued=true`);
-            console.log(`[ACH][WATCHER_EVENT] appid=${appIdStr} source=${source} queued=true`);
+            console.log(`[ACH][PIPELINE] process_queued appid=${appIdStr} source=${source}`);
             this.processLibrarycacheChange(appIdStr, path, "watcher", traceId).then((ok) => {
               this._debouncedAppIds.delete(appIdStr);
+              console.log(`[ACH][PIPELINE] process_completed appid=${appIdStr} ok=${ok}`);
               if (ok && lastFingerprints.has(path)) {
                 lastFingerprints.set(path, { fingerprint: fp, processed: true });
               }
             });
-          } else if (DEBUG_ACH_WATCHER) {
-            console.debug(`[ACH][BG][${traceId}] ignored reason=non-librarycache-source source=${source}`);
+          } else {
+            console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=non-librarycache-source source=${source}`);
           }
         },
       );
+      console.log("[ACH][RT_LISTENER_REGISTERED]");
     } catch (err) {
       console.warn(`[ACH][WATCHER] failed to listen for events: ${err}`);
       await invoke("stop_achievement_watcher").catch(() => {});
@@ -394,39 +402,93 @@ class AchievementWatcherService {
       const traceId = nextTraceId();
       const appFocused = document.hasFocus();
       const nativeEnabled = isNativeNotificationsEnabled();
+      const toastEnabled = isToastEnabled();
+      const overlayEnabled = isOverlayEnabled();
 
-      console.debug(`[ACH][NOTIFY][${traceId}] appFocused=${appFocused} nativeEnabled=${nativeEnabled} appId=${appId} unlocks=${unlocks.length}`);
+      const traceSettings = `overlay=${overlayEnabled} native=${nativeEnabled} inApp=${toastEnabled} appFocused=${appFocused}`;
+      console.log(`[ACH][NOTIFY_SETTINGS] ${traceSettings}`);
 
-      if (appFocused) {
-        // Show in-app toasts when focused (dedup against GameDetails handler)
+      // ── Overlay enabled: show immediately regardless of focus ──
+      if (overlayEnabled) {
         const maxShow = 3;
         let shownCount = 0;
         for (let i = 0; i < unlocks.length && shownCount < maxShow; i++) {
-          if (this.isToastRecentlyShown(appId, unlocks[i].apiName)) {
-            console.debug(`[ACH][TOAST][${traceId}] skipped dedup apiName=${unlocks[i].apiName}`);
-            continue;
-          }
-          showAchievementToast(unlocks[i], appId, this._getGameTitle(appId));
+          console.log(`[ACH][NOTIFY_OVERLAY_ATTEMPT] appid=${appId} apiName=${unlocks[i].apiName}`);
+          const indexSnapshot = i; // capture for closure
+          showAchievementOverlay({
+            name: unlocks[i].name,
+            iconUrl: unlocks[i].iconUrl,
+            iconGrayUrl: unlocks[i].iconGrayUrl,
+            appId: appId,
+            rarity: unlocks[i].rarityPercent,
+            gameTitle: this._getGameTitle(appId),
+          }).then((ok) => {
+            if (!ok) {
+              const reason = appFocused ? "overlay-failed-focused" : "overlay-failed-unfocused";
+              console.warn(`[ACH][OVERLAY_FALLBACK] reason=${reason} inAppEnabled=${toastEnabled} apiName=${unlocks[indexSnapshot].apiName}`);
+              if (toastEnabled) {
+                console.log(`[ACH][NOTIFY_INAPP_ATTEMPT] appid=${appId} apiName=${unlocks[indexSnapshot].apiName}`);
+                if (appFocused) {
+                  showAchievementToast(unlocks[indexSnapshot], appId, this._getGameTitle(appId));
+                } else {
+                  this._pendingUnfocusUnlocks.push({ unlock: unlocks[indexSnapshot], appId, source: "in-app-fallback" });
+                }
+              }
+            }
+          });
           this.markToastShown(appId, unlocks[i].apiName);
           shownCount++;
-          console.debug(`[ACH][TOAST][${traceId}] show apiName=${unlocks[i].apiName} hasIconUrl=${!!unlocks[i].iconUrl} source=global-watcher`);
         }
         const remaining = unlocks.length - shownCount;
         if (remaining > 0) {
-          showGroupedAchievementToast(remaining);
-          console.debug(`[ACH][TOAST][${traceId}] grouped remaining=${remaining}`);
+          showGroupedAchievementOverlay(remaining);
+          console.log(`[ACH][NOTIFY_ROUTE] visual=overlay-grouped remaining=${remaining} native=${nativeEnabled}`);
+        } else {
+          console.log(`[ACH][NOTIFY_ROUTE] visual=overlay native=${nativeEnabled} count=${shownCount}`);
         }
-      } else {
-        // Unfocused: queue in-app toasts for later, don't show now
-        console.debug(`[ACH][NOTIFY][${traceId}] inAppQueued=true appFocused=${appFocused}`);
-        this._pendingUnfocusUnlocks.push(...unlocks.map((u) => ({ unlock: u, appId })));
+      }
+
+      // ── Overlay disabled: in-app toast routing ──
+      if (!overlayEnabled) {
+        if (appFocused) {
+          const maxShow = 3;
+          let shownCount = 0;
+          for (let i = 0; i < unlocks.length && shownCount < maxShow; i++) {
+            if (this.isToastRecentlyShown(appId, unlocks[i].apiName)) {
+              console.debug(`[ACH][TOAST][${traceId}] skipped dedup apiName=${unlocks[i].apiName}`);
+              continue;
+            }
+            if (toastEnabled) {
+              console.log(`[ACH][NOTIFY_INAPP_ATTEMPT] appid=${appId} apiName=${unlocks[i].apiName}`);
+              showAchievementToast(unlocks[i], appId, this._getGameTitle(appId));
+            }
+            this.markToastShown(appId, unlocks[i].apiName);
+            shownCount++;
+          }
+          const remaining = unlocks.length - shownCount;
+          if (remaining > 0 && toastEnabled) {
+            showGroupedAchievementToast(remaining);
+            console.log(`[ACH][NOTIFY_ROUTE] visual=in-app-grouped remaining=${remaining} native=${nativeEnabled}`);
+          } else {
+            const visual = toastEnabled ? "in-app" : "none";
+            console.log(`[ACH][NOTIFY_ROUTE] visual=${visual} native=${nativeEnabled} count=${shownCount}`);
+          }
+        } else if (toastEnabled) {
+          for (const u of unlocks) {
+            this._pendingUnfocusUnlocks.push({ unlock: u, appId, source: "in-app" });
+            console.log(`[ACH][NOTIFY_INAPP_ATTEMPT] appid=${appId} apiName=${u.apiName} queued=true`);
+          }
+          console.log(`[ACH][NOTIFY_ROUTE] visual=in-app-queued count=${unlocks.length} native=${nativeEnabled}`);
+        } else {
+          console.log(`[ACH][NOTIFY_ROUTE] visual=none native=${nativeEnabled} reason=no-visual-notifications`);
+        }
       }
 
       // Native notification when enabled (always, regardless of focus)
       if (nativeEnabled) {
         for (const unlock of unlocks) {
+          console.log(`[ACH][NOTIFY_NATIVE_ATTEMPT] appid=${appId} apiName=${unlock.apiName}`);
           sendAchievementNativeNotification(unlock.name, appId);
-          console.debug(`[ACH][NOTIFY][${traceId}] native sent apiName=${unlock.apiName}`);
         }
       }
     });
@@ -464,6 +526,7 @@ class AchievementWatcherService {
 
     this._started = true;
     this._alreadyStartedOnce = true;
+    console.log(`[ACH][FLAGS] ACHIEVEMENTS_AUTO_ENABLED=${ACHIEVEMENTS_AUTO_ENABLED} ACHIEVEMENT_WATCHER_PROCESS_EVENTS=${ACHIEVEMENT_WATCHER_PROCESS_EVENTS} ACHIEVEMENT_AUTO_SYNC_ENABLED=${ACHIEVEMENT_AUTO_SYNC_ENABLED} ACHIEVEMENT_READ_CACHE_ON_BOOT=${ACHIEVEMENT_READ_CACHE_ON_BOOT} ACHIEVEMENT_SCHEMA_MIGRATION_AUTO=${ACHIEVEMENT_SCHEMA_MIGRATION_AUTO}`);
     if (DEBUG_ACH_WATCHER) {
       console.debug("[ACH][WATCHER] started background=true");
     }
@@ -730,16 +793,13 @@ class AchievementWatcherService {
     source: string,
     traceId: string,
   ): Promise<boolean> {
-    const RT = appId === "268910" || appId === "4069520";
-    if (RT) console.log(`[ACH][RT_PROCESS_START] appid=${appId} source=${source}`);
-    console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange start appid=${appId} source=${source}`);
+    console.log(`[ACH][PIPELINE] process_start appid=${appId} source=${source}`);
 
     // Coalescing: if already running, mark pending and return
     if (this._syncRunning) {
-      if (RT) console.log(`[ACH][RT_SYNC_RUNNING] appid=${appId} coalesced=true`);
       this._syncPending = true;
       this._syncPendingAppIds.add(appId);
-      console.log(`[SYNC] coalesced while running pending=${this._syncPendingAppIds.size}`);
+      console.log(`[ACH][PIPELINE] process_coalesced appid=${appId} pending=${this._syncPendingAppIds.size}`);
       return false;
     }
 
@@ -749,43 +809,40 @@ class AchievementWatcherService {
     try {
       // Stable file check
       const stable = await waitStableFile(appId, this._steamPath, this._steamAccountId, traceId);
-      if (RT) console.log(`[ACH][RT_STABLE] appid=${appId} stable=${stable}`);
+      console.log(`[ACH][PIPELINE] stable_check appid=${appId} stable=${stable}`);
       if (!stable) {
-        if (RT) console.log(`[ACH][RT_STABLE_FAIL] appid=${appId} reason=file-not-stable`);
-        console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange skipped appid=${appId} reason=file-not-stable`);
+        console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=file-not-stable`);
         return false;
       }
 
       // Pre-load canonical base from disk cache
       const hasMem = !!achievementStore.getSummary(appId);
-      if (RT) console.log(`[ACH][RT_CANONICAL] appid=${appId} hasInMemory=${hasMem}`);
+      console.log(`[ACH][PIPELINE] canonical_check appid=${appId} hasInMemory=${hasMem}`);
       if (!hasMem) {
         let loaded = false;
         try {
           const cached = await readAchievementCache(Number(appId));
-          if (RT) console.log(`[ACH][RT_CANONICAL_DISK] appid=${appId} found=${!!cached}`);
+          console.log(`[ACH][PIPELINE] canonical_disk appid=${appId} found=${!!cached}`);
           if (cached) {
             const cachedSummary = this.cacheToSummary(appId, cached);
             if (DEBUG_ACH_WATCHER) console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=cache(watcher) unlocked=${cachedSummary.unlocked}/${cachedSummary.total} updatedAt=${cachedSummary.updatedAt} progressAvailable=${cachedSummary.progressAvailable}`);
             achievementStore.setSummary(appId, cachedSummary);
             loaded = true;
-            if (RT) console.log(`[ACH][RT_CANONICAL_LOADED] appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
-            console.debug(`[ACH][BG][${traceId}] loadedCacheFallback=true appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
+            console.log(`[ACH][PIPELINE] canonical_loaded appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
           }
-        } catch {
-          if (RT) console.log(`[ACH][RT_CANONICAL_ERR] appid=${appId} reason=cache-load-exception`);
+        } catch (e) {
+          console.log(`[ACH][PIPELINE] canonical_disk_err appid=${appId} error=${e}`);
         }
 
         if (!loaded) {
-          if (RT) console.log(`[ACH][RT_SKIP] appid=${appId} reason=no-canonical-base`);
-          console.debug(`[ACH][WATCHER][${traceId}] skipped appid=${appId} reason=no-canonical-base`);
+          console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=no-canonical-base`);
           return false;
         }
       }
 
       // If usergamestats-triggered, wait extra time for librarycache to catch up
       if (source === "usergamestats") {
-        if (RT) console.log(`[ACH][RT_WAIT] appid=${appId} waiting=2000ms source=usergamestats`);
+        console.log(`[ACH][PIPELINE] usergamestats_wait appid=${appId} waiting=2000ms`);
         await new Promise(r => setTimeout(r, 2000));
       }
 
@@ -796,17 +853,16 @@ class AchievementWatcherService {
         traceId,
       );
 
-      if (RT) console.log(`[ACH][RT_PATCH] appid=${appId} patch=${!!patch} total=${patch?.total ?? "N/A"} unlocked=${patch?.unlocked ?? "N/A"}`);
+      console.log(`[ACH][PIPELINE] patch_built appid=${appId} patch=${!!patch} total=${patch?.total ?? "N/A"} unlocked=${patch?.unlocked ?? "N/A"}`);
       if (!patch) {
-        if (RT) console.log(`[ACH][RT_SKIP] appid=${appId} reason=patch-is-null`);
-        console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange skipped appid=${appId} reason=patch-is-null`);
+        console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=patch-is-null`);
         return false;
       }
 
       // Downgrade guard: reject partial/stale librarycache data that is lower than current known count
       const currentSummary = achievementStore.getSummary(appId);
       if (currentSummary && patch.unlocked < (currentSummary.unlocked ?? 0)) {
-        console.log(`[ACH][RT_PARTIAL_SKIP] appid=${appId} current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${patch.unlocked}/${patch.total} reason=stale-librarycache`);
+        console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${patch.unlocked}/${patch.total}`);
         // Schedule resolver refresh as fallback to get authoritative data
         this._scheduleResolverRefresh(appId, traceId).catch(() => {});
         return false;
@@ -827,20 +883,18 @@ class AchievementWatcherService {
       }
 
       const result = achievementStore.applyProgressPatch(appId, patch, traceId);
-      if (RT) console.log(`[ACH][RT_APPLY_RESULT] appid=${appId} result=${!!result}`);
+      console.log(`[ACH][PIPELINE] apply_result appid=${appId} result=${!!result}`);
       if (!result) {
-        if (RT) console.log(`[ACH][RT_SKIP] appid=${appId} reason=applyProgressPatch-returned-null`);
-        console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange skipped appid=${appId} reason=applyProgressPatch-returned-null`);
+        console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=applyProgressPatch-returned-null`);
         return false;
       }
 
-      if (RT) console.log(`[ACH][RT_DONE] appid=${appId} source=${source}`);
-      console.debug(`[ACH][BG][${traceId}] processLibrarycacheChange done appid=${appId}`);
+      console.log(`[ACH][PIPELINE] process_done appid=${appId} source=${source}`);
       // Fill missing icons from disk cache in background
       achievementStore.fillMissingIconsFromCache(appId, traceId).catch(() => {});
       return true;
     } catch (err) {
-      console.warn(`[ACH][BG][${traceId}] processLibrarycacheChange failed appid=${appId} reason=${err}`);
+      console.warn(`[ACH][PIPELINE] process_failed appid=${appId} error=${err}`);
       return false;
     } finally {
       this._syncRunning = false;
@@ -851,7 +905,7 @@ class AchievementWatcherService {
         this._syncPendingAppIds.clear();
         this._syncPending = false;
         if (nextAppId) {
-          console.log(`[SYNC] running pending follow-up count=${pendingCount}`);
+          console.log(`[ACH][PIPELINE] process_followup appid=${nextAppId} count=${pendingCount}`);
           const nextTrace = nextTraceId();
           this.processLibrarycacheChange(nextAppId, "coalesced", source, nextTrace).catch(() => {});
         }

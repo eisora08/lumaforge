@@ -64,7 +64,7 @@ import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
 import { showAchievementToast, showGroupedAchievementToast, showTestAchievementToast } from "./AchievementToast";
-import { sendAchievementNativeNotification } from "../../services/achievementNotificationService";
+import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "../../services/achievementNotificationService";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
 import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
@@ -794,20 +794,45 @@ export default function LibraryGameDetails({
     if (lastUnlockKey.current === key) return;
     lastUnlockKey.current = key;
     const events = achievementsSummary.newlyUnlocked;
+    const toastEnabled = settings.achievementToastEnabled;
+    const overlayEnabled = settings.achievementOverlayNotificationsEnabled;
+    const nativeEnabled = settings.achievementNativeNotificationsEnabled;
     const maxShow = 3;
     for (let i = 0; i < Math.min(events.length, maxShow); i++) {
-      showAchievementToast(events[i], appIdStr ?? undefined, detailTitle);
+      if (overlayEnabled) {
+        showAchievementOverlay({
+          name: events[i].name,
+          iconUrl: events[i].iconUrl,
+          appId: appIdStr ?? undefined,
+          rarity: events[i].rarityPercent,
+          gameTitle: detailTitle,
+        }).then((ok) => {
+          if (!ok) {
+            console.warn(`[ACH][OVERLAY_FALLBACK] appId=${appIdStr} apiName=${events[i].apiName} toastEnabled=${toastEnabled}`);
+            if (toastEnabled) {
+              showAchievementToast(events[i], appIdStr ?? undefined, detailTitle);
+            }
+          }
+        });
+      } else if (toastEnabled) {
+        showAchievementToast(events[i], appIdStr ?? undefined, detailTitle);
+      }
     }
     if (events.length > maxShow) {
-      showGroupedAchievementToast(events.length - maxShow);
+      if (overlayEnabled) {
+        showGroupedAchievementOverlay(events.length - maxShow);
+      } else if (toastEnabled) {
+        showGroupedAchievementToast(events.length - maxShow);
+      }
     }
-    if (settings.achievementNativeNotificationsEnabled) {
+    if (nativeEnabled) {
       for (const ev of events) {
         sendAchievementNativeNotification(ev.name, detailTitle);
       }
     }
-    console.debug(`[ACH][UNLOCK] toasts=${Math.min(events.length, maxShow)} extra=${Math.max(0, events.length - maxShow)} native=${settings.achievementNativeNotificationsEnabled}`);
-  }, [achievementsSummary?.newlyUnlocked, appIdStr, settings.achievementNativeNotificationsEnabled, detailTitle]);
+    const source = overlayEnabled ? 'overlay' : (toastEnabled ? 'in-app' : 'none');
+    console.debug(`[ACH][UNLOCK] toasts=${Math.min(events.length, maxShow)} extra=${Math.max(0, events.length - maxShow)} native=${nativeEnabled} source=${source}`);
+  }, [achievementsSummary?.newlyUnlocked, appIdStr, settings.achievementNativeNotificationsEnabled, settings.achievementOverlayNotificationsEnabled, settings.achievementToastEnabled, detailTitle]);
 
   // Subscribe to image download updates — filter by appId to avoid cross-AppID contamination
   useEffect(() => {

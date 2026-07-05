@@ -52,6 +52,99 @@
       animation: toastExit 240ms ease-in forwards;
     }
 
+    .toast.achieve {
+      width: 320px;
+      min-width: 320px;
+      max-width: 320px;
+      border-radius: 16px;
+      padding: 12px 16px;
+      background: color-mix(in srgb, var(--ach-bg) 95%, transparent);
+      border: 1px solid var(--ach-border);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      animation: achToastEntry 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .toast.achieve.exit {
+      animation: achToastExit 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+    }
+
+    .toast.achieve .ach-icon-container {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: color-mix(in srgb, var(--ach-accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--ach-accent) 20%, transparent);
+      color: var(--ach-accent);
+    }
+
+    .toast.achieve .ach-header {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--ach-accent);
+      margin: 0;
+    }
+
+    .toast.achieve .ach-name {
+      margin: 2px 0 0;
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.3;
+      color: var(--ach-text);
+      word-wrap: break-word;
+    }
+
+    .toast.achieve .ach-meta {
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .toast.achieve .ach-game-title {
+      font-size: 10px;
+      font-weight: 500;
+      color: color-mix(in srgb, var(--ach-muted) 70%, transparent);
+    }
+
+    .toast.achieve .ach-bullet {
+      font-size: 10px;
+      color: color-mix(in srgb, var(--ach-muted) 30%, transparent);
+    }
+
+    .toast.achieve .ach-rarity {
+      font-size: 10px;
+      color: color-mix(in srgb, var(--ach-muted) 50%, transparent);
+    }
+
+    .toast.achieve .ach-close-btn {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: color-mix(in srgb, var(--ach-muted) 50%, transparent);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .toast.achieve .ach-close-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--ach-text);
+    }
+
     @keyframes toastEntry {
       from {
         opacity: 0;
@@ -73,6 +166,56 @@
       to {
         opacity: 0;
         transform: translateY(8px) scale(0.96);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .toast.achieve {
+        animation: achFadeIn 300ms ease-out forwards !important;
+      }
+
+      .toast.achieve.exit {
+        animation: achFadeOut 200ms ease-in forwards !important;
+      }
+    }
+
+    @keyframes achFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes achFadeOut {
+      from { opacity: 1; }
+      to { opacity: 0; }
+    }
+
+    @keyframes achToastEntry {
+      from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.96);
+        filter: blur(8px);
+      }
+      60% {
+        opacity: 1;
+        filter: blur(0);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+      }
+    }
+
+    @keyframes achToastExit {
+      from {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+        filter: blur(0);
+      }
+      to {
+        opacity: 0;
+        transform: translateX(20px) scale(0.98);
+        filter: blur(4px);
       }
     }
 
@@ -272,6 +415,131 @@
         }, 300);
       }, duration);
     };
+
+    function applyThemeVars(vars) {
+      if (!vars) return;
+      var root = document.documentElement;
+      root.style.setProperty('--ach-bg', vars['--color-bg'] || '#181114');
+      root.style.setProperty('--ach-text', vars['--color-text'] || '#ffffff');
+      root.style.setProperty('--ach-muted', vars['--color-muted'] || '#9ca3af');
+      root.style.setProperty('--ach-accent', vars['--color-accent'] || '#b8d7dc');
+      root.style.setProperty('--ach-border', vars['--surface-active-border'] || 'rgba(255,255,255,0.1)');
+      root.style.setProperty('--ach-surface', vars['--surface-active'] || '#302b2f');
+    }
+
+    function parseRgb(colorStr) {
+      if (!colorStr) return null;
+      var match = colorStr.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+      if (match) return { r: match[1], g: match[2], b: match[3] };
+      if (colorStr.startsWith('#')) {
+        var hex = colorStr.slice(1);
+        if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        if (hex.length === 6) {
+          return {
+            r: parseInt(hex.slice(0, 2), 16).toString(),
+            g: parseInt(hex.slice(2, 4), 16).toString(),
+            b: parseInt(hex.slice(4, 6), 16).toString(),
+          };
+        }
+      }
+      return null;
+    }
+
+    // Achievements — reuse same container & animations
+    window.__showAchievementToast = function (data) {
+      console.log("[ACH][OVERLAY][WEB] __showAchievementToast called", JSON.stringify(data));
+      var container = document.getElementById('toast-container');
+      // Remove existing toast with exit animation
+      var existing = container.querySelector('.toast');
+      if (existing) {
+        existing.classList.add('exit');
+        setTimeout(function () { existing.remove(); }, 300);
+      }
+
+      applyThemeVars(data.themeVars);
+
+      var duration = data.duration || 4500;
+      var iconHtml = '';
+      if (data.iconUrl) {
+        iconHtml = '<img src="' + escapeHtml(data.iconUrl) + '" alt="" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"/>';
+      } else {
+        iconHtml = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>';
+      }
+
+      var rarityHtml = '';
+      if (data.rarity != null && Number.isFinite(data.rarity)) {
+        rarityHtml = '<span class="ach-rarity">' + data.rarity.toFixed(1) + '% rarity</span>';
+      }
+
+      var gameTitleHtml = '';
+      if (data.gameTitle) {
+        gameTitleHtml = '<span class="ach-game-title">' + escapeHtml(data.gameTitle) + '</span>';
+      }
+
+      var metaDiv = '<div class="ach-meta">';
+      if (gameTitleHtml) metaDiv += gameTitleHtml;
+      if (gameTitleHtml && rarityHtml) metaDiv += '<span class="ach-bullet">·</span>';
+      if (rarityHtml) metaDiv += rarityHtml;
+      metaDiv += '</div>';
+
+      var toast = document.createElement('div');
+      toast.className = 'toast achieve';
+      toast.innerHTML =
+        '<div class="toast-body" style="align-items:flex-start">' +
+          '<div class="ach-icon-container">' +
+            iconHtml +
+          '</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<p class="ach-header">Achievement Unlocked</p>' +
+            '<p class="ach-name">' + escapeHtml(data.name) + '</p>' +
+            metaDiv +
+          '</div>' +
+          '<button type="button" class="ach-close-btn" onclick="dismissToast(this.closest(\'.toast\'))" aria-label="Dismiss">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</button>' +
+        '</div>';
+
+      // Set dynamic box-shadow with accent glow
+      var accent = data.themeVars ? (data.themeVars['--color-accent'] || '#b8d7dc') : '#b8d7dc';
+      var rgb = parseRgb(accent);
+      if (rgb) {
+        toast.style.boxShadow =
+          '0 25px 50px -12px rgba(0,0,0,0.25), ' +
+          '0 0 0 1px rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',0.12), ' +
+          '0 0 28px rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',0.06)';
+      }
+
+      container.appendChild(toast);
+
+      // Clear any existing timer
+      if (window.__toastTimer) clearTimeout(window.__toastTimer);
+      // Auto-dismiss
+      window.__toastTimer = setTimeout(function () {
+        toast.classList.add('exit');
+        setTimeout(function () {
+          if (toast.parentNode) toast.remove();
+        }, 300);
+      }, duration);
+    };
+
+    function dismissToast(toast) {
+      if (!toast) return;
+
+      if (window.__toastTimer) {
+        clearTimeout(window.__toastTimer);
+        window.__toastTimer = null;
+      }
+
+      toast.classList.add('exit');
+
+      try {
+        window.__TAURI_INTERNALS__.invoke('close_toast_window');
+      } catch (_) {}
+
+      setTimeout(function () {
+        if (toast.parentNode) toast.remove();
+      }, 300);
+    }
 
     function escapeHtml(str) {
       if (!str) return '';
