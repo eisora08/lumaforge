@@ -62,6 +62,7 @@ import type { SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
+import { scanSteamAppcacheAchievements } from "../../services/tauri";
 import { showAchievementToast, showGroupedAchievementToast, showTestAchievementToast } from "./AchievementToast";
 import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "../../services/achievementNotificationService";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
@@ -274,6 +275,31 @@ export default function LibraryGameDetails({
   const [achievementsRefreshing, setAchievementsRefreshing] = useState(false);
   const achievementsSyncing = achievementsSummary != null && achievementsLoading;
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
+  const [localAchSupportFound, setLocalAchSupportFound] = useState(false);
+  const supportCheckDoneRef = useRef(false);
+
+  useEffect(() => {
+    if (game.achievementsSupported) {
+      setLocalAchSupportFound(true);
+      supportCheckDoneRef.current = true;
+      return;
+    }
+    if (supportCheckDoneRef.current) return;
+    if (!appIdStr || !settings.steamRoot) return;
+    supportCheckDoneRef.current = true;
+    const appIdNum = Number(appIdStr);
+    if (isNaN(appIdNum)) return;
+    scanSteamAppcacheAchievements({ appId: appIdNum, steamPath: settings.steamRoot }).then((res) => {
+      if (res.schema_file_found || res.parsed_schema.length > 0 || res.stats_file_found) {
+        setLocalAchSupportFound(true);
+        console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} source=local-appcache schema_found=${res.schema_file_found} stats_found=${res.stats_file_found} schema_entries=${res.parsed_schema.length} supported=true`);
+      } else {
+        console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} source=local-appcache no-files-found supported=false`);
+      }
+    }).catch(() => {
+      console.log(`[ACH][SUPPORT_CHECK] appid=${appIdStr} source=local-appcache error=scan-failed supported=uncertain`);
+    });
+  }, [appIdStr, game.achievementsSupported, settings.steamRoot]);
 
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
@@ -414,12 +440,16 @@ export default function LibraryGameDetails({
   // Derive progress from loaded achievement list if summary doesn't have it
   const derivedUnlocked = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
   const canDeriveProgress = (achievementsSummary?.achievements?.length ?? 0) > 0
-    && !achievementsSummary?.progressAvailable;
+    && !achievementsSummary?.progressAvailable
+    && derivedUnlocked > 0; // schema-only 0/N must not claim progress available
   const effectiveUnlocked = achievementsSummary?.unlocked ?? derivedUnlocked;
   const effectiveTotal = achievementsSummary?.total ?? achievementsSummary?.achievements?.length ?? 0;
   const effectiveProgressAvailable = achievementsSummary?.progressAvailable || canDeriveProgress;
+  if (DEBUG_ACH_DETAILS) {
+    console.log(`[ACH][PROGRESS_AVAILABLE_CHECK] appid=${appIdStr} resolverProgressAvailable=${achievementsSummary?.progressAvailable} summaryProgressAvailable=${achievementsSummary?.progressAvailable} uiProgressAvailable=${effectiveProgressAvailable} derivedUnlocked=${derivedUnlocked} canDerive=${canDeriveProgress}`);
+  }
   const achievementsStatus = achievementsSummary?.source === "disabled"
-    ? (game.achievementsSupported ? "Supported" : "Unavailable")
+    ? ((game.achievementsSupported || localAchSupportFound) ? "Supported" : "Unavailable")
     : achievementsSummary?.source === "setup-required"
       ? "Setup required"
       : achievementsSummary?.errorReason === "missing-appid"
@@ -428,7 +458,7 @@ export default function LibraryGameDetails({
           ? `${effectiveUnlocked} / ${effectiveTotal}`
           : achievementsSummary && achievementsSummary.achievements.length > 0
             ? "Progress unavailable"
-            : game.achievementsSupported
+            : (game.achievementsSupported || localAchSupportFound)
               ? "Supported"
               : "Unavailable";
   const [steamNews, setSteamNews] = useState<SteamNewsItem[]>([]);
@@ -493,6 +523,7 @@ export default function LibraryGameDetails({
       const stored = achievementStore.getSummary(appIdStr);
       if (stored) {
         setAchievementsSummary(stored);
+        if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${stored.unlocked} total=${stored.total} progressAvailable=${stored.progressAvailable} source=${stored.source}`);
         if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_CACHE_HIT] appid=${appIdStr} unlocked=${stored.unlocked}/${stored.total} storeUpdatedAt=${stored.updatedAt}`);
       }
       // 2. If ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP, check if disk cache is newer than store
@@ -507,6 +538,7 @@ export default function LibraryGameDetails({
                 const storeUpdatedAt = achievementStore.getSummary(appIdStr)?.updatedAt ?? 0;
                 const lastSeenAt = diskCacheRef.current?.updatedAt ?? 0;
                 if (!diskCache || !diskCache.achievements?.length) {
+                  if (appIdStr === "1167630") console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=no-disk-cache`);
                   if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false`);
                   if (!stored) setAchievementsLoading(false);
                   return;
@@ -547,9 +579,34 @@ export default function LibraryGameDetails({
                 };
                 console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=true diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
                 console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${unlocked}/${total} reason=newer-local-cache`);
+                if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=${hasRealProgress} source=local-cache`);
                 achievementStore.setSummary(appIdStr, summary);
                 setAchievementsSummary(summary);
                 setAchievementsLoading(false);
+                // ── Fallback: schema-only disk cache → try resolver for librarycache progress ──
+                if (!hasRealProgress && total > 0 && appIdStr) {
+                  if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=false source=local-cache`);
+                  console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=${appIdStr} reason=disk-cache-schema-only triggering-resolver-fallback`);
+                  resolveSteamAchievements({
+                    appId: appIdStr,
+                    steamWebApiKey: settings.steamWebApiKey || undefined,
+                    steamId64: settings.steamId64 || undefined,
+                    accountId: settings.steamAccountId || undefined,
+                    steamPath: settings.steamRoot || undefined,
+                    steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                    achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                  }).then((resolved) => {
+                    if (cancelled || !resolved.progressAvailable) {
+                      if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
+                      return;
+                    }
+                    const stored = achievementStore.getSummary(appIdStr);
+                    if (stored && !isSourceNewerOrEqual(resolved.source, resolved.updatedAt, stored.source, stored.updatedAt)) return;
+                    achievementStore.setSummary(appIdStr, resolved);
+                    setAchievementsSummary(resolved);
+                    console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${resolved.unlocked}/${resolved.total} reason=resolver-librarycache-fallback`);
+                  }).catch(() => {});
+                }
               }).catch(() => {
                 if (!cancelled && !stored) {
                   if (DEBUG_ACH_DETAILS) console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=false reason=disk-read-failed`);
@@ -590,6 +647,7 @@ export default function LibraryGameDetails({
           setAchievementsSummary(summary);
           achievementStore.setSummary(appIdStr, summary);
           setAchievementsLoading(false);
+          if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${summary.unlocked} total=${summary.total} progressAvailable=${summary.progressAvailable} source=${summary.source}`);
           console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
           console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
           console.debug(`[ACH][PROGRESS] progressAvailable=${summary.progressAvailable}`);
@@ -615,12 +673,14 @@ export default function LibraryGameDetails({
   }, [appIdStr]);
 
   // Derive progress from loaded achievement list if summary has list but no progress
+  // Does NOT run for schema-only results (all unlocked=false) — prevents 0/N from being marked valid progress
   useEffect(() => {
     if (!appIdStr || !achievementsSummary) return;
     if (achievementsSummary.progressAvailable) return;
     const list = achievementsSummary.achievements;
     if (!list || list.length === 0) return;
     const unlocked = list.filter(a => a.unlocked).length;
+    if (unlocked === 0) return; // schema-only 0/N — no real progress to derive
     const total = list.length;
     const percent = Math.round((unlocked / total) * 100);
     const patched = {
@@ -1657,7 +1717,7 @@ export default function LibraryGameDetails({
                       )}
                     </div>
                   </div>
-                ) : achievementsSummary && achievementsSummary.source === "unavailable" && game.achievementsSupported ? (
+                ) : achievementsSummary && achievementsSummary.source === "unavailable" && (game.achievementsSupported || localAchSupportFound) ? (
                   <div className="mt-3">
                     <p className="text-xs text-(--color-muted)">
                       Achievement tracking requires Steam Web API setup.
@@ -1668,7 +1728,7 @@ export default function LibraryGameDetails({
                       Configure in Settings
                     </p>
                   </div>
-                ) : game.achievementsSupported ? (
+                ) : (game.achievementsSupported || localAchSupportFound) ? (
                   <div className="mt-3 space-y-2">
                     <p className="text-xs text-(--color-muted)">
                       Achievements not loaded

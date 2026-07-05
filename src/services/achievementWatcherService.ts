@@ -835,8 +835,7 @@ class AchievementWatcherService {
         }
 
         if (!loaded) {
-          console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=no-canonical-base`);
-          return false;
+          console.log(`[ACH][PIPELINE] canonical_skip appid=${appId} reason=no-disk-cache continuing-with-patch`);
         }
       }
 

@@ -1382,6 +1382,15 @@ pub fn parse_librarycache_achievements(
     librarycache_log!("[ACH][LIBRARYCACHE] exists=true size={}", meta.len());
   }
 
+  // ── Targeted diagnostic log for appId 1167630 (Teardown) ──
+  if app_id == 1167630 {
+    println!(
+      "[ACH][LC_RAW] appid=1167630 path={} exists=true size={}",
+      path_str,
+      file_size.unwrap_or(0)
+    );
+  }
+
   let raw = match fs::read_to_string(&lib_path) {
     Ok(s) => s,
     Err(e) => {
@@ -1402,6 +1411,9 @@ pub fn parse_librarycache_achievements(
   let root: Vec<serde_json::Value> = match serde_json::from_str(&raw) {
     Ok(v) => v,
     Err(e) => {
+      if app_id == 1167630 {
+        println!("[ACH][LC_RAW] appid=1167630 parse-error={}", e);
+      }
       return Ok(LibraryCacheProgress {
         file_found: true,
         file_path: path_str,
@@ -1414,6 +1426,19 @@ pub fn parse_librarycache_achievements(
       });
     }
   };
+
+  // ── Log top-level keys for appId 1167630 ──
+  if app_id == 1167630 {
+    let keys: Vec<String> = root
+      .iter()
+      .filter_map(|entry| {
+        entry.as_array().and_then(|arr| {
+          if arr.len() >= 2 { arr[0].as_str().map(String::from) } else { None }
+        })
+      })
+      .collect();
+    println!("[ACH][LC_RAW_KEYS] appid=1167630 keys={:?}", keys);
+  }
 
   for entry in &root {
     if let Some(arr) = entry.as_array() {
@@ -1459,6 +1484,18 @@ pub fn parse_librarycache_achievements(
                 librarycache_log!("[ACH][LIBRARYCACHE] vecAchievedHidden={}", data.vec_achieved_hidden.len());
                 librarycache_log!("[ACH][LIBRARYCACHE] vecUnachieved={}", data.vec_unachieved.len());
               }
+            }
+
+            // Targeted parse result log for appId 1167630
+            if app_id == 1167630 {
+              let locked_names: Vec<&str> = result.entries.iter()
+                .filter(|e| e.b_achieved == Some(true))
+                .filter_map(|e| e.str_id.as_deref())
+                .collect();
+              println!(
+                "[ACH][LC_PARSE_RESULT] appid=1167630 nTotal={:?} nAchieved={:?} entries={} progress_available={} unlockedApiNames={:?}",
+                result.n_total, result.n_achieved, result.entries.len(), result.progress_available, locked_names
+              );
             }
 
             return Ok(result);
@@ -1888,7 +1925,17 @@ pub fn ensure_achievement_images(
     .collect();
   for url in &schema_gray_urls {
     if let Some(fname) = Path::new(url).file_name().and_then(|n| n.to_str()) {
-      all_urls.push((url.clone(), fname.to_string()));
+      // Gray icons must use <hash>_gray.jpg filename to match normalized cache paths
+      let gray_fname = if fname.ends_with("_gray.jpg") {
+        fname.to_string()
+      } else if let Some(stem) = fname.strip_suffix(".jpg") {
+        format!("{}_gray.jpg", stem)
+      } else if let Some(stem) = fname.strip_suffix(".png") {
+        format!("{}_gray.png", stem)
+      } else {
+        fname.to_string()
+      };
+      all_urls.push((url.clone(), gray_fname));
     }
   }
 

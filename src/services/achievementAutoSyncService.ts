@@ -327,6 +327,7 @@ class AchievementAutoSyncService {
         accountId: params.accountId,
         steamPath: params.steamPath,
         forceRefresh: true,
+        skipImageDownload: true,
         steamAchievementsEnabled: params.steamAchievementsEnabled,
         achievementSchemaPath: params.achievementSchemaPath,
       });
