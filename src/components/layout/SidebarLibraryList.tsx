@@ -46,6 +46,8 @@ type Props = {
   compact?: boolean;
   collapsed?: boolean;
   variant?: "full" | "header" | "list";
+  searchQuery?: string;
+  onSearchChange?: (q: string) => void;
 };
 
 function logSidebarMedia(appId: string, msg: string): void {
@@ -116,11 +118,13 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
   return null;
 }
 
-export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full" }: Props) {
+export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange }: Props) {
   countRender("SidebarLibraryList");
   const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
-  const [query, setQuery] = useState("");
+  const [localQuery, setLocalQuery] = useState("");
+  const searchQuery = externalSearchQuery ?? localQuery;
+  const handleSearchChange = onSearchChange ?? setLocalQuery;
   const [canonicalInfoMap, setCanonicalInfoMap] = useState<Record<string, GameAppInfo | null>>({});
   const [sidebarMediaMap, setSidebarMediaMap] = useState<Record<string, ResolvedSidebarMedia | null>>({});
   const [menuGame, setMenuGame] = useState<LibraryGame | null>(null);
@@ -176,14 +180,14 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   }, [games]);
 
   const filtered = useMemo(() => {
-    if (!query) return installed;
-    const q = query.toLowerCase();
+    if (!searchQuery) return installed;
+    const q = searchQuery.toLowerCase();
     return installed.filter((g) => {
       const entry = g.appId ? appInfoMap[g.appId] : undefined;
       const displayName = entry?.name || g.title;
       return displayName.toLowerCase().includes(q) || g.appId?.toLowerCase().includes(q);
     });
-  }, [installed, query, appInfoMap]);
+  }, [installed, searchQuery, appInfoMap]);
 
   const isCollapsedMode = collapsed;
   const isCompactMode = compact && !collapsed;
@@ -335,8 +339,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         <div className="relative mb-2">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
           <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
             placeholder="Search library..."
             className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1.5 pl-7 pr-2.5 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
           />
@@ -347,8 +351,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         <div className="relative mb-2">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-(--color-muted)" />
           <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
             placeholder="Buscar..."
             className="w-full rounded-lg border border-(--surface-active-border) bg-white/5 py-1 pl-7 pr-2 text-[11px] text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)/40"
           />

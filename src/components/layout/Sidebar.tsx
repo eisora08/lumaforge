@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ElementType } from "react";
+import { useCallback, useEffect, useRef, useState, type ElementType } from "react";
 
 import {
   Activity,
@@ -65,6 +65,7 @@ export default function Sidebar({
   const showLabels = isNavExpanded(mode);
   const isCollapsed = mode === "collapsed";
   const drawerRef = useRef<HTMLDivElement | null>(null);
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
 
   function handleNavigate(page: AppPage) {
     onNavigate(page);
@@ -192,6 +193,8 @@ export default function Sidebar({
               activePage={activePage}
               compact={mode === "compact"}
               variant="header"
+              searchQuery={sidebarSearchQuery}
+              onSearchChange={setSidebarSearchQuery}
             />
           </div>
         )}
@@ -204,6 +207,7 @@ export default function Sidebar({
               activePage={activePage}
               compact={mode === "compact"}
               variant="list"
+              searchQuery={sidebarSearchQuery}
             />
           )}
 
