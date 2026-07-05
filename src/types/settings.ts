@@ -30,6 +30,8 @@ export type AppSettings = {
   achievementToastEnabled: boolean;
   achievementNativeNotificationsEnabled: boolean;
   achievementOverlayNotificationsEnabled: boolean;
+  gameSessionOverlayEnabled: boolean;
+  overlayNotificationPosition: "top-right" | "top-left" | "bottom-right" | "bottom-left" | "top-center" | "bottom-center";
   achievementAutoSyncEnabled: boolean;
   achievementAutoSyncIntervalSeconds: number;
 

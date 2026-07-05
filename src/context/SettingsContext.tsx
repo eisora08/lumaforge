@@ -46,6 +46,8 @@ export const defaultSettings: AppSettings = {
   achievementToastEnabled: true,
   achievementNativeNotificationsEnabled: false,
   achievementOverlayNotificationsEnabled: false,
+  gameSessionOverlayEnabled: false,
+  overlayNotificationPosition: "top-right",
   achievementAutoSyncEnabled: true,
   achievementAutoSyncIntervalSeconds: 10,
   libraryCardArtworkMode: "landscape",

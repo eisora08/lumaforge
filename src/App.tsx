@@ -20,6 +20,7 @@ import { GameDetailsProvider } from "./context/GameDetailsContext";
 import { GameSessionProvider, useGameSession } from "./context/GameSessionContext";
 import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
 import GameSessionHUD from "./components/system/GameSessionHUD";
+import { showSessionOverlay, isSessionOverlayEnabled } from "./services/sessionOverlayService";
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AppPage } from "./types/navigation";
 import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
@@ -62,6 +63,38 @@ const DEBUG_ROUTE_RENDER = false;
 
 function SessionOverlayWrapper() {
   const { overlayEvent, clearOverlay } = useGameSession();
+  const handledIdsRef = useRef(new Set<string>());
+  const [, forceUpdate] = useState(0);
+
+  useEffect(() => {
+    if (!overlayEvent) return;
+    if (!isSessionOverlayEnabled()) return;
+    if (handledIdsRef.current.has(overlayEvent.id)) return;
+
+    const eventId = overlayEvent.id;
+    const dismissMs = overlayEvent.type === "launch" ? 3000 : 4000;
+
+    showSessionOverlay({
+      type: overlayEvent.type,
+      gameTitle: overlayEvent.gameTitle,
+      provider: overlayEvent.provider,
+      imageUrl: overlayEvent.imageUrl,
+      durationSeconds: overlayEvent.durationSeconds,
+    }).then((ok) => {
+      if (ok) {
+        handledIdsRef.current.add(eventId);
+        forceUpdate(v => v + 1);
+        setTimeout(() => { clearOverlay(); }, dismissMs + 300);
+      } else {
+        forceUpdate(v => v + 1);
+      }
+    });
+  }, [overlayEvent?.id, clearOverlay]);
+
+  if (overlayEvent && handledIdsRef.current.has(overlayEvent.id)) {
+    return null;
+  }
+
   return <GameSessionOverlay event={overlayEvent} onDismiss={clearOverlay} />;
 }
 

@@ -169,9 +169,134 @@
       }
     }
 
+    .toast.session {
+      width: 360px;
+      min-width: 360px;
+      max-width: 360px;
+      border-radius: 16px;
+      padding: 0;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--ach-bg) 95%, transparent);
+      border: 1px solid var(--ach-border);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      animation: achToastEntry 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .toast.session.exit {
+      animation: achToastExit 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+    }
+
+    .session-image-wrap {
+      height: 100px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.03);
+      position: relative;
+    }
+
+    .session-image-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .session-image-wrap .session-img-fade {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, var(--ach-bg, #181114), transparent);
+    }
+
+    .session-icon-fallback {
+      height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--ach-muted, #9ca3af);
+    }
+
+    .session-body {
+      padding: 12px 16px 14px;
+      text-align: center;
+    }
+
+    .session-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--ach-text, #fff);
+      line-height: 1.3;
+      word-wrap: break-word;
+    }
+
+    .session-status {
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .session-status-icon-launch {
+      color: #34d399;
+    }
+
+    .session-status-icon-end {
+      color: var(--ach-muted, #9ca3af);
+    }
+
+    .session-status-label {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .session-status-label.launch {
+      color: #6ee7b7;
+    }
+
+    .session-status-label.end {
+      color: var(--ach-muted, #9ca3af);
+    }
+
+    .session-duration {
+      font-weight: 600;
+      color: var(--ach-text, #fff);
+    }
+
+    .session-close-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      border: none;
+      background: rgba(0, 0, 0, 0.4);
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      z-index: 20;
+    }
+
+    .session-close-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .toast.achieve {
         animation: achFadeIn 300ms ease-out forwards !important;
+      }
+
+      .toast.session {
+        animation: achFadeIn 300ms ease-out forwards !important;
+      }
+
+      .toast.session.exit {
+        animation: achFadeOut 200ms ease-in forwards !important;
       }
 
       .toast.achieve.exit {
@@ -306,6 +431,14 @@
         transform: scaleX(0);
       }
     }
+
+    /* Position classes — override body flex alignment */
+    body.pos-top-right    { justify-content: flex-end;  align-items: flex-start; }
+    body.pos-top-left     { justify-content: flex-start; align-items: flex-start; }
+    body.pos-bottom-right { justify-content: flex-end;  align-items: flex-end;   }
+    body.pos-bottom-left  { justify-content: flex-start; align-items: flex-end;   }
+    body.pos-top-center   { justify-content: center;    align-items: flex-start; }
+    body.pos-bottom-center{ justify-content: center;    align-items: flex-end;   }
 
     /* Variant configs (injected via JS) */
   </style>
@@ -445,6 +578,12 @@
       return null;
     }
 
+    function setOverlayPosition(pos) {
+      var valid = ["top-right","top-left","bottom-right","bottom-left","top-center","bottom-center"];
+      var cls = valid.indexOf(pos) !== -1 ? "pos-" + pos : "pos-top-right";
+      document.body.className = cls;
+    }
+
     // Achievements — reuse same container & animations
     window.__showAchievementToast = function (data) {
       console.log("[ACH][OVERLAY][WEB] __showAchievementToast called", JSON.stringify(data));
@@ -456,6 +595,7 @@
         setTimeout(function () { existing.remove(); }, 300);
       }
 
+      setOverlayPosition(data.overlayPosition);
       applyThemeVars(data.themeVars);
 
       var duration = data.duration || 4500;
@@ -514,6 +654,117 @@
       // Clear any existing timer
       if (window.__toastTimer) clearTimeout(window.__toastTimer);
       // Auto-dismiss
+      window.__toastTimer = setTimeout(function () {
+        toast.classList.add('exit');
+        setTimeout(function () {
+          if (toast.parentNode) toast.remove();
+        }, 300);
+      }, duration);
+    };
+
+    // Session overlay — matches GameSessionOverlay.tsx
+    window.__showSessionToast = function (data) {
+      console.log("[SESSION][OVERLAY][WEB] __showSessionToast called", JSON.stringify(data));
+      var container = document.getElementById('toast-container');
+      var existing = container.querySelector('.toast');
+      if (existing) {
+        existing.classList.add('exit');
+        setTimeout(function () { existing.remove(); }, 300);
+      }
+
+      setOverlayPosition(data.overlayPosition);
+      applyThemeVars(data.themeVars);
+
+      var duration = data.duration || 4000;
+      var isLaunch = data.sessionType === 'launch';
+
+      // Image or fallback icon
+      var imageHtml = '';
+      if (data.imageUrl) {
+        imageHtml =
+          '<div class="session-image-wrap">' +
+            '<img src="' + escapeHtml(data.imageUrl) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'"/>' +
+            '<div class="session-img-fade"></div>' +
+          '</div>';
+      } else {
+        imageHtml =
+          '<div class="session-icon-fallback">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+              '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/>' +
+              '<path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>' +
+              '<path d="M4 22h16"/>' +
+              '<path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>' +
+              '<path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>' +
+              '<path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>' +
+            '</svg>' +
+          '</div>';
+      }
+
+      // Provider label
+      var providerStr = '';
+      if (data.provider) {
+        providerStr = ' (' + escapeHtml(data.provider) + ')';
+      }
+
+      // Status line
+      var statusHtml = '';
+      if (isLaunch) {
+        statusHtml =
+          '<div class="session-status">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>' +
+            '<span class="session-status-label launch">Playtime starting!</span>' +
+          '</div>';
+      } else {
+        var durStr = '';
+        if (data.durationSeconds != null && data.durationSeconds > 0) {
+          var s = data.durationSeconds;
+          if (s < 60) {
+            durStr = s + ' second' + (s !== 1 ? 's' : '');
+          } else {
+            var m = Math.floor(s / 60);
+            var secs = s % 60;
+            if (m < 60) {
+              durStr = m + ' min' + (secs > 0 ? ' ' + secs + ' sec' : '');
+            } else {
+              var h = Math.floor(m / 60);
+              var mins = m % 60;
+              durStr = h + 'h ' + mins + 'm';
+            }
+          }
+        } else {
+          durStr = 'a while';
+        }
+        statusHtml =
+          '<div class="session-status">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>' +
+            '<span class="session-status-label end">You played for <span class="session-duration">' + escapeHtml(durStr) + '</span></span>' +
+          '</div>';
+      }
+
+      var toast = document.createElement('div');
+      toast.className = 'toast session';
+      toast.innerHTML =
+        '<button type="button" class="session-close-btn" onclick="dismissToast(this.closest(\'.toast\'))" aria-label="Dismiss">' +
+          '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+        '</button>' +
+        imageHtml +
+        '<div class="session-body">' +
+          '<div class="session-title">' + escapeHtml(data.gameTitle) + providerStr + '</div>' +
+          statusHtml +
+        '</div>';
+
+      var accent = data.themeVars ? (data.themeVars['--color-accent'] || '#b8d7dc') : '#b8d7dc';
+      var rgb = parseRgb(accent);
+      if (rgb) {
+        toast.style.boxShadow =
+          '0 25px 50px -12px rgba(0,0,0,0.25), ' +
+          '0 0 0 1px rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',0.12), ' +
+          '0 0 28px rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',0.06)';
+      }
+
+      container.appendChild(toast);
+
+      if (window.__toastTimer) clearTimeout(window.__toastTimer);
       window.__toastTimer = setTimeout(function () {
         toast.classList.add('exit');
         setTimeout(function () {

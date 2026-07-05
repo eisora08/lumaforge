@@ -5,7 +5,6 @@ const DEBUG_LAUNCH_BUTTON_RENDER = false;
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
 import {
-  Activity,
   ArrowLeft,
   BookMarked,
   BookOpen,
@@ -50,7 +49,7 @@ import toast from "react-hot-toast";
 import AsyncImage from "../common/AsyncImage";
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
-import { SkeletonBox } from "../common/Skeleton";
+
 import { useGameActivity } from "../../context/GameActivityContext";
 import {
   localPathToUrl,
@@ -59,7 +58,7 @@ import {
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
 import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel, subscribePlaytimeStore } from "../../services/playtimeService";
-import type { GameActivityItem, SteamNewsItem } from "../../types/gameActivity";
+import type { SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
@@ -355,7 +354,7 @@ export default function LibraryGameDetails({
   );
 
   const appIdNum = game.appId ? Number(game.appId) : null;
-  const { activities, addActivity } = useGameActivity();
+  const { addActivity } = useGameActivity();
   const { recordLaunch: recordGameLaunch } = useGamePlayStats(game.id);
 
   const cloudStatus = game.steamCloudStatus
@@ -435,89 +434,6 @@ export default function LibraryGameDetails({
   const [steamNews, setSteamNews] = useState<SteamNewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState<string | null>(null);
-
-  const gameActivities: GameActivityItem[] = useMemo(() => {
-    const fromContext = activities.filter(
-      (a) => a.gameId === game.id || (appIdStr && a.appId === appIdStr)
-    );
-    if (fromContext.length > 0) return fromContext;
-
-    const fallback: GameActivityItem[] = [];
-    const now = Date.now();
-    let idx = 0;
-
-    if (game.steamInstalled) {
-      fallback.push({
-        id: `fb-act-${idx++}`,
-        gameId: game.id,
-        appId: appIdStr,
-        kind: "game-installed",
-        title: "Installed detected",
-        description: `Game is installed on this system.`,
-        createdAt: game.lastUpdated || now,
-        source: "steam",
-        severity: "success",
-      });
-    }
-
-    if (game.hasLua && game.luaScripts.length > 0) {
-      if (game.isLuaDisabled) {
-        fallback.push({
-          id: `fb-act-${idx++}`,
-          gameId: game.id,
-          appId: appIdStr,
-          kind: "lua-disabled",
-          title: "Lua disabled",
-          description: `Lua script "${game.luaScripts[0].file_name}" is disabled.`,
-          createdAt: now,
-          source: "lua",
-          severity: "warning",
-        });
-      } else {
-        fallback.push({
-          id: `fb-act-${idx++}`,
-          gameId: game.id,
-          appId: appIdStr,
-          kind: "lua-installed",
-          title: "Lua installed",
-          description: `Lua script "${game.luaScripts[0].file_name}" is active.`,
-          createdAt: now,
-          source: "lua",
-          severity: "success",
-        });
-      }
-    }
-
-    if (game.metadata?.dlc_count && game.metadata.dlc_count > 0) {
-      fallback.push({
-        id: `fb-act-${idx++}`,
-        gameId: game.id,
-        appId: appIdStr,
-        kind: "dlc-detected",
-        title: "DLC detected",
-        description: `${game.metadata.dlc_count} DLC items available.`,
-        createdAt: now,
-        source: "provider",
-        severity: "info",
-      });
-    }
-
-    if (game.metadata?.resolved) {
-      fallback.push({
-        id: `fb-act-${idx++}`,
-        gameId: game.id,
-        appId: appIdStr,
-        kind: "metadata-refreshed",
-        title: "Metadata loaded",
-        description: `Game metadata resolved for "${game.metadata.name || game.title}".`,
-        createdAt: now,
-        source: "system",
-        severity: "info",
-      });
-    }
-
-    return fallback;
-  }, [activities, game.id, appIdStr, game.steamInstalled, game.hasLua, game.luaScripts, game.isLuaDisabled, game.metadata, game.lastUpdated, game.title]);
 
   const fetchSteamNews = useCallback(() => {
     if (!appIdStr) {
@@ -1446,36 +1362,7 @@ export default function LibraryGameDetails({
                 )}
               </section>
 
-              {/* Activity
-              <section>
-                <h2 className="mb-3 text-base font-bold text-(--color-text)">
-                  <Activity className="mr-2 inline h-4 w-4 text-(--color-accent)" />
-                  Activity
-                </h2>
 
-                {loading ? (
-                  <div className="space-y-3">
-                    <SkeletonBox className="h-14 w-full" />
-                    <SkeletonBox className="h-14 w-full" />
-                  </div>
-                ) : gameActivities.length > 0 ? (
-                  <div className="space-y-2">
-                    {gameActivities.map((act) => (
-                      <ActivityRow key={act.id} activity={act} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-center">
-                    <Activity className="mx-auto h-6 w-6 text-(--color-muted)" />
-                    <p className="mt-2 text-sm text-(--color-muted)">
-                      No activity yet.
-                    </p>
-                    <p className="mt-0.5 text-xs text-(--color-muted)/60">
-                      Game scans, launches and Lua sync activity will appear here.
-                    </p>
-                  </div>
-                )}
-              </section> */}
             </div>
 
             {/* Right: Side panel */}
@@ -1993,12 +1880,6 @@ export default function LibraryGameDetails({
   );
 }
 
-const SEVERITY_ICONS: Record<string, React.ReactNode> = {
-  success: <Activity className="h-3.5 w-3.5 text-emerald-400" />,
-  warning: <Activity className="h-3.5 w-3.5 text-amber-400" />,
-  error: <Activity className="h-3.5 w-3.5 text-red-400" />,
-};
-
 function formatTimestamp(ts: number) {
   if (!ts || ts <= 0 || ts < 1000000000000) return "Recently";
 
@@ -2012,37 +1893,6 @@ function formatTimestamp(ts: number) {
   if (hours < 24) return `${hours}h ago`;
   if (days < 7) return `${days}d ago`;
   return new Date(ts).toLocaleDateString();
-}
-
-type ActivityRowProps = {
-  activity: GameActivityItem;
-};
-
-function ActivityRow({ activity }: ActivityRowProps) {
-  return (
-    <div className="flex gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-3 transition hover:border-white/15 hover:bg-white/[0.06]">
-      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5">
-        {SEVERITY_ICONS[activity.severity ?? "info"] ?? (
-          <Activity className="h-3.5 w-3.5 text-(--color-muted)" />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <span className="text-sm font-medium text-(--color-text)">
-            {activity.title}
-          </span>
-          <span className="shrink-0 text-[10px] text-(--color-muted)">
-            {formatTimestamp(activity.createdAt)}
-          </span>
-        </div>
-        {activity.description && (
-          <p className="mt-0.5 text-xs leading-relaxed text-(--color-muted)">
-            {activity.description}
-          </p>
-        )}
-      </div>
-    </div>
-  );
 }
 
 const CATEGORY_BG: Record<string, string> = {

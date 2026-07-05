@@ -627,6 +627,52 @@ export default function Settings() {
             </SettingsSection>
 
             <SettingsSection
+              title="Session Overlay"
+              description="Control how game session notifications (launch/stop) are delivered."
+            >
+              <div className="space-y-4">
+                <ToggleOption
+                  label="Overlay notification (experimental)"
+                  description="Use a transparent always-on-top overlay window for game launch and stop notifications."
+                  enabled={settings.gameSessionOverlayEnabled}
+                  onChange={(enabled) => updateSetting("gameSessionOverlayEnabled", enabled)}
+                />
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Overlay position
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      Choose where achievement and session overlay notifications appear.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-0.5 overflow-hidden rounded-lg border border-(--surface-active-border)">
+                    {(["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"] as const).map((pos) => (
+                      <button
+                        key={pos}
+                        type="button"
+                        onClick={() => updateSetting("overlayNotificationPosition", pos)}
+                        className={`cursor-pointer px-2 py-1.5 text-[11px] font-medium transition ${
+                          settings.overlayNotificationPosition === pos
+                            ? "bg-(--color-accent) text-black"
+                            : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                        }`}
+                      >
+                        {pos === "top-left" ? "TL" :
+                         pos === "top-center" ? "TC" :
+                         pos === "top-right" ? "TR" :
+                         pos === "bottom-left" ? "BL" :
+                         pos === "bottom-center" ? "BC" :
+                         "BR"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
               title="Importar / Exportar"
               description="Guarda o restaura tu configuración local de LumaForge."
             >

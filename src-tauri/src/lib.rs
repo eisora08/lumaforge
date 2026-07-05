@@ -196,6 +196,7 @@ pub fn run() {
             commands::desktop::open_folder,
             commands::desktop::create_shortcut,
             commands::toast::show_achievement_overlay,
+            commands::toast::show_session_overlay,
             commands::toast::close_toast_window,
             commands::toast::show_toast_notification,
             commands::hubcap::hubcap_health,

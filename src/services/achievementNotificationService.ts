@@ -132,6 +132,14 @@ function resolveOverlayIconUrl(
 // Overlay command
 // ---------------------------------------------------------------------------
 
+export type OverlayPosition = "top-right" | "top-left" | "bottom-right" | "bottom-left" | "top-center" | "bottom-center";
+
+function readOverlayPosition(): OverlayPosition {
+  const pos = readSettings().overlayNotificationPosition;
+  const valid: OverlayPosition[] = ["top-right", "top-left", "bottom-right", "bottom-left", "top-center", "bottom-center"];
+  return valid.includes(pos) ? pos : "top-right";
+}
+
 /** Show an achievement notification in the Tauri overlay window. */
 export async function showAchievementOverlay(params: {
   name: string;
@@ -146,6 +154,7 @@ export async function showAchievementOverlay(params: {
   console.log(`[ACH][OVERLAY_ICON] apiName=${params.name} input=${params.iconUrl ?? "(none)"} resolved=${resolvedIcon ?? "(none)"} fallback=${!resolvedIcon ? "trophy" : "none"}`);
   try {
     const themeVars = collectThemeVars();
+    const overlayPosition = readOverlayPosition();
     const invokePayload = {
       name: params.name,
       iconUrl: resolvedIcon,
@@ -154,6 +163,7 @@ export async function showAchievementOverlay(params: {
       gameTitle: params.gameTitle ?? null,
       duration: params.duration ?? null,
       themeVars,
+      overlayPosition,
     };
     await Promise.race([
       invoke("show_achievement_overlay", invokePayload),
