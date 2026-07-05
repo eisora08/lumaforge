@@ -624,20 +624,30 @@ async function _processDirtyAppIds(): Promise<void> {
       console.log(`[BootSnapshot][WRITE_COALESCED] skippedExtraSchedules=${_coalescedScheduleCount}`);
       _coalescedScheduleCount = 0;
     }
-  } catch {
-    console.warn("[BootSnapshot] write after coalesced media update failed");
-  }
 
-  // Clear dirty set only after successful write
-  _dirtyAppIds.clear();
-  _mediaUpdateDeferStart = null;
-  _writeInProgress = false;
+    // Clear dirty set only after confirmed successful write
+    _dirtyAppIds.clear();
+    _mediaUpdateDeferStart = null;
+    _writeInProgress = false;
 
-  // If writes came in while we were writing, schedule one more debounced write
-  if (_pendingAfterWrite) {
-    _pendingAfterWrite = false;
-    console.log(`[BootSnapshot][SCHEDULE] reason=pending-after-write dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
-    _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 1000);
+    // If writes came in while we were writing, schedule one more debounced write
+    if (_pendingAfterWrite) {
+      _pendingAfterWrite = false;
+      console.log(`[BootSnapshot][SCHEDULE] reason=pending-after-write dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
+      _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 1000);
+    }
+  } catch (writeErr) {
+    console.warn("[BootSnapshot] write after coalesced media update failed:", writeErr);
+    console.log(`[BootSnapshot][DIRTY_PRESERVED_AFTER_WRITE_FAIL] count=${_dirtyAppIds.size}`);
+    _mediaUpdateDeferStart = null;
+    _writeInProgress = false;
+
+    // Schedule a retry if pending writes came in during the failed write
+    if (_pendingAfterWrite) {
+      _pendingAfterWrite = false;
+      console.log(`[BootSnapshot][SCHEDULE] reason=retry-after-failed-write dirtyAppIds=${_dirtyAppIds.size} alreadyScheduled=false`);
+      _mediaUpdateTimer = setTimeout(() => _processDirtyAppIds(), 1000);
+    }
   }
 }
 

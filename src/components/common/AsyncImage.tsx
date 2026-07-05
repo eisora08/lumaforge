@@ -90,8 +90,37 @@ type ImageLoadStatus = {
   lastUpdated: number;
 };
 const imageLoadCache = new Map<string, ImageLoadStatus>();
+const MAX_IMAGE_LOAD_CACHE = 2000;
 const DEBUG_IMG_CACHE = false;
 const IMG_RETRY_FAILED_AFTER_MS = 30_000; // retry failed images after 30s
+
+function getImageLoadCache(src: string): ImageLoadStatus | undefined {
+  const val = imageLoadCache.get(src);
+  if (val !== undefined) {
+    imageLoadCache.delete(src);
+    imageLoadCache.set(src, val);
+  }
+  return val;
+}
+
+function setImageLoadCache(src: string, status: ImageLoadStatus): void {
+  imageLoadCache.delete(src);
+  imageLoadCache.set(src, status);
+  if (imageLoadCache.size > MAX_IMAGE_LOAD_CACHE) {
+    const excess = imageLoadCache.size - MAX_IMAGE_LOAD_CACHE;
+    let removed = 0;
+    for (const key of imageLoadCache.keys()) {
+      if (removed >= excess) break;
+      imageLoadCache.delete(key);
+      removed++;
+    }
+    console.log(`[IMG][CACHE_PRUNE] cache=imageLoadCache removed=${removed} size=${imageLoadCache.size}`);
+  }
+}
+
+export function getImageLoadCacheSize(): number {
+  return imageLoadCache.size;
+}
 
 function imgLog(...args: unknown[]) {
   if (DEBUG_IMG_CACHE) {
@@ -151,7 +180,7 @@ export default function AsyncImage({
     if (!src) return;
 
     // Check global imageLoadCache — if already loaded, render immediately
-    const cachedStatus = imageLoadCache.get(src);
+    const cachedStatus = getImageLoadCache(src);
     if (cachedStatus) {
       if (cachedStatus.status === "loaded") {
         setDisplaySrc(src);
@@ -166,7 +195,7 @@ export default function AsyncImage({
           // Still in cooldown — fall through to fallback
         } else {
           // Expired cooldown — retry
-          imageLoadCache.delete(src);
+          imageLoadCache.delete(src); // delete keeps failed entry out; re-set as loading below handles eviction
         }
       } else if (cachedStatus.status === "loading") {
         // Already loading, don't re-set
@@ -175,7 +204,7 @@ export default function AsyncImage({
       }
     }
     if (!imageLoadCache.has(src)) {
-      imageLoadCache.set(src, { status: "loading", lastUpdated: Date.now() });
+      setImageLoadCache(src, { status: "loading", lastUpdated: Date.now() });
     }
 
     if (fallbackLocalPath && !fallbackLocalPath.endsWith(".tmp")) {
@@ -243,7 +272,7 @@ export default function AsyncImage({
     if (!mountedRef.current) return;
     setLoaded(true);
     if (srcRef.current) {
-      imageLoadCache.set(srcRef.current, { status: "loaded", lastUpdated: Date.now() });
+      setImageLoadCache(srcRef.current, { status: "loaded", lastUpdated: Date.now() });
       imgLog("LOAD_DONE", `urlHash=${urlHash(srcRef.current)}`);
     }
     // Disabled by default. Set window.__DEBUG_ASYNC_IMAGE = true in dev console to enable.
@@ -256,7 +285,7 @@ export default function AsyncImage({
   function handleError(event: React.SyntheticEvent<HTMLImageElement, Event>) {
     if (!mountedRef.current) return;
     if (srcRef.current) {
-      imageLoadCache.set(srcRef.current, { status: "failed", lastUpdated: Date.now() });
+      setImageLoadCache(srcRef.current, { status: "failed", lastUpdated: Date.now() });
       imgLog("LOAD_FAIL", `urlHash=${urlHash(srcRef.current)}`);
     }
     // Only log terminal errors (no parent fallback handler) to reduce noise.

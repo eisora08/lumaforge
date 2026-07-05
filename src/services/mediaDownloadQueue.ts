@@ -66,6 +66,7 @@ type InternalJob = {
 const MAX_CONCURRENT = 2;
 const MAX_RETRIES = 1;
 const RETRY_BACKOFF_MS = 1000;
+const CANCELLED_KEY_WAIT_TIMEOUT_MS = 10_000;
 
 const activeJobs = new Map<string, InternalJob>();
 const pendingQueue: InternalJob[] = [];
@@ -443,9 +444,15 @@ export function enqueueMediaDownload(job: MediaDownloadJob): Promise<MediaDownlo
         const poll = setInterval(() => {
           if (!cancelledKeys.has(key)) {
             clearInterval(poll);
+            clearTimeout(failsafe);
             resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Previously cancelled" });
           }
         }, 100);
+        const failsafe = setTimeout(() => {
+          clearInterval(poll);
+          console.log(`[MEDIA_QUEUE][CANCELLED_WAIT_TIMEOUT] key=${key} timeoutMs=${CANCELLED_KEY_WAIT_TIMEOUT_MS}`);
+          resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Cancelled wait timeout" });
+        }, CANCELLED_KEY_WAIT_TIMEOUT_MS);
       });
     }
   }
