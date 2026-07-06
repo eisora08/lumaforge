@@ -51,6 +51,7 @@ import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
 
 import { useInstallTracker } from "../../hooks/useInstallTracker";
+import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { useGameActivity } from "../../context/GameActivityContext";
 import {
   localPathToUrl,
@@ -356,7 +357,19 @@ export default function LibraryGameDetails({
     : rawLogoUrl;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
-  const { installState, isInstalling, dismiss } = useInstallTracker(game.appId);
+  const { installState, dismiss } = useInstallTracker(game.appId);
+  const { getJobByAppId } = useDownloadQueueContext();
+  const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
+  const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
+  const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
+  const effectiveAction = hasActiveInstall
+    ? "installing"
+    : installState.status === "timeout"
+      ? "timeout"
+      : action;
+  if (DEBUG_LAUNCH_BUTTON_RENDER) {
+    console.log(`[GAME_ACTION_RENDER] appid=${game.appId} baseAction=${action} installJobStatus=${installJob?.status ?? "none"} effectiveAction=${effectiveAction} renderedButtons=1`);
+  }
 
   const rawShort = game.metadata?.short_description;
   const rawAbout = game.metadata?.about_the_game;
@@ -1060,7 +1073,7 @@ export default function LibraryGameDetails({
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
             <div className="shrink-0">
-              {action === "play" && (
+              {action === "play" && !hasActiveInstall && installState.status !== "timeout" && (
                 <>
                   {(!launchInfo || launchInfo.state === "idle" || launchInfo.state === "error") && (
                     <button
@@ -1161,49 +1174,47 @@ export default function LibraryGameDetails({
                   )}
                 </>
               )}
-              {action === "install" && !isInstalling && (
-                <button
-                  type="button"
-                  onClick={() => onInstall(game)}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                >
-                  <Download className="h-4 w-4" />
-                  Install
-                </button>
-              )}
-              {isInstalling && (
+              {hasActiveInstall ? (
                 <div className="flex flex-col gap-2 rounded-xl bg-amber-500/10 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="inline-flex items-center gap-2 text-sm font-medium text-amber-400">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      {installState.status === "opening-steam"
-                        ? "Opening Steam…"
-                        : installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0
-                          ? `Downloading ${Math.round(installState.downloadProgress.percent)}%`
-                          : "Waiting for Steam…"}
+                      {installJob.message || (
+                        installJob.status === "waiting" || installJob.status === "queued"
+                          ? "Waiting for Steam…"
+                          : installJob.status === "downloading"
+                            ? `Downloading ${installJob.progress}%`
+                            : installJob.status === "extracting" || installJob.status === "installing"
+                              ? "Installing…"
+                              : installJob.status === "checking"
+                                ? "Checking…"
+                                : installJob.status === "paused"
+                                  ? "Paused"
+                                  : "Installing…"
+                      )}
                     </div>
                     <span className="text-[11px] text-amber-400/50">
-                      {Math.floor(installState.elapsedMs / 1000)}s
+                      {/* elapsed time not available from DownloadJob — tracker hook still provides it */}
+                      {installState.elapsedMs > 0 ? `${Math.floor(installState.elapsedMs / 1000)}s` : ""}
                     </span>
                   </div>
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                    {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 ? (
+                    {installJob.progressMode === "determinate" && installJob.progress > 0 ? (
                       <div
                         className="h-full rounded-full bg-amber-400 transition-all duration-500 ease-out"
-                        style={{ width: `${Math.min(100, Math.round(installState.downloadProgress.percent))}%` }}
+                        style={{ width: `${Math.min(100, installJob.progress)}%` }}
                       />
                     ) : (
                       <div className="h-full w-1/3 animate-pulse rounded-full bg-amber-400/50" />
                     )}
                   </div>
-                  {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 && (
+                  {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
                     <div className="text-[11px] text-amber-400/40">
-                      {formatBytes(installState.downloadProgress.bytesDownloaded)} / {formatBytes(installState.downloadProgress.bytesToDownload)}
+                      {formatBytes(installJob.bytesRead)} / {formatBytes(installJob.totalBytes)}
                     </div>
                   )}
                 </div>
-              )}
-              {installState.status === "timeout" && (
+              ) : installState.status === "timeout" ? (
                 <div className="inline-flex items-center gap-2">
                   <span className="text-sm text-amber-400/70">Install taking longer than expected?</span>
                   <button
@@ -1223,37 +1234,50 @@ export default function LibraryGameDetails({
                     Dismiss
                   </button>
                 </div>
-              )}
-              {action === "open-steam" && (
-                <button
-                  type="button"
-                  onClick={() => onOpenSteam?.(game)}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Open in Steam
-                </button>
-              )}
-              {action === "open-lua-folder" && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (game.luaScripts.length > 0) {
-                      const scriptPath = game.luaScripts[0].path;
-                      const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
-                      if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => toast.error(`Could not open folder: ${err}`));
-                    }
-                  }}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                >
-                  <FolderOpen className="h-4 w-4" />
-                  Lua Folder
-                </button>
-              )}
-              {action === "missing-path" && (
-                <span className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300">
-                  Missing Path
-                </span>
+              ) : (
+                <>
+                  {action === "install" && (
+                    <button
+                      type="button"
+                      onClick={() => onInstall(game)}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      <Download className="h-4 w-4" />
+                      Install
+                    </button>
+                  )}
+                  {action === "open-steam" && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenSteam?.(game)}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Open in Steam
+                    </button>
+                  )}
+                  {action === "open-lua-folder" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (game.luaScripts.length > 0) {
+                          const scriptPath = game.luaScripts[0].path;
+                          const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
+                          if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => toast.error(`Could not open folder: ${err}`));
+                        }
+                      }}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                      Lua Folder
+                    </button>
+                  )}
+                  {action === "missing-path" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300">
+                      Missing Path
+                    </span>
+                  )}
+                </>
               )}
             </div>
 

@@ -35,6 +35,7 @@ import { SkeletonBox } from "../common/Skeleton";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
+import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { showSuccess, showError } from "../toast/GameToast";
 import { useConfirm } from "../../services/confirmService";
 import type { AppPage } from "../../types/navigation";
@@ -140,6 +141,19 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
   const { confirm } = useConfirm();
+  const { jobs } = useDownloadQueueContext();
+
+  // Build set of appIds with active Steam install jobs — these are not yet installed
+  const activeInstallAppIds = useMemo(() => {
+    const activeStatuses = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
+    const set = new Set<string>();
+    for (const job of jobs) {
+      if (job.type === "steam-install" && activeStatuses.includes(job.status) && job.appId) {
+        set.add(job.appId);
+      }
+    }
+    return set;
+  }, [jobs]);
 
   // Defer all batch processing by 5s so initial mount stays zero-work
   useEffect(() => {
@@ -151,7 +165,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
 
   const installed = useMemo(() => {
     const deduped = dedupeLibraryGames(games);
-    const filtered = deduped.filter(isSidebarInstalledGame);
+    const filtered = deduped.filter(
+      (g) => isSidebarInstalledGame(g) && !(g.appId && activeInstallAppIds.has(g.appId))
+    );
 
     const steamInstalledCount = deduped.filter((g) => g.steamInstalled === true).length;
     const luaActiveCount = deduped.filter(hasActiveInstalledLuaScript).length;

@@ -178,77 +178,75 @@ export default function DownloadJobCard({
         />
       </div>
 
-      {/* Stats row */}
-      {isSteamInstall && (job.status === "downloading" || job.status === "waiting") ? (
-        /* Steam active install — compact metrics row */
+      {/* Steam install — stats row (active or completed) */}
+      {isSteamInstall ? (
         <div className="mt-4 flex flex-wrap gap-3">
-          {/* Size: downloaded/total or just total */}
-          {job.totalBytes > 0 && (
-            <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-              {job.bytesRead > 0 ? (
-                <>
-                  <span className="text-(--color-muted)">Descargado </span>
-                  <span className="font-medium text-(--color-text)">
-                    {formatBytes(job.bytesRead)} / {formatBytes(job.totalBytes)}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="text-(--color-muted)">Total </span>
-                  <span className="font-medium text-(--color-text)">
-                    {formatBytes(job.totalBytes)}
-                  </span>
-                </>
+          {job.status === "done" ? (
+            /* Completed: show installed size only */
+            job.installedSize != null && job.installedSize > 0 ? (
+              <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
+                <span className="text-(--color-muted)">instalado </span>
+                <span className="font-medium text-(--color-text)">{formatBytes(job.installedSize)}</span>
+              </div>
+            ) : null
+          ) : (
+            /* Active: size/speed/eta — only show labels when we have data to display */
+            <>
+              {job.totalBytes > 0 && (
+                <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
+                  {job.bytesRead > 0 ? (
+                    <>
+                      <span className="text-(--color-muted)">Descargado </span>
+                      <span className="font-medium text-(--color-text)">
+                        {formatBytes(job.bytesRead)} / {formatBytes(job.totalBytes)}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-(--color-muted)">Total </span>
+                      <span className="font-medium text-(--color-text)">
+                        {formatBytes(job.totalBytes)}
+                      </span>
+                    </>
+                  )}
+                </div>
               )}
-            </div>
-          )}
 
-          {/* Speed */}
-          {(job.speedBytesPerSec != null && job.speedBytesPerSec > 0) ? (
-            <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-              <span className="text-(--color-muted)">Velocidad </span>
-              <span className="font-medium text-(--color-text)">
-                {formatSpeed(job.speedBytesPerSec)}
-              </span>
-            </div>
-          ) : job.status === "downloading" && job.totalBytes > 0 ? (
-            <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-              <span className="text-(--color-muted)">Velocidad </span>
-              <span className="font-medium text-(--color-text)">Calculando\u2026</span>
-            </div>
-          ) : null}
+              {job.speedBytesPerSec != null && job.speedBytesPerSec > 0 && (
+                <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
+                  <span className="text-(--color-muted)">Velocidad </span>
+                  <span className="font-medium text-(--color-text)">
+                    {formatSpeed(job.speedBytesPerSec)}
+                  </span>
+                </div>
+              )}
 
-          {/* ETA */}
-          {(job.etaSeconds != null && job.etaSeconds > 0) ? (
-            <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-              <span className="text-(--color-muted)">ETA </span>
-              <span className="font-medium text-(--color-text)">
-                {formatEta(job.etaSeconds)}
-              </span>
-            </div>
-          ) : job.status === "downloading" && job.totalBytes > 0 && (job.speedBytesPerSec == null || job.speedBytesPerSec <= 0) ? (
-            <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-              <span className="text-(--color-muted)">ETA </span>
-              <span className="font-medium text-(--color-text)">Calculando\u2026</span>
-            </div>
-          ) : null}
+              {job.etaSeconds != null && job.etaSeconds > 0 && (
+                <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
+                  <span className="text-(--color-muted)">ETA </span>
+                  <span className="font-medium text-(--color-text)">
+                    {formatEta(job.etaSeconds)}
+                  </span>
+                </div>
+              )}
 
-          {/* Waiting time */}
-          {job.status === "waiting" && job.totalBytes > 0 && (
-            <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
-              <span className="text-(--color-muted)">Esperando </span>
-              <span className="font-medium text-(--color-text)">
-                {(() => {
-                  const elapsed = Math.floor((Date.now() - new Date(job.updatedAt).getTime()) / 1000);
-                  if (elapsed < 60) return `${elapsed}s`;
-                  return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
-                })()}
-              </span>
-            </div>
+              {job.status === "waiting" && job.totalBytes > 0 && (
+                <div className="rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs">
+                  <span className="text-(--color-muted)">Esperando </span>
+                  <span className="font-medium text-(--color-text)">
+                    {(() => {
+                      const elapsed = Math.floor((Date.now() - new Date(job.updatedAt).getTime()) / 1000);
+                      if (elapsed < 60) return `${elapsed}s`;
+                      return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+                    })()}
+                  </span>
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (
-        /* Non-Steam or completed — existing stat card layout */
+        /* Non-Steam — existing stat card layout */
         <div className="mt-4 grid grid-cols-1 gap-3 text-xs text-(--color-muted) md:grid-cols-4">
           {progressMode === "determinate" && job.totalBytes > 0 && (
             <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
@@ -277,23 +275,10 @@ export default function DownloadJobCard({
             </div>
           )}
 
-          {isSteamInstall && job.status === "done" && (
-            <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-              <p>Tama\u00f1o instalado</p>
-              <p className="mt-1 font-medium text-(--color-text)">
-                {job.installedSize && job.installedSize > 0
-                  ? formatBytes(job.installedSize)
-                  : "No disponible"}
-              </p>
-            </div>
-          )}
-
           <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-3">
-            <p>{job.type === "steam-install" ? "Instalaci\u00f3n" : "Actualizado"}</p>
+            <p>Actualizado</p>
             <p className="mt-1 font-medium text-(--color-text)">
-              {isSteamInstall && job.status === "done"
-                ? "Completada"
-                : new Date(job.updatedAt).toLocaleTimeString()}
+              {new Date(job.updatedAt).toLocaleTimeString()}
             </p>
           </div>
         </div>

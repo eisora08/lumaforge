@@ -44,6 +44,7 @@ import { useConfirm } from "../../services/confirmService";
 import { openExternalUrl } from "../../services/externalLinks";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
+import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -223,7 +224,11 @@ export default function GameLauncherTile({
   const isRunning = sessionState === "running";
   const action = getLauncherGamePrimaryAction(game);
   const hasLua = game.luaScripts.length > 0;
-  const { installState, isInstalling, isWaiting, dismiss } = useInstallTracker(game.appId);
+  const { installState, dismiss } = useInstallTracker(game.appId);
+  const { getJobByAppId } = useDownloadQueueContext();
+  const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
+  const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
+  const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
 
   function handleCardClick() {
     setMenuOpen(false);
@@ -310,54 +315,41 @@ export default function GameLauncherTile({
           </Tooltip>
 
           <div className="mt-1.5 flex items-center gap-2">
-            {action === "play" && (
-              <button
-                type="button"
-                onClick={(e) => handleActionClick(e, () => onPlay(game))}
-                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-              >
-                <Play className="h-3 w-3" />
-                Play
-              </button>
-            )}
-            {action === "install" && !isInstalling && (
-              <button
-                type="button"
-                onClick={(e) => handleActionClick(e, () => onInstall(game))}
-                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-              >
-                <Download className="h-3 w-3" />
-                Install
-              </button>
-            )}
-            {isInstalling && (
+            {hasActiveInstall ? (
               <div className="flex w-full flex-col gap-1">
                 <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/80">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  {installState.status === "opening-steam"
-                    ? "Opening Steam…"
-                    : installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0
-                      ? `Downloading ${Math.round(installState.downloadProgress.percent)}%`
-                      : "Waiting for Steam…"}
-                  {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 && (
+                  {installJob.message || (
+                    installJob.status === "waiting" || installJob.status === "queued"
+                      ? "Waiting for Steam…"
+                      : installJob.status === "downloading"
+                        ? `Downloading ${installJob.progress}%`
+                        : installJob.status === "extracting" || installJob.status === "installing"
+                          ? "Installing…"
+                          : installJob.status === "checking"
+                            ? "Checking…"
+                            : installJob.status === "paused"
+                              ? "Paused"
+                              : "Installing…"
+                  )}
+                  {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
                     <span className="text-[10px] text-amber-400/40">
-                      {formatBytes(installState.downloadProgress.bytesDownloaded)} / {formatBytes(installState.downloadProgress.bytesToDownload)}
+                      {formatBytes(installJob.bytesRead)} / {formatBytes(installJob.totalBytes)}
                     </span>
                   )}
                 </div>
                 <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
-                  {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 ? (
+                  {installJob.progressMode === "determinate" && installJob.progress > 0 ? (
                     <div
                       className="h-full rounded-full bg-amber-400 transition-all duration-500 ease-out"
-                      style={{ width: `${Math.min(100, Math.round(installState.downloadProgress.percent))}%` }}
+                      style={{ width: `${Math.min(100, installJob.progress)}%` }}
                     />
                   ) : (
                     <div className="h-full w-1/3 animate-pulse rounded-full bg-amber-400/50" />
                   )}
                 </div>
               </div>
-            )}
-            {installState.status === "timeout" && (
+            ) : installState.status === "timeout" ? (
               <div className="inline-flex items-center gap-1.5">
                 <span className="text-[11px] text-amber-400/70">Install stuck?</span>
                 <button
@@ -377,37 +369,60 @@ export default function GameLauncherTile({
                   Dismiss
                 </button>
               </div>
-            )}
-            {action === "open-steam" && (
-              <button
-                type="button"
-                onClick={(e) => handleActionClick(e, () => {
-                  if (game.appId) openExternalUrl(getSteamStoreUrl(Number(game.appId)));
-                })}
-                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-              >
-                <ExternalLink className="h-3 w-3" />
-                Open in Steam
-              </button>
-            )}
-            {action === "open-lua-folder" && (
-              <button
-                type="button"
-                onClick={(e) => handleActionClick(e, () => {
-                  if (game.luaScripts.length > 0) {
-                    const scriptPath = game.luaScripts[0].path;
-                    const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
-                    if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
-                  }
-                })}
-                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
-              >
-                <FolderOpen className="h-3 w-3" />
-                Lua Folder
-              </button>
-            )}
-            {action === "missing-path" && (
-              <span className="text-[10px] text-(--color-muted)/50">Missing Path</span>
+            ) : (
+              <>
+                {action === "play" && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleActionClick(e, () => onPlay(game))}
+                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+                  >
+                    <Play className="h-3 w-3" />
+                    Play
+                  </button>
+                )}
+                {action === "install" && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleActionClick(e, () => onInstall(game))}
+                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+                  >
+                    <Download className="h-3 w-3" />
+                    Install
+                  </button>
+                )}
+                {action === "open-steam" && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleActionClick(e, () => {
+                      if (game.appId) openExternalUrl(getSteamStoreUrl(Number(game.appId)));
+                    })}
+                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Open in Steam
+                  </button>
+                )}
+                {action === "open-lua-folder" && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleActionClick(e, () => {
+                      if (game.luaScripts.length > 0) {
+                        const scriptPath = game.luaScripts[0].path;
+                        const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
+                        if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
+                      }
+                    })}
+                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+                  >
+                    <FolderOpen className="h-3 w-3" />
+                    Lua Folder
+                  </button>
+                )}
+                {action === "missing-path" && (
+                  <span className="text-[10px] text-(--color-muted)/50">Missing Path</span>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -464,7 +479,7 @@ export default function GameLauncherTile({
                   }
                 }}
               />
-            ) : !isInstalling ? (
+            ) : !hasActiveInstall ? (
               <MenuItem
                 label="Install"
                 icon={<Download className="h-3.5 w-3.5" />}
@@ -472,7 +487,7 @@ export default function GameLauncherTile({
               />
             ) : (
               <MenuItem
-                label={isWaiting ? "Waiting for Steam…" : "Opening Steam…"}
+                label={installJob?.status === "waiting" || installJob?.status === "queued" ? "Waiting for Steam…" : "Installing…"}
                 icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 disabled
               />
