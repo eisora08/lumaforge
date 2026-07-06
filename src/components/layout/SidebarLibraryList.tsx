@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Download,
   ExternalLink,
@@ -11,6 +11,7 @@ import {
   Search,
   Settings,
   X,
+  XCircle,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -40,7 +41,7 @@ import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
-import { isPendingUninstall, markPendingUninstall } from "../../services/gameCacheService";
+import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
@@ -141,6 +142,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
   const { jobs } = useDownloadQueueContext();
+
+  // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
+  useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
 
   // Build set of appIds with active Steam install jobs — these are not yet installed
   const activeInstallAppIds = useMemo(() => {
@@ -547,6 +551,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const mAction = getLauncherGamePrimaryAction(menuGame);
           const mHasLua = menuGame.luaScripts.length > 0;
           const mPendingUninstall = menuGame.appId ? isPendingUninstall(menuGame.appId) : false;
+          if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) console.log(`[SIDEBAR_ACTION_RENDER] appid=${menuGame.appId} uninstallPending=${mPendingUninstall} action=${mPendingUninstall ? "uninstalling" : mAction}`);
           const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
 
           return (
@@ -668,7 +673,19 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 label="Manage"
                 icon={<Settings className="h-3.5 w-3.5" />}
                 children={[
-                  {
+                  mPendingUninstall
+                    ? {
+                      label: "Cancel tracking",
+                      icon: <XCircle className="h-3.5 w-3.5" />,
+                      onClick: () => {
+                        handleMenuClose();
+                        console.log(`[UNINSTALL_PENDING] appid=${menuGame.appId} phase=manual-cancel before=${isPendingUninstall(String(menuGame.appId))}`);
+                        clearPendingUninstall(String(menuGame.appId));
+                        showInfo(`"${menuGame.title ?? menuGame.appId}" uninstall tracking cancelled.`);
+                        console.log(`[UNINSTALL_PENDING] appid=${menuGame.appId} phase=manual-cancel after=${isPendingUninstall(String(menuGame.appId))}`);
+                      },
+                    }
+                    : {
                     label: "Uninstall in Steam",
                     icon: <ExternalLink className="h-3.5 w-3.5" />,
                     disabled: !menuGame.steamInstalled,

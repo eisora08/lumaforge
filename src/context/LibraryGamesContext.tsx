@@ -800,6 +800,26 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           scanResult.map((g) => String(g.appId))
         );
 
+        // ── Check for pending uninstall that timed out (user cancelled Steam modal) ──
+        // Runs every poll cycle before the "no missing games" early return.
+        try {
+          const { isPendingUninstall, getPendingUninstallTimestamp, clearPendingUninstall, getUninstallPendingScanTtl } = await import("../services/gameCacheService");
+          const { showInfo } = await import("../components/toast/GameToast");
+          const scanTtl = getUninstallPendingScanTtl();
+          for (const game of gamesRef.current) {
+            if (!game.appId) continue;
+            if (isPendingUninstall(game.appId) && installedAppIds.has(game.appId)) {
+              const ts = getPendingUninstallTimestamp(game.appId);
+              if (ts && Date.now() - ts > scanTtl) {
+                clearPendingUninstall(game.appId);
+                const ageMs = Date.now() - ts;
+                console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=auto-clear stillInstalled=true ageMs=${ageMs}`);
+                showInfo(`"${game.title ?? game.appId}" uninstall cancelled or not completed. The game is still installed.`);
+              }
+            }
+          }
+        } catch { /* ignore */ }
+
         // Read games AFTER scan to capture any interleaved installs
         const currentGames = gamesRef.current;
         const installedGames = currentGames.filter(
@@ -819,11 +839,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         }
         if (missingAppIds.length === 0) return;
 
-        // Clear any pending uninstall state for truly removed games
+        // Clear pending uninstall state for truly removed games + confirm-uninstalled log
         try {
           const { clearPendingUninstall } = await import("../services/gameCacheService");
           for (const appId of missingAppIds) {
             clearPendingUninstall(appId);
+            console.log(`[UNINSTALL_PENDING] appid=${appId} phase=confirmed-uninstalled`);
           }
         } catch { /* ignore */ }
 

@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Gamepad2, Loader2, Play, Square, Sparkles, Store } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Gamepad2, Loader2, Play, Square, Sparkles, Store, XCircle } from "lucide-react";
 import { getCachedSnapshot, subscribeSnapshotUpdated } from "../../services/startupSnapshotService";
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { resolveGameMediaUrl, resolveDashboardTitles, isPendingUninstall } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles, isPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 
 const DEBUG_NAME_HERO = false;
 const DEBUG_MEDIA_HERO = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
-import { showWarning } from "../toast/GameToast";
+import { showInfo, showWarning } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import AsyncImage from "../common/AsyncImage";
 import StopGameModal from "../library/StopGameModal";
@@ -210,6 +210,8 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const heroInstallJob = heroAppId ? getJobByAppId(heroAppId) : undefined;
   const activeInstallStatuses = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
   const hasActiveInstall = heroInstallJob?.type === "steam-install" && activeInstallStatuses.includes(heroInstallJob.status);
+  // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
+  useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const heroPendingUninstall = heroAppId ? isPendingUninstall(heroAppId) : false;
 
   // Diagnostic logs — once per selection change
@@ -507,9 +509,24 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                 </button>
               </>
             ) : heroPendingUninstall ? (
-              <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
-                <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
-                <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
+                  <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                  <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!heroAppId) return;
+                    console.log(`[UNINSTALL_PENDING] appid=${heroAppId} phase=manual-cancel before=${isPendingUninstall(heroAppId)}`);
+                    clearPendingUninstall(heroAppId);
+                    showInfo(`"${heroTitle || heroGame?.title || heroAppId}" uninstall tracking cancelled.`);
+                    console.log(`[UNINSTALL_PENDING] appid=${heroAppId} phase=manual-cancel after=${isPendingUninstall(heroAppId)}`);
+                  }}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/5"
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Cancel tracking
+                </button>
               </div>
             ) : hasActiveInstall ? (
               <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">

@@ -2,7 +2,7 @@
 const DEBUG_ACH_DETAILS = false;
 const DEBUG_LAUNCH_BUTTON_RENDER = false;
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
 import {
   ArrowLeft,
@@ -29,11 +29,13 @@ import {
   Square,
   Trophy,
   X,
+  XCircle,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
-import { resolveCanonicalDisplayTitle, isPendingUninstall } from "../../services/gameCacheService";
+import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
+import { showInfo } from "../toast/GameToast";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -64,7 +66,7 @@ import type { SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
 import { resolveSteamAchievements, debugAchievements } from "../../services/steamAchievementsResolver";
-import { scanSteamAppcacheAchievements } from "../../services/tauri";
+import { scanSteamAppcacheAchievements, uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
 import { showAchievementToast, showGroupedAchievementToast, showTestAchievementToast } from "./AchievementToast";
 import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "../../services/achievementNotificationService";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
@@ -362,6 +364,8 @@ export default function LibraryGameDetails({
   const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
   const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
   const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
+  // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
+  useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
   const effectiveAction = hasPendingUninstall
     ? "uninstalling"
@@ -371,7 +375,7 @@ export default function LibraryGameDetails({
       ? "timeout"
       : action;
   if (DEBUG_LAUNCH_BUTTON_RENDER) {
-    console.log(`[GAME_ACTION_RENDER] appid=${game.appId} baseAction=${action} installJobStatus=${installJob?.status ?? "none"} effectiveAction=${effectiveAction} renderedButtons=1`);
+    console.log(`[GAME_ACTION_RENDER] appid=${game.appId} location=gamedetails uninstallPending=${hasPendingUninstall} baseAction=${action} effectiveAction=${effectiveAction} renderedPrimary=${hasPendingUninstall ? "Uninstalling" : effectiveAction === "play" ? "Play" : effectiveAction === "install" ? "Install" : effectiveAction}`);
   }
 
   const rawShort = game.metadata?.short_description;
@@ -1076,7 +1080,7 @@ export default function LibraryGameDetails({
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
             <div className="shrink-0">
-              {action === "play" && !hasActiveInstall && installState.status !== "timeout" && (
+              {effectiveAction === "play" && !hasActiveInstall && installState.status !== "timeout" && (
                 <>
                   {(!launchInfo || launchInfo.state === "idle" || launchInfo.state === "error") && (
                     <button
@@ -1238,9 +1242,25 @@ export default function LibraryGameDetails({
                   </button>
                 </div>
               ) : hasPendingUninstall ? (
-                <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
-                  <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
-                  <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
+                <div className="inline-flex items-center gap-3">
+                  <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
+                    <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                    <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!game.appId) return;
+                      console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel before=${isPendingUninstall(game.appId)}`);
+                      clearPendingUninstall(game.appId);
+                      showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+                      console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(game.appId)}`);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/5"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                    Cancel tracking
+                  </button>
                 </div>
               ) : (
                 <>
@@ -1323,13 +1343,45 @@ export default function LibraryGameDetails({
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setShowActions(false)} />
                     <div className="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-(--surface-active-border) bg-(--color-bg) p-1 shadow-lg">
-                      {game.isPlayable && (
+                      {hasPendingUninstall ? (
                         <DropdownItem
-                          label="Uninstall Game"
-                          disabled
-                          subtitle="Coming soon"
+                          label="Cancel tracking"
+                          onClick={() => {
+                            setShowActions(false);
+                            if (!game.appId) return;
+                            console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel before=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
+                            clearPendingUninstall(game.appId);
+                            showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+                            console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
+                          }}
                         />
-                      )}
+                      ) : game.steamInstalled ? (
+                        <DropdownItem
+                          label="Uninstall in Steam"
+                          onClick={async () => {
+                            setShowActions(false);
+                            const appIdStr = String(game.appId);
+                            const appIdNum = Number(game.appId);
+                            markPendingUninstall(appIdStr);
+                            console.log(`[UNINSTALL_PENDING] appid=${appIdStr} phase=start source=gamedetails-actions`);
+                            showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                            try {
+                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} source=gamedetails-actions`);
+                              await uninstallSteamApp(appIdNum);
+                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} result=ok source=gamedetails-actions`);
+                            } catch (e1) {
+                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} result=error error=${e1} source=gamedetails-actions`);
+                              try {
+                                console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appIdNum} attempt=2 source=gamedetails-actions`);
+                                await openSteamStoreApp(appIdNum);
+                              } catch (e2) {
+                                console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appIdNum} uri=${getSteamStoreUrl(appIdNum)} attempt=3 source=gamedetails-actions`);
+                                await openExternalUrl(getSteamStoreUrl(appIdNum));
+                              }
+                            }
+                          }}
+                        />
+                      ) : null}
                       {script && onDeleteScript && (
                         <DropdownItem
                           label="Delete Lua"

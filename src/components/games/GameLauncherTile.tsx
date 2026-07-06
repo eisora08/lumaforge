@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender } from "../../services/perfCounters";
 import {
   Download,
@@ -12,6 +12,7 @@ import {
   Play,
   Settings,
   X,
+  XCircle,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -37,6 +38,9 @@ import {
   resolveCanonicalName,
   isPendingUninstall,
   markPendingUninstall,
+  clearPendingUninstall,
+  subscribePendingUninstall,
+  getPendingUninstallVersion,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -228,6 +232,8 @@ export default function GameLauncherTile({
   const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
   const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
   const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
+  // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
+  useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
 
   function handleCardClick() {
@@ -583,32 +589,44 @@ export default function GameLauncherTile({
               label="Manage"
               icon={<Settings className="h-3.5 w-3.5" />}
               children={[
-                {
-                  label: "Uninstall in Steam",
-                  icon: <ExternalLink className="h-3.5 w-3.5" />,
-                  disabled: !game.steamInstalled,
-                  subtitle: !game.steamInstalled ? "Not installed" : undefined,
-                  onClick: game.steamInstalled ? async () => {
-                    setMenuOpen(false);
-                    const appId = Number(game.appId);
-                    markPendingUninstall(String(appId));
-                    showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
-                    try {
-                      console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
-                      await uninstallSteamApp(appId);
-                      console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
-                    } catch (e1) {
-                      console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                hasPendingUninstall
+                  ? {
+                    label: "Cancel tracking",
+                    icon: <XCircle className="h-3.5 w-3.5" />,
+                    onClick: () => {
+                      setMenuOpen(false);
+                      console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel before=${isPendingUninstall(String(game.appId))}`);
+                      clearPendingUninstall(String(game.appId));
+                      showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+                      console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(String(game.appId))}`);
+                    },
+                  }
+                  : {
+                    label: "Uninstall in Steam",
+                    icon: <ExternalLink className="h-3.5 w-3.5" />,
+                    disabled: !game.steamInstalled,
+                    subtitle: !game.steamInstalled ? "Not installed" : undefined,
+                    onClick: game.steamInstalled ? async () => {
+                      setMenuOpen(false);
+                      const appId = Number(game.appId);
+                      markPendingUninstall(String(appId));
+                      showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
                       try {
-                        console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
-                        await openSteamStoreApp(appId);
-                      } catch (e2) {
-                        console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
-                        await openExternalUrl(getSteamStoreUrl(appId));
+                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
+                        await uninstallSteamApp(appId);
+                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
+                      } catch (e1) {
+                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                        try {
+                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
+                          await openSteamStoreApp(appId);
+                        } catch (e2) {
+                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
+                          await openExternalUrl(getSteamStoreUrl(appId));
+                        }
                       }
-                    }
-                  } : undefined,
-                },
+                    } : undefined,
+                  },
                 ...(hasLua
                   ? [{
                     label: "Delete Lua",

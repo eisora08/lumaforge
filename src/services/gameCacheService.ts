@@ -1544,32 +1544,59 @@ export function createMediaIndexUpdate(
   };
 }
 
-// ── Pending uninstall state (in-memory only, auto-clears after 5min) ──
-const _pendingUninstallAppIds = new Map<string, ReturnType<typeof setTimeout>>();
+// ── Pending uninstall state (in-memory only, reactive via useSyncExternalStore) ──
+const _pendingUninstallAppIds = new Map<string, { timer: ReturnType<typeof setTimeout>; timestamp: number }>();
 const UNINSTALL_PENDING_TTL_MS = 5 * 60 * 1000;
+const UNINSTALL_PENDING_SCAN_TTL_MS = 45_000; // 45 seconds — cleared by scan when still installed
+let _pendingUninstallVersion = 0;
+const _pendingUninstallListeners = new Set<() => void>();
+
+function _notifyPendingUninstallChanged(): void {
+  _pendingUninstallVersion++;
+  _pendingUninstallListeners.forEach(cb => cb());
+}
+
+export function subscribePendingUninstall(callback: () => void): () => void {
+  _pendingUninstallListeners.add(callback);
+  return () => { _pendingUninstallListeners.delete(callback); };
+}
+
+export function getPendingUninstallVersion(): number {
+  return _pendingUninstallVersion;
+}
 
 export function markPendingUninstall(appId: string): void {
   const existing = _pendingUninstallAppIds.get(appId);
-  if (existing) clearTimeout(existing);
+  if (existing) clearTimeout(existing.timer);
   const timer = setTimeout(() => {
     _pendingUninstallAppIds.delete(appId);
-    console.log(`[UNINSTALL][PENDING_CLEAR] appid=${appId} reason=timeout`);
+    _notifyPendingUninstallChanged();
+    console.log(`[UNINSTALL_PENDING] appid=${appId} phase=clear reason=timeout`);
   }, UNINSTALL_PENDING_TTL_MS);
-  _pendingUninstallAppIds.set(appId, timer);
-  console.log(`[UNINSTALL][PENDING_MARK] appid=${appId}`);
+  _pendingUninstallAppIds.set(appId, { timer, timestamp: Date.now() });
+  _notifyPendingUninstallChanged();
+  console.log(`[UNINSTALL_PENDING] appid=${appId} phase=start`);
 }
 
 export function clearPendingUninstall(appId: string): void {
   const existing = _pendingUninstallAppIds.get(appId);
   if (existing) {
-    clearTimeout(existing);
+    clearTimeout(existing.timer);
     _pendingUninstallAppIds.delete(appId);
-    console.log(`[UNINSTALL][PENDING_CLEAR] appid=${appId} reason=completed`);
+    _notifyPendingUninstallChanged();
   }
 }
 
 export function isPendingUninstall(appId: string): boolean {
   return _pendingUninstallAppIds.has(appId);
+}
+
+export function getPendingUninstallTimestamp(appId: string): number | null {
+  return _pendingUninstallAppIds.get(appId)?.timestamp ?? null;
+}
+
+export function getUninstallPendingScanTtl(): number {
+  return UNINSTALL_PENDING_SCAN_TTL_MS;
 }
 
 export async function detectAndQueueMissingMedia(appId: string, source: MediaRepairSource = "visible-details"): Promise<string[]> {
