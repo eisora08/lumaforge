@@ -13,14 +13,43 @@ import {
 
 import DownloadJobCard from "../components/downloads/DownloadJobCard";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
+import { useLibraryGames } from "../context/LibraryGamesContext";
+import type { AppPage } from "../types/navigation";
+import { getBootSnapshot } from "../services/appBootCoordinator";
 
-export default function Downloads() {
+type Props = {
+  onNavigate?: (page: AppPage) => void;
+};
+
+export default function Downloads({ onNavigate }: Props) {
   const {
     jobs,
     cancelJob,
     removeJob,
     clearCompleted,
   } = useDownloadQueue();
+  const { setSelectedGame, games } = useLibraryGames();
+
+  function handleOpenGame(appId: string) {
+    let game = games.find(g => g.appId === appId || g.id.endsWith(`-${appId}`));
+    if (game) {
+      setSelectedGame(game);
+      onNavigate?.("library-game-detail");
+      return;
+    }
+    const snapshot = getBootSnapshot();
+    const snapshotGame = snapshot?.library.games.find(
+      g => g.appId === appId || g.appId.endsWith(`-${appId}`)
+    );
+    if (snapshotGame) {
+      game = games.find(g => g.appId === snapshotGame.appId || g.id.endsWith(`-${snapshotGame.appId}`));
+      if (game) {
+        setSelectedGame(game);
+        onNavigate?.("library-game-detail");
+        return;
+      }
+    }
+  }
 
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
 
@@ -120,6 +149,7 @@ export default function Downloads() {
               job={job}
               onCancel={cancelJob}
               onRemove={removeJob}
+              onOpenDetails={handleOpenGame}
             />
           ))}
         </section>
@@ -134,6 +164,7 @@ export default function Downloads() {
               job={job}
               onCancel={cancelJob}
               onRemove={removeJob}
+              onOpenDetails={handleOpenGame}
             />
           ))}
         </section>

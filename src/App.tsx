@@ -177,7 +177,7 @@ function App() {
       case "global-search":
         return <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
       case "downloads":
-        return <Downloads />;
+        return <Downloads onNavigate={handleNavigate} />;
       case "achievements":
         return <Achievements />;
       case "activity":
