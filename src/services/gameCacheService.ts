@@ -258,6 +258,7 @@ export function isNoSourceCooldown(appId: string): boolean {
 /** Known Steam system/tool appIds that should not have media repair applied. */
 const SYSTEM_TOOL_APP_IDS = new Set([
   "228980", // Steamworks Common Redistributables
+  "2371090", // Steam Game Notes (config)
   "1070560", // Steam Linux Runtime
   "1391110", // Steamworks Shared
   "1798010", // Proton Experimental
@@ -2081,7 +2082,7 @@ export async function generateMediaManifest(
   } catch {
     resolved = null;
   }
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
     console.log(`[MEDIA][MANIFEST_PROVIDER] appid=${appId} gameProvider=steam artworkSource=${provider} manifestProvider=${provider}`);
   }
   const entryForRole = (role: string): { path: string; exists: boolean; size: number | null; modifiedAt: number | null } => {
@@ -2096,7 +2097,7 @@ export async function generateMediaManifest(
       const bestPath = resolvedPath ?? relPath;
       const normalized = bestPath ? normalizeMediaPathForIndex(bestPath) : null;
       const manifestPath = normalized ?? `media/${role}.jpg`;
-      if (import.meta.env.DEV) {
+      if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
         const inputRelPath = relPath ?? "(null)";
         console.log(`[MEDIA][MANIFEST_VALIDATE] appid=${appId} role=${role} relPath=${inputRelPath} resolvedPath=${resolvedPath ?? "(null)"} manifestPath=${manifestPath} exists=${exists}`);
       }
@@ -2125,7 +2126,7 @@ export async function generateMediaManifest(
   };
 
   await writeMediaManifestTauri(appId, manifest);
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
     const roleLog = (r: string, f: { path: string; exists: boolean }) => `role=${r} path=${f.path} exists=${f.exists}`;
     console.log(`[MEDIA][MANIFEST_WRITE] appid=${appId} ${roleLog("cover", manifest.files.cover)} ${roleLog("landscape", manifest.files.landscape)} ${roleLog("background", manifest.files.background)} ${roleLog("logo", manifest.files.logo)} ${roleLog("icon", manifest.files.icon)}`);
   } else {

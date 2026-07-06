@@ -26,7 +26,6 @@ import {
   Heart,
   RefreshCw,
   Square,
-  Star,
   Trophy,
   X,
 } from "lucide-react";
@@ -433,7 +432,7 @@ export default function LibraryGameDetails({
   // Trace achievement render source for Cuphead debugging
   if (game.appId === "268910") {
     const derived = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
-    console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=header source=${achievementsSummary?.source ?? "none"} unlocked=${achievementsSummary?.unlocked ?? "undefined"}/${achievementsSummary?.total ?? "undefined"} derivedFromList=${derived} progressAvailable=${achievementsSummary?.progressAvailable}`);
+    if (DEBUG_ACH_DETAILS) console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=header source=${achievementsSummary?.source ?? "none"} unlocked=${achievementsSummary?.unlocked ?? "undefined"}/${achievementsSummary?.total ?? "undefined"} derivedFromList=${derived} progressAvailable=${achievementsSummary?.progressAvailable}`);
     console.log(`[ACH][SUMMARY_AVAILABLE] appid=268910 source=${achievementsSummary?.source ?? "null"} unlocked=${achievementsSummary?.unlocked ?? "null"} total=${achievementsSummary?.total ?? "null"}`);
   }
 
@@ -445,6 +444,8 @@ export default function LibraryGameDetails({
   const effectiveUnlocked = achievementsSummary?.unlocked ?? derivedUnlocked;
   const effectiveTotal = achievementsSummary?.total ?? achievementsSummary?.achievements?.length ?? 0;
   const effectiveProgressAvailable = achievementsSummary?.progressAvailable || canDeriveProgress;
+  const isPerfected = effectiveTotal > 0 && effectiveUnlocked === effectiveTotal && effectiveProgressAvailable !== false;
+  if (isPerfected) console.log(`[ACH][PERFECTED_TRACE] appid=${appIdStr ?? "?"} isPerfected=true location=render-only`);
   if (DEBUG_ACH_DETAILS) {
     console.log(`[ACH][PROGRESS_AVAILABLE_CHECK] appid=${appIdStr} resolverProgressAvailable=${achievementsSummary?.progressAvailable} summaryProgressAvailable=${achievementsSummary?.progressAvailable} uiProgressAvailable=${effectiveProgressAvailable} derivedUnlocked=${derivedUnlocked} canDerive=${canDeriveProgress}`);
   }
@@ -1179,7 +1180,15 @@ export default function LibraryGameDetails({
               <StatInline icon={<Clock className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
               <StatInline icon={<Trophy className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
               <StatInline icon={<HardDrive className="h-5 w-5" />} label="Size" value={formatBytes(game.sizeOnDisk)} />
-              <StatInline icon={<Star className="h-5 w-5" />} label="Achievements" value={achievementsStatus} />
+              {isPerfected ? (
+                <div className="inline-flex items-center gap-1.5 text-xs">
+                  <Trophy className="h-4 w-4 fill-amber-400 text-amber-400" />
+                  <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-amber-400/80">Perfected:</span>
+                  <span className="font-medium text-amber-400">{effectiveUnlocked}/{effectiveTotal}</span>
+                </div>
+              ) : (
+                <StatInline icon={<Trophy className="h-5 w-5" />} label="Achievements" value={achievementsStatus} />
+              )}
             </div>
 
             {/* Right side: Actions + Favorite */}
@@ -1506,9 +1515,9 @@ export default function LibraryGameDetails({
 
               {/* Achievements */}
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
-                <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
-                  <Trophy className="mr-1.5 inline h-3.5 w-3.5" />
-                  Achievements
+                <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isPerfected ? "text-amber-400/90" : "text-(--color-muted)"}`}>
+                  <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
+                  {isPerfected ? "Perfected" : "Achievements"}
                 </h3>
 
                 {achievementsLoading ? (
@@ -1550,25 +1559,48 @@ export default function LibraryGameDetails({
                 ) : achievementsSummary && effectiveProgressAvailable && effectiveTotal > 0 ? (
                   <div className="mt-3 space-y-3">
                     {/* Trace: log panel count source for Cuphead */}
-                    {game.appId === "268910" && (console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=panel source=${achievementsSummary.source} effectiveUnlocked=${effectiveUnlocked}/${effectiveTotal} summaryUnlocked=${achievementsSummary.unlocked}/${achievementsSummary.total} listDerived=${derivedUnlocked}`), null)}
+                    {game.appId === "268910" && DEBUG_ACH_DETAILS && (console.log(`[ACH][UI_COUNT_SOURCE] appid=268910 location=panel source=${achievementsSummary.source} effectiveUnlocked=${effectiveUnlocked}/${effectiveTotal} summaryUnlocked=${achievementsSummary.unlocked}/${achievementsSummary.total} listDerived=${derivedUnlocked}`), null)}
+
+                    {isPerfected && (
+                      <div className="rounded-xl bg-amber-500/8 border border-amber-400/15 px-3.5 py-2.5 flex items-center gap-3">
+                        <Trophy className="h-5 w-5 fill-amber-400 text-amber-400 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-amber-300">Perfected</p>
+                          <p className="text-[10px] text-amber-400/60">All achievements unlocked</p>
+                        </div>
+                        <span className="ml-auto shrink-0 text-[11px] font-bold text-amber-400/80">
+                          {effectiveUnlocked}/{effectiveTotal} &middot; 100%
+                        </span>
+                      </div>
+                    )}
+
                     {/* Progress bar */}
                     <div>
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-(--color-text) font-medium">
+                        <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
                           {effectiveUnlocked} / {effectiveTotal}
                         </span>
-                        <span className="text-(--color-muted)">
+                        <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
                           {effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%
                         </span>
                       </div>
                       <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
                         <div
-                          className="h-full rounded-full bg-(--color-accent) transition-all duration-500"
-                          style={{ width: `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%` }}
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            isPerfected
+                              ? "bg-gradient-to-r from-amber-400 to-yellow-300"
+                              : "bg-(--color-accent)"
+                          }`}
+                          style={{
+                            width: `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%`,
+                            boxShadow: isPerfected ? "0 0 10px rgba(251,191,36,0.4)" : undefined,
+                          }}
                         />
                       </div>
-                      <p className="mt-1 text-[10px] text-(--color-muted)/60">
-                        {effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}% complete
+                      <p className={`mt-1 text-[10px] ${isPerfected ? "text-amber-400/50" : "text-(--color-muted)/60"}`}>
+                        {isPerfected
+                          ? "All achievements unlocked"
+                          : `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}% complete`}
                         {achievementsSyncing && (
                           <span className="ml-2 italic">Syncing...</span>
                         )}
@@ -1612,14 +1644,25 @@ export default function LibraryGameDetails({
                       ))}
                     </div>
                     <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowAchievementsModal(true)}
-                        className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-                      >
-                        <Trophy className="h-3.5 w-3.5" />
-                        View all achievements ({achievementsSummary.total})
-                      </button>
+                      {isPerfected ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowAchievementsModal(true)}
+                          className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-amber-400/20 bg-amber-500/8 px-3 py-2 text-xs font-medium text-amber-400 transition hover:bg-amber-500/12 focus-visible:ring-2 focus-visible:ring-amber-400/50"
+                        >
+                          <Trophy className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                          View all · {achievementsSummary.total} achievements
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowAchievementsModal(true)}
+                          className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                        >
+                          <Trophy className="h-3.5 w-3.5" />
+                          View all achievements ({achievementsSummary.total})
+                        </button>
+                      )}
                       {import.meta.env.DEV && (
                         <>
                           <button

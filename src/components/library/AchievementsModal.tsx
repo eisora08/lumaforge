@@ -292,6 +292,7 @@ export default function AchievementsModal({
   const percent = summary.progressAvailable && summary.total > 0
     ? Math.round((summary.unlocked! / summary.total) * 100)
     : 0;
+  const isPerfected = summary.total > 0 && summary.unlocked === summary.total && summary.progressAvailable !== false;
 
   const resolvedGameIcon = resolveGameIconUrl(gameIconUrl, appIdStr);
 
@@ -477,34 +478,48 @@ export default function AchievementsModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* ===== HEADER ===== */}
-        <div className="shrink-0 border-b border-(--surface-active-border)">
+        <div className={`shrink-0 border-b ${isPerfected ? "border-amber-400/20" : "border-(--surface-active-border)"}`}>
           <div className="flex items-center justify-between px-5 pt-4 pb-3">
             <div className="flex items-center gap-3 min-w-0">
               {resolvedGameIcon ? (
-                <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl ring-1 ring-white/10">
+                <div className={`h-11 w-11 shrink-0 overflow-hidden rounded-xl ${isPerfected ? "ring-1 ring-amber-400/30" : "ring-1 ring-white/10"}`}>
                   <img src={resolvedGameIcon} alt="" className="h-full w-full object-cover" />
                 </div>
               ) : (
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-(--color-accent)/10 ring-1 ring-(--color-accent)/20">
-                  <Trophy className="h-5 w-5 text-(--color-accent)" />
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${isPerfected ? "bg-amber-500/15 ring-amber-400/30" : "bg-(--color-accent)/10 ring-(--color-accent)/20"} ring-1`}>
+                  <Trophy className={`h-5 w-5 ${isPerfected ? "fill-amber-400 text-amber-400" : "text-(--color-accent)"}`} />
                 </div>
               )}
               <div className="min-w-0">
-                <h2 className="text-base font-bold text-(--color-text) truncate">
-                  {gameTitle || "Achievements"}
+                <h2 className={`text-base font-bold truncate ${isPerfected ? "text-amber-300" : "text-(--color-text)"}`}>
+                  {isPerfected ? `${gameTitle || "Achievements"} · Perfected` : (gameTitle || "Achievements")}
                 </h2>
-                <p className="text-[11px] text-(--color-muted) truncate">
-                  {summary.progressAvailable
-                    ? `${summary.unlocked} of ${summary.total} achievements earned`
-                    : `${summary.total} achievements`}
+                <p className={`text-[11px] truncate ${isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}`}>
+                  {isPerfected ? (
+                    <span className="flex items-center gap-1">
+                      <Trophy className="h-3 w-3 fill-amber-400" />
+                      All {summary.total} achievements unlocked
+                    </span>
+                  ) : summary.progressAvailable ? (
+                    `${summary.unlocked} of ${summary.total} achievements earned`
+                  ) : (
+                    `${summary.total} achievements`
+                  )}
                   {appIdStr ? <> &middot; App {appIdStr}</> : null}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {summary.progressAvailable && summary.total > 0 && (
-                <div className="hidden sm:flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-2.5 py-1">
-                  <span className="text-xs font-bold text-emerald-400">{percent}%</span>
+                <div className={`hidden sm:flex items-center gap-1.5 rounded-lg px-2.5 py-1 ${isPerfected ? "bg-amber-500/15" : "bg-emerald-500/10"}`}>
+                  {isPerfected ? (
+                    <>
+                      <Trophy className="h-3 w-3 fill-amber-400 text-amber-400" />
+                      <span className="text-xs font-bold text-amber-400">Perfected</span>
+                    </>
+                  ) : (
+                    <span className="text-xs font-bold text-emerald-400">{percent}%</span>
+                  )}
                 </div>
               )}
               <button
@@ -530,19 +545,36 @@ export default function AchievementsModal({
 
           {/* Progress bar */}
           {summary.progressAvailable && summary.total > 0 && (
-            <div className="px-5 pb-3">
+            <div className={`px-5 pb-3 ${isPerfected ? "relative" : ""}`}>
+              {isPerfected && (
+                <div className="absolute inset-x-5 bottom-3 h-1.5 rounded-full bg-amber-400/10 blur-md" />
+              )}
               <div className="flex items-center justify-between text-xs mb-1.5">
-                <span className="text-(--color-text) font-medium">
-                  {summary.unlocked} / {summary.total}
+                <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
+                  {isPerfected ? (
+                    <span className="flex items-center gap-1.5">
+                      <Trophy className="h-3.5 w-3.5 fill-amber-400" />
+                      Perfected
+                    </span>
+                  ) : (
+                    `${summary.unlocked} / ${summary.total}`
+                  )}
                 </span>
-                <span className="text-(--color-muted)">
-                  {percent}%
+                <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
+                  {isPerfected ? "100%" : `${percent}%`}
                 </span>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                 <div
-                  className="h-full rounded-full bg-(--color-accent) transition-all duration-700 ease-out"
-                  style={{ width: `${percent}%`, boxShadow: "0 0 8px var(--color-accent)" }}
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${
+                    isPerfected
+                      ? "bg-gradient-to-r from-amber-400 to-yellow-300"
+                      : "bg-(--color-accent)"
+                  }`}
+                  style={{
+                    width: `${percent}%`,
+                    boxShadow: isPerfected ? "0 0 14px rgba(251,191,36,0.5)" : "0 0 8px var(--color-accent)",
+                  }}
                 />
               </div>
             </div>

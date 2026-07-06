@@ -1,6 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { resolveImageSource } from "./achievementImageQueue";
+import { resolveAchievementImagePath } from "./tauri";
+import { DEBUG_ACH_VERBOSE } from "./achievementAutoFlags";
 
 const THEME_VAR_NAMES = [
   "--color-bg",
@@ -23,7 +25,7 @@ function collectThemeVars(): ThemeVars {
       vars[name] = val;
     }
   }
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV && DEBUG_ACH_VERBOSE) {
     const themeId = root.dataset.theme || "unknown";
     const surfaceStyle = root.dataset.surface || "unknown";
     console.debug(`[ACH][OVERLAY_THEME] themeId=${themeId} surfaceStyle=${surfaceStyle}`);
@@ -81,15 +83,66 @@ function isSettingEnabled(key: string): boolean {
 
 const STEAM_CDN = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps";
 
-function resolveOverlayIconUrl(
+async function tryResolveLocalCached(
+  value: string | null | undefined,
+  appId: string | null | undefined,
+  isGray: boolean,
+): Promise<string | null> {
+  if (!value || !appId) return null;
+
+  // Already browser-loadable — let caller handle it
+  if (value.startsWith("data:") || value.startsWith("file://") || value.startsWith("asset://")) {
+    return null;
+  }
+
+  let hash: string | null = null;
+
+  // img/<hash>.jpg or img/<hash>_gray.jpg
+  if (value.startsWith("img/")) {
+    const m = value.match(/^img\/([a-f0-9]{40})(?:_gray)?\.jpg$/i);
+    if (m) hash = m[1];
+  }
+
+  // Raw 40-char hex hash
+  if (!hash && /^[a-f0-9]{40}$/i.test(value)) {
+    hash = value;
+  }
+
+  if (hash) {
+    const suffix = isGray ? "_gray" : "";
+    const relativePath = `img/${hash}${suffix}.jpg`;
+    try {
+      const absPath = await resolveAchievementImagePath("steam", Number(appId), relativePath);
+      const exists = await invoke<boolean>("file_exists", { path: absPath });
+      if (exists) {
+        const localUrl = convertFileSrc(absPath, "asset");
+        console.log(`[ACH][OVERLAY_ICON_LOCAL] appid=${appId} path=${relativePath} exists=true`);
+        return localUrl;
+      }
+    } catch {
+      // fall through to fallback
+    }
+  }
+
+  return null;
+}
+
+async function resolveOverlayIconUrl(
   iconUrl: string | null | undefined,
   iconGrayUrl: string | null | undefined,
   appId: string | null | undefined,
-): string | null {
+): Promise<string | null> {
+  // Phase 1: Local cached files first
+  const localIcon = await tryResolveLocalCached(iconUrl, appId, false);
+  if (localIcon) return localIcon;
+
+  const localGray = await tryResolveLocalCached(iconGrayUrl, appId, true);
+  if (localGray) return localGray;
+
+  // Phase 2: Remote/CDN fallback (existing synchronous logic)
   const tryResolve = (value: string | null | undefined): string | null => {
     if (!value) return null;
 
-    // Already absolute and browser-loadable
     if (
       value.startsWith("data:") ||
       value.startsWith("file://") ||
@@ -100,7 +153,6 @@ function resolveOverlayIconUrl(
       return value;
     }
 
-    // Relative img/ path — resolve via image queue or CDN fallback
     if (value.startsWith("img/") && appId) {
       try {
         const resolved = resolveImageSource(value, appId, "icon");
@@ -108,14 +160,12 @@ function resolveOverlayIconUrl(
       } catch {
         // fall through
       }
-      // Direct CDN fallback: extract hash from img/<hash>.jpg
       const hash = value.replace("img/", "").replace(/\.jpg$/i, "");
       if (/^[a-f0-9]{32,40}$/i.test(hash)) {
         return `${STEAM_CDN}/${appId}/${hash}.jpg`;
       }
     }
 
-    // Raw steam hash (40 hex chars)
     if (/^[a-f0-9]{40}$/i.test(value) && appId) {
       return `${STEAM_CDN}/${appId}/${value}.jpg`;
     }
@@ -123,9 +173,7 @@ function resolveOverlayIconUrl(
     return null;
   };
 
-  // Try icon first, then iconGray, then null
-  const result = tryResolve(iconUrl) ?? tryResolve(iconGrayUrl);
-  return result;
+  return tryResolve(iconUrl) ?? tryResolve(iconGrayUrl);
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +198,8 @@ export async function showAchievementOverlay(params: {
   duration?: number | null;
   iconGrayUrl?: string | null;
 }): Promise<boolean> {
-  const resolvedIcon = resolveOverlayIconUrl(params.iconUrl ?? null, params.iconGrayUrl ?? null, params.appId ?? null);
-  console.log(`[ACH][OVERLAY_ICON] apiName=${params.name} input=${params.iconUrl ?? "(none)"} resolved=${resolvedIcon ?? "(none)"} fallback=${!resolvedIcon ? "trophy" : "none"}`);
+  const resolvedIcon = await resolveOverlayIconUrl(params.iconUrl ?? null, params.iconGrayUrl ?? null, params.appId ?? null);
+  console.log(`[ACH][OVERLAY_ICON] appid=${params.appId ?? "?"} apiName=${params.name} input=${params.iconUrl ?? "(none)"} resolved=${resolvedIcon ?? "(none)"} source=${resolvedIcon?.startsWith("asset://") || resolvedIcon?.startsWith("http://asset.localhost") || resolvedIcon?.startsWith("https://asset.localhost") ? "local-cache" : resolvedIcon?.startsWith("http") ? "cdn" : resolvedIcon?.startsWith("file://") ? "file" : resolvedIcon?.startsWith("data:") ? "data" : resolvedIcon ? "asset" : "fallback"}`);
   try {
     const themeVars = collectThemeVars();
     const overlayPosition = readOverlayPosition();

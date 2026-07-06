@@ -18,6 +18,7 @@ import {
   logStoreSkipOnce,
   isStoreRoute,
 } from "./achievementAutoFlags";
+import { isSystemToolApp } from "./gameCacheService";
 
 // ---------------------------------------------------------------------------
 // Realtime Achievement Scope
@@ -362,6 +363,11 @@ class AchievementWatcherService {
           const isAcceptedSource = source === "librarycache" || source === "usergamestats";
           console.log(`[ACH][PIPELINE] source_check appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
           if (isAcceptedSource) {
+            // Skip non-game appIds (tools, config apps, etc.)
+            if (isSystemToolApp(appIdStr)) {
+              console.log(`[ACH][WATCHER_FILTER] appid=${appIdStr} accepted=false reason=non-game-app-type`);
+              return;
+            }
             // Debounce: skip if already queued for same appId
             if (this._debouncedAppIds.has(appIdStr)) {
               console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=already-queued`);
@@ -376,17 +382,23 @@ class AchievementWatcherService {
               }
               this._usergamestatsCooldown.set(appIdStr, Date.now());
             }
+            if (DEBUG_ACH_WATCHER) console.log(`[ACH][WATCHER_STATE] event=before-process appid=${appIdStr} processing=false queued=${this._syncPendingAppIds.size} debouncedTotal=${this._debouncedAppIds.size}`);
             this._debouncedAppIds.add(appIdStr);
             console.log(`[ACH][PIPELINE] process_queued appid=${appIdStr} source=${source}`);
             this.processLibrarycacheChange(appIdStr, path, "watcher", traceId).then((ok) => {
               this._debouncedAppIds.delete(appIdStr);
               console.log(`[ACH][PIPELINE] process_completed appid=${appIdStr} ok=${ok}`);
+              if (DEBUG_ACH_WATCHER) console.log(`[ACH][WATCHER_STATE] event=cleanup appid=${appIdStr} processingHas=${this._syncRunning} queuedCount=${this._syncPendingAppIds.size}`);
               if (ok && lastFingerprints.has(path)) {
                 lastFingerprints.set(path, { fingerprint: fp, processed: true });
               }
+            }).catch((err) => {
+              this._debouncedAppIds.delete(appIdStr);
+              console.warn(`[ACH][WATCHER_CLEANUP_MISSING] appid=${appIdStr} reason=unhandled-rejection error=${err}`);
             });
           } else {
             console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=non-librarycache-source source=${source}`);
+            console.log(`[ACH][MANUAL_NEEDED_REASON] appid=${appIdStr} reason=non-librarycache-source source=${source}`);
           }
         },
       );
@@ -411,6 +423,7 @@ class AchievementWatcherService {
       // ── Overlay enabled: show immediately regardless of focus ──
       if (overlayEnabled) {
         const maxShow = 3;
+        console.log(`[ACH][TOAST_BATCH] appid=${appId} newUnlocks=${unlocks.length} maxShow=${maxShow} route=overlay`);
         let shownCount = 0;
         for (let i = 0; i < unlocks.length && shownCount < maxShow; i++) {
           console.log(`[ACH][NOTIFY_OVERLAY_ATTEMPT] appid=${appId} apiName=${unlocks[i].apiName}`);
@@ -440,6 +453,7 @@ class AchievementWatcherService {
           shownCount++;
         }
         const remaining = unlocks.length - shownCount;
+        console.log(`[ACH][TOAST_CAP] appid=${appId} notificationOnly=true storeUnaffected=true individualShown=${shownCount} groupedRemaining=${remaining}`);
         if (remaining > 0) {
           showGroupedAchievementOverlay(remaining);
           console.log(`[ACH][NOTIFY_ROUTE] visual=overlay-grouped remaining=${remaining} native=${nativeEnabled}`);
@@ -452,6 +466,7 @@ class AchievementWatcherService {
       if (!overlayEnabled) {
         if (appFocused) {
           const maxShow = 3;
+          console.log(`[ACH][TOAST_BATCH] appid=${appId} newUnlocks=${unlocks.length} maxShow=${maxShow} route=in-app`);
           let shownCount = 0;
           for (let i = 0; i < unlocks.length && shownCount < maxShow; i++) {
             if (this.isToastRecentlyShown(appId, unlocks[i].apiName)) {
@@ -466,6 +481,7 @@ class AchievementWatcherService {
             shownCount++;
           }
           const remaining = unlocks.length - shownCount;
+          console.log(`[ACH][TOAST_CAP] appid=${appId} notificationOnly=true storeUnaffected=true individualShown=${shownCount} groupedRemaining=${remaining}`);
           if (remaining > 0 && toastEnabled) {
             showGroupedAchievementToast(remaining);
             console.log(`[ACH][NOTIFY_ROUTE] visual=in-app-grouped remaining=${remaining} native=${nativeEnabled}`);
@@ -774,7 +790,6 @@ class AchievementWatcherService {
 
   // ── Coalescing state for PART 14 ──
   private _syncRunning = false;
-  private _syncPending = false;
   private _syncPendingAppIds = new Set<string>();
 
   /**
@@ -793,18 +808,19 @@ class AchievementWatcherService {
     source: string,
     traceId: string,
   ): Promise<boolean> {
+    if (DEBUG_ACH_WATCHER) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=process-start`);
     console.log(`[ACH][PIPELINE] process_start appid=${appId} source=${source}`);
+    if (DEBUG_ACH_WATCHER) console.log(`[ACH][WATCHER_STATE] event=global appidsProcessing=${this._syncRunning ? 1 : 0} queuedAppIds=${this._syncPendingAppIds.size}`);
 
     // Coalescing: if already running, mark pending and return
     if (this._syncRunning) {
-      this._syncPending = true;
       this._syncPendingAppIds.add(appId);
       console.log(`[ACH][PIPELINE] process_coalesced appid=${appId} pending=${this._syncPendingAppIds.size}`);
+      if (DEBUG_ACH_WATCHER) console.log(`[ACH][WATCHER_STATE] event=coalesced appid=${appId} totalQueued=${this._syncPendingAppIds.size}`);
       return false;
     }
 
     this._syncRunning = true;
-    this._syncPending = false;
 
     try {
       // Stable file check
@@ -852,16 +868,23 @@ class AchievementWatcherService {
         traceId,
       );
 
+      if (DEBUG_ACH_WATCHER) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=patch-built total=${patch?.total ?? "N/A"} unlocked=${patch?.unlocked ?? "N/A"}`);
       console.log(`[ACH][PIPELINE] patch_built appid=${appId} patch=${!!patch} total=${patch?.total ?? "N/A"} unlocked=${patch?.unlocked ?? "N/A"}`);
       if (!patch) {
+        console.log(`[ACH][SYNC_SKIP] appid=${appId} reason=patch-is-null`);
         console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=patch-is-null`);
+        console.log(`[ACH][MANUAL_NEEDED_REASON] appid=${appId} reason=patch-is-null scheduleResolverRefresh=true`);
+        // Schedule resolver refresh as fallback to get authoritative data
+        this._scheduleResolverRefresh(appId, traceId).catch(() => {});
         return false;
       }
 
       // Downgrade guard: reject partial/stale librarycache data that is lower than current known count
       const currentSummary = achievementStore.getSummary(appId);
       if (currentSummary && patch.unlocked < (currentSummary.unlocked ?? 0)) {
+        console.log(`[ACH][SYNC_SKIP] appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${patch.unlocked}/${patch.total}`);
         console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${patch.unlocked}/${patch.total}`);
+        console.log(`[ACH][MANUAL_NEEDED_REASON] appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked}/${currentSummary.total} patch=${patch.unlocked}/${patch.total}`);
         // Schedule resolver refresh as fallback to get authoritative data
         this._scheduleResolverRefresh(appId, traceId).catch(() => {});
         return false;
@@ -882,6 +905,7 @@ class AchievementWatcherService {
       }
 
       const result = achievementStore.applyProgressPatch(appId, patch, traceId);
+      if (DEBUG_ACH_WATCHER) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=apply-result result=${!!result}`);
       console.log(`[ACH][PIPELINE] apply_result appid=${appId} result=${!!result}`);
       if (!result) {
         console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=applyProgressPatch-returned-null`);
@@ -897,16 +921,18 @@ class AchievementWatcherService {
       return false;
     } finally {
       this._syncRunning = false;
-      // Process coalesced follow-up
-      if (this._syncPending && this._syncPendingAppIds.size > 0) {
+      if (DEBUG_ACH_WATCHER) console.log(`[ACH][WATCHER_STATE] event=after-process appid=${appId} processing=${this._syncRunning} queued=${this._syncPendingAppIds.size}`);
+      // Process coalesced follow-up — preserve remaining appIds for next finally
+      if (this._syncPendingAppIds.size > 0) {
         const pendingCount = this._syncPendingAppIds.size;
-        const nextAppId = this._syncPendingAppIds.values().next().value;
-        this._syncPendingAppIds.clear();
-        this._syncPending = false;
+        const nextAppId = this._syncPendingAppIds.values().next().value!;
+        this._syncPendingAppIds.delete(nextAppId);
         if (nextAppId) {
-          console.log(`[ACH][PIPELINE] process_followup appid=${nextAppId} count=${pendingCount}`);
+          console.log(`[ACH][PIPELINE] process_followup appid=${nextAppId} totalPending=${pendingCount - 1}`);
           const nextTrace = nextTraceId();
-          this.processLibrarycacheChange(nextAppId, "coalesced", source, nextTrace).catch(() => {});
+          this.processLibrarycacheChange(nextAppId, "coalesced", source, nextTrace).catch((err) => {
+            console.warn(`[ACH][WATCHER_STUCK] appid=${nextAppId} reason=followup-failed error=${err}`);
+          });
         }
       }
     }

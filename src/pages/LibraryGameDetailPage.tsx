@@ -28,6 +28,8 @@ import { useGamePlayStats } from "../services/gamePlayStats";
 import { importExternalPlaytime } from "../services/playtimeService";
 
 import type { LibraryGame } from "../types/libraryGame";
+const DEBUG_MEDIA_CACHE = false;
+const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = DEBUG_MEDIA_CACHE;
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import type { AppPage } from "../types/navigation";
 
@@ -178,11 +180,11 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           mergeField("iconPath");
 
           if (changed) {
-            console.log(`[MEDIA][MANIFEST_MERGE] appid=${appId} merged=true`);
+            if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][MANIFEST_MERGE] appid=${appId} merged=true`);
             mergedInfo = { ...info, media: merged };
           }
         }
-        if (resolvedManifestPaths && import.meta.env.DEV) {
+        if (resolvedManifestPaths && import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
           ["background", "logo"].forEach((role) => {
             const key = `${role}Path` as keyof GameMediaPaths;
             const resolvedPath = resolvedManifestPaths[key] ?? null;
@@ -298,20 +300,20 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     loadSteamStats(settings.steamRoot || undefined, [appIdNum], { forceRefresh: true })
       .then((statsMap) => {
         const stat = statsMap.get(appIdNum);
-        if (resolvedGame.appId === "268910") {
+        if (resolvedGame.appId === "268910" && (window as any).__DEBUG_NAME_TRACE) {
           console.log(`[ACTIVITY][TRACE_STEAM_STATS] appid=268910 statFound=${!!stat} lastPlayed=${stat?.lastPlayed ?? "null"} playtimeMinutes=${stat?.playtimeMinutes ?? "null"}`);
           console.log(`[ACTIVITY][TRACE_SQLITE] appid=268910 preMergeSteamLastPlayed=${resolvedGame.steamLastPlayedAt ?? "null"} steamPlaytimeMinutes=${resolvedGame.steamPlaytimeMinutes ?? "null"}`);
         }
         const games = [resolvedGame];
         mergeSteamStatsIntoGames(games, statsMap);
         setResolvedGame({ ...games[0] });
-        if (resolvedGame.appId === "268910") {
+        if (resolvedGame.appId === "268910" && (window as any).__DEBUG_NAME_TRACE) {
           console.log(`[ACTIVITY][TRACE_STEAM_STATS] appid=268910 postMergeSteamLastPlayed=${games[0].steamLastPlayedAt ?? "null"} postMergeSteamPlaytimeMinutes=${games[0].steamPlaytimeMinutes ?? "null"}`);
         }
 
         // Import Steam playtime when available
         if (stat?.playtimeMinutes && stat.playtimeMinutes > 0) {
-          if (resolvedGame.appId === "268910") {
+          if (resolvedGame.appId === "268910" && (window as any).__DEBUG_NAME_TRACE) {
             console.log(`[ACTIVITY][TRACE_PLAYTIME_IMPORT] appid=268910 playtimeMinutes=${stat.playtimeMinutes} calling importExternalPlaytime`);
           }
           importExternalPlaytime({

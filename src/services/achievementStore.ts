@@ -281,6 +281,9 @@ class AchievementStoreImpl {
 
     const prevUnlocked = current.achievements?.filter((a) => a.unlocked).length ?? 0;
 
+    const currentCanonicalTotal = current.achievements?.length ?? 0;
+    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][PATCH_MAP] appid=${appId} canonicalTotal=${currentCanonicalTotal} librarycacheNTotal=${patch.total} librarycacheNAchieved=${patch.unlocked} mappedUnlocked=${0}`);
+
     // Merge progress into existing achievements
     const mergedAchievements: GameAchievement[] = (current.achievements ?? []).map((ach) => {
       const progress = patch.progressMap.get(ach.apiName);
@@ -320,7 +323,24 @@ class AchievementStoreImpl {
       }
     }
 
-    const newUnlockedCount = mergedAchievements.filter((a) => a.unlocked).length;
+    // Full completion: librarycache says all achievements unlocked
+    // Mark ALL canonical achievements unlocked regardless of progressMap coverage
+    if (patch.unlocked === patch.total && patch.total > 0 && currentCanonicalTotal === patch.total) {
+      console.log(`[ACH][FULL_COMPLETION] appid=${appId} nTotal=${patch.total} nAchieved=${patch.unlocked} canonicalTotal=${currentCanonicalTotal} action=mark-all-unlocked`);
+      for (const ach of mergedAchievements) {
+        ach.unlocked = true;
+      }
+    }
+
+    const mapCoverage = currentCanonicalTotal > 0 ? patch.progressMap.size / currentCanonicalTotal : 0;
+    const mappedUnlocked = mergedAchievements.filter((a) => a.unlocked).length;
+    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][PATCH_MAP] appid=${appId} canonicalTotal=${currentCanonicalTotal} librarycacheNTotal=${patch.total} librarycacheNAchieved=${patch.unlocked} mappedUnlocked=${mappedUnlocked} coverage=${(mapCoverage * 100).toFixed(0)}%`);
+    const missingCount = currentCanonicalTotal - patch.progressMap.size;
+    if (missingCount > 0 && mappedUnlocked < patch.unlocked) {
+      if (DEBUG_ACH_VERBOSE) console.log(`[ACH][PATCH_MAP_MISSING] appid=${appId} missingCount=${missingCount} reason=partial-map-mismatch`);
+    }
+
+    const newUnlockedCount = mappedUnlocked;
     const total = Math.max(patch.total, current.total);
     const percent = total > 0 ? Math.round((newUnlockedCount / total) * 100) : 0;
 
@@ -387,6 +407,9 @@ class AchievementStoreImpl {
 
       const previousSource = hasSnapshot ? "snapshot" : "store";
       console.debug(`[ACH][TOAST][${tid}] previousSource=${previousSource} previousUnlocked=${prevUnlocked} currentUnlocked=${newUnlockedCount} newUnlocks=${newUnlocks.length}`);
+      if (newUnlocks.length > 0) {
+        console.log(`[ACH][SYNC_BATCH_ENTRIES] appid=${appId} unlockedApiNames=${newUnlocks.map(u => u.apiName).join(",")}`);
+      }
     }
 
     // Set newlyUnlocked so UI toasts can fire
@@ -406,7 +429,10 @@ class AchievementStoreImpl {
       this.notify(appId, storeCurrent!); // re-notify with current state
       return null;
     }
+    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=store-update unlocked=${patched.unlocked}/${patched.total}`);
+    console.log(`[ACH][SYNC_BATCH] appid=${appId} patchUnlocked=${patch.unlocked} previousUnlocked=${prevUnlocked} afterUnlocked=${newUnlockedCount} delta=${newUnlockedCount - prevUnlocked}`);
     this.summariesByAppId.set(appId, patched);
+    console.log(`[ACH][STORE_AFTER_PATCH] appid=${appId} unlocked=${patched.unlocked}/${patched.total}`);
     if (RT) console.log(`[ACH][RT_STORE_SET] appid=${appId} unlocked=${patched.unlocked}/${patched.total}`);
     console.debug(`[ACH][STORE_PATCH][${tid}] subscribersNotified=true`);
 
