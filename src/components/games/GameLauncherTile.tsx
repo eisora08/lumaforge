@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { countRender } from "../../services/perfCounters";
 import {
   Download,
+  ExternalLink,
   FileText,
   FolderOpen,
   Gamepad2,
@@ -39,6 +40,8 @@ import { useGameSession, computeGameKey } from "../../context/GameSessionContext
 import { useFavorites } from "../../context/FavoritesContext";
 import { showSuccess, showError } from "../toast/GameToast";
 import { useConfirm } from "../../services/confirmService";
+import { openExternalUrl } from "../../services/externalLinks";
+import { getSteamStoreUrl } from "../../utils/steamLinks";
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -317,6 +320,34 @@ export default function GameLauncherTile({
                 Install
               </button>
             )}
+            {action === "open-steam" && (
+              <button
+                type="button"
+                onClick={(e) => handleActionClick(e, () => {
+                  if (game.appId) openExternalUrl(getSteamStoreUrl(Number(game.appId)));
+                })}
+                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open in Steam
+              </button>
+            )}
+            {action === "open-lua-folder" && (
+              <button
+                type="button"
+                onClick={(e) => handleActionClick(e, () => {
+                  if (game.luaScripts.length > 0) {
+                    const scriptPath = game.luaScripts[0].path;
+                    const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
+                    if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
+                  }
+                })}
+                className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+              >
+                <FolderOpen className="h-3 w-3" />
+                Lua Folder
+              </button>
+            )}
             {action === "missing-path" && (
               <span className="text-[10px] text-(--color-muted)/50">Missing Path</span>
             )}
@@ -356,6 +387,25 @@ export default function GameLauncherTile({
                 icon={<Play className="h-3.5 w-3.5" />}
                 onClick={() => { setMenuOpen(false); onPlay(game); }}
               />
+            ) : action === "open-steam" ? (
+              <MenuItem
+                label="Open in Steam"
+                icon={<ExternalLink className="h-3.5 w-3.5" />}
+                onClick={() => { setMenuOpen(false); if (game.appId) openExternalUrl(getSteamStoreUrl(Number(game.appId))); }}
+              />
+            ) : action === "open-lua-folder" ? (
+              <MenuItem
+                label="Lua Folder"
+                icon={<FolderOpen className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (game.luaScripts.length > 0) {
+                    const scriptPath = game.luaScripts[0].path;
+                    const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
+                    if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
+                  }
+                }}
+              />
             ) : (
               <MenuItem
                 label="Install"
@@ -368,6 +418,13 @@ export default function GameLauncherTile({
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
               onClick={() => { if (game.appId) toggleFavorite(game.appId); setMenuOpen(false); }}
             />
+            {game.appId && (
+              <MenuItem
+                label="Open in Steam"
+                icon={<ExternalLink className="h-3.5 w-3.5" />}
+                onClick={() => { setMenuOpen(false); openExternalUrl(getSteamStoreUrl(Number(game.appId))); }}
+              />
+            )}
             <MenuItem
               label="Browse Local Files"
               icon={<FolderOpen className="h-3.5 w-3.5" />}

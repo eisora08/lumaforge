@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
+  ExternalLink,
   FileText,
   FolderOpen,
   Gamepad2,
@@ -37,6 +38,9 @@ import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import { showSuccess, showError } from "../toast/GameToast";
 import { useConfirm } from "../../services/confirmService";
 import type { AppPage } from "../../types/navigation";
+import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
+import { openExternalUrl } from "../../services/externalLinks";
+import { getSteamStoreUrl } from "../../utils/steamLinks";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 
@@ -525,7 +529,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const mgk = computeGameKey(menuGame);
           const mState = getState(mgk);
           const isRunning = mState === "running";
-          const mAction = menuGame.isPlayable || menuGame.steamInstalled ? "play" : "install";
+          const mAction = getLauncherGamePrimaryAction(menuGame);
           const mHasLua = menuGame.luaScripts.length > 0;
           const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
 
@@ -543,6 +547,25 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   icon={<Play className="h-3.5 w-3.5" />}
                   onClick={() => { handleMenuClose(); launchGame(menuGame); }}
                 />
+              ) : mAction === "open-steam" ? (
+                <MenuItem
+                  label="Open in Steam"
+                  icon={<ExternalLink className="h-3.5 w-3.5" />}
+                  onClick={() => { handleMenuClose(); if (menuGame.appId) openExternalUrl(getSteamStoreUrl(Number(menuGame.appId))); }}
+                />
+              ) : mAction === "open-lua-folder" ? (
+                <MenuItem
+                  label="Lua Folder"
+                  icon={<FolderOpen className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    handleMenuClose();
+                    if (menuGame.luaScripts.length > 0) {
+                      const scriptPath = menuGame.luaScripts[0].path;
+                      const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
+                      if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => showError(`Could not open folder: ${err}`));
+                    }
+                  }}
+                />
               ) : (
                 <MenuItem
                   label="Install"
@@ -558,6 +581,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   handleMenuClose();
                 }}
               />
+              {menuGame.appId && (
+                <MenuItem
+                  label="Open in Steam"
+                  icon={<ExternalLink className="h-3.5 w-3.5" />}
+                  onClick={() => { handleMenuClose(); openExternalUrl(getSteamStoreUrl(Number(menuGame.appId))); }}
+                />
+              )}
               <MenuItem
                 label="Browse Local Files"
                 icon={<FolderOpen className="h-3.5 w-3.5" />}

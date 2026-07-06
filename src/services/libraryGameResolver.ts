@@ -93,7 +93,7 @@ function buildFromLua(
     title: metaName || "",
     source: "lua",
     isPlayable: false,
-    isInstallable: true,
+    isInstallable: false,
     steamInstalled: false,
     luaScripts: scripts,
     hasLua: true,
@@ -228,8 +228,10 @@ export async function resolveLibraryGames(
     try {
       luaScripts = await scanInstalledLuaScripts(settings.luaPath);
       onProgress?.("lua", "scanning-lua", { itemsFound: luaScripts.length });
+      console.log(`[LUA][LOAD_RESULT] entries=${luaScripts.length} path=${settings.luaPath}`);
     } catch (error) {
       warnings.push(`Lua scan failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.log(`[LUA][LOAD_RESULT] error=${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -296,10 +298,11 @@ export async function resolveLibraryGames(
     const appIdStr = String(appIdNum);
     const existingGame = steamByAppId.get(appIdStr);
     if (existingGame) {
-      // Merge Lua into existing Steam game
+      console.log(`[LUA][MERGE_INTO] appId=${appIdStr} title="${existingGame.title}" steamInstalled=${existingGame.steamInstalled} scripts=${scripts.length}`);
       mergeLuaIntoGame(existingGame, true, scripts, sourceAppIds);
+      console.log(`[LUA][MERGE_AFTER] appId=${appIdStr} hasLua=${existingGame.hasLua} luaScripts=${existingGame.luaScripts.length} isPlayable=${existingGame.isPlayable} isInstallable=${existingGame.isInstallable} steamInstalled=${existingGame.steamInstalled}`);
     } else {
-      // Add Lua-only game (has Lua script but no Steam manifest)
+      console.log(`[LUA][ENTRY] appId=${appIdStr} scripts=${scripts.length} disabled=${scripts.every(s => s.is_disabled)}`);
       const game = buildFromLua(appIdStr, scripts, sourceAppIds, metadata);
       gamesMap.set(game.id, game);
     }
@@ -312,19 +315,29 @@ export async function resolveLibraryGames(
       const ownedGames = await fetchSteamOwnedGames(settings.steamWebApiKey, settings.steamId64);
       let ownedMerged = 0;
       let ownedSkipped = 0;
+      let ownedLuaMerged = 0;
       for (const owned of ownedGames) {
         const appIdStr = String(owned.appid);
-        if (!steamByAppId.has(appIdStr) && !gamesMap.has(`steam-${appIdStr}`)) {
-          const game = buildFromOwned(owned);
-          gamesMap.set(game.id, game);
-          ownedMerged++;
-        } else {
+        if (steamByAppId.has(appIdStr) || gamesMap.has(`steam-${appIdStr}`)) {
           ownedSkipped++;
+          continue;
         }
+        // Check if a Lua entry with this appId already exists; merge ownership into it
+        const existingLua = gamesMap.get(`lua-${appIdStr}`);
+        if (existingLua) {
+          console.log(`[LUA][OWNED_MERGE] appId=${appIdStr} title="${existingLua.title}" wasInstallable=${existingLua.isInstallable} setInstallable=true`);
+          existingLua.isInstallable = true;
+          ownedLuaMerged++;
+          continue;
+        }
+        // Create new Steam owned entry
+        const game = buildFromOwned(owned);
+        gamesMap.set(game.id, game);
+        ownedMerged++;
       }
       onProgress?.("steam-owned", "fetching-steam-owned", { itemsFound: ownedGames.length, itemsAdded: ownedMerged });
-      if (ownedMerged > 0) {
-        console.log(`[LIBRARY][OWNED_MERGED] count=${ownedMerged} skipped=${ownedSkipped}`);
+      if (ownedMerged > 0 || ownedLuaMerged > 0) {
+        console.log(`[LIBRARY][OWNED_MERGED] new=${ownedMerged} lua-merged=${ownedLuaMerged} skipped=${ownedSkipped}`);
       }
     } catch (error) {
       warnings.push(`Steam owned games fetch failed: ${error instanceof Error ? error.message : String(error)}`);

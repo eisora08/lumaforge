@@ -15,6 +15,7 @@ import {
   Download,
   ExternalLink,
   FileCode2,
+  FolderOpen,
   Gamepad2,
   HardDrive,
   LifeBuoy,
@@ -72,6 +73,7 @@ import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSna
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession } from "../../context/GameSessionContext";
+import { invoke } from "@tauri-apps/api/core";
 import AchievementsModal from "./AchievementsModal";
 import type { AppPage } from "../../types/navigation";
 
@@ -1165,6 +1167,32 @@ export default function LibraryGameDetails({
                 >
                   <Download className="h-4 w-4" />
                   Install
+                </button>
+              )}
+              {action === "open-steam" && (
+                <button
+                  type="button"
+                  onClick={() => onOpenSteam?.(game)}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Open in Steam
+                </button>
+              )}
+              {action === "open-lua-folder" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (game.luaScripts.length > 0) {
+                      const scriptPath = game.luaScripts[0].path;
+                      const scriptDir = scriptPath.substring(0, Math.max(scriptPath.lastIndexOf('/'), scriptPath.lastIndexOf('\\')));
+                      if (scriptDir) invoke("open_folder", { path: scriptDir }).catch((err) => toast.error(`Could not open folder: ${err}`));
+                    }
+                  }}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  Lua Folder
                 </button>
               )}
               {action === "missing-path" && (

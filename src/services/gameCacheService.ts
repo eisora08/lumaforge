@@ -403,6 +403,9 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
       `source=${game.source} included=${included}`
     );
   }
+  if (game.source === "lua" && !included) {
+    console.log(`[LUA][SIDEBAR_FILTERED_OUT] appId=${game.appId} title="${game.title}" hasLua=${game.hasLua} scripts=${game.luaScripts?.length ?? 0} luaActive=${luaActive} steamInstalled=${steamInstalled}`);
+  }
 
   return included;
 }
@@ -455,7 +458,7 @@ export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
     // Boolean flags: true wins
     merged.steamInstalled = existing.steamInstalled || game.steamInstalled;
     merged.isPlayable = existing.isPlayable || game.isPlayable;
-    merged.isInstallable = existing.isInstallable && game.isInstallable;
+    merged.isInstallable = existing.isInstallable || game.isInstallable;
     merged.hasLua = existing.hasLua || game.hasLua;
     merged.isLuaActive = existing.isLuaActive || game.isLuaActive;
     merged.isLuaDisabled = existing.isLuaDisabled && game.isLuaDisabled;
