@@ -204,6 +204,7 @@ pub fn run() {
             commands::hubcap::hubcap_health,
             commands::hubcap::hubcap_user_stats,
             commands::hubcap::hubcap_depot_keys,
+            commands::steam_owned::fetch_steam_owned_games,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

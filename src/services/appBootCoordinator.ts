@@ -6,6 +6,7 @@ import { loadSettings } from "../context/SettingsContext";
 import type { AppSettings } from "../types/settings";
 import type { SteamGameIndexEntry } from "./fullSteamGameIndex";
 import { initPerfCounters, setBootPhaseLabel } from "./perfCounters";
+import { reportLibraryProgress } from "./libraryProgressService";
 
 export type BootStatus =
   | "booting"
@@ -192,6 +193,7 @@ export async function runBootTasks(): Promise<void> {
           // Stage 3: Load startup snapshot (instant from file)
           await track("load-startup-snapshot", async () => {
             logBoot("load snapshot start");
+            reportLibraryProgress({ phase: "hydrating-snapshot", source: "snapshot" });
             try {
               _snapshotLoaded = await loadStartupSnapshot();
               if (_snapshotLoaded) {
@@ -235,6 +237,7 @@ export async function runBootTasks(): Promise<void> {
             }
             logBoot("load snapshot end");
           });
+          reportLibraryProgress({ phase: "done", source: "snapshot" });
 
           if (_snapshotResolve) _snapshotResolve();
           setBootPhaseLabel("critical-done");

@@ -26,6 +26,10 @@ import {
   scheduleSnapshotWrite,
 } from "../services/startupSnapshotService";
 import {
+  reportLibraryProgress,
+} from "../services/libraryProgressService";
+import type { LibraryLoadSource } from "../services/libraryProgressService";
+import {
   countLibraryApplied,
   countLibrarySkipped,
   countLibraryReconciledDiff,
@@ -424,101 +428,121 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }
 
   async function load(settings: AppSettings) {
-    const snapshot = await waitForBootSnapshot();
-    if (snapshot) {
-      seedResolvedMediaCacheFromSnapshot(snapshot.library.games);
-    }
-
-    const cached = await loadCachedGames();
-    const { getReconciledGames } = await import("../services/gameStore");
-    let loadedGames: LibraryGame[] | null = null;
-    let loadSource = "";
-
-    if (cached && cached.games.length > 0) {
-      loadedGames = cached.games;
-      loadSource = "cached";
-
-      const reconciled = getReconciledGames();
-      if (reconciled.length > 0) {
-        const reconciledById = new Map(reconciled.map((g) => [g.id, g]));
-        const existingIds = new Set(loadedGames.map((g) => g.id));
-        const added: LibraryGame[] = [];
-        for (const [id, game] of reconciledById) {
-          if (!existingIds.has(id)) {
-            added.push(game);
-          }
-        }
-        if (added.length > 0) {
-          loadedGames = [...loadedGames, ...added].sort((a, b) =>
-            a.title.localeCompare(b.title)
-          );
-          console.debug(`[GAME_STORE] gamesUpdated count=${loadedGames.length} source=config-lua-reconcile added=${added.length}`);
-        }
+    try {
+      const snapshot = await waitForBootSnapshot();
+      if (snapshot) {
+        reportLibraryProgress({ phase: "hydrating-snapshot", source: "snapshot" });
+        seedResolvedMediaCacheFromSnapshot(snapshot.library.games);
       }
 
-      // Repair placeholder titles in cached games
-      const { resolveCanonicalName } = await import("../services/gameCacheService");
-      await Promise.allSettled(loadedGames.map(async (game) => {
-        if (!game.appId) return;
-        if (!game.title || game.title.startsWith("Steam App ")) {
-          const realName = await resolveCanonicalName(game.appId);
-          if (realName) {
-            console.log(`[NAME][CACHE_REPAIR] appid=${game.appId} old=${game.title} new=${realName} source=canonical`);
-            game.title = realName;
-          }
-        }
-      }));
-    } else {
-      const reconciled = getReconciledGames();
-      if (reconciled.length > 0) {
-        loadedGames = reconciled;
-        loadSource = "reconciled-fallback";
-        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=reconciled-fallback games=${reconciled.length}`);
-      } else if (snapshot && snapshot.library.games.length > 0) {
-        loadedGames = snapshot.library.games.map(snapshotGameToLibraryGame);
-        loadSource = "snapshot-fallback";
-        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=snapshot-fallback games=${loadedGames.length}`);
-      } else {
-        console.log(`[LIBRARY_CONTEXT][HYDRATE] source=empty (sqlite empty, reconciled empty, snapshot empty)`);
-        loadSource = "empty";
-      }
-    }
+      reportLibraryProgress({ phase: "reading-sqlite", source: "sqlite" });
+      const cached = await loadCachedGames();
+      const { getReconciledGames } = await import("../services/gameStore");
+      let loadedGames: LibraryGame[] | null = null;
+      let loadSource = "";
 
-    if (loadedGames) {
-      // Phase 3: If loading from snapshot and no prior data, tag as "snapshot" so UI
-      // shows stable data immediately rather than waiting for SQLite/reconcile.
-      const effectiveSource = (loadSource === "snapshot-fallback" && gamesRef.current.length === 0) ? "snapshot" : loadSource;
-      applyGamesSafely(loadedGames, effectiveSource, { allowReplace: true });
-    }
-    if (cached) {
-      setWarnings(cached.warnings || []);
-    }
-    setInitialLoading(false);
-    bootLoaded.current = true;
+      if (cached && cached.games.length > 0) {
+        loadedGames = cached.games;
+        loadSource = "cached";
 
-    // Schedule background Steam scan after main window is visible
-    const needsScan = !cached || isCacheExpired(cached);
-    if (needsScan) {
-      scheduleAfterMain(async () => {
-        setLoading(true);
-        try {
-          const result = await resolveLibraryGames(settings);
-          const enriched = await enrichWithStats(result.games);
-          await saveCachedGames(enriched, result.warnings);
-          applyGamesSafely(enriched, "background-scan");
-          setWarnings(result.warnings);
-
-          triggerBackgroundScan(settings).then((count) => {
-            if (count > 0) {
-              console.debug(`[LibraryGamesContext] Full dataset scan complete: ${count} games indexed`);
+        const reconciled = getReconciledGames();
+        if (reconciled.length > 0) {
+          const reconciledById = new Map(reconciled.map((g) => [g.id, g]));
+          const existingIds = new Set(loadedGames.map((g) => g.id));
+          const added: LibraryGame[] = [];
+          for (const [id, game] of reconciledById) {
+            if (!existingIds.has(id)) {
+              added.push(game);
             }
-          }).catch(() => {});
-        } catch (error) {
-          console.error("[LibraryGamesContext] scan error:", error);
-        } finally {
-          setLoading(false);
+          }
+          if (added.length > 0) {
+            loadedGames = [...loadedGames, ...added].sort((a, b) =>
+              a.title.localeCompare(b.title)
+            );
+            console.debug(`[GAME_STORE] gamesUpdated count=${loadedGames.length} source=config-lua-reconcile added=${added.length}`);
+          }
         }
-      }, 3000);
+
+        // Repair placeholder titles in cached games
+        const { resolveCanonicalName } = await import("../services/gameCacheService");
+        await Promise.allSettled(loadedGames.map(async (game) => {
+          if (!game.appId) return;
+          if (!game.title || game.title.startsWith("Steam App ")) {
+            const realName = await resolveCanonicalName(game.appId);
+            if (realName) {
+              console.log(`[NAME][CACHE_REPAIR] appid=${game.appId} old=${game.title} new=${realName} source=canonical`);
+              game.title = realName;
+            }
+          }
+        }));
+      } else {
+        const reconciled = getReconciledGames();
+        if (reconciled.length > 0) {
+          loadedGames = reconciled;
+          loadSource = "reconciled-fallback";
+          console.log(`[LIBRARY_CONTEXT][HYDRATE] source=reconciled-fallback games=${reconciled.length}`);
+        } else if (snapshot && snapshot.library.games.length > 0) {
+          loadedGames = snapshot.library.games.map(snapshotGameToLibraryGame);
+          loadSource = "snapshot-fallback";
+          console.log(`[LIBRARY_CONTEXT][HYDRATE] source=snapshot-fallback games=${loadedGames.length}`);
+        } else {
+          console.log(`[LIBRARY_CONTEXT][HYDRATE] source=empty (sqlite empty, reconciled empty, snapshot empty)`);
+          loadSource = "empty";
+        }
+      }
+
+      if (loadedGames) {
+        const effectiveSource = (loadSource === "snapshot-fallback" && gamesRef.current.length === 0) ? "snapshot" : loadSource;
+        applyGamesSafely(loadedGames, effectiveSource, { allowReplace: true });
+      }
+      if (cached) {
+        setWarnings(cached.warnings || []);
+      }
+      setInitialLoading(false);
+      bootLoaded.current = true;
+
+      reportLibraryProgress({ phase: "done", source: (loadSource === "empty" ? "unknown" : loadSource) as LibraryLoadSource, itemsFound: loadedGames?.length });
+
+      // Schedule background Steam scan after main window is visible
+      const needsScan = !cached || isCacheExpired(cached);
+      if (needsScan) {
+        scheduleAfterMain(async () => {
+          setLoading(true);
+          try {
+            const result = await resolveLibraryGames(settings, {
+              onProgress(source, phase, extra) {
+                reportLibraryProgress({
+                  source,
+                  phase,
+                  itemsFound: extra?.itemsFound,
+                  itemsAdded: extra?.itemsAdded,
+                });
+              },
+            });
+            const enriched = await enrichWithStats(result.games);
+            reportLibraryProgress({ phase: "updating-cache", source: "unknown" });
+            await saveCachedGames(enriched, result.warnings);
+            applyGamesSafely(enriched, "background-scan");
+            setWarnings(result.warnings);
+            reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
+            triggerBackgroundScan(settings).then((count) => {
+              if (count > 0) {
+                console.debug(`[LibraryGamesContext] Full dataset scan complete: ${count} games indexed`);
+              }
+            }).catch(() => {});
+          } catch (error) {
+            console.error("[LibraryGamesContext] scan error:", error);
+            reportLibraryProgress({ phase: "error", source: "steam", errors: [String(error)] });
+          } finally {
+            setLoading(false);
+          }
+        }, 3000);
+      }
+    } catch (error) {
+      console.error("[LibraryGamesContext] load error:", error);
+      reportLibraryProgress({ phase: "error", source: "unknown", errors: [String(error)] });
+      setInitialLoading(false);
+      bootLoaded.current = true;
     }
   }
 
@@ -600,18 +624,31 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     const s = settingsRef.current;
     setLoading(true);
     try {
-      const result = await resolveLibraryGames(s);
+      const result = await resolveLibraryGames(s, {
+        onProgress(source, phase, extra) {
+          reportLibraryProgress({
+            source,
+            phase,
+            itemsFound: extra?.itemsFound,
+            itemsAdded: extra?.itemsAdded,
+          });
+        },
+      });
       const enriched = await enrichWithStats(result.games);
+      reportLibraryProgress({ phase: "updating-cache", source: "unknown" });
       await saveCachedGames(enriched, result.warnings);
       if (enriched.length === 0 && gamesRef.current.length > 0) {
         console.log(`[LIBRARY_CONTEXT][REFRESH_EMPTY_IGNORED] current=${gamesRef.current.length}`);
+        reportLibraryProgress({ phase: "done", source: "steam", itemsFound: 0 });
         return;
       }
       applyGamesSafely(enriched, "manual-refresh", { allowReplace: true });
       setWarnings(result.warnings);
       await updateAppInfoFromGames(enriched).catch(() => {});
+      reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);
+      reportLibraryProgress({ phase: "error", source: "steam", errors: [String(error)] });
     } finally {
       setLoading(false);
     }

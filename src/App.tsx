@@ -26,6 +26,7 @@ import { AppPage } from "./types/navigation";
 import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
+import LibraryLoadProgressCard from "./components/loading/LibraryLoadProgressCard";
 import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
 import BackgroundJobDebugPanel from "./components/common/BackgroundJobDebugPanel";
 import { runBootTasks } from "./services/appBootCoordinator";
@@ -216,6 +217,7 @@ function App() {
       {import.meta.env.DEV && <BackgroundJobDebugPanel />}
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
+      <LibraryLoadProgressCard />
     </ConfirmProvider>
   );
 

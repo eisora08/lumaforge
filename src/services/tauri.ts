@@ -16,6 +16,7 @@ import type { LocalDiscoveredGame } from "../types/localGame";
 import type { LocalExecutableGame } from "../types/localExecutableGame";
 import type { SyncIndex, SyncIndexItem, SyncCheckResult } from "../types/syncIndex";
 import type { SteamLoginUser } from "../types/steamLoginUser";
+import type { OwnedSteamGame } from "../types/ownedSteamGame";
 
 export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
@@ -158,6 +159,10 @@ export async function markSyncIndexItem(item: SyncIndexItem): Promise<void> {
 
 export async function scanSteamLoginUsers(steamRoot: string): Promise<SteamLoginUser[]> {
   return await invoke<SteamLoginUser[]>("scan_steam_login_users", { steamRoot });
+}
+
+export async function fetchSteamOwnedGames(apiKey: string, steamId: string): Promise<OwnedSteamGame[]> {
+  return await invoke<OwnedSteamGame[]>("fetch_steam_owned_games", { apiKey, steamId });
 }
 
 export async function scanSteamInstalledGames(params?: {
