@@ -15,5 +15,7 @@ pub struct SteamInstalledGame {
     pub size_on_disk: Option<u64>,
     pub build_id: Option<String>,
     pub last_updated: Option<u64>,
+    pub bytes_downloaded: Option<u64>,
+    pub bytes_to_download: Option<u64>,
     pub is_installed: bool,
 }

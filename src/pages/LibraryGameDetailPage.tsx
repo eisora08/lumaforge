@@ -4,6 +4,7 @@ import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
   installSteamApp,
 } from "../services/tauri";
+import { installTrackerService } from "../services/installTrackingService";
 import { openExternalUrl } from "../services/externalLinks";
 import { getSteamStoreUrl, getSteamDbUrl } from "../utils/steamLinks";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
@@ -401,6 +402,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
+        installTrackerService.startTracking(game.appId, settings.steamRoot, game.title || String(game.appId), game.imageUrl);
       } catch (err) {
         showError(String(err), { title: "Error" });
       }

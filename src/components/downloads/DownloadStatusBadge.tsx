@@ -2,11 +2,13 @@ import {
   CheckCircle2,
   CircleDashed,
   CircleX,
+  Clock,
   DownloadCloud,
   FileArchive,
   HardDriveDownload,
   Loader2,
   PackageCheck,
+  PauseCircle,
 } from "lucide-react";
 
 import { DownloadStatus } from "../../types/download";
@@ -15,11 +17,20 @@ type DownloadStatusBadgeProps = {
   status: DownloadStatus;
 };
 
-const statusConfig = {
+const statusConfig: Record<DownloadStatus, {
+  label: string;
+  icon: typeof CheckCircle2;
+  className: string;
+}> = {
   queued: {
     label: "En cola",
     icon: CircleDashed,
     className: "border-sky-500/20 bg-sky-500/10 text-sky-300",
+  },
+  waiting: {
+    label: "Esperando",
+    icon: Clock,
+    className: "border-amber-500/20 bg-amber-500/10 text-amber-300",
   },
   checking: {
     label: "Verificando",
@@ -41,6 +52,11 @@ const statusConfig = {
     icon: HardDriveDownload,
     className: "border-orange-500/20 bg-orange-500/10 text-orange-300",
   },
+  paused: {
+    label: "Pausado",
+    icon: PauseCircle,
+    className: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
+  },
   done: {
     label: "Completado",
     icon: PackageCheck,
@@ -56,14 +72,7 @@ const statusConfig = {
     icon: CheckCircle2,
     className: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
   },
-} satisfies Record<
-  DownloadStatus,
-  {
-    label: string;
-    icon: typeof CheckCircle2;
-    className: string;
-  }
->;
+};
 
 export default function DownloadStatusBadge({
   status,

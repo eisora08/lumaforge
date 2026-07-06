@@ -14,6 +14,7 @@ import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession } from "../context/GameSessionContext";
 import { installSteamApp, deleteLuaScript } from "../services/tauri";
+import { installTrackerService } from "../services/installTrackingService";
 
 import type { LibraryGame } from "../types/libraryGame";
 
@@ -156,6 +157,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
+        installTrackerService.startTracking(game.appId, settings.steamRoot, game.title || String(game.appId), game.imageUrl);
       } catch (err) {
         showError(String(err), { title: "Error" });
       }

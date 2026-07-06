@@ -2,10 +2,12 @@ import { PackageFileType } from "./provider";
 
 export type DownloadStatus =
   | "queued"
+  | "waiting"
   | "checking"
   | "downloading"
   | "extracting"
   | "installing"
+  | "paused"
   | "done"
   | "failed"
   | "cancelled";
@@ -18,6 +20,21 @@ export type DownloadJob = {
   providerName: string;
   fileType: PackageFileType;
   downloadUrl?: string;
+
+  /** Broad category for display/grouping */
+  type?: "steam-install" | "lua-package" | "zip" | "manifest" | "media" | "other";
+  /** Indeterminate when reliable percentage is unavailable */
+  progressMode?: "determinate" | "indeterminate";
+  speedBytesPerSec?: number;
+  etaSeconds?: number;
+  /** Status message shown below the title */
+  message?: string;
+  /** Game artwork URL for Steam install items */
+  artworkUrl?: string;
+  /** Links this job to a parent install item */
+  parentId?: string;
+  /** Installed size in bytes (populated when Steam install completes) */
+  installedSize?: number;
 
   status: DownloadStatus;
   progress: number;

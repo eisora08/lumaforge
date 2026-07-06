@@ -25,6 +25,7 @@ import {
 import {
   scheduleSnapshotWrite,
 } from "../services/startupSnapshotService";
+import { installTrackerService } from "../services/installTrackingService";
 import {
   reportLibraryProgress,
 } from "../services/libraryProgressService";
@@ -113,6 +114,7 @@ type LibraryGamesState = {
   selectedGame: LibraryGame | null;
   setSelectedGame: (game: LibraryGame | null) => void;
   refresh: () => Promise<void>;
+  updateGame: (appId: string, updates: Partial<LibraryGame>) => void;
   appInfoMap: LibraryAppInfoMap;
   status: LibraryRuntimeStatus;
   librarySource: LibrarySource;
@@ -143,6 +145,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [libraryFingerprint, setLibraryFingerprintState] = useState<string | null>(null);
   const appInfoLoaded = useRef(false);
   const gamesRef = useRef<LibraryGame[]>([]);
+  const appInfoMapRef = useRef(appInfoMap);
+  useEffect(() => { appInfoMapRef.current = appInfoMap; }, [appInfoMap]);
   const lastSettingsKey = useRef<string>("");
   const bootLoaded = useRef(false);
   const lastLogStatus = useRef<string>("");
@@ -332,6 +336,20 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       return [...byAppId.values()].sort((a, b) => a.title.localeCompare(b.title));
     }
     const deduped = dedupeLibraryGames(incoming);
+    // Phase 10: Prevent owned merge from downgrading installed state
+    const currentByAppId = new Map<string, LibraryGame>();
+    for (const g of current) {
+      if (g.appId && g.steamInstalled) currentByAppId.set(g.appId, g);
+    }
+    if (currentByAppId.size > 0) {
+      for (const game of deduped) {
+        if (game.appId && currentByAppId.has(game.appId) && !game.steamInstalled) {
+          console.log(`[INSTALL_STATE] appid=${game.appId} downgradeBlocked oldInstalled=true incomingOwnedOnly=true`);
+          game.steamInstalled = true;
+          game.isInstallable = false;
+        }
+      }
+    }
     return deduped;
   }
 
@@ -654,14 +672,222 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
+  const updateGame = useCallback((appId: string, updates: Partial<LibraryGame>) => {
+    setGames((prev) => {
+      const idx = prev.findIndex((g) => g.appId === appId);
+      if (idx === -1) {
+        console.log(`[LIBRARY_CONTEXT][UPDATE_GAME_SKIP] appid=${appId} reason=not-found`);
+        return prev;
+      }
+      const updated = { ...prev[idx], ...updates };
+      const next = [...prev];
+      next[idx] = updated;
+      console.log(`[LIBRARY_CONTEXT][UPDATE_GAME] appid=${appId} updates=${Object.keys(updates).join(",")}`);
+      return next;
+    });
+  }, []);
+
+  // Subscribe to install completion events — re-ingest through real installed Steam pipeline
+  useEffect(() => {
+    return installTrackerService.onInstalled(async (appId) => {
+      console.log(`[INSTALL_REAL] appid=${appId} phase=detected`);
+
+      // Phase 1: Get real installed game data from Steam appmanifest
+      const steamRoot = settingsRef.current.steamRoot;
+      let installStatus: import("../services/tauri").SteamGameInstallStatus | null = null;
+      try {
+        const { checkSteamGameInstalled: doCheck } = await import("../services/tauri");
+        installStatus = await doCheck(Number(appId), steamRoot);
+        console.log(`[INSTALL_REAL] appid=${appId} phase=steam-scan found=${installStatus.isInstalled} installDir=${installStatus.installPath ?? installStatus.installDir ?? "null"} name=${installStatus.name ?? "null"}`);
+      } catch (err) {
+        console.log(`[INSTALL_REAL] appid=${appId} phase=steam-scan error=${String(err)}`);
+      }
+
+      if (!installStatus || !installStatus.isInstalled) {
+        // Appmanifest not found yet — tracker race? Fall back to flag-only patch
+        updateGame(appId, { steamInstalled: true, isInstallable: false, isPlayable: true });
+        console.log(`[INSTALL_REAL] appid=${appId} phase=fallback reason=not-on-disk-yet`);
+        return;
+      }
+
+      // Phase 2: Build real LibraryGame from installed Steam data
+      const current = gamesRef.current;
+      const idx = current.findIndex((g) => g.appId === appId);
+      if (idx === -1) {
+        console.log(`[INSTALL_REAL] appid=${appId} phase=abort reason=game-not-found`);
+        return;
+      }
+
+      const existing = current[idx];
+      const installDir = installStatus.installPath || installStatus.installDir || existing.installDir || undefined;
+      const libraryPath = installStatus.libraryPath || existing.libraryPath || undefined;
+      const realInstalled: LibraryGame = {
+        ...existing,
+        // Real installed fields from Steam appmanifest
+        steamInstalled: true,
+        isInstallable: false,
+        isPlayable: installStatus.isInstalled,
+        source: "steam",
+        installDir,
+        libraryPath,
+        title: existing.title || installStatus.name || existing.title,
+        sizeOnDisk: installStatus.sizeOnDisk ?? existing.sizeOnDisk,
+        lastUpdated: installStatus.lastUpdated ?? existing.lastUpdated,
+        // Preserve Lua metadata
+        luaScripts: existing.luaScripts || [],
+        hasLua: existing.hasLua || false,
+        isLuaActive: existing.isLuaActive || false,
+        isLuaDisabled: existing.isLuaDisabled || false,
+        hasLuaSource: existing.hasLuaSource || false,
+      };
+      console.log(`[INSTALL_REAL] appid=${appId} phase=canonical-built steamInstalled=true isPlayable=true isInstallable=false installDir=${installDir ?? "null"} libraryPath=${libraryPath ?? "null"}`);
+      console.log(`[INSTALL_REAL] appid=${appId} phase=merge-preserve-lua hasLua=${existing.hasLua} luaScripts=${(existing.luaScripts || []).length}`);
+
+      // Phase 3: Update React in-memory state via updateGame (sync)
+      updateGame(appId, {
+        steamInstalled: true,
+        isInstallable: false,
+        isPlayable: true,
+        source: "steam",
+        installDir,
+        libraryPath,
+      });
+
+      // Phase 4: Persist to SQLite cache
+      const updatedGames = [...current];
+      updatedGames[idx] = realInstalled;
+      try {
+        await saveCachedGames(updatedGames);
+        console.log(`[INSTALL_REAL] appid=${appId} phase=sqlite-write ok=true`);
+      } catch {
+        console.log(`[INSTALL_REAL] appid=${appId} phase=sqlite-write ok=false`);
+      }
+
+      // Phase 5: Update game store for boot reconciliation
+      try {
+        const { setReconciledGames } = await import("../services/gameStore");
+        setReconciledGames(updatedGames);
+        console.log(`[INSTALL_REAL] appid=${appId} phase=reconciled-write ok=true`);
+      } catch {
+        console.log(`[INSTALL_REAL] appid=${appId} phase=reconciled-write ok=false`);
+      }
+
+      // Phase 6: Schedule snapshot write with short delay
+      const appInfoMapCurrent = appInfoMapRef.current;
+      scheduleSnapshotWrite(updatedGames, appInfoMapCurrent, null, 100, "install-detected");
+      console.log(`[INSTALL_REAL] appid=${appId} phase=snapshot-dirty ok=true delayMs=100`);
+      console.log(`[INSTALL_REAL] appid=${appId} phase=install-dir-action available=${!!installDir} path=${installDir ?? "null"}`);
+      console.log(`[INSTALL_REAL] appid=${appId} phase=play-action action=play`);
+    });
+  }, [updateGame]);
+
+  // ── Uninstall detection: periodic check for removed Steam appmanifests ──
+  useEffect(() => {
+    const UNINSTALL_POLL_MS = 30000;
+    let running = false;
+
+    const checkForUninstalled = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const steamRoot = settingsRef.current.steamRoot;
+        if (!steamRoot) return;
+
+        // Scan all currently-installed Steam appmanifests (single Rust command)
+        const { scanSteamInstalledGames: doScan } = await import("../services/tauri");
+        const scanResult = await doScan({ steamPath: steamRoot });
+        const installedAppIds = new Set<string>(
+          scanResult.map((g) => String(g.appId))
+        );
+
+        // Read games AFTER scan to capture any interleaved installs
+        const currentGames = gamesRef.current;
+        const installedGames = currentGames.filter(
+          (g): g is LibraryGame & { appId: string } =>
+            g.appId !== undefined && g.steamInstalled === true
+        );
+        if (installedGames.length === 0) return;
+
+        // Find games marked installed but missing from Steam scan
+        const missingAppIds: string[] = [];
+        const seenMissing = new Set<string>();
+        for (const game of installedGames) {
+          if (!installedAppIds.has(game.appId) && !seenMissing.has(game.appId)) {
+            seenMissing.add(game.appId);
+            missingAppIds.push(game.appId);
+          }
+        }
+        if (missingAppIds.length === 0) return;
+
+        // Build full updated games array from the captured snapshot
+        const updatedGames = currentGames.map((g) => {
+          if (!g.appId || !seenMissing.has(g.appId)) return g;
+          return {
+            ...g,
+            steamInstalled: false,
+            isInstallable: true,
+            isPlayable: false,
+            installDir: undefined,
+            libraryPath: undefined,
+            sizeOnDisk: undefined,
+            lastUpdated: undefined,
+          } as LibraryGame;
+        });
+
+        // Update React state (sync, React 18 auto-batches)
+        for (const appId of missingAppIds) {
+          updateGame(appId, {
+            steamInstalled: false,
+            isInstallable: true,
+            isPlayable: false,
+            installDir: undefined,
+            libraryPath: undefined,
+            sizeOnDisk: undefined,
+            lastUpdated: undefined,
+          });
+          const game = currentGames.find((g) => g.appId === appId);
+          console.log(`[UNINSTALL][DETECT] appid=${appId} title=${game?.title ?? "unknown"}`);
+        }
+
+        // Persist to SQLite cache
+        try { await saveCachedGames(updatedGames); } catch { /* ignore */ }
+
+        // Update game store for boot reconciliation
+        try {
+          const { setReconciledGames } = await import("../services/gameStore");
+          setReconciledGames(updatedGames);
+        } catch { /* ignore */ }
+
+        // Schedule snapshot write
+        scheduleSnapshotWrite(updatedGames, appInfoMapRef.current, null, 100, "uninstall-detected");
+        console.log(`[UNINSTALL][DONE] count=${missingAppIds.length}`);
+      } catch {
+        // scan failed — try again next interval
+      } finally {
+        running = false;
+      }
+    };
+
+    const interval = setInterval(checkForUninstalled, UNINSTALL_POLL_MS);
+    const initialTimer = setTimeout(checkForUninstalled, 5000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(initialTimer);
+    };
+  }, [updateGame]);
+
   const ctxValue = useMemo(() => ({
     games, warnings, loading, initialLoading,
     selectedId, setSelectedId, selectedGame, setSelectedGame,
-    refresh, appInfoMap, status, librarySource, libraryFingerprint,
+    refresh,
+    updateGame,
+    appInfoMap, status, librarySource, libraryFingerprint,
   }), [
     games, warnings, loading, initialLoading,
     selectedId, selectedGame,
-    refresh, appInfoMap, status, librarySource, libraryFingerprint,
+    refresh, updateGame,
+    appInfoMap, status, librarySource, libraryFingerprint,
   ]);
 
   return (

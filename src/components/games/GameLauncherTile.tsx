@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Gamepad2,
   Heart,
+  Loader2,
   MoreHorizontal,
   Play,
   Settings,
@@ -42,6 +43,14 @@ import { showSuccess, showError } from "../toast/GameToast";
 import { useConfirm } from "../../services/confirmService";
 import { openExternalUrl } from "../../services/externalLinks";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
+import { useInstallTracker } from "../../hooks/useInstallTracker";
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 type GameLauncherTileProps = {
   game: LibraryGame;
@@ -214,6 +223,7 @@ export default function GameLauncherTile({
   const isRunning = sessionState === "running";
   const action = getLauncherGamePrimaryAction(game);
   const hasLua = game.luaScripts.length > 0;
+  const { installState, isInstalling, isWaiting, dismiss } = useInstallTracker(game.appId);
 
   function handleCardClick() {
     setMenuOpen(false);
@@ -310,7 +320,7 @@ export default function GameLauncherTile({
                 Play
               </button>
             )}
-            {action === "install" && (
+            {action === "install" && !isInstalling && (
               <button
                 type="button"
                 onClick={(e) => handleActionClick(e, () => onInstall(game))}
@@ -319,6 +329,54 @@ export default function GameLauncherTile({
                 <Download className="h-3 w-3" />
                 Install
               </button>
+            )}
+            {isInstalling && (
+              <div className="flex w-full flex-col gap-1">
+                <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/80">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {installState.status === "opening-steam"
+                    ? "Opening Steam…"
+                    : installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0
+                      ? `Downloading ${Math.round(installState.downloadProgress.percent)}%`
+                      : "Waiting for Steam…"}
+                  {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 && (
+                    <span className="text-[10px] text-amber-400/40">
+                      {formatBytes(installState.downloadProgress.bytesDownloaded)} / {formatBytes(installState.downloadProgress.bytesToDownload)}
+                    </span>
+                  )}
+                </div>
+                <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+                  {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 ? (
+                    <div
+                      className="h-full rounded-full bg-amber-400 transition-all duration-500 ease-out"
+                      style={{ width: `${Math.min(100, Math.round(installState.downloadProgress.percent))}%` }}
+                    />
+                  ) : (
+                    <div className="h-full w-1/3 animate-pulse rounded-full bg-amber-400/50" />
+                  )}
+                </div>
+              </div>
+            )}
+            {installState.status === "timeout" && (
+              <div className="inline-flex items-center gap-1.5">
+                <span className="text-[11px] text-amber-400/70">Install stuck?</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onInstall(game); }}
+                  className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+                >
+                  <Download className="h-3 w-3" />
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); dismiss(); }}
+                  className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-muted)/50 transition hover:text-(--color-muted)"
+                >
+                  <X className="h-3 w-3" />
+                  Dismiss
+                </button>
+              </div>
             )}
             {action === "open-steam" && (
               <button
@@ -406,11 +464,17 @@ export default function GameLauncherTile({
                   }
                 }}
               />
-            ) : (
+            ) : !isInstalling ? (
               <MenuItem
                 label="Install"
                 icon={<Download className="h-3.5 w-3.5" />}
                 onClick={() => { setMenuOpen(false); onInstall(game); }}
+              />
+            ) : (
+              <MenuItem
+                label={isWaiting ? "Waiting for Steam…" : "Opening Steam…"}
+                icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                disabled
               />
             )}
             <MenuItem

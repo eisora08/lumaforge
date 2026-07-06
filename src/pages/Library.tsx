@@ -19,6 +19,7 @@ import { GridSkeleton, LibrarySectionSkeleton } from "../components/common/Skele
 import { useSettings } from "../context/SettingsContext";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useGameSession } from "../context/GameSessionContext";
+import { installTrackerService } from "../services/installTrackingService";
 import {
   installSteamApp,
   deleteLuaScript,
@@ -210,6 +211,7 @@ export default function LibraryPage({ onNavigate }: Props) {
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
+        installTrackerService.startTracking(game.appId, settings.steamRoot, game.title || String(game.appId), game.imageUrl);
       } catch (err) {
         showError(String(err), { title: "Error" });
       }

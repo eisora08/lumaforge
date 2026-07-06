@@ -10,8 +10,10 @@ export function getLauncherGamePrimaryAction(game: LibraryGame): PrimaryAction {
     action = "play";
   } else if (game.isInstallable && game.appId) {
     action = "install";
-  } else if (hasLuaScripts && game.appId && !game.steamInstalled) {
-    action = "open-steam";
+  } else if (game.appId && !game.isPlayable && !game.steamInstalled) {
+    // Any game with a valid Steam appId, not playable, not installed → Install
+    // Covers owned-but-not-installed, Lua ownership-unknown, any future Steam-mapped entry
+    action = "install";
   } else if (hasLuaScripts && !game.appId && !game.executablePath && !game.isPlayable) {
     action = "open-lua-folder";
   } else if (game.source === "local" && game.executablePath) {

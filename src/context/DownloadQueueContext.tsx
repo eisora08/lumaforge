@@ -2,10 +2,12 @@ import {
   createContext,
   useContext,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
 import { DownloadJob, DownloadStatus } from "../types/download";
+import { useSteamInstallSync } from "../hooks/useSteamInstallSync";
 
 type CreateDownloadJobInput = {
   appId: string;
@@ -14,6 +16,10 @@ type CreateDownloadJobInput = {
   providerName: string;
   fileType: DownloadJob["fileType"];
   downloadUrl?: string;
+  type?: DownloadJob["type"];
+  progressMode?: DownloadJob["progressMode"];
+  message?: string;
+  artworkUrl?: string;
 };
 
 type UpdateDownloadJobInput = {
@@ -22,25 +28,35 @@ type UpdateDownloadJobInput = {
   bytesRead?: number;
   totalBytes?: number;
   error?: string;
+  message?: string;
+  speedBytesPerSec?: number;
+  etaSeconds?: number;
+  progressMode?: DownloadJob["progressMode"];
+  artworkUrl?: string;
+  installedSize?: number;
 };
 
 type DownloadQueueContextValue = {
   jobs: DownloadJob[];
   addJob: (input: CreateDownloadJobInput) => DownloadJob;
+  addSteamInstallJob: (appId: string, title: string, artworkUrl?: string) => string;
   updateJob: (jobId: string, update: UpdateDownloadJobInput) => void;
   cancelJob: (jobId: string) => void;
   removeJob: (jobId: string) => void;
   clearCompleted: () => void;
+  getJobByAppId: (appId: string) => DownloadJob | undefined;
 };
 
 const STORAGE_KEY = "lumaforge-download-queue";
 
 const activeStatuses: DownloadStatus[] = [
   "queued",
+  "waiting",
   "checking",
   "downloading",
   "extracting",
   "installing",
+  "paused",
 ];
 
 const DownloadQueueContext =
@@ -48,6 +64,10 @@ const DownloadQueueContext =
 
 function createJobId(input: CreateDownloadJobInput) {
   return `${input.appId}-${input.providerId}-${input.fileType}-${Date.now()}`;
+}
+
+function createSteamJobId(appId: string): string {
+  return `steam-install-${appId}`;
 }
 
 function persistJobs(jobs: DownloadJob[]) {
@@ -65,9 +85,17 @@ function loadJobs(): DownloadJob[] {
     const parsedJobs = JSON.parse(savedJobs) as DownloadJob[];
 
     return parsedJobs.map((job) => {
-      if (activeStatuses.includes(job.status)) {
+      // Migration: set defaults for new optional fields
+      const migrated: DownloadJob = {
+        ...job,
+        type: job.type ?? (job.fileType === "lua" ? "lua-package" : job.fileType === "zip" ? "zip" : "other"),
+        progressMode: job.progressMode ?? "determinate",
+      };
+
+      // App reload while active — mark as failed unless it's a steam-install (can't verify on reload)
+      if (activeStatuses.includes(migrated.status)) {
         return {
-          ...job,
+          ...migrated,
           status: "failed",
           error:
             job.error ||
@@ -76,7 +104,7 @@ function loadJobs(): DownloadJob[] {
         };
       }
 
-      return job;
+      return migrated;
     });
   } catch {
     return [];
@@ -99,6 +127,15 @@ export function DownloadQueueProvider({
     persistJobs(nextJobs);
   }
 
+  // Bridge Steam install tracker into the download queue
+  const syncRef = useRef({ addSteamInstallJob, updateJob, removeJob });
+  syncRef.current = { addSteamInstallJob, updateJob, removeJob };
+  useSteamInstallSync({
+    addSteamInstallJob: (appId, title, artworkUrl) => syncRef.current.addSteamInstallJob(appId, title, artworkUrl),
+    updateJob: (jobId, update) => syncRef.current.updateJob(jobId, update as any),
+    removeJob: (jobId) => syncRef.current.removeJob(jobId),
+  });
+
   function addJob(input: CreateDownloadJobInput) {
     const now = new Date().toISOString();
 
@@ -110,6 +147,10 @@ export function DownloadQueueProvider({
       providerName: input.providerName,
       fileType: input.fileType,
       downloadUrl: input.downloadUrl,
+      type: input.type ?? "other",
+      progressMode: input.progressMode ?? "determinate",
+      message: input.message,
+      artworkUrl: input.artworkUrl,
 
       status: "queued",
       progress: 0,
@@ -124,6 +165,44 @@ export function DownloadQueueProvider({
     commitJobs(nextJobs);
 
     return job;
+  }
+
+  function addSteamInstallJob(appId: string, title: string, artworkUrl?: string): string {
+    const jobId = createSteamJobId(appId);
+    const existing = jobs.find((j) => j.id === jobId);
+    if (existing && activeStatuses.includes(existing.status)) {
+      return jobId;
+    }
+
+    const now = new Date().toISOString();
+
+    const job: DownloadJob = {
+      id: jobId,
+      appId,
+      gameTitle: title,
+      providerId: "steam",
+      providerName: "Steam",
+      fileType: "manifest",
+      type: "steam-install",
+      progressMode: "indeterminate",
+      message: "Opening Steam install\u2026",
+      artworkUrl,
+
+      status: "waiting",
+      progress: 0,
+      bytesRead: 0,
+      totalBytes: 0,
+
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Replace any existing terminal job for same appId
+    const filtered = jobs.filter((j) => j.id !== jobId);
+    const nextJobs = [job, ...filtered];
+    commitJobs(nextJobs);
+
+    return jobId;
   }
 
   function updateJob(jobId: string, update: UpdateDownloadJobInput) {
@@ -174,14 +253,20 @@ export function DownloadQueueProvider({
     });
   }
 
+  function getJobByAppId(appId: string): DownloadJob | undefined {
+    return jobs.find((j) => j.appId === appId);
+  }
+
   const value = useMemo(
     () => ({
       jobs,
       addJob,
+      addSteamInstallJob,
       updateJob,
       cancelJob,
       removeJob,
       clearCompleted,
+      getJobByAppId,
     }),
     [jobs]
   );

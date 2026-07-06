@@ -1,8 +1,14 @@
+import { useMemo, useState } from "react";
 import {
+  ChevronDown,
+  ChevronRight,
   Download,
+  HardDrive,
   ListChecks,
   PackageCheck,
+  PackageX,
   Trash2,
+  Upload,
 } from "lucide-react";
 
 import DownloadJobCard from "../components/downloads/DownloadJobCard";
@@ -16,99 +22,99 @@ export default function Downloads() {
     clearCompleted,
   } = useDownloadQueue();
 
-  const activeJobs = jobs.filter((job) =>
-    [
-      "queued",
-      "checking",
-      "downloading",
-      "extracting",
-      "installing",
-    ].includes(job.status)
-  );
+  const [completedCollapsed, setCompletedCollapsed] = useState(true);
 
-  const completedJobs = jobs.filter((job) =>
+  const activeJobs = useMemo(() => jobs.filter((job) =>
+    ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(job.status)
+  ), [jobs]);
+
+  const completedJobs = useMemo(() => jobs.filter((job) =>
     ["done", "failed", "cancelled"].includes(job.status)
-  );
+  ), [jobs]);
+
+  const failedJobs = useMemo(() => jobs.filter((job) =>
+    job.status === "failed"
+  ), [jobs]);
+
+  const queuedJobs = useMemo(() => jobs.filter((job) =>
+    job.status === "queued" || job.status === "waiting"
+  ), [jobs]);
 
   return (
     <div className="space-y-6 p-5 lg:p-7">
-      <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
-            <Download className="h-3.5 w-3.5" />
-            Download Manager
-          </div>
+      {/* ── Header ── */}
+      <header>
+        <span className="mb-3 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">
+          <Download className="h-3.5 w-3.5" />
+          Download Manager
+        </span>
 
-          <h1 className="text-3xl font-bold text-(--color-text)">
-            Descargas
-          </h1>
+        <h1 className="mt-3 text-3xl font-bold text-(--color-text)">
+          Descargas
+        </h1>
 
-          <p className="mt-2 max-w-2xl text-(--color-muted)">
-            Administra la cola de descargas, progreso, instalación y estados de
-            paquetes Lua, ZIP y manifests.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <MiniStat
-            icon={ListChecks}
-            label="Activas"
-            value={activeJobs.length}
-          />
-
-          <MiniStat
-            icon={PackageCheck}
-            label="Finalizadas"
-            value={completedJobs.length}
-          />
-
-          <MiniStat
-            icon={Download}
-            label="Total"
-            value={jobs.length}
-          />
-        </div>
+        <p className="mt-2 text-(--color-muted)">
+          Gestiona instalaciones de Steam, paquetes Lua, ZIP y manifests.
+        </p>
       </header>
 
-      <section className="lf-surface rounded-2xl border p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="font-semibold text-(--color-text)">
-              Cola de descargas
-            </h2>
+      {/* ── Stats grid ── */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <MiniStat
+          icon={Download}
+          label="Activas"
+          value={activeJobs.length}
+        />
+        <MiniStat
+          icon={ListChecks}
+          label="En cola"
+          value={queuedJobs.length}
+        />
+        <MiniStat
+          icon={PackageCheck}
+          label="Completadas"
+          value={completedJobs.length}
+        />
+        <MiniStat
+          icon={PackageX}
+          label="Fallidas"
+          value={failedJobs.length}
+        />
+      </div>
 
-            <p className="mt-1 text-sm text-(--color-muted)">
-              Los paquetes agregados desde el catálogo aparecerán aquí.
-            </p>
+      {/* ── Clear completed bar ── */}
+      {jobs.length > 0 && completedJobs.length > 0 && (
+        <section className="lf-surface rounded-2xl border p-4">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setCompletedCollapsed((v) => !v)}
+              className="flex items-center gap-2 text-sm font-medium text-(--color-text) transition hover:text-(--color-accent)"
+            >
+              {completedCollapsed ? (
+                <ChevronRight className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+              Completadas y fallidas ({completedJobs.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={clearCompleted}
+              className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
+            >
+              <Trash2 className="h-4 w-4" />
+              Limpiar
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={clearCompleted}
-            disabled={completedJobs.length === 0}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Trash2 className="h-4 w-4" />
-            Limpiar completadas
-          </button>
-        </div>
-      </section>
-
-      {jobs.length === 0 ? (
-        <section className="lf-surface rounded-2xl border p-10 text-center">
-          <Download className="mx-auto h-10 w-10 text-(--color-muted)" />
-
-          <h2 className="mt-4 font-semibold text-(--color-text)">
-            No hay descargas todavía
-          </h2>
-
-          <p className="mt-2 text-sm text-(--color-muted)">
-            Ve a Paquetes, selecciona una fuente y agrega un paquete a la cola.
-          </p>
         </section>
-      ) : (
+      )}
+
+      {/* ── Active download queue ── */}
+      {activeJobs.length > 0 && (
         <section className="space-y-4">
-          {jobs.map((job) => (
+          {activeJobs.map((job) => (
             <DownloadJobCard
               key={job.id}
               job={job}
@@ -116,6 +122,46 @@ export default function Downloads() {
               onRemove={removeJob}
             />
           ))}
+        </section>
+      )}
+
+      {/* ── Completed section (collapsible) ── */}
+      {completedJobs.length > 0 && !completedCollapsed && (
+        <section className="space-y-4">
+          {completedJobs.map((job) => (
+            <DownloadJobCard
+              key={job.id}
+              job={job}
+              onCancel={cancelJob}
+              onRemove={removeJob}
+            />
+          ))}
+        </section>
+      )}
+
+      {/* ── Empty state ── */}
+      {jobs.length === 0 && (
+        <section className="lf-surface rounded-2xl border p-14 text-center">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-white/5">
+            <Upload className="h-8 w-8 text-(--color-muted)" />
+          </div>
+
+          <h2 className="text-xl font-semibold text-(--color-text)">
+            No hay descargas activas
+          </h2>
+
+          <p className="mx-auto mt-3 max-w-md text-sm text-(--color-muted)">
+            Instala un juego de Steam o agrega un paquete Lua, ZIP o manifest
+            desde Paquetes para ver su progreso aqu\u00ed.
+          </p>
+
+          <a
+            href="#/library"
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+          >
+            <HardDrive className="h-4 w-4" />
+            Explorar biblioteca
+          </a>
         </section>
       )}
     </div>

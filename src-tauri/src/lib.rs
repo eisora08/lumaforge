@@ -72,6 +72,7 @@ pub fn run() {
             commands::steam::scan_steam_installed_games,
             commands::steam::launch_steam_app,
             commands::steam::install_steam_app,
+            commands::steam::check_steam_game_installed,
             commands::steam_user_stats::scan_steam_user_game_stats,
             commands::steam_achievements::fetch_steam_player_achievements,
             commands::steam_achievements::fetch_steam_global_achievement_percentages,

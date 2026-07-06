@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use serde::Serialize;
 
 fn debug_log(msg: impl std::fmt::Display) {
     eprintln!("[steam-scan] {}", msg);
@@ -9,6 +10,29 @@ fn debug_log(msg: impl std::fmt::Display) {
 use crate::models::steam_installed_game::SteamInstalledGame;
 use crate::models::steam_paths::SteamPaths;
 use crate::utils::path_utils;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadProgress {
+    pub bytes_downloaded: u64,
+    pub bytes_to_download: u64,
+    pub percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamGameInstallStatus {
+    pub is_installed: bool,
+    pub is_completed: bool,
+    pub state_flags: Option<u64>,
+    pub install_path: Option<String>,
+    pub install_dir: Option<String>,
+    pub library_path: Option<String>,
+    pub name: Option<String>,
+    pub size_on_disk: Option<u64>,
+    pub last_updated: Option<u64>,
+    pub download_progress: Option<DownloadProgress>,
+}
 
 pub struct SteamLibraryPath {
     pub library_root: PathBuf,
@@ -72,7 +96,7 @@ pub fn normalize_steam_library_path(input: &Path) -> Option<SteamLibraryPath> {
 }
 
 /// Check common drive-root locations for Steam library folders — no deep scanning.
-fn collect_safe_fallback_steam_paths() -> Vec<PathBuf> {
+pub fn collect_safe_fallback_steam_paths() -> Vec<PathBuf> {
     let mut results = Vec::new();
 
     let patterns = &[
@@ -386,6 +410,8 @@ pub fn parse_appmanifest(
     let mut size_on_disk: Option<u64> = None;
     let mut build_id: Option<String> = None;
     let mut last_updated: Option<u64> = None;
+    let mut bytes_downloaded: Option<u64> = None;
+    let mut bytes_to_download: Option<u64> = None;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -406,6 +432,8 @@ pub fn parse_appmanifest(
             "sizeondisk" => size_on_disk = value.parse::<u64>().ok(),
             "buildid" => build_id = Some(value.to_string()),
             "lastupdated" => last_updated = value.parse::<u64>().ok(),
+            "bytesdownloaded" => bytes_downloaded = value.parse::<u64>().ok(),
+            "bytestodownload" => bytes_to_download = value.parse::<u64>().ok(),
             _ => {}
         }
     }
@@ -440,6 +468,8 @@ pub fn parse_appmanifest(
         size_on_disk,
         build_id,
         last_updated,
+        bytes_downloaded,
+        bytes_to_download,
         is_installed,
     })
 }
@@ -555,4 +585,143 @@ pub fn launch_steam_app(app_id: u32) -> Result<(), String> {
 pub fn install_steam_app(app_id: u32) -> Result<(), String> {
     let url = format!("steam://install/{}", app_id);
     open::that_detached(&url).map_err(|e| format!("Could not open Steam install page: {}", e))
+}
+
+#[tauri::command]
+pub fn check_steam_game_installed(
+    app_id: u32,
+    steam_root: Option<String>,
+) -> Result<SteamGameInstallStatus, String> {
+    // ---- Step 1: collect candidate paths ----
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(ref sp) = steam_root {
+        candidates.push(PathBuf::from(sp));
+    }
+
+    // Add auto-detected Steam root if not already present
+    if let Some(sp) = path_utils::detect_steam_paths() {
+        let p = PathBuf::from(&sp.steam_root);
+        let p_lower = p.to_string_lossy().to_lowercase();
+        let already = candidates.iter().any(|c| c.to_string_lossy().to_lowercase() == p_lower);
+        if !already {
+            candidates.push(p);
+        }
+    }
+
+    // Add safe fallback paths
+    let safe_fallback = collect_safe_fallback_steam_paths();
+    for fp in &safe_fallback {
+        let fp_lower = fp.to_string_lossy().to_lowercase();
+        let already = candidates.iter().any(|c| c.to_string_lossy().to_lowercase() == fp_lower);
+        if !already {
+            candidates.push(fp.clone());
+        }
+    }
+
+    // ---- Step 2: normalize into SteamLibraryPath ----
+    let mut normalized_libs: Vec<SteamLibraryPath> = Vec::new();
+    let mut seen_steamapps: HashSet<String> = HashSet::new();
+
+    for candidate in &candidates {
+        if let Some(lib_path) = normalize_steam_library_path(candidate) {
+            if is_valid_steamapps_path(&lib_path.steamapps_path) {
+                let key = lib_path.steamapps_path.to_string_lossy().to_lowercase();
+                if seen_steamapps.insert(key) {
+                    normalized_libs.push(lib_path);
+                }
+            }
+        }
+    }
+
+    // ---- Step 3: expand via libraryfolders.vdf ----
+    let mut all_steamapps_dirs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut seen_all: HashSet<String> = HashSet::new();
+
+    for lib in &normalized_libs {
+        let key = lib.steamapps_path.to_string_lossy().to_lowercase();
+        if seen_all.insert(key) {
+            all_steamapps_dirs.push((lib.steamapps_path.clone(), lib.common_path.clone()));
+        }
+
+        let vdf_path = lib.steamapps_path.join("libraryfolders.vdf");
+        if vdf_path.is_file() {
+            let extra_roots = collect_library_roots_from_vdf(&vdf_path);
+            for root_path in extra_roots {
+                if let Some(extra_lib) = normalize_steam_library_path(&root_path) {
+                    let extra_key = extra_lib.steamapps_path.to_string_lossy().to_lowercase();
+                    if seen_all.insert(extra_key) {
+                        all_steamapps_dirs.push((extra_lib.steamapps_path, extra_lib.common_path));
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Step 4: look for appmanifest_<app_id>.acf ----
+    let manifest_name = format!("appmanifest_{}.acf", app_id);
+
+    for (steamapps_dir, common_path) in &all_steamapps_dirs {
+        let manifest_path = steamapps_dir.join(&manifest_name);
+        if !manifest_path.is_file() {
+            continue;
+        }
+
+        if let Some(parsed) = parse_appmanifest(&manifest_path, common_path, steamapps_dir) {
+            let download_progress = match (parsed.bytes_downloaded, parsed.bytes_to_download) {
+                (Some(downloaded), Some(total)) if total > 0 => Some(DownloadProgress {
+                    bytes_downloaded: downloaded,
+                    bytes_to_download: total,
+                    percent: (downloaded as f64 / total as f64) * 100.0,
+                }),
+                _ => None,
+            };
+
+            // Stricter completion check: FullyInstalled flag + no active download + bytes match
+            let flags = parsed.state_flags.unwrap_or(0);
+            let no_active_download = flags & 32 == 0    // Not Updating
+                && flags & 512 == 0    // Not Preallocating
+                && flags & 1024 == 0   // Not DownloadPaused
+                && flags & 8192 == 0   // Not VerifyIntegrity
+                && flags & 16384 == 0; // Not UpdatingPaused
+            let bytes_complete = match (parsed.bytes_downloaded, parsed.bytes_to_download) {
+                (Some(d), Some(t)) if t > 0 => d >= t,
+                _ => true,
+            };
+            let is_completed = parsed.is_installed
+                && (flags & 4 != 0)
+                && no_active_download
+                && bytes_complete;
+
+            eprintln!("[INSTALL_TRACK] appid={} phase=status-check isInstalled={} isCompleted={} stateFlags={} bytesDownloaded={:?} bytesToDownload={:?} sizeOnDisk={:?}",
+                app_id, parsed.is_installed, is_completed, flags, parsed.bytes_downloaded, parsed.bytes_to_download, parsed.size_on_disk);
+
+            return Ok(SteamGameInstallStatus {
+                is_installed: parsed.is_installed,
+                is_completed,
+                state_flags: parsed.state_flags,
+                install_path: parsed.install_path,
+                install_dir: parsed.install_dir,
+                library_path: Some(parsed.library_path),
+                name: Some(parsed.name),
+                size_on_disk: parsed.size_on_disk,
+                last_updated: parsed.last_updated,
+                download_progress,
+            });
+        }
+    }
+
+    // Manifest not found in any library folder — game is not installed
+    Ok(SteamGameInstallStatus {
+        is_installed: false,
+        is_completed: false,
+        state_flags: None,
+        install_path: None,
+        install_dir: None,
+        library_path: None,
+        name: None,
+        size_on_disk: None,
+        last_updated: None,
+        download_progress: None,
+    })
 }

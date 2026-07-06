@@ -1691,3 +1691,146 @@ After playing a game (e.g., Cuphead), session-end data wasn't reflected in the U
 - `tsc --noEmit` ✅ (only pre-existing LibraryGameDetails.tsx unused-vars)
 - `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ✅ (no Rust changes)
+
+## Session — Uninstall Detection + Real Installed State Fix
+
+### Problem 1: onInstalled created fake/incomplete installed state
+When Steam finishes installing a game, the `onInstalled` handler only patched `steamInstalled=true`, `isPlayable=true`, `isInstallable=false` — never populated `installDir`, `libraryPath`, `source`, `sizeOnDisk` from the actual appmanifest. Open installation directory, play actions, and sidebar snapshot resolution all broke.
+
+### Fix 1: Real installed pipeline re-ingestion
+- **Rust `check_steam_game_installed` enhanced** — added `name`, `size_on_disk`, `last_updated` fields to `SteamGameInstallStatus`; populated from `parse_appmanifest` in both return paths
+- **TS `SteamGameInstallStatus` type** — matching `name`, `sizeOnDisk`, `lastUpdated` fields
+- **`onInstalled` handler rewritten** as 6-phase pipeline:
+  1. Call `checkSteamGameInstalled(appId, steamRoot)` for real appmanifest data
+  2. Build `LibraryGame` with `installDir`, `libraryPath`, `source="steam"`, `sizeOnDisk`, `lastUpdated`
+  3. Update React state via `updateGame` (sync)
+  4. Persist to SQLite via `saveCachedGames`
+  5. Update game store via `setReconciledGames` — prevents stale boot reconciliation
+  6. Schedule snapshot write with 100ms delay via `scheduleSnapshotWrite(..., "install-detected")`
+- Lua metadata preserved explicitly: `luaScripts`, `hasLua`, `isLuaActive`, `isLuaDisabled`, `hasLuaSource` spread from existing game
+- `[INSTALL_REAL]` diagnostic logs for all phases: detected, steam-scan, canonical-built, merge-preserve-lua, sqlite-write, reconciled-write, snapshot-dirty, install-dir-action, play-action
+
+### Problem 2: No uninstall detection
+When a Steam game is uninstalled outside LumaForge (appmanifest deleted from Steam library folder):
+- `installTrackerService` stopped polling (only checks actively-downloading games, 3s interval, stops on install)
+- `resolveLibraryGames` + `mergeGames` in cached/reconciled-update mode preserves existing games — never detects disappearance
+- Downgrade guard (`[INSTALL_STATE] downgradeBlocked`) prevents owned-only merge from setting `steamInstalled=false`
+- Zero uninstall detection exists anywhere — sidebar shows uninstalled games permanently until restart or full manual refresh
+
+### Fix 2: Periodic uninstall poll in LibraryGamesContext
+- **30s interval + 5s initial delay** — balanced between responsiveness and CPU usage
+- **Single Rust command per cycle**: `scanSteamInstalledGames({ steamPath: steamRoot })` — reads all appmanifest files across all library folders in one invoke (<50ms for 80+ games)
+- **Games read AFTER scan** to capture any interleaved installs that completed during the async scan
+- **Set-difference comparison**: build Set of currently-installed appIds from scan result, compare against `gamesRef.current` games with `steamInstalled=true`
+- **Full 5-layer persistence** per missing appId:
+  1. `updateGame(appId, {...})` — React state (sync, React 18 auto-batches)
+  2. `saveCachedGames(updatedGames)` — SQLite cache
+  3. `setReconciledGames(updatedGames)` — game store for boot reconciliation
+  4. `scheduleSnapshotWrite(..., "uninstall-detected")` — snapshot with 100ms delay
+- **Clears**: `steamInstalled=false`, `isInstallable=true`, `isPlayable=false`, `installDir`, `libraryPath`, `sizeOnDisk`, `lastUpdated`
+- **Preserves**: `source`, `title`, Lua metadata, `steamLastPlayedAt`, `steamPlaytimeMinutes`, `achievementTotal`, `isFavorite`
+- **Sidebar auto-updates**: reads `useLibraryGames()` → `games` state filtered by `isSidebarInstalledGame(game)` which checks `steamInstalled===true` — React re-render removes game instantly
+- **Guard flag**: module-level `running` bool prevents overlapping scan cycles
+- **Cleanup on unmount**: `clearInterval` + `clearTimeout` — no leaks
+- **`[UNINSTALL][DETECT]`** log per appId with title; **`[UNINSTALL][DONE]`** log with count
+- **Edge cases handled**:
+  - No `steamRoot` → skip silently
+  - No installed games → return early
+  - Scan failure → try again next interval
+  - Multiple games uninstalled between polls → all detected in one cycle, single persistence batch
+  - Downgrade guard doesn't re-lift: guard only fires when incoming ownership merge has `steamInstalled=false` while current has `steamInstalled=true`; uninstall handler explicitly sets through `updateGame` which is a direct mutation, not a merge path
+  - Owned games remain in library as owned-only (uninstalled) — not removed completely
+  - Non-owned games naturally removed from library when uninstalled (no owned-entry fallback)
+
+### Key Files Changed
+- `src-tauri/src/commands/steam.rs` — `SteamGameInstallStatus` enhanced with `name`, `size_on_disk`, `last_updated`
+- `src/services/tauri.ts` — `SteamGameInstallStatus` type with matching fields
+- `src/context/LibraryGamesContext.tsx` — `onInstalled` handler rewritten as real pipeline (lines 690-782); new uninstall detection effect (lines 784-876)
+
+### Build
+- `tsc --noEmit` ✅ (no errors)
+- `vite build` ✅ (no errors)
+- `cargo check` ✅ (no errors)
+
+## Session — Universal Download Manager (Download center redesign)
+
+### Goal
+Upgrade the Downloads page into a universal download/install activity center supporting Steam install status tracking, Lua/ZIP/manifest packages, and future providers.
+
+### Architecture
+- **No new Rust code** — all changes are TypeScript/React only
+- **No new services** — reuses existing `DownloadQueueContext` (localStorage-persisted queue) and `installTrackerService` (in-memory Steam install tracker)
+- **No duplicate queue model** — unified `DownloadQueueContext` handles both Steam installs and package downloads
+- **Steam install progress is observational only** — opens `steam://install/<appid>`, monitors via `checkSteamGameInstalled` (existing Rust command), never downloads Steam files or edits appmanifests
+
+### Part 1 — Generic download/install model
+- Extended `DownloadJob` type in `types/download.ts`:
+  - `type?: "steam-install" | "lua-package" | "zip" | "manifest" | "media" | "other"`
+  - `progressMode?: "determinate" | "indeterminate"` (indeterminate when no reliable percentage)
+  - `speedBytesPerSec?: number`, `etaSeconds?: number`, `message?: string`, `artworkUrl?: string`, `parentId?: string`
+  - Added `"waiting"` and `"paused"` to `DownloadStatus`
+- All new fields are optional — backward compatible with existing serialized localStorage jobs
+
+### Part 2 — Steam install status tracking via existing tracker
+- `installTrackerService` already tracks Steam installs: opens URL, polls `checkSteamGameInstalled`, detects `downloadProgress` (BytesDownloaded/BytesToDownload from appmanifest), 5-min timeout
+- **New `useSteamInstallSync` hook** (`src/hooks/useSteamInstallSync.ts`) bridges tracker → download queue:
+  - `onAny()` callback listens to all tracker events
+  - `opening-steam` → adds `addSteamInstallJob(appId, title)` to queue with `status="waiting"`
+  - `waiting` with `downloadProgress.percent > 0` → switches to `status="downloading"`, `progressMode="determinate"`, displays real %
+  - `waiting` without progress → keeps `status="waiting"`, `progressMode="indeterminate"`, updates message ("Starting…" or "Waiting for Steam…")
+  - `installed` → marks `status="done"`, `progress=100`, `message="Installed · Ready to play"`
+  - `timeout` → marks `status="failed"`, error "Timeout waiting for Steam to begin downloading."
+  - `dismissed` → removes job from queue
+- Mounted in `DownloadQueueProvider` via stable `syncRef` pattern — never duplicates `onAny` listener
+
+### Part 3 — Real percentage (observational, determinate when available)
+- `checkSteamGameInstalled` Rust command already returns `downloadProgress: { bytesDownloaded, bytesToDownload, percent }` from appmanifest fields
+- When `percent > 0 && bytesToDownload > 0`: `progressMode="determinate"` with real percentage
+- When unavailable: `progressMode="indeterminate"` using existing `lf-launch-bar` CSS animation (`lf-progress-indeterminate` keyframe)
+- No fake percentages ever
+
+### Part 4 — Lua/ZIP/Manifest integration
+- `DownloadQueueContext` already handles these via `addJob()` with `fileType`
+- `InstallerProgressListener.tsx` listens to Tauri `installer-progress` events and updates jobs
+- No changes to the existing package download flow — UI shows both Steam installs and package downloads in the same unified queue
+
+### Part 5 — UI redesign
+- **`Downloads.tsx`**: Premium layout with header badge, subtitle, 4-column stats (Active/Queued/Completed/Failed), collapsible completed section with "Limpiar" button, improved empty state with "Explorar biblioteca" link
+- **`DownloadJobCard.tsx`**: Unified card supporting both Steam and package items:
+  - Shows game artwork when `artworkUrl` available (Steam installs), file-type icon otherwise
+  - Provider badge: Steam (blue), Lua (purple), ZIP (amber), Manifest (cyan)
+  - Status message below title
+  - Determinate or indeterminate progress bar
+  - Stats row: downloaded bytes, speed (if available), ETA (if available), installation status
+  - Active Steam installs show "Open Steam" action link
+  - Cancel active jobs, remove completed jobs
+  - Error display
+- **`DownloadProgressBar.tsx`**: Supports both `determinate` (percentage + width bar) and `indeterminate` (animated `lf-launch-bar` shimmer)
+- **`DownloadStatusBadge.tsx`**: Added `waiting` (amber/clock) and `paused` (zinc/pause) statuses
+- All styling uses existing theme variables — compatible with all themes (OLED/Midnight/Crimson/Steam Gray)
+
+### Part 6 — State persistence
+- Package downloads persisted to localStorage via existing `DownloadQueueContext`
+- Steam install items use a **stable job ID** (`steam-install-<appId>`) — single job per appId, replaces previous terminal jobs
+- On app reload, active jobs (including Steam) are marked `failed` with clear message — no fake active items
+- Completed items persist until "Limpiar" is clicked
+- Failed items persist until dismissed
+
+### Part 7 — Sidebar/library update (already works)
+- Steam installs already trigger the `onInstalled` handler in `LibraryGamesContext.tsx` — the real installed pipeline (from the previous session) re-ingests via `checkSteamGameInstalled`, persists to all layers
+- Sidebar, library grid, and game details update via React re-render from `useLibraryGames()` context
+- No additional work needed — the Downloads page is observational only
+
+### Key Files Changed
+- `src/types/download.ts` — Extended `DownloadJob` with `type`, `progressMode`, `speedBytesPerSec`, `etaSeconds`, `message`, `artworkUrl`, `parentId`; added `waiting`/`paused` to `DownloadStatus`
+- `src/context/DownloadQueueContext.tsx` — `addSteamInstallJob()`, `getJobByAppId()`, migration in `loadJobs()`, extended `UpdateDownloadJobInput`, `useSteamInstallSync` mount
+- `src/hooks/useSteamInstallSync.ts` — **new** — bridges `installTrackerService` → `DownloadQueueContext`
+- `src/components/downloads/DownloadProgressBar.tsx` — Added `mode` prop for determinate/indeterminate
+- `src/components/downloads/DownloadStatusBadge.tsx` — Added `waiting`/`paused` statuses
+- `src/components/downloads/DownloadJobCard.tsx` — Redesigned as unified card (Steam artwork, provider badge, speed/ETA, Open Steam action)
+- `src/pages/Downloads.tsx` — Redesigned with premium layout, 4-column stats, collapsible completed, empty state with link
+
+### Build
+- `tsc --noEmit` ✅ (no errors)
+- `vite build` ✅ (no errors)
+- `cargo check` ✅ (no Rust changes)

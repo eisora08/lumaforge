@@ -215,6 +215,35 @@ export async function installSteamApp(appId: number): Promise<void> {
   return await invoke("install_steam_app", { appId });
 }
 
+export type DownloadProgress = {
+  bytesDownloaded: number;
+  bytesToDownload: number;
+  percent: number;
+};
+
+export type SteamGameInstallStatus = {
+  isInstalled: boolean;
+  isCompleted: boolean;
+  stateFlags: number | null;
+  installPath: string | null;
+  installDir: string | null;
+  libraryPath: string | null;
+  name: string | null;
+  sizeOnDisk: number | null;
+  lastUpdated: number | null;
+  downloadProgress: DownloadProgress | null;
+};
+
+export async function checkSteamGameInstalled(
+  appId: number,
+  steamRoot?: string | null,
+): Promise<SteamGameInstallStatus> {
+  return await invoke<SteamGameInstallStatus>("check_steam_game_installed", {
+    appId,
+    steamRoot: steamRoot ?? null,
+  });
+}
+
 export type RawSteamNewsItem = {
   gid: string;
   title: string;

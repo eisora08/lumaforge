@@ -50,6 +50,7 @@ import AsyncImage from "../common/AsyncImage";
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
 
+import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useGameActivity } from "../../context/GameActivityContext";
 import {
   localPathToUrl,
@@ -355,6 +356,7 @@ export default function LibraryGameDetails({
     : rawLogoUrl;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
+  const { installState, isInstalling, dismiss } = useInstallTracker(game.appId);
 
   const rawShort = game.metadata?.short_description;
   const rawAbout = game.metadata?.about_the_game;
@@ -1159,7 +1161,7 @@ export default function LibraryGameDetails({
                   )}
                 </>
               )}
-              {action === "install" && (
+              {action === "install" && !isInstalling && (
                 <button
                   type="button"
                   onClick={() => onInstall(game)}
@@ -1168,6 +1170,59 @@ export default function LibraryGameDetails({
                   <Download className="h-4 w-4" />
                   Install
                 </button>
+              )}
+              {isInstalling && (
+                <div className="flex flex-col gap-2 rounded-xl bg-amber-500/10 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex items-center gap-2 text-sm font-medium text-amber-400">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {installState.status === "opening-steam"
+                        ? "Opening Steam…"
+                        : installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0
+                          ? `Downloading ${Math.round(installState.downloadProgress.percent)}%`
+                          : "Waiting for Steam…"}
+                    </div>
+                    <span className="text-[11px] text-amber-400/50">
+                      {Math.floor(installState.elapsedMs / 1000)}s
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 ? (
+                      <div
+                        className="h-full rounded-full bg-amber-400 transition-all duration-500 ease-out"
+                        style={{ width: `${Math.min(100, Math.round(installState.downloadProgress.percent))}%` }}
+                      />
+                    ) : (
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-amber-400/50" />
+                    )}
+                  </div>
+                  {installState.downloadProgress && installState.downloadProgress.bytesToDownload > 0 && (
+                    <div className="text-[11px] text-amber-400/40">
+                      {formatBytes(installState.downloadProgress.bytesDownloaded)} / {formatBytes(installState.downloadProgress.bytesToDownload)}
+                    </div>
+                  )}
+                </div>
+              )}
+              {installState.status === "timeout" && (
+                <div className="inline-flex items-center gap-2">
+                  <span className="text-sm text-amber-400/70">Install taking longer than expected?</span>
+                  <button
+                    type="button"
+                    onClick={() => onInstall(game)}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+                  >
+                    <Download className="h-4 w-4" />
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={dismiss}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/5"
+                  >
+                    <X className="h-4 w-4" />
+                    Dismiss
+                  </button>
+                </div>
               )}
               {action === "open-steam" && (
                 <button
