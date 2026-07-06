@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   Ban,
   DownloadCloud,
@@ -11,6 +12,8 @@ import {
 import { DownloadJob } from "../../types/download";
 import DownloadProgressBar from "./DownloadProgressBar";
 import DownloadStatusBadge from "./DownloadStatusBadge";
+import { getBootSnapshot } from "../../services/appBootCoordinator";
+import { localPathToUrl } from "../../services/gameCacheService";
 
 type DownloadJobCardProps = {
   job: DownloadJob;
@@ -97,14 +100,44 @@ export default function DownloadJobCard({
   const progressMode = job.progressMode ?? "determinate";
   const isSteamInstall = job.type === "steam-install";
 
+  const displayTitle = useMemo(() => {
+    if (job.gameTitle && !/^\d+$/.test(job.gameTitle) && !job.gameTitle.startsWith("Steam App ")) {
+      return job.gameTitle;
+    }
+    const snapshot = getBootSnapshot();
+    if (snapshot) {
+      const game = snapshot.library.games.find(g => g.appId === job.appId || g.appId.endsWith(`-${job.appId}`));
+      if (game?.title && !game.title.startsWith("Steam App ") && !/^\d+$/.test(game.title)) {
+        return game.title;
+      }
+    }
+    return `Steam App ${job.appId}`;
+  }, [job.gameTitle, job.appId]);
+
+  const displayArtworkUrl = useMemo(() => {
+    if (job.artworkUrl) return job.artworkUrl;
+    if (isSteamInstall) {
+      const snapshot = getBootSnapshot();
+      if (snapshot) {
+        const game = snapshot.library.games.find(g => g.appId === job.appId || g.appId.endsWith(`-${job.appId}`));
+        const mediaPath = game?.media?.landscapePath || game?.media?.coverPath || game?.media?.backgroundPath;
+        if (mediaPath) {
+          const url = localPathToUrl(mediaPath);
+          if (url) return url;
+        }
+      }
+    }
+    return "";
+  }, [job.artworkUrl, job.appId, isSteamInstall]);
+
   return (
     <article className="lf-surface rounded-2xl border p-5 transition hover:border-(--color-accent)/20">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="flex min-w-0 items-start gap-4">
           {/* Icon/artwork */}
-          {isSteamInstall && job.artworkUrl ? (
+          {isSteamInstall && displayArtworkUrl ? (
             <img
-              src={job.artworkUrl}
+              src={displayArtworkUrl}
               alt=""
               className="h-14 w-14 flex-shrink-0 rounded-xl object-cover"
               loading="lazy"
@@ -118,7 +151,7 @@ export default function DownloadJobCard({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate font-semibold text-(--color-text)">
-                {job.gameTitle}
+                {displayTitle}
               </h3>
               <span
                 className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${providerBadge.className}`}
