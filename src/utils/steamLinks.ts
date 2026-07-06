@@ -21,3 +21,11 @@ export function getSteamSupportUrl(appId: number) {
 export function getSteamDbUrl(appId: number) {
   return `https://steamdb.info/app/${appId}`;
 }
+
+export function getSteamUninstallUrl(appId: number) {
+  return `steam://uninstall/${appId}`;
+}
+
+export function getSteamStoreProtocolUrl(appId: number) {
+  return `steam://store/${appId}`;
+}

@@ -819,6 +819,14 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         }
         if (missingAppIds.length === 0) return;
 
+        // Clear any pending uninstall state for truly removed games
+        try {
+          const { clearPendingUninstall } = await import("../services/gameCacheService");
+          for (const appId of missingAppIds) {
+            clearPendingUninstall(appId);
+          }
+        } catch { /* ignore */ }
+
         // Build full updated games array from the captured snapshot
         const updatedGames = currentGames.map((g) => {
           if (!g.appId || !seenMissing.has(g.appId)) return g;

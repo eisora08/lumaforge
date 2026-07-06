@@ -588,6 +588,18 @@ pub fn install_steam_app(app_id: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn uninstall_steam_app(app_id: u32) -> Result<(), String> {
+    let url = format!("steam://uninstall/{}", app_id);
+    open::that_detached(&url).map_err(|e| format!("Could not open Steam uninstall page: {}", e))
+}
+
+#[tauri::command]
+pub fn open_steam_store_app(app_id: u32) -> Result<(), String> {
+    let url = format!("steam://store/{}", app_id);
+    open::that_detached(&url).map_err(|e| format!("Could not open Steam store page: {}", e))
+}
+
+#[tauri::command]
 pub fn check_steam_game_installed(
     app_id: u32,
     steam_root: Option<String>,

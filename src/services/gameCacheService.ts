@@ -1544,6 +1544,34 @@ export function createMediaIndexUpdate(
   };
 }
 
+// ── Pending uninstall state (in-memory only, auto-clears after 5min) ──
+const _pendingUninstallAppIds = new Map<string, ReturnType<typeof setTimeout>>();
+const UNINSTALL_PENDING_TTL_MS = 5 * 60 * 1000;
+
+export function markPendingUninstall(appId: string): void {
+  const existing = _pendingUninstallAppIds.get(appId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    _pendingUninstallAppIds.delete(appId);
+    console.log(`[UNINSTALL][PENDING_CLEAR] appid=${appId} reason=timeout`);
+  }, UNINSTALL_PENDING_TTL_MS);
+  _pendingUninstallAppIds.set(appId, timer);
+  console.log(`[UNINSTALL][PENDING_MARK] appid=${appId}`);
+}
+
+export function clearPendingUninstall(appId: string): void {
+  const existing = _pendingUninstallAppIds.get(appId);
+  if (existing) {
+    clearTimeout(existing);
+    _pendingUninstallAppIds.delete(appId);
+    console.log(`[UNINSTALL][PENDING_CLEAR] appid=${appId} reason=completed`);
+  }
+}
+
+export function isPendingUninstall(appId: string): boolean {
+  return _pendingUninstallAppIds.has(appId);
+}
+
 export async function detectAndQueueMissingMedia(appId: string, source: MediaRepairSource = "visible-details"): Promise<string[]> {
   // No-source-url cooldown — skip repair if recently found no source URLs.
   // Must be at the very top to prevent repeated disk scans and AUTO_REPAIR_SCAN logs.

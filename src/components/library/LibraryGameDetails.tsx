@@ -33,7 +33,7 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
-import { resolveCanonicalDisplayTitle } from "../../services/gameCacheService";
+import { resolveCanonicalDisplayTitle, isPendingUninstall } from "../../services/gameCacheService";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -362,7 +362,10 @@ export default function LibraryGameDetails({
   const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
   const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
   const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
-  const effectiveAction = hasActiveInstall
+  const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
+  const effectiveAction = hasPendingUninstall
+    ? "uninstalling"
+    : hasActiveInstall
     ? "installing"
     : installState.status === "timeout"
       ? "timeout"
@@ -1233,6 +1236,11 @@ export default function LibraryGameDetails({
                     <X className="h-4 w-4" />
                     Dismiss
                   </button>
+                </div>
+              ) : hasPendingUninstall ? (
+                <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
+                  <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                  <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
                 </div>
               ) : (
                 <>

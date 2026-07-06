@@ -10,7 +10,6 @@ import {
   Play,
   Search,
   Settings,
-  Trash2,
   X,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
@@ -36,11 +35,12 @@ import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../se
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
-import { showSuccess, showError } from "../toast/GameToast";
-import { useConfirm } from "../../services/confirmService";
+import { showSuccess, showError, showInfo } from "../toast/GameToast";
 import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
+import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
+import { isPendingUninstall, markPendingUninstall } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
@@ -140,7 +140,6 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
-  const { confirm } = useConfirm();
   const { jobs } = useDownloadQueueContext();
 
   // Build set of appIds with active Steam install jobs — these are not yet installed
@@ -547,6 +546,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const isRunning = mState === "running";
           const mAction = getLauncherGamePrimaryAction(menuGame);
           const mHasLua = menuGame.luaScripts.length > 0;
+          const mPendingUninstall = menuGame.appId ? isPendingUninstall(menuGame.appId) : false;
           const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
 
           return (
@@ -556,6 +556,12 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   label="Stop"
                   icon={<X className="h-3.5 w-3.5" />}
                   onClick={() => { handleMenuClose(); stopSession(mgk); }}
+                />
+              ) : mPendingUninstall ? (
+                <MenuItem
+                  label="Uninstalling…"
+                  icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  disabled
                 />
               ) : mAction === "play" ? (
                 <MenuItem
@@ -663,21 +669,30 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 icon={<Settings className="h-3.5 w-3.5" />}
                 children={[
                   {
-                    label: "Uninstall",
-                    icon: <Trash2 className="h-3.5 w-3.5" />,
+                    label: "Uninstall in Steam",
+                    icon: <ExternalLink className="h-3.5 w-3.5" />,
                     disabled: !menuGame.steamInstalled,
                     subtitle: !menuGame.steamInstalled ? "Not installed" : undefined,
-                    onClick: menuGame.steamInstalled ? (() => {
+                    onClick: menuGame.steamInstalled ? async () => {
                       handleMenuClose();
-                      confirm({
-                        title: "Uninstall game?",
-                        description: `This will remove the installed package for ${getSidebarTitle(menuGame, menuGame.appId ? (appInfoMap[menuGame.appId] ?? null) : null)}. Local files may be deleted depending on the install type.`,
-                        confirmLabel: "Uninstall",
-                        variant: "danger",
-                      }).then((r) => {
-                        if (r.confirmed) showSuccess("Game uninstalled (simulated).");
-                      });
-                    }) : undefined,
+                      const appId = Number(menuGame.appId);
+                      markPendingUninstall(String(appId));
+                      showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                      try {
+                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
+                        await uninstallSteamApp(appId);
+                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
+                      } catch (e1) {
+                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                        try {
+                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
+                          await openSteamStoreApp(appId);
+                        } catch (e2) {
+                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
+                          await openExternalUrl(getSteamStoreUrl(appId));
+                        }
+                      }
+                    } : undefined,
                   },
                   ...(mHasLua
                     ? [{

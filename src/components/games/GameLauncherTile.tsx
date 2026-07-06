@@ -11,7 +11,6 @@ import {
   MoreHorizontal,
   Play,
   Settings,
-  Trash2,
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -36,12 +35,14 @@ import {
   resolveGameMediaUrl,
   resolveCanonicalDisplayTitle,
   resolveCanonicalName,
+  isPendingUninstall,
+  markPendingUninstall,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { showSuccess, showError } from "../toast/GameToast";
-import { useConfirm } from "../../services/confirmService";
+import { showSuccess, showError, showInfo } from "../toast/GameToast";
 import { openExternalUrl } from "../../services/externalLinks";
+import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
@@ -104,8 +105,6 @@ export default function GameLauncherTile({
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
   const hasRequestedData = useRef(false);
   const hasMountedData = useRef(false);
-  const { confirm } = useConfirm();
-
   // Request game data via priority system when card enters viewport
   useEffect(() => {
     if (!game.appId || !isVisible || hasRequestedData.current) return;
@@ -229,6 +228,7 @@ export default function GameLauncherTile({
   const installJob = game.appId ? getJobByAppId(game.appId) : undefined;
   const activeInstallStatuses: string[] = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
   const hasActiveInstall = installJob?.type === "steam-install" && activeInstallStatuses.includes(installJob.status);
+  const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
 
   function handleCardClick() {
     setMenuOpen(false);
@@ -239,17 +239,6 @@ export default function GameLauncherTile({
     e.stopPropagation();
     setMenuOpen(false);
     cb();
-  }
-
-  async function handleUninstall() {
-    const result = await confirm({
-      title: "Uninstall game?",
-      description: `This will remove the installed package for ${displayTitle}. Local files may be deleted depending on the install type.`,
-      confirmLabel: "Uninstall",
-      variant: "danger",
-    });
-    if (!result.confirmed) return;
-    showSuccess("Game uninstalled (simulated).");
   }
 
   function handleMenuToggle(e: React.MouseEvent) {
@@ -368,6 +357,11 @@ export default function GameLauncherTile({
                   <X className="h-3 w-3" />
                   Dismiss
                 </button>
+              </div>
+            ) : hasPendingUninstall ? (
+              <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/70">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Uninstalling…
               </div>
             ) : (
               <>
@@ -590,11 +584,30 @@ export default function GameLauncherTile({
               icon={<Settings className="h-3.5 w-3.5" />}
               children={[
                 {
-                  label: "Uninstall",
-                  icon: <Trash2 className="h-3.5 w-3.5" />,
+                  label: "Uninstall in Steam",
+                  icon: <ExternalLink className="h-3.5 w-3.5" />,
                   disabled: !game.steamInstalled,
                   subtitle: !game.steamInstalled ? "Not installed" : undefined,
-                  onClick: game.steamInstalled ? () => { setMenuOpen(false); handleUninstall(); } : undefined,
+                  onClick: game.steamInstalled ? async () => {
+                    setMenuOpen(false);
+                    const appId = Number(game.appId);
+                    markPendingUninstall(String(appId));
+                    showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                    try {
+                      console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
+                      await uninstallSteamApp(appId);
+                      console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
+                    } catch (e1) {
+                      console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                      try {
+                        console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
+                        await openSteamStoreApp(appId);
+                      } catch (e2) {
+                        console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
+                        await openExternalUrl(getSteamStoreUrl(appId));
+                      }
+                    }
+                  } : undefined,
                 },
                 ...(hasLua
                   ? [{

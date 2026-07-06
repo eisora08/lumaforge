@@ -215,6 +215,14 @@ export async function installSteamApp(appId: number): Promise<void> {
   return await invoke("install_steam_app", { appId });
 }
 
+export async function uninstallSteamApp(appId: number): Promise<void> {
+  return await invoke("uninstall_steam_app", { appId });
+}
+
+export async function openSteamStoreApp(appId: number): Promise<void> {
+  return await invoke("open_steam_store_app", { appId });
+}
+
 export type DownloadProgress = {
   bytesDownloaded: number;
   bytesToDownload: number;

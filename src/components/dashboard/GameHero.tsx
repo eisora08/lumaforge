@@ -6,12 +6,13 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { resolveGameMediaUrl, resolveDashboardTitles } from "../../services/gameCacheService";
+import { resolveGameMediaUrl, resolveDashboardTitles, isPendingUninstall } from "../../services/gameCacheService";
 
 const DEBUG_NAME_HERO = false;
 const DEBUG_MEDIA_HERO = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showWarning } from "../toast/GameToast";
+import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import AsyncImage from "../common/AsyncImage";
 import StopGameModal from "../library/StopGameModal";
 import type { AppPage } from "../../types/navigation";
@@ -205,6 +206,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const hasActiveSession = isRunning || isStopping || isLaunching;
 
   const heroAppId = heroGame?.appId;
+  const { getJobByAppId } = useDownloadQueueContext();
+  const heroInstallJob = heroAppId ? getJobByAppId(heroAppId) : undefined;
+  const activeInstallStatuses = ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"];
+  const hasActiveInstall = heroInstallJob?.type === "steam-install" && activeInstallStatuses.includes(heroInstallJob.status);
+  const heroPendingUninstall = heroAppId ? isPendingUninstall(heroAppId) : false;
 
   // Diagnostic logs — once per selection change
   const prevHeroRef = useRef<string | null>(null);
@@ -500,6 +506,22 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   Stop
                 </button>
               </>
+            ) : heroPendingUninstall ? (
+              <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
+                <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                <span className="text-sm font-medium text-amber-400">Uninstalling…</span>
+              </div>
+            ) : hasActiveInstall ? (
+              <div className="inline-flex items-center gap-2 rounded-xl bg-amber-500/10 px-5 py-3">
+                <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                <span className="text-sm font-medium text-amber-400">
+                  {heroInstallJob.status === "waiting" || heroInstallJob.status === "queued"
+                    ? "Waiting for Steam\u2026"
+                    : heroInstallJob.status === "downloading"
+                      ? "Downloading"
+                      : "Installing\u2026"}
+                </span>
+              </div>
             ) : heroGame.playable ? (
               <>
                 <button

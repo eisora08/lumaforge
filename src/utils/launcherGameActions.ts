@@ -1,6 +1,6 @@
 import type { LibraryGame } from "../types/libraryGame";
 
-export type PrimaryAction = "play" | "install" | "missing-path" | "details" | "open-steam" | "open-lua-folder";
+export type PrimaryAction = "play" | "install" | "uninstalling" | "missing-path" | "details" | "open-steam" | "open-lua-folder";
 
 export function getLauncherGamePrimaryAction(game: LibraryGame): PrimaryAction {
   const hasLuaScripts = game.luaScripts && game.luaScripts.length > 0;
