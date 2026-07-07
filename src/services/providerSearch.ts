@@ -1,15 +1,24 @@
 import { mockPackages } from "../data/mockPackages";
 import { defaultApiProviders } from "../data/providers";
 import { checkProviderAvailability } from "./tauri";
+import {
+  shouldSkipProvider,
+  getHealthyProviders,
+  recordProviderSuccess,
+  recordProviderFailure,
+} from "./providerHealthService";
 
 import type { AppSettings } from "../types/settings";
 import type { ApiProviderDefinition, ApiProviderId } from "../types/provider";
 import type {
+  ProviderProgressCallback,
   ProviderSearchParams,
   ProviderSearchProviderReport,
   ProviderSearchResult,
 } from "../types/providerSearch";
 import type { PackageGame, PackageSource } from "../types/package";
+
+export type { ProviderProgressCallback };
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 
@@ -88,9 +97,36 @@ async function searchRealProviderAvailability(
 ): Promise<ProviderSearchResult> {
   const providerReports: ProviderSearchProviderReport[] = [];
   const sources: PackageSource[] = [];
+  const timeoutMs = params.timeoutMs ?? 10000;
 
-  for (const provider of targetProviders) {
+  const sortedProviders = getHealthyProviders(targetProviders);
+
+  for (const provider of sortedProviders) {
     const userSettings = settings.providers?.[provider.id];
+
+    if (shouldSkipProvider(provider.id)) {
+      console.log(`[PROVIDER_SKIP] provider=${provider.id} reason=cooldown`);
+      providerReports.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        status: "error",
+        resultCount: 0,
+        message: "Provider en cooldown",
+      });
+      sources.push({
+        providerId: provider.id,
+        providerName: provider.name,
+        fileType: provider.supportedFileTypes[0] ?? "zip",
+        available: false,
+        error: "Temporarily unavailable (cooldown)",
+        providerMessage: "Temporarily unavailable (cooldown)",
+        checkedAt: new Date().toISOString(),
+        requiresApiKey: provider.requiresApiKey,
+        authType: provider.authType,
+        hasAuth: false,
+      });
+      continue;
+    }
 
     if (provider.requiresApiKey && !userSettings?.apiKey) {
       providerReports.push({
@@ -190,8 +226,11 @@ async function searchRealProviderAvailability(
       continue;
     }
 
+    const startedAt = Date.now();
+
     try {
       log(`start { appId: "${appId}", provider: "${provider.id}" }`);
+      console.log(`[STORE][PROVIDER_DISCOVERY_REQUEST] appid=${appId} provider=${provider.id} url=${availabilityUrl} timeoutMs=${timeoutMs}`);
       const availability = await withTimeout(
         checkProviderAvailability({
           url: availabilityUrl,
@@ -199,14 +238,18 @@ async function searchRealProviderAvailability(
           unavailableCode: provider.unavailableCode,
           headers: authHeaders,
         }),
-        10000,
+        timeoutMs,
         `checkProviderAvailability(${provider.id}, ${appId})`
       );
+      const elapsedMs = Date.now() - startedAt;
+      recordProviderSuccess(provider.id, elapsedMs);
+
       if (availability.available) {
         log(`exact appId match { appId: "${appId}", provider: "${provider.id}" }`);
       } else {
         log(`no sources { appId: "${appId}", provider: "${provider.id}" }`);
       }
+      console.log(`[STORE][PROVIDER_DISCOVERY_RESPONSE] appid=${appId} provider=${provider.id} available=${availability.available} statusCode=${availability.status_code} latencyMs=${elapsedMs}`);
 
       providerReports.push({
         providerId: provider.id,
@@ -216,7 +259,7 @@ async function searchRealProviderAvailability(
         message: availability.message,
       });
 
-      sources.push({
+      const newSource: PackageSource = {
         providerId: provider.id,
         providerName: provider.name,
         fileType,
@@ -232,6 +275,15 @@ async function searchRealProviderAvailability(
         requiresApiKey: provider.requiresApiKey,
         authType: provider.authType,
         hasAuth: Boolean(authHeaders),
+      };
+      sources.push(newSource);
+      params.onProgress?.({
+        appId,
+        providerId: provider.id,
+        providerName: provider.name,
+        source: newSource,
+        allSources: [...sources],
+        totalEnabled: targetProviders.length,
       });
     } catch (error) {
       const message =
@@ -240,6 +292,11 @@ async function searchRealProviderAvailability(
           : typeof error === "string"
             ? error
             : "Error consultando provider";
+      const elapsedMs = Date.now() - startedAt;
+      const isTimeout = message.toLowerCase().includes("timeout");
+      recordProviderFailure(provider.id, isTimeout ? "timeout" : "error", elapsedMs);
+
+      console.warn(`[STORE][PROVIDER_DISCOVERY_RESPONSE] appid=${appId} provider=${provider.id} error="${message}" latencyMs=${elapsedMs}`);
 
       providerReports.push({
         providerId: provider.id,
@@ -249,7 +306,7 @@ async function searchRealProviderAvailability(
         message,
       });
 
-      sources.push({
+      const errorSource: PackageSource = {
         providerId: provider.id,
         providerName: provider.name,
         fileType,
@@ -262,6 +319,15 @@ async function searchRealProviderAvailability(
         requiresApiKey: provider.requiresApiKey,
         authType: provider.authType,
         hasAuth: Boolean(authHeaders),
+      };
+      sources.push(errorSource);
+      params.onProgress?.({
+        appId,
+        providerId: provider.id,
+        providerName: provider.name,
+        source: errorSource,
+        allSources: [...sources],
+        totalEnabled: targetProviders.length,
       });
     }
   }

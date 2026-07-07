@@ -1,5 +1,5 @@
 import { ApiProviderId } from "./provider";
-import { PackageGame } from "./package";
+import { PackageGame, PackageSource } from "./package";
 
 export type ProviderFilter = ApiProviderId | "all";
 
@@ -14,7 +14,18 @@ export type ProviderSearchParams = {
   query: string;
   provider: ProviderFilter;
   enabledProviderIds: ApiProviderId[];
+  onProgress?: ProviderProgressCallback;
+  timeoutMs?: number;
 };
+
+export type ProviderProgressCallback = (result: {
+  appId: string;
+  providerId: string;
+  providerName: string;
+  source: PackageSource;
+  allSources: PackageSource[];
+  totalEnabled: number;
+}) => void;
 
 export type ProviderSearchProviderReport = {
   providerId: ApiProviderId;

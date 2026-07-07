@@ -30,6 +30,7 @@ type StoreGameSummaryPanelProps = {
   totalSources: number;
   selectedSource?: PackageSource | null;
   sourceStatus?: SourceCheckStatus;
+  isBackgroundChecking?: boolean;
   onDownload?: () => void;
   onChangeSource?: () => void;
   onOpenSteam: () => void;
@@ -95,13 +96,14 @@ export default function StoreGameSummaryPanel({
   totalSources,
   selectedSource,
   sourceStatus = "idle",
+  isBackgroundChecking = false,
   onDownload,
   onChangeSource,
   onOpenSteam,
   onOpenSteamDb,
   onRefreshSources,
 }: StoreGameSummaryPanelProps) {
-  const isChecking = sourceStatus === "checking";
+  const isChecking = sourceStatus === "checking" && !isBackgroundChecking;
   const isReady = sourceStatus === "ready" || availableSources > 0;
   const isNone = sourceStatus === "none" && availableSources === 0;
   const isError = sourceStatus === "error";
@@ -180,11 +182,12 @@ export default function StoreGameSummaryPanel({
               </span>
             )}
 
-            {totalSources > 0 && !isChecking && (
+            {(totalSources > 0 && !isChecking) || isBackgroundChecking ? (
               <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
                 {availableSources}/{totalSources} Sources
+                {isBackgroundChecking && " · scanning..."}
               </span>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -222,6 +225,11 @@ export default function StoreGameSummaryPanel({
               <span className="text-xs text-emerald-300">
                 Ready
               </span>
+              {isBackgroundChecking && (
+                <span className="text-xs text-yellow-300/70">
+                  Checking more sources...
+                </span>
+              )}
               {selectedSource.providerName === "HubcapDB" && <HubcapProviderBadges surface="store-details" />}
             </div>
           </div>
@@ -257,6 +265,7 @@ export default function StoreGameSummaryPanel({
                   : needsRetry
                     ? "Source check failed"
                     : "No Sources Available"}
+            
           </button>
 
           <button
@@ -266,6 +275,7 @@ export default function StoreGameSummaryPanel({
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isChecking ? "Checking sources..." : isReady ? "Change Source" : "Sources: None"}
+            
           </button>
 
           {needsRetry && onRefreshSources && (
@@ -316,13 +326,15 @@ export default function StoreGameSummaryPanel({
             value={
               isChecking
                 ? "Checking..."
-                : isReady
-                  ? `${availableSources}/${totalSources} available`
-                  : isNone
-                    ? "None"
-                    : needsRetry
-                      ? "Check failed"
-                      : "None"
+                : isBackgroundChecking
+                  ? `${availableSources}/${totalSources} · scanning...`
+                  : isReady
+                    ? `${availableSources}/${totalSources} available`
+                    : isNone
+                      ? "None"
+                      : needsRetry
+                        ? "Check failed"
+                        : "None"
             }
           />
           <SummaryLine label="Developer" value={developer} />

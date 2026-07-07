@@ -55,6 +55,7 @@ type StoreGameDetailsPageProps = {
   moreLikeThisGames?: StoreMoreLikeThisGame[];
   selectedSource?: PackageSource | null;
   sourceStatus?: SourceCheckStatus;
+  isBackgroundChecking?: boolean;
   onBack: () => void;
   onDownloadSource?: (source: PackageSource) => void;
   onOpenGame?: (game: PackageGame) => void;
@@ -156,6 +157,7 @@ export default function StoreGameDetailsPage({
   moreLikeThisGames,
   selectedSource,
   sourceStatus,
+  isBackgroundChecking = false,
   onBack,
   onDownloadSource,
   onOpenGame,
@@ -216,6 +218,17 @@ export default function StoreGameDetailsPage({
           resolvedGame.sources,
           totalProviders
         );
+        const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
+        if (!savedProvider || savedProvider === "none") {
+          console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
+          setInternalSourceStatus("timeout");
+          const existing = getSourceAvailability(appId);
+          if (existing && existing.availableSources.length > 0) {
+            sourceLog("preserve", { appId, previousSources: existing.availableSources.length });
+            updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+          }
+          return;
+        }
         sourceLog("saved (internal)", { appId, sourceCount: entry.sourceCount });
         setInternalSourceStatus(entry.status);
         updateSourceAvailability(appId, entry).catch(() => {});
@@ -225,12 +238,21 @@ export default function StoreGameDetailsPage({
         const message = error instanceof Error ? error.message : String(error);
         const isTimeout = message.toLowerCase().includes("timeout");
         sourceLog(isTimeout ? "timeout" : "error", { appId, message });
-        const status: SourceCheckStatus = isTimeout ? "timeout" : "error";
-        setInternalSourceStatus(status);
+        if (isTimeout) {
+          const existing = getSourceAvailability(appId);
+          if (existing && existing.availableSources.length > 0) {
+            sourceLog("timeout-preserve", { appId, previousSources: existing.availableSources.length });
+            updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            return;
+          }
+          sourceLog("timeout-nocache", { appId });
+          return;
+        }
+        setInternalSourceStatus("error");
         updateSourceAvailability(appId, {
           appId,
           title: game.title,
-          status,
+          status: "error",
           luaReady: false,
           availableSources: [],
           sourceCount: 0,
@@ -301,6 +323,20 @@ export default function StoreGameDetailsPage({
           totalProviders
         );
         sourceLog("resolved (internal)", { appId, sourceCount: entry.sourceCount, status: entry.status });
+        const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
+        if (!savedProvider || savedProvider === "none") {
+          console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
+          if (!cancelled) {
+            setInternalSources([]);
+            setInternalSourceStatus("timeout");
+          }
+          const existing = getSourceAvailability(appId);
+          if (existing && existing.availableSources.length > 0) {
+            sourceLog("preserve", { appId, previousSources: existing.availableSources.length });
+            await updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) });
+          }
+          return;
+        }
         if (!cancelled) {
           setInternalSources(resolvedGame.sources);
           setInternalSourceStatus(entry.status);
@@ -311,15 +347,28 @@ export default function StoreGameDetailsPage({
         const message = error instanceof Error ? error.message : String(error);
         const isTimeout = message.toLowerCase().includes("timeout");
         sourceLog(isTimeout ? "timeout" : "error", { appId, message });
-        const status: SourceCheckStatus = isTimeout ? "timeout" : "error";
+        if (isTimeout) {
+          if (!cancelled) {
+            setInternalSources([]);
+            setInternalSourceStatus("timeout");
+          }
+          const existing = getSourceAvailability(appId);
+          if (existing && existing.availableSources.length > 0) {
+            sourceLog("timeout-preserve", { appId, previousSources: existing.availableSources.length });
+            await updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) });
+            return;
+          }
+          sourceLog("timeout-nocache", { appId });
+          return;
+        }
         if (!cancelled) {
           setInternalSources([]);
-          setInternalSourceStatus(status);
+          setInternalSourceStatus("error");
         }
         await updateSourceAvailability(appId, {
           appId,
           title: game.title,
-          status,
+          status: "error",
           luaReady: false,
           availableSources: [],
           sourceCount: 0,
@@ -342,7 +391,7 @@ export default function StoreGameDetailsPage({
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
 
-  const isChecking = effectiveSourceStatus === "checking" || effectiveSourceStatus === "idle";
+  const isChecking = (effectiveSourceStatus === "checking" || effectiveSourceStatus === "idle") && !isBackgroundChecking;
 
   // Resolve preview image independent of checking state
   const previewResult = resolveStoreDetailsPreviewImage({
@@ -381,7 +430,7 @@ export default function StoreGameDetailsPage({
     if (diagLogRef.current !== key) {
       diagLogRef.current = key;
       console.log(
-        `[STORE][SOURCE_STATE] appid=${game.appId} checking=${isChecking} savedSelected=${hasSavedSource} selectedProvider=${effectiveSelectedSource?.providerName || "null"} providerResults=${game.sources.length} hasPreview=${!!imageUrl}`,
+        `[STORE][SOURCE_STATE] appid=${game.appId} checking=${isChecking} backgroundChecking=${isBackgroundChecking} savedSelected=${hasSavedSource} selectedProvider=${effectiveSelectedSource?.providerName || "null"} providerResults=${game.sources.length} hasPreview=${!!imageUrl}`,
       );
       if (ENABLE_VERBOSE_SOURCE_LOGS) {
         logDetailsMedia(game.appId, previewResult, isChecking);
@@ -610,6 +659,7 @@ export default function StoreGameDetailsPage({
               totalSources={effectiveSources.length}
               selectedSource={effectiveSelectedSource ?? bestSource}
               sourceStatus={effectiveSourceStatus}
+              isBackgroundChecking={isBackgroundChecking}
               onDownload={handleDownload}
               onChangeSource={() => setSourceSelectorOpen(true)}
               onOpenSteam={handleOpenSteam}

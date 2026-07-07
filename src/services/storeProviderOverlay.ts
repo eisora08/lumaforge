@@ -1,17 +1,19 @@
 import type { PackageGame } from "../types/package";
 import type { AppSettings } from "../types/settings";
+import type { ProviderProgressCallback } from "../types/providerSearch";
 
 import {
   getEnabledProviderIds,
   searchPackagesByProviders,
 } from "./providerSearch";
+import { getForegroundTimeoutMs } from "./providerHealthService";
 
 const CACHE_KEY = "lumaforge-store-provider-overlay-cache-v2";
 const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 
 const MAX_OVERLAY_CHECKS = 24;
 const OVERLAY_CONCURRENCY = 3;
-const OVERLAY_TIMEOUT_MS = 12000;
+const OVERLAY_WARN_AFTER_MS = 12000;
 
 type OverlayWorkerResult = {
   appId: string;
@@ -60,28 +62,6 @@ function isCacheValid(item?: OverlayCacheItem) {
   }
 
   return Date.now() - item.savedAt < CACHE_TTL_MS;
-}
-
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timeoutId = window.setTimeout(() => {
-      reject(new Error(timeoutMessage));
-    }, timeoutMs);
-
-    promise
-      .then((value) => {
-        window.clearTimeout(timeoutId);
-        resolve(value);
-      })
-      .catch((error) => {
-        window.clearTimeout(timeoutId);
-        reject(error);
-      });
-  });
 }
 
 async function runWithConcurrency<T, R>(
@@ -140,12 +120,14 @@ function createNoSourceGame(game: PackageGame): PackageGame {
 
 export async function resolveProviderOverlaysForStoreGames(
   games: PackageGame[],
-  settings: AppSettings
+  settings: AppSettings,
+  onProgress?: ProviderProgressCallback
 ): Promise<Record<string, PackageGame>> {
   const enabledProviderIds = getEnabledProviderIds(settings);
   const output: Record<string, PackageGame> = {};
 
   if (enabledProviderIds.length === 0 || games.length === 0) {
+    console.log(`[STORE][PROVIDER_DISCOVERY_START] games=${games.length} providers=0 reason=no-enabled-providers`);
     return output;
   }
 
@@ -159,6 +141,8 @@ export async function resolveProviderOverlaysForStoreGames(
     .filter((game) => game.sources.length === 0)
     .slice(0, MAX_OVERLAY_CHECKS);
 
+  console.log(`[STORE][PROVIDER_DISCOVERY_START] games=${games.length} unique=${uniqueGames.length} candidates=${candidates.length} providers=[${enabledProviderIds.join(",")}]`);
+
   const gamesToCheck: PackageGame[] = [];
 
   for (const game of candidates) {
@@ -166,6 +150,8 @@ export async function resolveProviderOverlaysForStoreGames(
     const cached = cache[cacheKey];
 
     if (isCacheValid(cached)) {
+      const availableSources = cached.game.sources.filter(s => s.available).length;
+      console.log(`[STORE][PROVIDER_DISCOVERY_CACHE] appid=${game.appId} sources=${cached.game.sources.length} available=${availableSources}`);
       output[game.appId] = cached.game;
       continue;
     }
@@ -185,19 +171,23 @@ export async function resolveProviderOverlaysForStoreGames(
       if (existing) return existing;
 
       const promise = (async (): Promise<OverlayWorkerResult> => {
+        const slowWarningTimer = window.setTimeout(() => {
+          console.warn(`[STORE][PROVIDER_DISCOVERY_SLOW] appid=${game.appId} elapsed=${OVERLAY_WARN_AFTER_MS}ms providers=${enabledProviderIds.length} still-running`);
+        }, OVERLAY_WARN_AFTER_MS);
+
         try {
-          const response = await withTimeout(
-            searchPackagesByProviders(
-              {
-                query: game.appId,
-                provider: "all",
-                enabledProviderIds,
-              },
-              settings
-            ),
-            OVERLAY_TIMEOUT_MS,
-            `Timeout revisando providers para AppID ${game.appId}.`
+          const response = await searchPackagesByProviders(
+            {
+              query: game.appId,
+              provider: "all",
+              enabledProviderIds,
+              onProgress,
+              timeoutMs: getForegroundTimeoutMs(),
+            },
+            settings
           );
+
+          window.clearTimeout(slowWarningTimer);
 
           const providerGame = response.results.find(
             (item) => item.appId === game.appId
@@ -213,13 +203,20 @@ export async function resolveProviderOverlaysForStoreGames(
             };
           }
 
+          const totalSources = providerGame.sources.length;
+          const successes = providerGame.sources.filter(s => s.available).length;
+          const timedOut = providerGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
+          const failures = totalSources - successes - timedOut;
+          console.log(`[STORE][PROVIDER_DISCOVERY_PARTIAL] appid=${game.appId} successes=${successes} failures=${failures} timedOut=${timedOut} total=${totalSources}`);
+
           return {
             appId: game.appId,
             game: mergeSteamGameWithProviderGame(game, providerGame),
             cacheable: true,
           };
         } catch (error) {
-          console.error(error);
+          window.clearTimeout(slowWarningTimer);
+          console.error(`[STORE][PROVIDER_DISCOVERY_ERROR] appid=${game.appId} error=${error instanceof Error ? error.message : String(error)}`);
 
           return {
             appId: game.appId,
@@ -249,6 +246,10 @@ export async function resolveProviderOverlaysForStoreGames(
   });
 
   saveCache(cache);
+
+  const cachedCount = candidates.length - gamesToCheck.length;
+  const outputAppIds = Object.keys(output);
+  console.log(`[STORE][PROVIDER_DISCOVERY_RESULT] cached=${cachedCount} resolved=${resolvedGames.length} outputGames=${outputAppIds.length} appids=[${outputAppIds.join(",")}]`);
 
   return output;
 }

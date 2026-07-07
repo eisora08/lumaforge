@@ -50,6 +50,7 @@ import {
 import { getEnabledProviderIds } from "../services/providerSearch";
 import { consumePendingStoreDetailAppId } from "../services/storeNavigationService";
 import { useLibraryGames } from "../context/LibraryGamesContext";
+import type { ProviderProgressCallback } from "../types/providerSearch";
 import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
 import {
   getCachedStoreDiscover,
@@ -338,6 +339,9 @@ export default function Store() {
   const [browsePage, setBrowsePage] = useState(1);
 
   const [sourcesLoadingByAppId, setSourcesLoadingByAppId] = useState<
+    Record<string, boolean>
+  >({});
+  const [backgroundCheckingByAppId, setBackgroundCheckingByAppId] = useState<
     Record<string, boolean>
   >({});
 
@@ -2160,7 +2164,45 @@ export default function Store() {
         updatedAt: Math.floor(Date.now() / 1000),
       }).catch(() => {});
 
-      resolveProviderOverlaysForStoreGames([game], settings)
+      const foregroundStartedAt = Date.now();
+      const onEarlyResult: ProviderProgressCallback = (result) => {
+        if (requestId !== sourceResolveReqRef.current) return;
+
+        console.log(`[STORE][PROVIDER_DISCOVERY_EARLY_RESULT] appid=${result.appId} provider=${result.providerName} available=${result.source.available}`);
+
+        setProviderOverlayByAppId((current) => ({
+          ...current,
+          [appId]: {
+            ...game,
+            sources: result.allSources,
+          },
+        }));
+
+        const entry = buildSourceAvailabilityFromProviders(appId, title, result.allSources, result.totalEnabled);
+        updateSourceAvailability(appId, entry).catch(() => {});
+
+        if (result.source.available) {
+          const currentEntry = getSourceAvailability(appId);
+          const alreadySelected = currentEntry?.selectedSourceId;
+          if (!alreadySelected) {
+            // First available provider — unblock UI immediately
+            setSourcesLoadingByAppId((prev) => ({
+              ...prev,
+              [appId]: false,
+            }));
+            setBackgroundCheckingByAppId((prev) => ({
+              ...prev,
+              [appId]: true,
+            }));
+            console.log(`[STORE][SOURCE_READY_EARLY] appid=${appId} provider=${result.providerName} checking=false backgroundChecking=true`);
+            console.log(`[STORE][PROVIDER_DISCOVERY_FAST_DONE] appid=${appId} selectedProvider=${result.providerName} elapsedMs=${Date.now() - foregroundStartedAt}`);
+          } else {
+            console.log(`[STORE][SOURCE_BACKGROUND_MERGE] appid=${appId} provider=${result.providerName} count=${result.allSources.length}`);
+          }
+        }
+      };
+
+      resolveProviderOverlaysForStoreGames([game], settings, onEarlyResult)
         .then((overlays) => {
           if (requestId !== sourceResolveReqRef.current) return;
 
@@ -2176,6 +2218,11 @@ export default function Store() {
           const totalProviders = resolvedGame.sources.length;
           const hasPreview = !!(resolvedGame.imageUrl && isHttpUrl(resolvedGame.imageUrl));
 
+          const successes = resolvedGame.sources.filter(s => s.available).length;
+          const timedOut = resolvedGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
+          const skipped = resolvedGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("cooldown")).length;
+          console.log(`[STORE][PROVIDER_DISCOVERY_BACKGROUND_DONE] appid=${appId} total=${totalProviders} successes=${successes} skipped=${skipped} timedOut=${timedOut}`);
+
           const entry = buildSourceAvailabilityFromProviders(
             appId,
             title,
@@ -2183,6 +2230,16 @@ export default function Store() {
             totalProviders
           );
           const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
+          if (!savedProvider || savedProvider === "none") {
+            console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
+            console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
+            const existing = getSourceAvailability(appId);
+            if (existing && existing.availableSources.length > 0) {
+              log("store-search", `preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
+              updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            }
+            return;
+          }
           console.log(`[STORE][SOURCE_SAVE] appid=${appId} provider=${savedProvider} hasPreview=${hasPreview}`);
           log("store-search", `saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
 
@@ -2196,10 +2253,20 @@ export default function Store() {
 
           log("store-search", `${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
 
+          if (isTimeout) {
+            const existing = getSourceAvailability(appId);
+            if (existing && existing.availableSources.length > 0) {
+              log("store-search", `timeout-preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
+              updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+              return;
+            }
+            log("store-search", `timeout-nocache { appId: "${appId}" }`);
+            return;
+          }
           updateSourceAvailability(appId, {
             appId,
             title,
-            status: isTimeout ? "timeout" : "error",
+            status: "error",
             luaReady: false,
             availableSources: [],
             sourceCount: 0,
@@ -2211,6 +2278,10 @@ export default function Store() {
           if (requestId !== sourceResolveReqRef.current) return;
           setSourcesLoadingByAppId((current) => ({
             ...current,
+            [appId]: false,
+          }));
+          setBackgroundCheckingByAppId((prev) => ({
+            ...prev,
             [appId]: false,
           }));
         });
@@ -2505,6 +2576,8 @@ export default function Store() {
   const selectedAppId = selectedDetailGameWithOverlay?.appId;
   const isLoadingSources =
     selectedAppId ? sourcesLoadingByAppId[selectedAppId] ?? false : false;
+  const isBackgroundChecking =
+    selectedAppId ? backgroundCheckingByAppId[selectedAppId] ?? false : false;
   const cachedEntry: SourceAvailabilityGameEntry | undefined =
     selectedAppId ? getSourceAvailability(selectedAppId) : undefined;
 
@@ -2519,7 +2592,7 @@ export default function Store() {
           : "none";
 
   if (selectedAppId) {
-    log("store-search", `final status { appId: "${selectedAppId}", status: "${sourceStatus}", sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
+    log("store-search", `final status { appId: "${selectedAppId}", status: "${sourceStatus}", backgroundChecking: ${isBackgroundChecking}, sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
   }
 
 
@@ -2582,6 +2655,7 @@ export default function Store() {
           luaInstalled={luaInstalledByAppId.has(selectedDetailGameWithOverlay.appId)}
           selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
           sourceStatus={sourceStatus}
+          isBackgroundChecking={isBackgroundChecking}
           moreLikeThisGames={selectedDetailRelatedGames}
           onBack={handleBackFromDetails}
           onDownloadSource={handleDownloadSource}
@@ -2619,7 +2693,44 @@ export default function Store() {
               updatedAt: Math.floor(Date.now() / 1000),
             }).catch(() => {});
 
-            resolveProviderOverlaysForStoreGames([game], settings)
+            const retryForegroundStartedAt = Date.now();
+            const onRetryEarlyResult: ProviderProgressCallback = (result) => {
+              if (requestId !== sourceResolveReqRef.current) return;
+
+              console.log(`[STORE][PROVIDER_DISCOVERY_EARLY_RESULT] appid=${result.appId} provider=${result.providerName} available=${result.source.available}`);
+
+              setProviderOverlayByAppId((current) => ({
+                ...current,
+                [appId]: {
+                  ...game,
+                  sources: result.allSources,
+                },
+              }));
+
+              const retryEntry = buildSourceAvailabilityFromProviders(appId, game.title, result.allSources, result.totalEnabled);
+              updateSourceAvailability(appId, retryEntry).catch(() => {});
+
+              if (result.source.available) {
+                const currentEntry = getSourceAvailability(appId);
+                const alreadySelected = currentEntry?.selectedSourceId;
+                if (!alreadySelected) {
+                  setSourcesLoadingByAppId((prev) => ({
+                    ...prev,
+                    [appId]: false,
+                  }));
+                  setBackgroundCheckingByAppId((prev) => ({
+                    ...prev,
+                    [appId]: true,
+                  }));
+                  console.log(`[STORE][SOURCE_READY_EARLY] appid=${appId} provider=${result.providerName} checking=false backgroundChecking=true`);
+            console.log(`[STORE][PROVIDER_DISCOVERY_FAST_DONE] appid=${appId} selectedProvider=${result.providerName} elapsedMs=${Date.now() - retryForegroundStartedAt}`);
+                } else {
+                  console.log(`[STORE][SOURCE_BACKGROUND_MERGE] appid=${appId} provider=${result.providerName} count=${result.allSources.length}`);
+                }
+              }
+            };
+
+            resolveProviderOverlaysForStoreGames([game], settings, onRetryEarlyResult)
               .then((overlays) => {
                 if (requestId !== sourceResolveReqRef.current) return;
                 const overlayGame = overlays[appId];
@@ -2631,6 +2742,10 @@ export default function Store() {
                 }
                 const resolvedGame = overlayGame ?? game;
                 const totalProviders = resolvedGame.sources.length;
+                const successes = resolvedGame.sources.filter(s => s.available).length;
+                const timedOut = resolvedGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
+                console.log(`[STORE][PROVIDER_DISCOVERY_BACKGROUND_DONE] appid=${appId} total=${totalProviders} successes=${successes} timedOut=${timedOut}`);
+
                 const entry = buildSourceAvailabilityFromProviders(
                   appId,
                   game.title,
@@ -2638,6 +2753,17 @@ export default function Store() {
                   totalProviders
                 );
         log("store-search", `saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
+                const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
+                if (!savedProvider || savedProvider === "none") {
+                  console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
+                  console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
+                  const existing = getSourceAvailability(appId);
+                  if (existing && existing.availableSources.length > 0) {
+                    log("store-search", `preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
+                    updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+                  }
+                  return;
+                }
                 updateSourceAvailability(appId, entry).catch(() => {});
               })
               .catch((error: unknown) => {
@@ -2645,10 +2771,20 @@ export default function Store() {
                 const message = error instanceof Error ? error.message : String(error);
                 const isTimeout = message.toLowerCase().includes("timeout");
         log("store-search", `${isTimeout ? "timeout" : "error"} { appId: "${appId}", error: "${message}" }`);
+                if (isTimeout) {
+                  const existing = getSourceAvailability(appId);
+                  if (existing && existing.availableSources.length > 0) {
+                    log("store-search", `timeout-preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
+                    updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+                    return;
+                  }
+                  log("store-search", `timeout-nocache { appId: "${appId}" }`);
+                  return;
+                }
                 updateSourceAvailability(appId, {
                   appId,
                   title: game.title,
-                  status: isTimeout ? "timeout" : "error",
+                  status: "error",
                   luaReady: false,
                   availableSources: [],
                   sourceCount: 0,
@@ -2660,6 +2796,10 @@ export default function Store() {
                 if (requestId !== sourceResolveReqRef.current) return;
                 setSourcesLoadingByAppId((current) => ({
                   ...current,
+                  [appId]: false,
+                }));
+                setBackgroundCheckingByAppId((prev) => ({
+                  ...prev,
                   [appId]: false,
                 }));
               });
