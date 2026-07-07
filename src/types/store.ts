@@ -120,6 +120,38 @@ export type StoreSearchState = {
   isSearching: boolean;
 };
 
+export type StoreMediaType = "trailer" | "screenshot";
+
+export type StoreMediaSource = "steam-screenshots" | "steam-movies" | "html-about" | "html-detailed-description" | "igdb";
+
+export interface StoreScreenshotMedia {
+  type: "screenshot";
+  id: string;
+  thumbnail?: string;
+  image: string;
+  source: StoreMediaSource;
+}
+
+export interface StoreTrailerMedia {
+  type: "trailer";
+  id: string;
+  name?: string;
+  thumbnail?: string;
+  poster?: string;
+  mp4?: string;
+  webm?: string;
+  hls?: string;
+  hls_h264?: string;
+  dash?: string;
+  dash_h264?: string;
+  dash_av1?: string;
+  source: StoreMediaSource;
+  mediaLanguage?: string;
+  mediaRegion?: string;
+}
+
+export type StoreMediaItem = StoreScreenshotMedia | StoreTrailerMedia;
+
 export type StoreHomeModel = {
   hero: {
     totalGames: number;

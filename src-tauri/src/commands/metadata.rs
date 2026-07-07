@@ -5,6 +5,8 @@ use crate::models::steam_app_metadata::SteamAppMetadata;
 #[tauri::command]
 pub fn resolve_steam_app_metadata(
     app_ids: Vec<u32>,
+    language: Option<String>,
+    country: Option<String>,
 ) -> Result<Vec<SteamAppMetadata>, String> {
     if app_ids.is_empty() {
         return Ok(Vec::new());
@@ -21,10 +23,20 @@ pub fn resolve_steam_app_metadata(
     let mut output = Vec::new();
 
     for app_id in app_ids {
-        let url = format!(
+        let mut url = format!(
             "https://store.steampowered.com/api/appdetails?appids={}",
             app_id
         );
+        if let Some(ref lang) = language {
+            url.push_str(&format!("&l={}", lang));
+        }
+        if let Some(ref cc) = country {
+            url.push_str(&format!("&cc={}", cc));
+        }
+
+        if language.is_some() || country.is_some() {
+            println!("[STORE][STEAM_MEDIA_FETCH] appid={} language={:?} country={:?} url={}", app_id, language, country, url);
+        }
 
         let response = match client.get(&url).send() {
             Ok(value) => value,
@@ -72,6 +84,37 @@ pub fn resolve_steam_app_metadata(
                 continue;
             }
         };
+
+        // Diagnostic: log available top-level keys to debug missing movies
+        {
+            let keys: Vec<String> = data.as_object()
+                .map(|obj| obj.keys().cloned().collect())
+                .unwrap_or_default();
+            let has_movies = data.get("movies").is_some();
+            let movies_count = data.get("movies")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let movies_names: String = data.get("movies")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| {
+                            m.get("name").and_then(|n| n.as_str()).map(|s| format!("\"{}\"", s))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            if has_movies {
+                println!("[STORE][STEAM_APPDETAILS_MOVIES] appid={} count={} names={}", app_id, movies_count, movies_names);
+                if language.is_some() || country.is_some() {
+                    println!("[STORE][STEAM_MEDIA_FETCH_RESULT] appid={} language={:?} movies={} names={}", app_id, language, movies_count, movies_names);
+                }
+            } else {
+                println!("[STORE][STEAM_APPDETAILS_KEYS] appid={} has_movies=false keys={:?}", app_id, keys);
+            }
+        }
 
         let name = data
             .get("name")
@@ -195,6 +238,82 @@ pub fn resolve_steam_app_metadata(
             })
             .unwrap_or_default();
 
+        use crate::models::steam_app_metadata::SteamMovie;
+        let movies = data
+            .get("movies")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        let id = m.get("id").and_then(|v| v.as_u64())?;
+                        let name = m
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let thumbnail = m
+                            .get("thumbnail")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        let highlight = m
+                            .get("highlight")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let mp4 = m.get("mp4");
+                        let webm = m.get("webm");
+                        Some(SteamMovie {
+                            id,
+                            name,
+                            thumbnail,
+                            mp4_max: mp4
+                                .and_then(|v| v.get("max"))
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            mp4_480: mp4
+                                .and_then(|v| v.get("480"))
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            webm_max: webm
+                                .and_then(|v| v.get("max"))
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            webm_480: webm
+                                .and_then(|v| v.get("480"))
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            hls: m
+                                .get("hls")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            hls_h264: m
+                                .get("hls_h264")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            dash: m
+                                .get("dash")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            dash_h264: m
+                                .get("dash_h264")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            dash_av1: m
+                                .get("dash_av1")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            highlight,
+                        })
+                    })
+                    .collect::<Vec<SteamMovie>>()
+            })
+            .unwrap_or_default();
+
+        let parsed_movies = movies.len();
+        if parsed_movies > 0 {
+            let names: Vec<String> = movies.iter().map(|m| format!("\"{}\"", m.name.clone())).collect();
+            println!("[STORE][MOVIES_PARSED] appid={} count={} names={}", app_id, parsed_movies, names.join(", "));
+        }
+
         output.push(SteamAppMetadata {
             app_id,
             name,
@@ -224,6 +343,7 @@ pub fn resolve_steam_app_metadata(
             mac_requirements,
             linux_requirements,
             screenshots,
+            movies,
             resolved: true,
         });
     }
@@ -304,6 +424,7 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         mac_requirements: None,
         linux_requirements: None,
         screenshots: Vec::new(),
+        movies: Vec::new(),
         resolved: false,
     }
 }

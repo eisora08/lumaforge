@@ -103,10 +103,14 @@ export async function resolveSteamAppNames(
 
 
 export async function resolveSteamAppMetadata(
-  appIds: number[]
+  appIds: number[],
+  language?: string,
+  country?: string,
 ): Promise<SteamAppMetadata[]> {
   return await invoke<SteamAppMetadata[]>("resolve_steam_app_metadata", {
     appIds,
+    language: language ?? null,
+    country: country ?? null,
   });
 }
 

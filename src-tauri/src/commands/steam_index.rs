@@ -163,7 +163,7 @@ pub fn scan_and_build_full_dataset(
     for (batch_idx, chunk) in app_ids.chunks(BATCH_SIZE).enumerate() {
         debug_log(format!("Batch {}/{} ({} apps)", batch_idx + 1, total_batches, chunk.len()));
 
-        let metadata_results = match resolve_steam_app_metadata(chunk.to_vec()) {
+        let metadata_results = match resolve_steam_app_metadata(chunk.to_vec(), None, None) {
             Ok(results) => results,
             Err(e) => {
                 debug_log(format!("Batch {} failed: {}", batch_idx + 1, e));

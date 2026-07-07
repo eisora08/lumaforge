@@ -1797,7 +1797,14 @@ export default function Store() {
                   m.capsule_image !== c.capsule_image ||
                   m.capsule_image_v5 !== c.capsule_image_v5 ||
                   JSON.stringify(m.genres?.slice().sort()) !== JSON.stringify(c.genres?.slice().sort()) ||
-                  JSON.stringify(m.platforms?.slice().sort()) !== JSON.stringify(c.platforms?.slice().sort())) {
+                  JSON.stringify(m.platforms?.slice().sort()) !== JSON.stringify(c.platforms?.slice().sort()) ||
+                  JSON.stringify(m.movies) !== JSON.stringify(c.movies) ||
+                  JSON.stringify(m.screenshots?.slice().sort()) !== JSON.stringify(c.screenshots?.slice().sort()) ||
+                  m.short_description !== c.short_description ||
+                  m.about_the_game !== c.about_the_game ||
+                  m.detailed_description !== c.detailed_description ||
+                  m.release_date !== c.release_date ||
+                  m.resolved !== c.resolved) {
                 changed = true;
                 break;
               }

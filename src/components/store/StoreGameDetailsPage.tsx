@@ -13,10 +13,11 @@ import {
   getSteamStoreUrl,
 } from "../../utils/steamLinks";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
-import { resolveGameMetadata } from "../../services/gameMetadataResolver";
+import { resolveGameMetadata, resolveGameMetadataForMedia } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
 import { resolveProviderOverlaysForStoreGames } from "../../services/storeProviderOverlay";
 import { resolveStoreDetailsPreviewImage, logDetailsMedia } from "../../services/storeDetailsMediaResolver";
+import { buildStoreMedia } from "../../services/storeMediaService";
 import {
   getStoreDetailsState,
   setStoreDetailsState,
@@ -171,6 +172,33 @@ export default function StoreGameDetailsPage({
   const { settings } = useSettings();
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
+  const [englishMovies, setEnglishMovies] = useState<SteamAppMetadata["movies"] | null>(null);
+  const _mediaEnrichReqRef = useRef(0);
+
+  // Fetch English-language media metadata for trailers
+  useEffect(() => {
+    const appId = Number(game.appId);
+    if (!appId || appId <= 0) return;
+
+    const reqId = ++_mediaEnrichReqRef.current;
+
+    setEnglishMovies(null);
+
+    resolveGameMetadataForMedia([appId]).then((enriched) => {
+      if (reqId !== _mediaEnrichReqRef.current) return;
+      const entry = enriched[appId];
+      const movies = entry?.movies ?? [];
+      if (movies.length > 0) {
+        setEnglishMovies(movies);
+        console.log(`[STORE][MEDIA_ENRICH] appid=${appId} movies=${movies.length}`);
+      } else {
+        console.log(`[STORE][MEDIA_ENRICH_SKIP] appid=${appId} reason=no-english-movies`);
+      }
+    }).catch((err: unknown) => {
+      if (reqId !== _mediaEnrichReqRef.current) return;
+      console.warn(`[STORE][MEDIA_ENRICH_FAIL] appid=${appId} err=${String(err)}`);
+    });
+  }, [game.appId]);
 
   // Provider-status sidecar state
   const [providerCheckState, setProviderCheckState] = useState<ProviderCheckState>("no-data");
@@ -552,23 +580,12 @@ export default function StoreGameDetailsPage({
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.appId, effectiveSelectedSource?.providerName, game.sources.length, imageUrl, previewResult.url, isChecking]);
-  const galleryImages = useMemo(
-    () =>
-      [
-        metadata?.header_image,
-        metadata?.capsule_image,
-        metadata?.capsule_image_v5,
-        ...(metadata?.screenshots ?? []),
-        game.imageUrl,
-      ].filter((img): img is string => !!img),
-    [
-      metadata?.header_image,
-      metadata?.capsule_image,
-      metadata?.capsule_image_v5,
-      metadata?.screenshots,
-      game.imageUrl,
-    ],
-  );
+  const mediaItems = useMemo(() => {
+    const mediaMeta = (englishMovies && metadata)
+      ? { ...metadata, movies: englishMovies }
+      : metadata;
+    return buildStoreMedia(mediaMeta, englishMovies ? "english" : undefined, englishMovies ? "US" : undefined);
+  }, [metadata, englishMovies]);
   const platforms = getPlatforms(game, metadata);
   const languagesLabel = getLanguagesLabel(metadata);
   const dlcLabel = getDlcLabel(metadata);
@@ -835,8 +852,7 @@ export default function StoreGameDetailsPage({
       <section className="overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5">
         <StoreGameMediaGallery
           title={title}
-          imageUrl={imageUrl}
-          galleryImages={galleryImages}
+          mediaItems={mediaItems}
           appId={game.appId}
           developer={developer}
           platforms={platforms}

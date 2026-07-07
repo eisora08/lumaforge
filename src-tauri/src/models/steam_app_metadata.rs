@@ -1,6 +1,23 @@
 use serde::Serialize;
 
 #[derive(Serialize)]
+pub struct SteamMovie {
+    pub id: u64,
+    pub name: String,
+    pub thumbnail: Option<String>,
+    pub mp4_max: Option<String>,
+    pub mp4_480: Option<String>,
+    pub webm_max: Option<String>,
+    pub webm_480: Option<String>,
+    pub hls: Option<String>,
+    pub hls_h264: Option<String>,
+    pub dash: Option<String>,
+    pub dash_h264: Option<String>,
+    pub dash_av1: Option<String>,
+    pub highlight: bool,
+}
+
+#[derive(Serialize)]
 pub struct SteamAppMetadata {
     pub app_id: u32,
     pub name: String,
@@ -36,6 +53,7 @@ pub struct SteamAppMetadata {
     pub linux_requirements: Option<SystemRequirements>,
 
     pub screenshots: Vec<String>,
+    pub movies: Vec<SteamMovie>,
 
     pub resolved: bool,
 }

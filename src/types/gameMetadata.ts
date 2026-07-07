@@ -3,6 +3,22 @@ export type SystemRequirements = {
   recommended?: string | null;
 };
 
+export type SteamMovie = {
+  id: number;
+  name: string;
+  thumbnail?: string | null;
+  mp4_max?: string | null;
+  mp4_480?: string | null;
+  webm_max?: string | null;
+  webm_480?: string | null;
+  hls?: string | null;
+  hls_h264?: string | null;
+  dash?: string | null;
+  dash_h264?: string | null;
+  dash_av1?: string | null;
+  highlight: boolean;
+};
+
 export type SteamAppMetadata = {
   app_id: number;
   name: string;
@@ -38,6 +54,7 @@ export type SteamAppMetadata = {
   linux_requirements?: SystemRequirements | null;
 
   screenshots?: string[];
+  movies?: SteamMovie[];
 
   resolved: boolean;
 };
