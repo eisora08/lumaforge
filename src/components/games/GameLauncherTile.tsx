@@ -10,6 +10,7 @@ import {
   Loader2,
   MoreHorizontal,
   Play,
+  RefreshCw,
   Settings,
   X,
   XCircle,
@@ -44,9 +45,16 @@ import {
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { showSuccess, showError, showInfo } from "../toast/GameToast";
+import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
 import { openExternalUrl } from "../../services/externalLinks";
-import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
+import { uninstallSteamApp, openSteamStoreApp, downloadAndInstallPackage, computeFileHash, markSyncIndexItem } from "../../services/tauri";
+import { getEffectiveProviderAuthHeaders, buildProviderDownloadUrl } from "../../services/providerSearch";
+import { findCachedSourceForApp } from "../../services/sourceAvailabilityCacheService";
+import { defaultApiProviders } from "../../data/providers";
+import type { PackageFileType } from "../../types/provider";
+import { saveProviderStatusAfterInstall, saveProviderStatusAuthError, normalizeProviderId, type ProviderStatusOptions } from "../../services/providerStatusService";
+import { getUpdateEntry } from "../../services/installedLuaScanner";
+import type { SyncIndexItem } from "../../types/syncIndex";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
@@ -235,6 +243,8 @@ export default function GameLauncherTile({
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
+  const [updateRunning, setUpdateRunning] = useState(false);
+
   // Subscribe to Lua update status
   const [luaUpdateStatus, setLuaUpdateStatus] = useState<string | undefined>(undefined);
   useEffect(() => {
@@ -250,6 +260,145 @@ export default function GameLauncherTile({
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [game.appId]);
+
+  async function handleUpdatePackage() {
+    if (!game.appId) return;
+    const entry = getUpdateEntry(game.appId);
+    if (!entry || entry.status !== "update-available") return;
+    const providerId = entry.providerId;
+    if (!providerId) {
+      showError("Provider not found for this package.", { title: "Update" });
+      return;
+    }
+
+    setUpdateRunning(true);
+    try {
+      if (!settings.luaPath || !settings.depotcachePath) {
+        showWarning("Configure Lua and Depot paths in Settings.", { title: "Paths required" });
+        return;
+      }
+
+      // Resolve source via cascading fallback:
+      //   1. game.sources (match by normalized providerId)
+      //   2. sourceAvailabilityCache (findCachedSourceForApp)
+      //   3. Provider definition + downloadUrlTemplate
+      const normalizedProviderId = normalizeProviderId(providerId);
+      let source = game.sources.find((s) =>
+        normalizeProviderId(s.providerId) === normalizedProviderId && s.downloadUrl
+      );
+      if (!source || !source.downloadUrl) {
+        source = await findCachedSourceForApp(game.appId!, providerId);
+      }
+      if (!source || !source.downloadUrl) {
+        // Reconstruct from provider definition
+        const providerDef = defaultApiProviders.find(
+          (p) => normalizeProviderId(p.id) === normalizedProviderId
+        );
+        if (providerDef) {
+          const downloadUrl = buildProviderDownloadUrl(providerDef, game.appId!, settings, "zip");
+          if (downloadUrl) {
+            const authHeaders = getEffectiveProviderAuthHeaders(providerId, settings);
+            source = {
+              providerId: providerDef.id,
+              providerName: providerDef.name,
+              fileType: "zip" as PackageFileType,
+              available: true,
+              downloadUrl,
+              authHeaders,
+            };
+          }
+        }
+      }
+      if (!source || !source.downloadUrl) {
+        console.log(`[PACKAGE][CARD_UPDATE_SOURCE_MISS] appid=${game.appId} provider=${providerId} reason=no-match-in-sources-cache-or-provider-def`);
+        showError("Source required. Open Store Details to choose a source.", { title: "Update" });
+        return;
+      }
+
+      // Rebuild auth headers fresh from settings at request time (never from cache)
+      const effectiveHeaders = source.authHeaders ?? getEffectiveProviderAuthHeaders(providerId, settings);
+
+      console.log(`[PACKAGE][CARD_UPDATE_START] appid=${game.appId} provider=${providerId}`);
+
+      showSuccess(`Updating from ${source.providerName}...`, { title: "Update started" });
+
+      await downloadAndInstallPackage({
+        jobId: `card-update-${game.appId}-${Date.now()}`,
+        downloadUrl: source.downloadUrl,
+        luaTarget: settings.luaPath,
+        depotcacheTarget: settings.depotcachePath,
+        createBackups: true,
+        headers: effectiveHeaders,
+      });
+
+      // Compute local hash for sync index
+      const luaScript = game.luaScripts[0];
+      let localHash: string | undefined;
+      if (luaScript) {
+        try { localHash = await computeFileHash(luaScript.path); } catch { /* optional */ }
+      }
+      const now = new Date().toISOString();
+      const syncItem: SyncIndexItem = {
+        appId: game.appId,
+        sourceKey: `${source.providerId}:${source.fileType}`,
+        providerId: source.providerId,
+        providerName: source.providerName,
+        fileType: source.fileType,
+        installedPath: luaScript?.path || "",
+        lastDownloadUrl: source.downloadUrl,
+        remoteHash: undefined,
+        localHash: localHash || undefined,
+        etag: undefined,
+        lastModified: undefined,
+        installedAt: now,
+        updatedAt: now,
+        lastCheckedAt: now,
+        status: "up-to-date",
+      };
+      await markSyncIndexItem(syncItem);
+
+      // Save provider status as up-to-date (triggers store → subscribers → UI updates)
+      const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
+        ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
+        : undefined;
+      const providerOpts: ProviderStatusOptions = {
+        luaDir: settings.luaPath || undefined,
+        steamRoot: settings.steamRoot || undefined,
+      };
+      await saveProviderStatusAfterInstall(game.appId, providerId, hubcapConfig, providerOpts);
+
+      showSuccess(`Package updated successfully.`, { title: "Update complete" });
+      console.log(`[PACKAGE][CARD_UPDATE_SUCCESS] appid=${game.appId} provider=${providerId}`);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[PACKAGE][CARD_UPDATE_FAILED] appid=${game.appId} provider=${providerId} error=${errMsg}`);
+
+      // Parse HTTP status from error message for auth/rate-limit handling
+      const statusMatch = errMsg.match(/Status:\s*(\d{3})/);
+      if (statusMatch) {
+        const statusCode = parseInt(statusMatch[1], 10);
+        if (statusCode === 401) {
+          await saveProviderStatusAuthError(game.appId, providerId, "auth-required", "unauthorized").catch(() => {});
+          showError("Update failed: Auth required. Check API key in Settings.", { title: "Unauthorized" });
+          console.log(`[PACKAGE][CARD_UPDATE_AUTH_ERROR] appid=${game.appId} status=401 reason=unauthorized`);
+        } else if (statusCode === 403) {
+          await saveProviderStatusAuthError(game.appId, providerId, "auth-required", "forbidden").catch(() => {});
+          showError("Update failed: Forbidden. Check API key permissions.", { title: "Forbidden" });
+          console.log(`[PACKAGE][CARD_UPDATE_AUTH_ERROR] appid=${game.appId} status=403 reason=forbidden`);
+        } else if (statusCode === 429) {
+          await saveProviderStatusAuthError(game.appId, providerId, "rate-limited", "rate-limited").catch(() => {});
+          showError("Update failed: Rate limited. Try again later.", { title: "Rate limited" });
+          console.log(`[PACKAGE][CARD_UPDATE_AUTH_ERROR] appid=${game.appId} status=429 reason=rate-limited`);
+        } else {
+          showError(`Update failed: ${errMsg.slice(0, 200)}`, { title: "Error" });
+        }
+      } else {
+        showError(`Update failed: ${errMsg.slice(0, 200)}`, { title: "Error" });
+      }
+    } finally {
+      setUpdateRunning(false);
+    }
+  }
 
   function handleCardClick() {
     setMenuOpen(false);
@@ -510,6 +659,18 @@ export default function GameLauncherTile({
                 label={installJob?.status === "waiting" || installJob?.status === "queued" ? "Waiting for Steam…" : "Installing…"}
                 icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 disabled
+              />
+            )}
+            {luaUpdateStatus === "update-available" && (
+              <MenuItem
+                label="Update Package"
+                icon={<RefreshCw className={`h-3.5 w-3.5 ${updateRunning ? "animate-spin" : ""}`} />
+                }
+                disabled={updateRunning}
+                onClick={() => {
+                  setMenuOpen(false);
+                  handleUpdatePackage();
+                }}
               />
             )}
             <MenuItem

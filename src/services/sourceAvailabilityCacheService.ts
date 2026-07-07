@@ -96,6 +96,37 @@ function pruneCache(): number {
   return removed;
 }
 
+function _normalizeProviderId(id: string): string {
+  return id.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Find a cached PackageSource by appId + providerId from the source
+ * availability cache. Returns undefined if no cached source matches.
+ */
+export async function findCachedSourceForApp(
+  appId: string,
+  providerId: string
+): Promise<PackageSource | undefined> {
+  await loadSourceAvailabilityIndex();
+  const entry = getSourceAvailability(appId);
+  if (!entry) return undefined;
+  const norm = _normalizeProviderId(providerId);
+  const cached = entry.availableSources.find(
+    (s) => _normalizeProviderId(s.id) === norm
+  );
+  if (!cached) return undefined;
+  return {
+    providerId: cached.id as any,
+    providerName: cached.name,
+    fileType: (cached.type === "lua" || cached.type === "zip" || cached.type === "manifest")
+      ? cached.type
+      : "zip",
+    available: cached.status === "ready",
+    downloadUrl: cached.packageUrl,
+  };
+}
+
 export function getSourceAvailability(
   appId: string
 ): SourceAvailabilityGameEntry | undefined {

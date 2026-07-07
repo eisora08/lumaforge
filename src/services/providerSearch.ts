@@ -582,7 +582,7 @@ function buildProviderAvailabilityUrl(
   return url;
 }
 
-function buildProviderDownloadUrl(
+export function buildProviderDownloadUrl(
   provider: ApiProviderDefinition,
   appId: string,
   settings: AppSettings,
