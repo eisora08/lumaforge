@@ -71,9 +71,9 @@ export default function HubcapProviderBadges({ surface = "settings" }: Props) {
     if (didLogBadges.current) return;
     didLogBadges.current = true;
     console.log(
-      `[HUBCAP][BADGES] surface=${surface} today=${status.todayUsage} limit=${status.dailyLimit} reset=${status.resetLabel}`,
+      `[HUBCAP][BADGES] surface=${surface} today=${status.todayUsage} limit=${status.dailyLimit} plan=${status.plan} expiry=${status.apiKeyExpiresAt} canMake=${status.canMakeRequests}`,
     );
-  }, [surface, status.todayUsage, status.dailyLimit, status.resetLabel]);
+  }, [surface, status.todayUsage, status.dailyLimit, status.plan, status.apiKeyExpiresAt, status.canMakeRequests]);
 
   // --- Computed values ---
 
@@ -115,14 +115,49 @@ export default function HubcapProviderBadges({ surface = "settings" }: Props) {
             ? "No Key"
             : "···";
 
-  const hasUsage = status.todayUsage != null && status.dailyLimit != null && status.dailyLimit > 0;
-  const usagePct = hasUsage ? (status.todayUsage! / status.dailyLimit!) * 100 : 0;
+  /** Effective daily limit: customApiLimit when usingCustomApiLimit, else roleDailyLimit or dailyLimit */
+  const effectiveLimit = status.usingCustomApiLimit && status.customApiLimit != null
+    ? status.customApiLimit
+    : (status.roleDailyLimit ?? status.dailyLimit);
+
+  const hasUsage = status.todayUsage != null && effectiveLimit != null && effectiveLimit > 0;
+  const usagePct = hasUsage ? (status.todayUsage! / effectiveLimit!) * 100 : 0;
   const usageVariant: PillVariant = usagePct >= 100 ? "red" : usagePct >= 70 ? "amber" : "muted";
 
   const hasReset = status.resetLabel != null && status.resetLabel.length > 0;
 
+  /** Compute expiry label from apiKeyExpiresAt */
+  const expiryLabel = status.apiKeyExpiresAt
+    ? (() => {
+        const ms = new Date(status.apiKeyExpiresAt).getTime() - Date.now();
+        if (ms <= 0) return "Expired";
+        const days = Math.floor(ms / 86400000);
+        const hours = Math.floor((ms % 86400000) / 3600000);
+        return days >= 1 ? `${days}d` : `${hours}h`;
+      })()
+    : null;
+  const isExpired = status.apiKeyExpiresAt != null && new Date(status.apiKeyExpiresAt).getTime() <= Date.now();
+  const expiryVariant: PillVariant = isExpired || (expiryLabel === "Expired") ? "red" : "amber";
+
+  /** canMakeRequests badge */
+  const canMake = status.canMakeRequests;
+  const requestsVariant: PillVariant = canMake === true ? "green" : canMake === false ? "red" : "muted";
+
+  /** Plan badge */
+  const hasPlan = status.plan != null && status.plan.length > 0;
+
   const tooltipLines: string[] = [];
-  if (status.totalKeyUsage != null) tooltipLines.push(`Total: ${status.totalKeyUsage}`);
+  if (status.plan) tooltipLines.push(`Plan: ${status.plan}`);
+  if (status.totalKeyUsage != null) tooltipLines.push(`Total usage: ${status.totalKeyUsage}`);
+  if (canMake != null) tooltipLines.push(`Can make requests: ${canMake ? "Yes" : "No"}`);
+  if (status.apiKeyExpiresAt) {
+    const d = new Date(status.apiKeyExpiresAt);
+    tooltipLines.push(`Key expires: ${d.toLocaleDateString()}`);
+  }
+  if (status.roleDailyLimit != null) tooltipLines.push(`Role limit: ${status.roleDailyLimit}`);
+  if (status.usingCustomApiLimit && status.customApiLimit != null) {
+    tooltipLines.push(`Custom limit: ${status.customApiLimit}`);
+  }
   if (status.lastCheckedAt > 0) {
     tooltipLines.push(`Checked: ${new Date(status.lastCheckedAt).toLocaleString()}`);
   }
@@ -147,12 +182,42 @@ export default function HubcapProviderBadges({ surface = "settings" }: Props) {
           className={`rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none ${pillClass(usageVariant)}`}
           title={tooltip}
         >
-          Today {status.todayUsage}/{status.dailyLimit}
+          Today {status.todayUsage}/{effectiveLimit}
+        </span>
+      )}
+
+      {/* {hasUsage && !hasReset && (
+        <span className="rounded-full border border-(--surface-active-border) bg-white/5 px-2 py-0.5 text-[10px] font-medium leading-none text-(--color-muted)" title={tooltip}>
+          24h cycle
+        </span>
+      )} */}
+
+      {hasPlan && (
+        <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium leading-none text-sky-300" title={tooltip}>
+          {status.plan}
+        </span>
+      )}
+
+      {expiryLabel && (
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none ${pillClass(expiryVariant)}`}
+          title={tooltip}
+        >
+          {isExpired ? "Expired" : `${expiryLabel}`}
+        </span>
+      )}
+
+      {canMake != null && (
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none ${pillClass(requestsVariant)}`}
+          title={tooltip}
+        >
+          {canMake ? "Active" : "Blocked"}
         </span>
       )}
 
       {hasReset && (
-        <span className="rounded-full border border-(--surface-active-border) bg-white/5 px-2 py-0.5 text-[10px] font-medium leading-none text-(--color-muted)">
+        <span className="rounded-full border border-(--surface-active-border) bg-white/5 px-2 py-0.5 text-[10px] font-medium leading-none text-(--color-muted)" title={tooltip}>
           Reset {status.resetLabel}
         </span>
       )}

@@ -1692,6 +1692,14 @@ export interface HubcapUserStatsResponse {
   remaining: number | null;
   plan: string | null;
   last_used_at: string | null;
+  api_key_usage_count: number | null;
+  api_key_expires_at: string | null;
+  can_make_requests: boolean | null;
+  user_id: string | null;
+  role_daily_limit: number | null;
+  custom_api_limit: number | null;
+  using_custom_api_limit: boolean | null;
+  auto_update_enabled: boolean | null;
 }
 
 export interface HubcapDepotKeysResponse {

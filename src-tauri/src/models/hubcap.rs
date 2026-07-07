@@ -22,6 +22,14 @@ pub struct HubcapUserStatsResponse {
     pub remaining: Option<i64>,
     pub plan: Option<String>,
     pub last_used_at: Option<String>,
+    pub api_key_usage_count: Option<i64>,
+    pub api_key_expires_at: Option<String>,
+    pub can_make_requests: Option<bool>,
+    pub user_id: Option<String>,
+    pub role_daily_limit: Option<i64>,
+    pub custom_api_limit: Option<i64>,
+    pub using_custom_api_limit: Option<bool>,
+    pub auto_update_enabled: Option<bool>,
 }
 
 #[derive(Serialize)]

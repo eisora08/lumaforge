@@ -31,6 +31,14 @@ fn empty_stats(status: &str) -> HubcapUserStatsResponse {
         remaining: None,
         plan: None,
         last_used_at: None,
+        api_key_usage_count: None,
+        api_key_expires_at: None,
+        can_make_requests: None,
+        user_id: None,
+        role_daily_limit: None,
+        custom_api_limit: None,
+        using_custom_api_limit: None,
+        auto_update_enabled: None,
     }
 }
 
@@ -125,6 +133,7 @@ pub fn hubcap_user_stats(
                         let obj = json.as_object().cloned().unwrap_or_default();
 
                         let today_usage = parse_i64_field(&obj, &[
+                            "daily_usage", "dailyUsage",
                             "today_usage", "todayUsage", "todaysUsage",
                             "daily_lua_used", "daily_used", "usedToday", "used_today",
                             "lua_used", "luaUsed",
@@ -137,6 +146,7 @@ pub fn hubcap_user_stats(
                         ]);
 
                         let total_key_usage = parse_i64_field(&obj, &[
+                            "api_key_usage_count", "apiKeyUsageCount",
                             "total_key_usage", "totalKeyUsage",
                             "totalUsage", "total_usage", "total",
                         ]);
@@ -177,6 +187,52 @@ pub fn hubcap_user_stats(
 
                         let username = parse_str_field(&obj, &["username"]);
 
+                        let api_key_usage_count = parse_i64_field(&obj, &[
+                            "api_key_usage_count", "apiKeyUsageCount",
+                        ]);
+
+                        let api_key_expires_at = parse_str_field(&obj, &[
+                            "api_key_expires_at", "apiKeyExpiresAt",
+                            "key_expires_at", "keyExpiresAt",
+                        ]);
+
+                        let can_make_requests = obj
+                            .get("can_make_requests")
+                            .or_else(|| obj.get("canMakeRequests"))
+                            .and_then(|v| v.as_bool());
+
+                        let user_id = parse_str_field(&obj, &["user_id", "userId"]);
+
+                        let role_daily_limit = parse_i64_field(&obj, &[
+                            "role_daily_limit", "roleDailyLimit",
+                            "role_limit", "roleLimit",
+                        ]);
+
+                        let custom_api_limit = parse_i64_field(&obj, &[
+                            "custom_api_limit", "customApiLimit",
+                            "custom_limit", "customLimit",
+                        ]);
+
+                        let using_custom_api_limit = obj
+                            .get("using_custom_api_limit")
+                            .or_else(|| obj.get("usingCustomApiLimit"))
+                            .or_else(|| obj.get("usingCustomLimit"))
+                            .and_then(|v| v.as_bool());
+
+                        let auto_update_enabled = obj
+                            .get("auto_update_enabled")
+                            .or_else(|| obj.get("autoUpdateEnabled"))
+                            .and_then(|v| v.as_bool());
+
+                        println!(
+                            "[HUBCAP][USER_STATS] daily_usage={} daily_limit={} api_key_usage_count={} expires={} can_make={}",
+                            today_usage.map_or(-1, |v| v),
+                            daily_limit.map_or(-1, |v| v),
+                            api_key_usage_count.map_or(-1, |v| v),
+                            api_key_expires_at.as_deref().unwrap_or("null"),
+                            can_make_requests.map_or("null", |v| if v { "true" } else { "false" }),
+                        );
+
                         Ok(HubcapUserStatsResponse {
                             ok: true,
                             status: "ok".into(),
@@ -192,6 +248,14 @@ pub fn hubcap_user_stats(
                             remaining,
                             plan,
                             last_used_at,
+                            api_key_usage_count,
+                            api_key_expires_at,
+                            can_make_requests,
+                            user_id,
+                            role_daily_limit,
+                            custom_api_limit,
+                            using_custom_api_limit,
+                            auto_update_enabled,
                         })
                     }
                     Err(e) => {

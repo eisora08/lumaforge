@@ -39,6 +39,14 @@ export interface HubcapUsageStats {
   remaining?: number;
   plan?: string;
   lastUsedAt?: string;
+  apiKeyUsageCount?: number;
+  apiKeyExpiresAt?: string;
+  canMakeRequests?: boolean;
+  userId?: string;
+  roleDailyLimit?: number;
+  customApiLimit?: number;
+  usingCustomApiLimit?: boolean;
+  autoUpdateEnabled?: boolean;
 }
 
 export interface HubcapDepotKeyStatus {
@@ -56,6 +64,13 @@ export interface HubcapProviderStatus {
   resetAt: number | string | null;
   resetLabel: string | null;
   lastCheckedAt: number;
+  apiKeyUsageCount: number | null;
+  apiKeyExpiresAt: string | null;
+  canMakeRequests: boolean | null;
+  roleDailyLimit: number | null;
+  customApiLimit: number | null;
+  usingCustomApiLimit: boolean | null;
+  plan: string | null;
 }
 
 // --- In-memory cache (internal, per-endpoint) ---
@@ -101,6 +116,13 @@ function defaultProviderStatus(): HubcapProviderStatus {
     resetAt: null,
     resetLabel: null,
     lastCheckedAt: 0,
+    apiKeyUsageCount: null,
+    apiKeyExpiresAt: null,
+    canMakeRequests: null,
+    roleDailyLimit: null,
+    customApiLimit: null,
+    usingCustomApiLimit: null,
+    plan: null,
   };
 }
 
@@ -212,10 +234,21 @@ export async function refreshHubcapStatus(
 
   const todayUsage = statsResult?.todayUsage ?? null;
   const dailyLimit = statsResult?.dailyLimit ?? null;
-  const totalKeyUsage = statsResult?.totalKeyUsage ?? null;
+  const totalKeyUsage = (statsResult?.apiKeyUsageCount ?? statsResult?.totalKeyUsage) ?? null;
   const resetInSeconds = statsResult?.resetInSeconds ?? null;
   const resetAt = statsResult?.resetAt ?? null;
   const resetLabel = computeResetLabel(resetInSeconds, resetAt);
+
+  /** Effective daily limit: customApiLimit when usingCustomApiLimit, else dailyLimit or roleDailyLimit */
+  const effectiveLimit = statsResult?.usingCustomApiLimit && statsResult?.customApiLimit != null
+    ? statsResult.customApiLimit
+    : (statsResult?.roleDailyLimit ?? statsResult?.dailyLimit);
+
+  if (statsResult) {
+    console.log(
+      `[HUBCAP][STATS_MAPPED] todayUsage=${todayUsage} dailyLimit=${dailyLimit} totalKeyUsage=${totalKeyUsage} apiKeyExpiresAt=${statsResult.apiKeyExpiresAt ?? "null"} canMakeRequests=${statsResult.canMakeRequests ?? "null"}`,
+    );
+  }
 
   const status: HubcapProviderStatus = {
     healthStatus: healthResult.status,
@@ -227,6 +260,13 @@ export async function refreshHubcapStatus(
     resetAt,
     resetLabel,
     lastCheckedAt: Date.now(),
+    apiKeyUsageCount: statsResult?.apiKeyUsageCount ?? null,
+    apiKeyExpiresAt: statsResult?.apiKeyExpiresAt ?? null,
+    canMakeRequests: statsResult?.canMakeRequests ?? null,
+    roleDailyLimit: statsResult?.roleDailyLimit ?? null,
+    customApiLimit: statsResult?.customApiLimit ?? null,
+    usingCustomApiLimit: statsResult?.usingCustomApiLimit ?? null,
+    plan: statsResult?.plan ?? null,
   };
 
   _providerStatus = status;
@@ -234,7 +274,7 @@ export async function refreshHubcapStatus(
   notifyProviderStatusListeners(status);
 
   console.log(
-    `[HUBCAP][STATUS_SAVE] today=${todayUsage} limit=${dailyLimit} reset=${resetLabel}`,
+    `[HUBCAP][STATUS_SAVE] today=${todayUsage} limit=${effectiveLimit} reset=${resetLabel} plan=${status.plan} canMakeRequests=${status.canMakeRequests}`,
   );
   return status;
 }
@@ -259,6 +299,14 @@ function mapStatsResponse(r: HubcapUserStatsResponse): HubcapUsageStats {
     remaining: r.remaining ?? undefined,
     plan: r.plan ?? undefined,
     lastUsedAt: r.last_used_at ?? undefined,
+    apiKeyUsageCount: r.api_key_usage_count ?? undefined,
+    apiKeyExpiresAt: r.api_key_expires_at ?? undefined,
+    canMakeRequests: r.can_make_requests ?? undefined,
+    userId: r.user_id ?? undefined,
+    roleDailyLimit: r.role_daily_limit ?? undefined,
+    customApiLimit: r.custom_api_limit ?? undefined,
+    usingCustomApiLimit: r.using_custom_api_limit ?? undefined,
+    autoUpdateEnabled: r.auto_update_enabled ?? undefined,
   };
 }
 
@@ -301,6 +349,7 @@ export async function fetchHubcapUserStats(
   }
 
   log("fetching user stats");
+  console.log(`[HUBCAP][STATS_REQUEST] baseUrl=${baseUrl} hasApiKey=true`);
   console.log(`[HUBCAP][USAGE_REFRESH] started=true`);
 
   try {
@@ -317,6 +366,9 @@ export async function fetchHubcapUserStats(
     }
 
     const stats = mapStatsResponse(raw);
+    console.log(
+      `[HUBCAP][STATS_RAW] daily_usage=${raw.today_usage ?? "null"} daily_limit=${raw.daily_limit ?? "null"} api_key_usage_count=${raw.api_key_usage_count ?? "null"} expires=${raw.api_key_expires_at ?? "null"} can_make_requests=${raw.can_make_requests ?? "null"}`,
+    );
     log("stats fetched", stats);
     statsCache.set(cacheKey, createCacheEntry(stats));
     return stats;
