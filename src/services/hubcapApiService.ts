@@ -1,8 +1,9 @@
-import { hubcapHealth, hubcapUserStats, hubcapDepotKeys } from "./tauri";
+import { hubcapHealth, hubcapUserStats, hubcapDepotKeys, hubcapAppStatus } from "./tauri";
 import type {
   HubcapHealthResponse,
   HubcapUserStatsResponse,
   HubcapDepotKeysResponse,
+  HubcapAppStatusResponse,
 } from "./tauri";
 
 const ENABLE_VERBOSE_LOGS = false;
@@ -402,4 +403,214 @@ export async function fetchHubcapDepotKeys(
     console.log(`[HUBCAP][DEPOT_KEYS] status=network_error count=0 error="${String(error)}"`);
     return entry;
   }
+}
+
+// ---------------------------------------------------------------------------
+// HubcapDB per-app status (/api/v1/status/<appid>)
+// Metadata-only — never downloads packages or modifies Lua files.
+// ---------------------------------------------------------------------------
+
+export interface HubcapAppStatusRemote {
+  status: string;
+  gameName?: string;
+  manifestFileExists?: boolean;
+  autoUpdateEnabled?: boolean | null;
+  updateInProgress?: boolean;
+  fileSize?: number;
+  fileModified?: string;
+  fileAgeDays?: number;
+  needsUpdate?: boolean;
+  updateReason?: string | null;
+  timestamp?: string;
+}
+
+export type HubcapAppUpdateStatus =
+  | "provider-unavailable"
+  | "provider-updating"
+  | "provider-needs-refresh"
+  | "unknown"
+  | "update-available"
+  | "up-to-date";
+
+export interface HubcapAppUpdateResult {
+  status: HubcapAppUpdateStatus;
+  reason: string;
+  remote: HubcapAppStatusRemote | null;
+}
+
+export interface LocalPackageMetadata {
+  fileModifiedAtInstall?: string;
+  fileSizeAtInstall?: number;
+  metadataSource?: "local-lua" | "remote" | "unknown";
+}
+
+// --- In-memory caches ---
+
+const _appStatusCache = new Map<string, HubcapAppStatusRemote>();
+const _localPackageMetadata = new Map<string, LocalPackageMetadata>();
+
+/** Register local install metadata for an appId so update checks can compare. */
+export function setLocalPackageMetadata(appId: string, meta: LocalPackageMetadata): void {
+  _localPackageMetadata.set(appId, meta);
+}
+
+/** Fetch remote app status from HubcapDB. */
+export async function fetchHubcapAppStatus(
+  baseUrl: string,
+  apiKey: string,
+  appId: string,
+): Promise<HubcapAppStatusRemote | null> {
+  if (!apiKey) {
+    console.log(`[PACKAGE][CHECK_REMOTE] appid=${appId} skipped=no-api-key`);
+    return null;
+  }
+
+  let raw: HubcapAppStatusResponse;
+  try {
+    raw = await hubcapAppStatus(baseUrl, apiKey, appId);
+  } catch (error) {
+    console.log(`[PACKAGE][CHECK_REMOTE] appid=${appId} error="${String(error)}"`);
+    return null;
+  }
+
+  if (!raw.ok) {
+    console.log(`[PACKAGE][CHECK_REMOTE] appid=${appId} status=${raw.status}`);
+    return null;
+  }
+
+  const remote: HubcapAppStatusRemote = {
+    status: raw.status,
+    gameName: raw.game_name ?? undefined,
+    manifestFileExists: raw.manifest_file_exists ?? undefined,
+    autoUpdateEnabled: raw.auto_update_enabled,
+    updateInProgress: raw.update_in_progress ?? undefined,
+    fileSize: raw.file_size ?? undefined,
+    fileModified: raw.file_modified ?? undefined,
+    fileAgeDays: raw.file_age_days ?? undefined,
+    needsUpdate: raw.needs_update ?? undefined,
+    updateReason: raw.update_reason ?? undefined,
+    timestamp: raw.timestamp ?? undefined,
+  };
+
+  _appStatusCache.set(appId, remote);
+
+  console.log(
+    `[PACKAGE][CHECK_REMOTE] appid=${appId} status=${remote.status} manifestExists=${remote.manifestFileExists} updateInProgress=${remote.updateInProgress} needsUpdate=${remote.needsUpdate} fileModified=${remote.fileModified ?? "null"} fileSize=${remote.fileSize ?? "null"}`,
+  );
+  return remote;
+}
+
+/** Get the last-fetched remote status without re-fetching. */
+export function getCachedHubcapAppStatus(appId: string): HubcapAppStatusRemote | undefined {
+  return _appStatusCache.get(appId);
+}
+
+/**
+ * Compare remote HubcapDB status against local install metadata.
+ * Returns a result with status + reason string.
+ *
+ * Rules (modelled after the spec):
+ *   1. manifest_file_exists === false   → provider-unavailable / manifest-missing
+ *   2. status !== "available"            → provider-unavailable / provider-status-<status>
+ *   3. update_in_progress === true       → provider-updating / update-in-progress
+ *   4. needs_update === true             → provider-needs-refresh / <reason>
+ *   5. No local metadata                → unknown / no-local-data-for-comparison
+ *   6. local metadata from local Lua file:
+ *      a. remote fileModified > local   → update-available / remote-newer-than-local-lua
+ *      b. remote fileModified <= local  → up-to-date / local-lua-not-older
+ *      c. fileSize skipped (Lua file size != package ZIP size)
+ *   7. local metadata from remote/package:
+ *      a. remote fileModified > local   → update-available / remote-newer
+ *      b. remote fileSize !== local     → update-available / size-differs
+ *      c. Otherwise                     → up-to-date / remote-not-newer
+ */
+export function checkHubcapAppUpdate(
+  appId: string,
+  remote: HubcapAppStatusRemote,
+  local?: LocalPackageMetadata,
+): HubcapAppUpdateResult {
+  const localMeta = local ?? _localPackageMetadata.get(appId);
+
+  // Rule 1
+  if (remote.manifestFileExists === false) {
+    const result: HubcapAppUpdateResult = { status: "provider-unavailable", reason: "manifest-missing", remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  // Rule 2
+  if (remote.status !== "available") {
+    const result: HubcapAppUpdateResult = { status: "provider-unavailable", reason: `provider-status-${remote.status}`, remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  // Rule 3
+  if (remote.updateInProgress === true) {
+    const result: HubcapAppUpdateResult = { status: "provider-updating", reason: "update-in-progress", remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  // Rule 4
+  if (remote.needsUpdate === true) {
+    const result: HubcapAppUpdateResult = { status: "provider-needs-refresh", reason: remote.updateReason || "provider-needs-update", remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  // Rule 5 — no local metadata
+  if (!localMeta || (localMeta.fileModifiedAtInstall == null && localMeta.fileSizeAtInstall == null)) {
+    const result: HubcapAppUpdateResult = { status: "unknown", reason: "no-local-data-for-comparison", remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  const source = localMeta.metadataSource ?? "remote";
+
+  // Rule 6 — local metadata came from a local Lua file
+  if (source === "local-lua") {
+    if (remote.fileModified && localMeta.fileModifiedAtInstall) {
+      const remoteTs = new Date(remote.fileModified).getTime();
+      const localTs = new Date(localMeta.fileModifiedAtInstall).getTime();
+      if (!isNaN(remoteTs) && !isNaN(localTs) && remoteTs > localTs) {
+        const result: HubcapAppUpdateResult = { status: "update-available", reason: "remote-newer-than-local-lua", remote };
+        logResult(appId, result);
+        return result;
+      }
+    }
+    // fileSize comparison skipped — Lua file size != package ZIP size
+    const result: HubcapAppUpdateResult = { status: "up-to-date", reason: "local-lua-not-older", remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  // Rule 7 — local metadata from remote/package download
+
+  // Rule 7a — remote fileModified > local
+  if (remote.fileModified && localMeta.fileModifiedAtInstall) {
+    const remoteTs = new Date(remote.fileModified).getTime();
+    const localTs = new Date(localMeta.fileModifiedAtInstall).getTime();
+    if (!isNaN(remoteTs) && !isNaN(localTs) && remoteTs > localTs) {
+      const result: HubcapAppUpdateResult = { status: "update-available", reason: "remote-newer", remote };
+      logResult(appId, result);
+      return result;
+    }
+  }
+
+  // Rule 7b — fileSize differs
+  if (remote.fileSize != null && localMeta.fileSizeAtInstall != null && remote.fileSize !== localMeta.fileSizeAtInstall) {
+    const result: HubcapAppUpdateResult = { status: "update-available", reason: "size-differs", remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  // Rule 7c — up to date
+  const result: HubcapAppUpdateResult = { status: "up-to-date", reason: "remote-not-newer", remote };
+  logResult(appId, result);
+  return result;
+}
+
+function logResult(appId: string, result: HubcapAppUpdateResult): void {
+  console.log(`[PACKAGE][CHECK_RESULT] appid=${appId} status=${result.status} reason=${result.reason}`);
 }

@@ -643,6 +643,34 @@ function buildProviderAuthHeaders(
   };
 }
 
+function normalizeProviderIdForAuth(id: string): string {
+  const lower = id.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (lower === "hubcapdb" || lower === "hubcap") return "hubcapdb";
+  if (lower === "ryuu") return "ryuu";
+  return id;
+}
+
+export function getEffectiveProviderAuthHeaders(
+  providerId: string,
+  settings: AppSettings
+): Record<string, string> | undefined {
+  const normalized = normalizeProviderIdForAuth(providerId);
+
+  if (normalized === "hubcapdb") {
+    const apiKey = settings.providers?.hubcapdb?.apiKey;
+    if (!apiKey) return undefined;
+    return { "Authorization": `Bearer ${apiKey}` };
+  }
+
+  if (normalized === "ryuu") {
+    const apiKey = settings.providers?.ryuu?.apiKey;
+    if (!apiKey) return undefined;
+    return { "X-Auth-Key": apiKey };
+  }
+
+  return undefined;
+}
+
 function getAppIdFromQuery(query: string): string | null {
   if (/^\d{2,10}$/.test(query)) {
     return query;

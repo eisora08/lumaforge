@@ -48,7 +48,7 @@ import {
   buildSourceAvailabilityFromProviders,
 } from "../services/sourceAvailabilityCacheService";
 import { getEnabledProviderIds } from "../services/providerSearch";
-import { consumePendingStoreDetailAppId } from "../services/storeNavigationService";
+import { consumePendingStoreDetailAppId, consumePendingStoreDetailAppTitle } from "../services/storeNavigationService";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import type { ProviderProgressCallback } from "../types/providerSearch";
 import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
@@ -76,6 +76,8 @@ import {
   getStoreImageCacheSize,
   getStoreImageCacheVersion,
 } from "../services/storeImageCache";
+import { saveProviderStatusAfterInstall, saveProviderStatusAuthError, type ProviderStatusOptions } from "../services/providerStatusService";
+import { getEffectiveProviderAuthHeaders } from "../services/providerSearch";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 const DEBUG_STORE_RENDER_VERBOSE = false;
@@ -578,11 +580,21 @@ export default function Store() {
 
     const appIdNum = parseInt(appIdStr, 10);
     const entry = steamCatalog.find((e) => e.appid === appIdNum);
+    const fallbackTitle = consumePendingStoreDetailAppTitle();
     if (entry) {
       console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${appIdStr} reason=pending-nav`);
       const game: PackageGame = {
         appId: appIdStr,
         title: entry.name,
+        platforms: [],
+        sources: [],
+      };
+      openDetailsForGame(game);
+    } else if (fallbackTitle) {
+      console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${appIdStr} reason=pending-nav-fallback title=${fallbackTitle}`);
+      const game: PackageGame = {
+        appId: appIdStr,
+        title: fallbackTitle,
         platforms: [],
         sources: [],
       };
@@ -2354,6 +2366,30 @@ export default function Store() {
       return;
     }
 
+    // Check HubcapDB API key before attempting download
+    const hubcapId = "hubcapdb";
+    const isHubcapProvider = source.providerId === hubcapId || source.providerName === "HubcapDB";
+    if (isHubcapProvider) {
+      const hubcapSettings = settings.providers?.hubcapdb;
+      if (!hubcapSettings?.apiKey) {
+        console.log(`[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=false authMode=bearer action=blocked`);
+        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "missing-api-key");
+        showWarning("HubcapDB API key required.", { title: "Auth required" });
+        return;
+      }
+    }
+
+    // Rebuild auth headers from settings at request time (never from cache — overlay strips authHeaders)
+    const effectiveHeaders = source.authHeaders ?? getEffectiveProviderAuthHeaders(source.providerId, settings);
+    const sourceHadHeaders = Boolean(source.authHeaders);
+    const rebuiltHeaders = !sourceHadHeaders && Boolean(effectiveHeaders);
+    if (isHubcapProvider) {
+      console.log(
+        `[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=true` +
+        ` authMode=bearer sourceHadHeaders=${sourceHadHeaders} rebuiltHeaders=${rebuiltHeaders}`
+      );
+    }
+
     const job = addJob({
       appId: game.appId,
       gameTitle: game.title,
@@ -2370,7 +2406,7 @@ export default function Store() {
         luaTarget: settings.luaPath,
         depotcacheTarget: settings.depotcachePath,
         createBackups: settings.createBackups,
-        headers: source.authHeaders,
+        headers: effectiveHeaders,
         tempFolder: settings.tempFolder,
       });
 
@@ -2391,6 +2427,16 @@ export default function Store() {
       });
 
       refreshInstalledScripts();
+
+      // Save provider-status local snapshot after successful install
+      const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
+        ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
+        : undefined;
+      const providerOpts: ProviderStatusOptions = {
+        luaDir: settings.luaPath || undefined,
+        steamRoot: settings.steamRoot || undefined,
+      };
+      await saveProviderStatusAfterInstall(game.appId, source.providerId, hubcapConfig, providerOpts);
 
       if (!_mountedRef.current) return;
 
@@ -2425,12 +2471,41 @@ export default function Store() {
       // Parse HTTP status code from Rust error message (e.g. "Status: 401")
       const statusMatch = message.match(/Status:\s*(\d+)/);
       const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
-      const isAuthError = statusCode === 401 || statusCode === 403;
 
-      if (isAuthError) {
-        console.log(`[STORE][PROVIDER_DOWNLOAD_FAILED] appid=${game.appId} provider=${source.providerName} status=${statusCode} title="${game.title}"`);
-
-        // Mark source as failed in cache, but preserve available sources for Change Source option
+      if (statusCode === 401) {
+        // Unauthorized — save provider auth error, do NOT mark sources as failed
+        console.log(
+          `[PACKAGE][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=401 reason=unauthorized`,
+        );
+        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "unauthorized");
+        showError(
+          source.providerName === "HubcapDB"
+            ? "HubcapDB rejected the request. Check your API key."
+            : `${source.providerName} rechazó la descarga. Verifica la API key o permisos. (HTTP 401)`,
+          { title: "Descarga fallida" },
+        );
+      } else if (statusCode === 403) {
+        // Forbidden — save provider auth error, do NOT mark sources as failed
+        console.log(
+          `[PACKAGE][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=403 reason=forbidden`,
+        );
+        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "forbidden");
+        showError(
+          "Your HubcapDB account does not have access to this package.",
+          { title: "Acceso denegado" },
+        );
+      } else if (statusCode === 429) {
+        // Rate limited — save provider rate-limit error, do NOT mark sources as failed
+        console.log(
+          `[PACKAGE][DOWNLOAD_RATE_LIMITED] appid=${game.appId} provider=${source.providerName} status=429`,
+        );
+        await saveProviderStatusAuthError(game.appId, source.providerId, "rate-limited", "rate-limited");
+        showError(
+          "HubcapDB rate limit reached. Try again later.",
+          { title: "Rate limited" },
+        );
+      } else {
+        // Non-auth errors: update source availability
         updateSourceAvailability(game.appId, {
           appId: game.appId,
           title: game.title,
@@ -2449,14 +2524,6 @@ export default function Store() {
           updatedAt: Math.floor(Date.now() / 1000),
         }).catch(() => {});
 
-        const settingsHint = source.providerName === "HubcapDB"
-          ? `Revisa la API key en Configuración > Providers.`
-          : `Verifica la API key o permisos.`;
-        showError(
-          `${source.providerName} rechazó la descarga. ${settingsHint} (HTTP ${statusCode})`,
-          { title: "Descarga fallida" }
-        );
-      } else {
         showError(message, {
           title: "Instalación fallida",
         });

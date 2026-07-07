@@ -1715,6 +1715,118 @@ export async function hubcapUserStats(baseUrl: string, apiKey: string): Promise<
   return await invoke<HubcapUserStatsResponse>("hubcap_user_stats", { baseUrl, apiKey });
 }
 
+export interface HubcapAppStatusResponse {
+  ok: boolean;
+  status: string;
+  app_id: string | null;
+  game_name: string | null;
+  manifest_file_exists: boolean | null;
+  auto_update_enabled: boolean | null;
+  update_in_progress: boolean | null;
+  file_size: number | null;
+  file_modified: string | null;
+  file_age_days: number | null;
+  needs_update: boolean | null;
+  update_reason: string | null;
+  timestamp: string | null;
+}
+
 export async function hubcapDepotKeys(baseUrl: string, apiKey: string): Promise<HubcapDepotKeysResponse> {
   return await invoke<HubcapDepotKeysResponse>("hubcap_depot_keys", { baseUrl, apiKey });
+}
+
+export async function hubcapAppStatus(baseUrl: string, apiKey: string, appId: string): Promise<HubcapAppStatusResponse> {
+  return await invoke<HubcapAppStatusResponse>("hubcap_app_status", { baseUrl, apiKey, appId });
+}
+
+// --- File Metadata ---
+
+export interface FileMetadata {
+  exists: boolean;
+  size: number | null;
+  modified_unix_s: number | null;
+  created_unix_s: number | null;
+}
+
+export async function getFileMetadata(path: string): Promise<FileMetadata> {
+  return await invoke<FileMetadata>("get_file_metadata", { path });
+}
+
+// --- Provider Status Cache (sidecar JSON) ---
+
+export interface ProviderStatusLocal {
+  packagePath: string | null;
+  luaPath: string | null;
+  fileSizeAtInstall: number | null;
+  fileModifiedAtInstall: string | null;
+  fileCreatedAtInstall: string | null;
+  metadataSource: string | null;
+  providerTimestampAtInstall: string | null;
+  checksumAtInstall: string | null;
+  versionAtInstall: string | null;
+  manifestIdsAtInstall: string[];
+  depotIdsAtInstall: string[];
+}
+
+export interface ProviderStatusRemote {
+  status: string;
+  gameName: string | null;
+  manifestFileExists: boolean | null;
+  autoUpdateEnabled: boolean | null;
+  updateInProgress: boolean | null;
+  fileSize: number | null;
+  fileModified: string | null;
+  fileAgeDays: number | null;
+  needsUpdate: boolean | null;
+  updateReason: string | null;
+  timestamp: string | null;
+}
+
+export interface ProviderStatusResult {
+  status: string;
+  reason: string;
+}
+
+export interface ProviderStatusFile {
+  appId: string;
+  providerId: string;
+  providerName: string;
+  checkedAt: number;
+  installedAt: number | null;
+  local: ProviderStatusLocal | null;
+  remote: ProviderStatusRemote | null;
+  result: ProviderStatusResult | null;
+}
+
+export async function readProviderStatus(appId: string, providerId: string): Promise<ProviderStatusFile | null> {
+  return await invoke<ProviderStatusFile | null>("read_provider_status", { appId, providerId });
+}
+
+export async function writeProviderStatus(appId: string, providerId: string, payload: string): Promise<void> {
+  await invoke("write_provider_status", { appId, providerId, payload });
+}
+
+// --- Scan State ---
+
+export interface ScanStateSummary {
+  updates: number;
+  upToDate: number;
+  unknown: number;
+  authRequired: number;
+  providerUnavailable: number;
+}
+
+export interface ScanState {
+  lastScanAt: number;
+  intervalHours: number;
+  lastResultHash: string | null;
+  lastSummary: ScanStateSummary | null;
+}
+
+export async function readScanState(): Promise<ScanState | null> {
+  return await invoke<ScanState | null>("read_scan_state");
+}
+
+export async function writeScanState(payload: string): Promise<void> {
+  await invoke("write_scan_state", { payload });
 }

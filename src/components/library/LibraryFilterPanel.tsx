@@ -1,6 +1,6 @@
   import { Search, RotateCcw } from "lucide-react";
 
-  export type LibraryFilter = "all" | "lua" | "installed" | "disabled";
+  export type LibraryFilter = "all" | "lua" | "installed" | "disabled" | "updates";
 
   export type LibrarySort = "name" | "size" | "updated";
 
@@ -21,6 +21,7 @@
     { key: "lua", label: "Lua" },
     { key: "installed", label: "Installed" },
     { key: "disabled", label: "Disabled" },
+    { key: "updates", label: "Updates" },
   ];
 
   const sortOptions: { key: LibrarySort; label: string }[] = [

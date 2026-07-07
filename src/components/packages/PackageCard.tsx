@@ -30,6 +30,7 @@ import type { SteamReviewSummary } from "../../types/gameReview";
 import { useSettings } from "../../context/SettingsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 import { downloadAndInstallPackage } from "../../services/tauri";
+import { getEffectiveProviderAuthHeaders } from "../../services/providerSearch";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { useHoverPrefetch } from "../../hooks/useHoverPrefetch";
 
@@ -38,6 +39,8 @@ import {
   showSuccess,
   showWarning,
 } from "../toast/GameToast";
+
+import { saveProviderStatusAfterInstall, saveProviderStatusAuthError, type ProviderStatusOptions } from "../../services/providerStatusService";
 
 import StoreSourceSelectorModal from "../store/StoreSourceSelectorModal";
 
@@ -280,6 +283,30 @@ function PackageCardRaw({
       return;
     }
 
+    // Check HubcapDB API key before attempting download
+    const hubcapId = "hubcapdb";
+    const isHubcapProvider = source.providerId === hubcapId || source.providerName === "HubcapDB";
+    if (isHubcapProvider) {
+      const hubcapSettings = settings.providers?.hubcapdb;
+      if (!hubcapSettings?.apiKey) {
+        console.log(`[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=false authMode=bearer action=blocked`);
+        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "missing-api-key");
+        showWarning("HubcapDB API key required.", { title: "Auth required" });
+        return;
+      }
+    }
+
+    // Rebuild auth headers from settings at request time (never from cache — overlay strips authHeaders)
+    const effectiveHeaders = source.authHeaders ?? getEffectiveProviderAuthHeaders(source.providerId, settings);
+    const sourceHadHeaders = Boolean(source.authHeaders);
+    const rebuiltHeaders = !sourceHadHeaders && Boolean(effectiveHeaders);
+    if (isHubcapProvider) {
+      console.log(
+        `[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=true` +
+        ` authMode=bearer sourceHadHeaders=${sourceHadHeaders} rebuiltHeaders=${rebuiltHeaders}`
+      );
+    }
+
     const job = addJob({
       appId: game.appId,
       gameTitle: displayTitle,
@@ -296,7 +323,7 @@ function PackageCardRaw({
         luaTarget: settings.luaPath,
         depotcacheTarget: settings.depotcachePath,
         createBackups: settings.createBackups,
-        headers: source.authHeaders,
+        headers: effectiveHeaders,
         tempFolder: settings.tempFolder,
       });
 
@@ -315,6 +342,15 @@ function PackageCardRaw({
       showSuccess(result.message, {
         title: "Paquete instalado",
       });
+
+      const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
+        ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
+        : undefined;
+      const providerOpts: ProviderStatusOptions = {
+        luaDir: settings.luaPath || undefined,
+        steamRoot: settings.steamRoot || undefined,
+      };
+      await saveProviderStatusAfterInstall(game.appId, source.providerId, hubcapConfig, providerOpts);
 
       console.log(`[LUA][INSTALL_COMPLETE] appid=${game.appId} provider=${source.providerName} title="${displayTitle}"`);
       onInstallComplete?.();
@@ -339,18 +375,32 @@ function PackageCardRaw({
 
       const statusMatch = message.match(/Status:\s*(\d+)/);
       const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
-      const isAuthError = statusCode === 401 || statusCode === 403;
 
-      if (isAuthError) {
-        console.log(`[CARD][PROVIDER_DOWNLOAD_FAILED] appid=${game.appId} provider=${source.providerName} status=${statusCode} title="${displayTitle}"`);
-        const settingsHint = source.providerName === "HubcapDB"
-          ? `Revisa la API key en Configuración > Providers.`
-          : `Verifica la API key o permisos.`;
+      if (statusCode === 401) {
+        console.log(`[HUBCAP][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=401 reason=unauthorized`);
+        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "unauthorized");
         showError(
-          `${source.providerName} rechazó la descarga. ${settingsHint} (HTTP ${statusCode})`,
+          source.providerName === "HubcapDB"
+            ? "HubcapDB rejected the request. Check your API key."
+            : `${source.providerName} rechazó la descarga. Verifica la API key o permisos. (HTTP 401)`,
           { title: "Descarga fallida" }
         );
+      } else if (statusCode === 403) {
+        console.log(`[HUBCAP][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=403 reason=forbidden`);
+        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "forbidden");
+        showError(
+          "Your HubcapDB account does not have access to this package.",
+          { title: "Acceso denegado" }
+        );
+      } else if (statusCode === 429) {
+        console.log(`[HUBCAP][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=429 reason=rate-limited`);
+        await saveProviderStatusAuthError(game.appId, source.providerId, "rate-limited", "rate-limited");
+        showError(
+          "HubcapDB rate limit reached. Try again later.",
+          { title: "Rate limited" }
+        );
       } else {
+        console.log(`[CARD][PROVIDER_DOWNLOAD_FAILED] appid=${game.appId} provider=${source.providerName} status=${statusCode} title="${displayTitle}"`);
         showError(message, {
           title: "Instalación fallida",
         });

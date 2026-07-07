@@ -23,12 +23,13 @@ import { installTrackerService } from "../services/installTrackingService";
 import {
   installSteamApp,
   deleteLuaScript,
-  scanInstalledLuaScripts,
   computeFileHash,
   downloadAndInstallPackage,
   markSyncIndexItem,
 } from "../services/tauri";
-import { checkInstalledLuaUpdates } from "../services/installedLuaUpdateChecker";
+import { getEffectiveProviderAuthHeaders } from "../services/providerSearch";
+import { saveProviderStatusAfterInstall, type ProviderStatusOptions } from "../services/providerStatusService";
+import { runInstalledLuaScan, getUpdateStatus, subscribeUpdateStatus } from "../services/installedLuaScanner";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 
@@ -56,6 +57,13 @@ export default function LibraryPage({ onNavigate }: Props) {
   const session = useGameSession();
   const hasLuaPath = Boolean(settings.luaPath);
   const [, startTransition] = useTransition();
+
+  // Subscribe to provider-status store so the updates filter re-renders immediately
+  const [, forceRerender] = useState(0);
+  useEffect(() => {
+    const unsub = subscribeUpdateStatus(() => forceRerender((v) => v + 1));
+    return unsub;
+  }, []);
 
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
@@ -88,6 +96,10 @@ export default function LibraryPage({ onNavigate }: Props) {
       if (filter === "lua" && !g.hasLua) return false;
       if (filter === "installed" && !g.isPlayable && !g.steamInstalled) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;
+      if (filter === "updates" && g.appId) {
+        const s = getUpdateStatus(g.appId);
+        if (s !== "update-available") return false;
+      }
       return true;
     });
 
@@ -249,13 +261,19 @@ export default function LibraryPage({ onNavigate }: Props) {
     }
     try {
       setCheckingUpdates(true);
-      const scripts = await scanInstalledLuaScripts(settings.luaPath);
-      if (scripts.length === 0) {
-        showWarning("No Lua scripts to check.", { title: "No updates" });
-        return;
+      const hubcapSettings = settings.providers?.hubcapdb;
+      const hubcapConfig = hubcapSettings?.enabled && hubcapSettings?.baseUrl && hubcapSettings?.apiKey
+        ? { baseUrl: hubcapSettings.baseUrl, apiKey: hubcapSettings.apiKey }
+        : undefined;
+      const summary = await runInstalledLuaScan({ luaDir: settings.luaPath, hubcapConfig, force: true });
+      const updates = summary.updates;
+      if (updates > 0) {
+        showSuccess(`${updates} update${updates === 1 ? "" : "s"} found.`, { title: "Updates" });
+        setFilter("updates");
+      } else {
+        showSuccess("All packages up to date.", { title: "Checked" });
       }
-      await checkInstalledLuaUpdates(scripts, settings);
-      showSuccess("Update check complete.", { title: "Checked" });
+      console.log(`[LIBRARY][FILTER_UPDATES] count=${updates}`);
     } catch {
       showError("Update check failed.", { title: "Error" });
     } finally {
@@ -276,6 +294,8 @@ export default function LibraryPage({ onNavigate }: Props) {
       showError("Source has no download URL.", { title: "Invalid source" });
       return;
     }
+    // Rebuild auth headers from settings at request time (never from cache)
+    const effectiveHeaders = source.authHeaders ?? getEffectiveProviderAuthHeaders(source.providerId, settings);
     try {
       showSuccess(`Downloading from ${source.providerName}...`, { title: "Download started" });
       await downloadAndInstallPackage({
@@ -284,7 +304,7 @@ export default function LibraryPage({ onNavigate }: Props) {
         luaTarget: settings.luaPath,
         depotcacheTarget: settings.depotcachePath,
         createBackups: true,
-        headers: source.authHeaders,
+        headers: effectiveHeaders,
       });
       const luaScript = game.luaScripts[0];
       let localHash: string | undefined;
@@ -314,6 +334,18 @@ export default function LibraryPage({ onNavigate }: Props) {
         status: "up-to-date",
       };
       await markSyncIndexItem(syncItem);
+
+      if (game.appId) {
+        const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
+          ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
+          : undefined;
+        const providerOpts: ProviderStatusOptions = {
+          luaDir: settings.luaPath || undefined,
+          steamRoot: settings.steamRoot || undefined,
+        };
+        await saveProviderStatusAfterInstall(game.appId, source.providerId, hubcapConfig, providerOpts);
+      }
+
       showSuccess(`Sync complete from ${source.providerName}.`, { title: "Synced" });
       await refresh();
     } catch (error) {
@@ -429,9 +461,19 @@ export default function LibraryPage({ onNavigate }: Props) {
 
                 {paginatedGames.length === 0 ? (
                   <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
-                    <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
-                    <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
-                    <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
+                    {filter === "updates" ? (
+                      <>
+                        <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
+                        <h2 className="mt-4 font-semibold text-(--color-text)">No package updates available</h2>
+                        <p className="mt-1.5 text-sm text-(--color-muted)">All installed Lua packages are up to date.</p>
+                      </>
+                    ) : (
+                      <>
+                        <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
+                        <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
+                        <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
+                      </>
+                    )}
                     {(filter !== "all" || searchQuery) && (
                     <button
                       type="button"

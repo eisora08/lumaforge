@@ -31,4 +31,6 @@ pub mod toast;
 pub mod steam_index;
 pub mod achievement_watcher;
 pub mod hubcap;
+pub mod provider_status_cache;
+pub mod scan_state;
 pub mod steam_owned;

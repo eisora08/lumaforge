@@ -29,6 +29,10 @@ import {
   loadSourceAvailabilityIndex,
 } from "../../services/sourceAvailabilityCacheService";
 import { useSettings } from "../../context/SettingsContext";
+import { loadProviderStatus, normalizeProviderId, updateProviderRemoteStatus, type ProviderStatusOptions } from "../../services/providerStatusService";
+import { getCachedProviderStatus, subscribeUpdateStatus } from "../../services/providerStatusStore";
+import { fetchHubcapAppStatus, checkHubcapAppUpdate, setLocalPackageMetadata, refreshHubcapStatus } from "../../services/hubcapApiService";
+import type { ProviderCheckState } from "./details/StoreGameSummaryPanel";
 
 import { showError } from "../toast/GameToast";
 
@@ -57,7 +61,7 @@ type StoreGameDetailsPageProps = {
   sourceStatus?: SourceCheckStatus;
   isBackgroundChecking?: boolean;
   onBack: () => void;
-  onDownloadSource?: (source: PackageSource) => void;
+  onDownloadSource?: (source: PackageSource) => Promise<void>;
   onOpenGame?: (game: PackageGame) => void;
   onSelectSourceKey?: (sourceKey: string) => void;
   onRefreshSources?: () => void;
@@ -167,6 +171,17 @@ export default function StoreGameDetailsPage({
   const { settings } = useSettings();
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
+
+  // Provider-status sidecar state
+  const [providerCheckState, setProviderCheckState] = useState<ProviderCheckState>("no-data");
+  const [providerCheckReason, setProviderCheckReason] = useState<string>("");
+  const [providerRemoteFileModified, setProviderRemoteFileModified] = useState<string | undefined>();
+  const [providerRemoteFileSize, setProviderRemoteFileSize] = useState<number | undefined>();
+  const [isProviderChecking, setIsProviderChecking] = useState(false);
+
+  // Provider-check in-flight guard + stale result protection
+  const _checkRequestIdRef = useRef(0);
+  const _checkInFlightRef = useRef(false);
 
   // Internal source checking — used when parent does not provide sourceStatus/onRefreshSources
   const [internalSourceStatus, setInternalSourceStatus] = useState<SourceCheckStatus | undefined>();
@@ -438,6 +453,87 @@ export default function StoreGameDetailsPage({
     }
   });
 
+  // Load provider-status sidecar on mount when provider is known
+  useEffect(() => {
+    const appId = game.appId;
+    const providerId = effectiveSelectedSource?.providerId;
+    if (!appId || !providerId) return;
+
+    const pid: string = providerId;
+    let cancelled = false;
+
+    async function loadStatus() {
+      const normalizedId = normalizeProviderId(pid);
+      const statusFile = await loadProviderStatus(appId, normalizedId);
+      if (cancelled) return;
+
+      if (!statusFile || !statusFile.result) {
+        setProviderCheckState("no-data");
+        setProviderCheckReason("");
+        return;
+      }
+
+      setProviderCheckState(statusFile.result.status as ProviderCheckState);
+      setProviderCheckReason(statusFile.result.reason);
+      setProviderRemoteFileModified(statusFile.remote?.fileModified ?? undefined);
+      setProviderRemoteFileSize(statusFile.remote?.fileSize ?? undefined);
+
+      // Seed local package metadata for comparison
+      if (statusFile.local) {
+        setLocalPackageMetadata(appId, {
+          fileModifiedAtInstall: statusFile.local.fileModifiedAtInstall ?? undefined,
+          fileSizeAtInstall: statusFile.local.fileSizeAtInstall ?? undefined,
+        });
+      }
+    }
+
+    loadStatus();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.appId, effectiveSelectedSource?.providerId]);
+
+  // Subscribe to reactive provider-status store so the detail page updates immediately
+  // when provider-status changes (scan, check, download, update).
+  useEffect(() => {
+    const appId = game.appId;
+    const providerId = effectiveSelectedSource?.providerId;
+    if (!appId || !providerId) return;
+
+    const normalizedId = normalizeProviderId(providerId);
+
+    const unsub = subscribeUpdateStatus(() => {
+      // Re-read provider-status from store cache (no disk I/O — store already loaded it)
+      getCachedProviderStatus(appId, normalizedId).then((statusFile) => {
+        if (!statusFile || !statusFile.result) {
+          setProviderCheckState("no-data");
+          setProviderCheckReason("");
+          return;
+        }
+        setProviderCheckState(statusFile.result.status as ProviderCheckState);
+        setProviderCheckReason(statusFile.result.reason);
+        setProviderRemoteFileModified(statusFile.remote?.fileModified ?? undefined);
+        setProviderRemoteFileSize(statusFile.remote?.fileSize ?? undefined);
+
+        if (statusFile.local) {
+          const resultReason = statusFile.result?.reason ?? "";
+          const localLuaReasons = ["local-lua-file", "local-lua-not-older", "remote-newer-than-local-lua"];
+          const metadataSource = localLuaReasons.includes(resultReason) ? "local-lua" as const : ("remote" as const);
+          setLocalPackageMetadata(appId, {
+            fileModifiedAtInstall: statusFile.local.fileModifiedAtInstall ?? undefined,
+            fileSizeAtInstall: statusFile.local.fileSizeAtInstall ?? undefined,
+            metadataSource,
+          });
+        }
+
+        console.log(`[PACKAGE][SUMMARY_STATE] appid=${appId} providerCheckState=${statusFile.result?.status ?? "unknown"} reason=${statusFile.result?.reason ?? ""} hasLocal=${!!statusFile.local} hasRemote=${!!statusFile.remote}`);
+        console.log(`[PACKAGE][BUTTON_STATE] appid=${appId} button=${statusFile.result?.status === "update-available" ? "update-available" : statusFile.result?.status === "up-to-date" ? "up-to-date" : "other"} enabled=true reason=store-subscription`);
+      });
+    });
+
+    return unsub;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.appId, effectiveSelectedSource?.providerId]);
+
   // Update source state cache when effective state changes
   useEffect(() => {
     if (!game.appId) return;
@@ -557,15 +653,143 @@ export default function StoreGameDetailsPage({
     }
   }
 
-  function handleDownload() {
-    const source = effectiveSelectedSource?.available ? effectiveSelectedSource : bestSource;
-    if (source) {
-      onDownloadSource?.(source);
+  async function reloadProviderStatus() {
+    const appId = game.appId;
+    const providerId = effectiveSelectedSource?.providerId;
+    if (!appId || !providerId) return;
+
+    const pid: string = providerId;
+    const normalizedId = normalizeProviderId(pid);
+    const statusFile = await loadProviderStatus(appId, normalizedId);
+    if (!statusFile || !statusFile.result) {
+      setProviderCheckState("no-data");
+      setProviderCheckReason("");
+      return;
+    }
+    setProviderCheckState(statusFile.result.status as ProviderCheckState);
+    setProviderCheckReason(statusFile.result.reason);
+    setProviderRemoteFileModified(statusFile.remote?.fileModified ?? undefined);
+    setProviderRemoteFileSize(statusFile.remote?.fileSize ?? undefined);
+    if (statusFile.local) {
+      // Determine metadataSource from result reason
+      const resultReason = statusFile.result?.reason ?? "";
+      const localLuaReasons = ["local-lua-file", "local-lua-not-older", "remote-newer-than-local-lua"];
+      const metadataSource = localLuaReasons.includes(resultReason) ? "local-lua" as const : ("remote" as const);
+      setLocalPackageMetadata(appId, {
+        fileModifiedAtInstall: statusFile.local.fileModifiedAtInstall ?? undefined,
+        fileSizeAtInstall: statusFile.local.fileSizeAtInstall ?? undefined,
+        metadataSource,
+      });
     }
   }
 
-  function handleDownloadFromSource(source: PackageSource) {
-    onDownloadSource?.(source);
+  async function handleDownload() {
+    const source = effectiveSelectedSource?.available ? effectiveSelectedSource : bestSource;
+    if (source) {
+      await onDownloadSource?.(source);
+      await reloadProviderStatus();
+
+      // Refresh Hubcap badge usage/status after download/update
+      const hubcapSettings = settings.providers?.hubcapdb;
+      if (hubcapSettings?.baseUrl && hubcapSettings?.apiKey) {
+        refreshHubcapStatus(hubcapSettings.baseUrl, hubcapSettings.apiKey).then(() => {
+          console.log(`[HUBCAP][BADGES] surface=store-details after-download appid=${game.appId}`);
+        });
+      }
+    }
+  }
+
+  async function handleDownloadFromSource(source: PackageSource) {
+    await onDownloadSource?.(source);
+    await reloadProviderStatus();
+  }
+
+  async function handleCheckForUpdates() {
+    const appId = game.appId;
+    const providerId = effectiveSelectedSource?.providerId;
+    if (!appId || !providerId) return;
+
+    const pid: string = providerId;
+    const hubcapSettings = settings.providers?.hubcapdb;
+    if (!hubcapSettings?.apiKey || !hubcapSettings?.baseUrl) {
+      console.log(`[PACKAGE][CHECK_FOR_UPDATES] appid=${appId} skipped=no-hubcap-settings`);
+      return;
+    }
+
+    // In-flight guard — prevent duplicate checks
+    if (_checkInFlightRef.current) {
+      console.log(`[PACKAGE][CHECK_SKIP] appid=${appId} provider=${pid} reason=already-running`);
+      return;
+    }
+
+    const requestId = ++_checkRequestIdRef.current;
+    _checkInFlightRef.current = true;
+    setIsProviderChecking(true);
+
+    console.log(`[PACKAGE][CHECK_START] appid=${appId} provider=${pid} requestId=${requestId}`);
+
+    try {
+      const remote = await fetchHubcapAppStatus(hubcapSettings.baseUrl, hubcapSettings.apiKey, appId);
+      // Stale result protection — only apply if requestId matches latest
+      if (_checkRequestIdRef.current !== requestId) {
+        console.log(`[PACKAGE][CHECK_STALE_IGNORED] appid=${appId} provider=${pid} requestId=${requestId}`);
+        return;
+      }
+
+      if (!remote) {
+        setProviderCheckState("error");
+        setProviderCheckReason("fetch-failed");
+        return;
+      }
+
+      const result = checkHubcapAppUpdate(appId, remote);
+
+      const providerOptions: ProviderStatusOptions = {
+        luaDir: settings.luaPath || undefined,
+        steamRoot: settings.steamRoot || undefined,
+      };
+      await updateProviderRemoteStatus(appId, pid, {
+        status: remote.status,
+        gameName: remote.gameName ?? null,
+        manifestFileExists: remote.manifestFileExists ?? null,
+        autoUpdateEnabled: remote.autoUpdateEnabled ?? null,
+        updateInProgress: remote.updateInProgress ?? null,
+        fileSize: remote.fileSize ?? null,
+        fileModified: remote.fileModified ?? null,
+        fileAgeDays: remote.fileAgeDays ?? null,
+        needsUpdate: remote.needsUpdate ?? null,
+        updateReason: remote.updateReason ?? null,
+        timestamp: remote.timestamp ?? null,
+      }, {
+        status: result.status,
+        reason: result.reason,
+      }, providerOptions);
+
+      // Reload from disk to pick up any auto-baseline changes
+      await reloadProviderStatus();
+
+      console.log(
+        `[PACKAGE][CHECK_APPLY] appid=${appId} provider=${pid} requestId=${requestId} status=${result.status} reason=${result.reason}`,
+      );
+
+      // Refresh Hubcap badge usage/status after check completes
+      if (hubcapSettings.baseUrl && hubcapSettings.apiKey) {
+        refreshHubcapStatus(hubcapSettings.baseUrl, hubcapSettings.apiKey).then(() => {
+          console.log(`[HUBCAP][BADGES] surface=store-details after-check appid=${appId}`);
+        });
+      }
+    } catch (err) {
+      if (_checkRequestIdRef.current !== requestId) {
+        console.log(`[PACKAGE][CHECK_STALE_IGNORED] appid=${appId} provider=${pid} requestId=${requestId} reason=stale-error`);
+        return;
+      }
+      console.log(`[PACKAGE][CHECK_FOR_UPDATES] appid=${appId} error="${String(err)}"`);
+      setProviderCheckState("error");
+      setProviderCheckReason(String(err));
+    } finally {
+      _checkInFlightRef.current = false;
+      setIsProviderChecking(false);
+    }
   }
 
   if (metadataLoading) {
@@ -665,6 +889,14 @@ export default function StoreGameDetailsPage({
               onOpenSteam={handleOpenSteam}
               onOpenSteamDb={handleOpenSteamDb}
               onRefreshSources={effectiveRefreshSources}
+              providerCheckState={providerCheckState}
+              providerCheckReason={providerCheckReason}
+              providerRemoteFileModified={providerRemoteFileModified}
+              providerRemoteFileSize={providerRemoteFileSize}
+              hasLocalPackage={luaInstalled}
+              steamOwned={false}
+              isProviderChecking={isProviderChecking}
+              onCheckForUpdates={handleCheckForUpdates}
             />
           </aside>
         </div>

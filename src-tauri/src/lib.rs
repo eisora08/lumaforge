@@ -198,6 +198,7 @@ pub fn run() {
             commands::installed_games_registry::read_installed_games_registry,
             commands::installed_games_registry::write_installed_games_registry,
             commands::process::file_exists,
+            commands::process::get_file_metadata,
             commands::desktop::open_folder,
             commands::desktop::create_shortcut,
             commands::toast::show_achievement_overlay,
@@ -207,6 +208,11 @@ pub fn run() {
             commands::hubcap::hubcap_health,
             commands::hubcap::hubcap_user_stats,
             commands::hubcap::hubcap_depot_keys,
+            commands::hubcap::hubcap_app_status,
+            commands::provider_status_cache::read_provider_status,
+            commands::provider_status_cache::write_provider_status,
+            commands::scan_state::read_scan_state,
+            commands::scan_state::write_scan_state,
             commands::steam_owned::fetch_steam_owned_games,
         ])
         .run(tauri::generate_context!())

@@ -2,7 +2,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::models::hubcap::{
-    HubcapDepotKeysResponse, HubcapHealthResponse, HubcapUserStatsResponse,
+    HubcapAppStatusResponse, HubcapDepotKeysResponse, HubcapHealthResponse, HubcapUserStatsResponse,
 };
 
 fn build_client() -> Result<reqwest::blocking::Client, String> {
@@ -365,6 +365,144 @@ pub fn hubcap_depot_keys(
                 status: "network_error".into(),
                 count: 0,
             })
+        }
+    }
+}
+
+fn empty_app_status(status: &str) -> HubcapAppStatusResponse {
+    HubcapAppStatusResponse {
+        ok: false,
+        status: status.into(),
+        app_id: None,
+        game_name: None,
+        manifest_file_exists: None,
+        auto_update_enabled: None,
+        update_in_progress: None,
+        file_size: None,
+        file_modified: None,
+        file_age_days: None,
+        needs_update: None,
+        update_reason: None,
+        timestamp: None,
+    }
+}
+
+#[tauri::command]
+pub fn hubcap_app_status(
+    base_url: String,
+    api_key: String,
+    app_id: String,
+) -> Result<HubcapAppStatusResponse, String> {
+    if api_key.is_empty() {
+        return Ok(empty_app_status("no_key"));
+    }
+
+    let base = base_url.trim_end_matches('/').to_string();
+    let url = format!("{}/api/v1/status/{}", base, app_id);
+    let client = build_client()?;
+
+    match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+    {
+        Ok(response) => {
+            let status_code = response.status().as_u16();
+            match status_code {
+                200 => match response.json::<serde_json::Value>() {
+                    Ok(json) => {
+                        let obj = json.as_object().cloned().unwrap_or_default();
+
+                        let status = parse_str_field(&obj, &["status"]);
+                        let game_name = parse_str_field(&obj, &["game_name", "gameName"]);
+                        let app_id_val = parse_str_field(&obj, &["app_id", "appId"]);
+                        let manifest_file_exists = obj
+                            .get("manifest_file_exists")
+                            .or_else(|| obj.get("manifestFileExists"))
+                            .and_then(|v| v.as_bool());
+                        let auto_update_enabled = obj
+                            .get("auto_update_enabled")
+                            .or_else(|| obj.get("autoUpdateEnabled"))
+                            .and_then(|v| v.as_bool());
+                        let update_in_progress = obj
+                            .get("update_in_progress")
+                            .or_else(|| obj.get("updateInProgress"))
+                            .and_then(|v| v.as_bool());
+                        let file_size = parse_i64_field(&obj, &["file_size", "fileSize"]);
+                        let file_modified = parse_str_field(&obj, &["file_modified", "fileModified"]);
+                        let file_age_days = obj
+                            .get("file_age_days")
+                            .or_else(|| obj.get("fileAgeDays"))
+                            .and_then(|v| v.as_f64());
+                        let needs_update = obj
+                            .get("needs_update")
+                            .or_else(|| obj.get("needsUpdate"))
+                            .and_then(|v| v.as_bool());
+                        let update_reason = parse_str_field(&obj, &["update_reason", "updateReason"]);
+                        let timestamp = parse_str_field(&obj, &["timestamp"]);
+
+                        println!(
+                            "[HUBCAP][APP_STATUS] appid={} status={} manifestExists={} updateInProgress={} needsUpdate={} fileModified={} fileSize={}",
+                            app_id,
+                            status.as_deref().unwrap_or("null"),
+                            manifest_file_exists.map_or("null".into(), |v| v.to_string()),
+                            update_in_progress.map_or("null".into(), |v| v.to_string()),
+                            needs_update.map_or("null".into(), |v| v.to_string()),
+                            file_modified.as_deref().unwrap_or("null"),
+                            file_size.map_or(-1, |v| v),
+                        );
+
+                        Ok(HubcapAppStatusResponse {
+                            ok: true,
+                            status: status.unwrap_or_else(|| "unknown".into()),
+                            app_id: app_id_val,
+                            game_name,
+                            manifest_file_exists,
+                            auto_update_enabled,
+                            update_in_progress,
+                            file_size,
+                            file_modified,
+                            file_age_days,
+                            needs_update,
+                            update_reason,
+                            timestamp,
+                        })
+                    }
+                    Err(e) => {
+                        println!(
+                            "[HUBCAP][APP_STATUS] status=parse_error error=\"{}\"",
+                            e
+                        );
+                        Ok(empty_app_status("parse_error"))
+                    }
+                },
+                401 => {
+                    println!("[HUBCAP][APP_STATUS] status=unauthorized appid={}", app_id);
+                    Ok(empty_app_status("unauthorized"))
+                }
+                403 => {
+                    println!("[HUBCAP][APP_STATUS] status=forbidden appid={}", app_id);
+                    Ok(empty_app_status("forbidden"))
+                }
+                429 => {
+                    println!("[HUBCAP][APP_STATUS] status=rate_limited");
+                    Ok(empty_app_status("rate_limited"))
+                }
+                _ => {
+                    println!(
+                        "[HUBCAP][APP_STATUS] status=error http={}",
+                        status_code
+                    );
+                    Ok(empty_app_status("error"))
+                }
+            }
+        }
+        Err(e) => {
+            println!(
+                "[HUBCAP][APP_STATUS] status=network_error error=\"{}\"",
+                e
+            );
+            Ok(empty_app_status("network_error"))
         }
     }
 }

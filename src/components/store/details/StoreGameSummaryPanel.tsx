@@ -1,6 +1,7 @@
 import AsyncImage from "../../common/AsyncImage";
 import HubcapProviderBadges from "../../settings/HubcapProviderBadges";
 import {
+  CheckCircle2,
   Database,
   Download,
   ExternalLink,
@@ -9,14 +10,31 @@ import {
   FileText,
   Gamepad2,
   PauseCircle,
+  RefreshCw,
+  Library,
+  SquareArrowOutUpRight,
+  AlertTriangle,
+  ShieldAlert,
+  Clock,
+  RefreshCwOff,
 } from "lucide-react";
 
 import { SummaryLine } from "./StoreGameDetailPrimitives";
-
-import { CheckCircle2, Library, SquareArrowOutUpRight } from "lucide-react";
 import type { PackageGame, PackageSource } from "../../../types/package";
 import type { PackageInstallStatus } from "../../../types/packageInstall";
 import type { SourceCheckStatus } from "../../../services/sourceAvailabilityCacheService";
+
+export type ProviderCheckState =
+  | "update-available"
+  | "up-to-date"
+  | "unknown"
+  | "provider-unavailable"
+  | "provider-updating"
+  | "provider-needs-refresh"
+  | "auth-required"
+  | "rate-limited"
+  | "error"
+  | "no-data";
 
 type StoreGameSummaryPanelProps = {
   game: PackageGame;
@@ -36,6 +54,16 @@ type StoreGameSummaryPanelProps = {
   onOpenSteam: () => void;
   onOpenSteamDb: () => void;
   onRefreshSources?: () => void;
+
+  // Provider-status sidecar props
+  providerCheckState?: ProviderCheckState;
+  providerCheckReason?: string;
+  providerRemoteFileModified?: string;
+  providerRemoteFileSize?: number;
+  hasLocalPackage?: boolean;
+  steamOwned?: boolean;
+  isProviderChecking?: boolean;
+  onCheckForUpdates?: () => void;
 };
 
 function getStatusBadge(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean) {
@@ -72,16 +100,105 @@ function getFileIcon(fileType: PackageSource["fileType"]) {
   return FileText;
 }
 
-function getDownloadLabel(source?: PackageSource | null, luaInstalled?: boolean) {
-  if (luaInstalled) {
-    if (source?.fileType === "lua") return "Update Lua";
-    if (source?.fileType === "zip") return "Update Package";
-    return "Update";
+type ButtonConfig = {
+  label: string;
+  enabled: boolean;
+  onClick: (() => void) | undefined;
+  reason: string;
+};
+
+function getButtonConfig(
+  providerCheckState: ProviderCheckState,
+  luaInstalled: boolean,
+  isSteamInstalled: boolean,
+  steamOwned: boolean,
+  isChecking: boolean,
+  isNone: boolean,
+  needsRetry: boolean,
+  canDownload: boolean,
+  selectedSource: PackageSource | null | undefined,
+  onDownload: (() => void) | undefined,
+  onCheckForUpdates: (() => void) | undefined,
+): ButtonConfig {
+  if (isChecking) {
+    return { label: "Checking sources...", enabled: false, onClick: undefined, reason: "checking-sources" };
   }
-  if (!source) return "Download";
-  if (source.fileType === "lua") return "Download Lua";
-  if (source.fileType === "zip") return "Download Package";
-  return "Download";
+  if (isNone) {
+    return { label: "No Sources Available", enabled: false, onClick: undefined, reason: "no-sources" };
+  }
+  if (needsRetry) {
+    return { label: "Source check failed", enabled: false, onClick: undefined, reason: "source-check-failed" };
+  }
+
+  // Non-installed: show download action, provider status is secondary
+  if (!luaInstalled && !isSteamInstalled) {
+    if (steamOwned) {
+      return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
+    }
+    if (!canDownload) {
+      return { label: "Select a Source", enabled: false, onClick: undefined, reason: "no-source-selected" };
+    }
+    let label = "Download";
+    if (selectedSource?.fileType === "lua") label = "Download Lua";
+    else if (selectedSource?.fileType === "zip") label = "Download Package";
+    return { label, enabled: true, onClick: onDownload, reason: "download-ready" };
+  }
+
+  // Installed: owned-blocked
+  if (steamOwned) {
+    return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
+  }
+
+  // Installed: button depends on provider check state
+  switch (providerCheckState) {
+    case "no-data":
+      return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "no-provider-data" };
+    case "update-available":
+      return { label: "Update Package", enabled: true, onClick: onDownload, reason: "update-available" };
+    case "up-to-date":
+      return { label: "Up to date", enabled: false, onClick: undefined, reason: "up-to-date" };
+    case "unknown":
+      return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "unknown-no-local-data" };
+    case "provider-updating":
+      return { label: "Provider updating", enabled: false, onClick: undefined, reason: "provider-updating" };
+    case "provider-needs-refresh":
+      return { label: "Provider needs refresh", enabled: false, onClick: undefined, reason: "provider-needs-refresh" };
+    case "provider-unavailable":
+      return { label: "Provider unavailable", enabled: false, onClick: undefined, reason: "provider-unavailable" };
+    case "auth-required":
+      return { label: "Auth required", enabled: false, onClick: undefined, reason: "auth-required" };
+    case "rate-limited":
+      return { label: "Rate limited", enabled: false, onClick: undefined, reason: "rate-limited" };
+    case "error":
+      return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "provider-error" };
+    default:
+      return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "default" };
+  }
+}
+
+function getProviderStatusBadge(checkState: ProviderCheckState): { label: string; icon: typeof AlertTriangle; className: string } | null {
+  switch (checkState) {
+    case "update-available":
+      return { label: "Update available", icon: Download, className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" };
+    case "up-to-date":
+      return { label: "Up to date", icon: CheckCircle2, className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" };
+    case "unknown":
+      return { label: "No local data", icon: AlertTriangle, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+    case "provider-updating":
+      return { label: "Provider updating", icon: Clock, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+    case "provider-needs-refresh":
+      return { label: "Needs refresh", icon: RefreshCw, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+    case "provider-unavailable":
+      return { label: "Provider unavailable", icon: RefreshCwOff, className: "border-red-500/20 bg-red-500/10 text-red-300" };
+    case "auth-required":
+      return { label: "Auth required", icon: ShieldAlert, className: "border-red-500/20 bg-red-500/10 text-red-300" };
+    case "rate-limited":
+      return { label: "Rate limited", icon: Clock, className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300" };
+    case "error":
+      return { label: "Check error", icon: AlertTriangle, className: "border-red-500/20 bg-red-500/10 text-red-300" };
+    default:
+      return null;
+  }
 }
 
 export default function StoreGameSummaryPanel({
@@ -102,6 +219,14 @@ export default function StoreGameSummaryPanel({
   onOpenSteam,
   onOpenSteamDb,
   onRefreshSources,
+  providerCheckState = "no-data",
+  providerCheckReason,
+  providerRemoteFileModified,
+  providerRemoteFileSize,
+  hasLocalPackage = false,
+  steamOwned = false,
+  isProviderChecking = false,
+  onCheckForUpdates,
 }: StoreGameSummaryPanelProps) {
   const isChecking = sourceStatus === "checking" && !isBackgroundChecking;
   const isReady = sourceStatus === "ready" || availableSources > 0;
@@ -113,9 +238,40 @@ export default function StoreGameSummaryPanel({
   const canDownload = isReady && !!selectedSource?.available;
   const needsRetry = isError || isTimeout;
 
-  console.debug(
-    `[STORE][DETAILS_STATE] appid=${game.appId} installed=${isSteamInstalled} luaInstalled=${luaInstalled} status=${statusBadge?.label || "not-installed"} button=${getDownloadLabel(selectedSource, luaInstalled)}`
+  const isInstalled = luaInstalled || isSteamInstalled;
+  const actionState = steamOwned ? "owned-blocked" : canDownload ? "download-available" : "none";
+
+  const buttonConfig = getButtonConfig(
+    providerCheckState,
+    luaInstalled,
+    isSteamInstalled,
+    steamOwned,
+    isChecking,
+    isNone,
+    needsRetry,
+    canDownload,
+    selectedSource,
+    onDownload,
+    onCheckForUpdates,
   );
+
+  const providerStatusBadge = isInstalled ? getProviderStatusBadge(providerCheckState) : null;
+
+  console.debug(
+    `[PACKAGE][SUMMARY_STATE] appid=${game.appId} actionState=${actionState} providerCheckState=${providerCheckState} reason=${buttonConfig.reason} hasLocal=${hasLocalPackage} hasRemote=${providerCheckState !== "no-data"}`,
+  );
+  const primaryIsCheckAction = buttonConfig.label === "Check again" || buttonConfig.label === "Check for updates";
+  const showSecondaryCheckAgain = isInstalled && providerCheckState !== "no-data" && !primaryIsCheckAction && !isProviderChecking;
+  const checkAgainRendered = primaryIsCheckAction ? 1 : showSecondaryCheckAgain ? 1 : 0;
+
+  console.debug(
+    `[PACKAGE][BUTTON_STATE] appid=${game.appId} button="${buttonConfig.label}" enabled=${buttonConfig.enabled} checkAgainRendered=${checkAgainRendered} isChecking=${isProviderChecking} baselineButtonRendered=false`,
+  );
+  if (providerRemoteFileModified || providerRemoteFileSize) {
+    console.debug(
+      `[PACKAGE][REMOTE_INFO_RENDER] appid=${game.appId} fileModified=${providerRemoteFileModified} fileSize=${providerRemoteFileSize}`,
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -188,6 +344,19 @@ export default function StoreGameSummaryPanel({
                 {isBackgroundChecking && " · scanning..."}
               </span>
             ) : null}
+
+            {isInstalled && providerStatusBadge &&
+              (() => {
+                const Icon = providerStatusBadge.icon;
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${providerStatusBadge.className}`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {providerStatusBadge.label}
+                  </span>
+                );
+              })()}
           </div>
         </div>
       </div>
@@ -248,24 +417,62 @@ export default function StoreGameSummaryPanel({
           </div>
         )}
 
+        {/* Provider-status info block — auto-baselined from remote, no manual action needed */}
+
+        {isInstalled && providerCheckState === "update-available" && steamOwned && (
+          <div className="mb-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2">
+            <p className="text-xs text-blue-300">
+              Provider update available, but this game is already in your Steam account.
+            </p>
+          </div>
+        )}
+
+        {/* Auth error info blocks — shown for any state where auth is required */}
+        {providerCheckState === "auth-required" && providerCheckReason === "missing-api-key" && (
+          <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2">
+            <p className="text-xs font-medium text-red-300">
+              HubcapDB API key required.
+            </p>
+            <p className="mt-1 text-xs text-(--color-muted)">
+              Configure your HubcapDB API key in Settings {'>'} Providers.
+            </p>
+          </div>
+        )}
+
+        {providerCheckState === "auth-required" && providerCheckReason === "unauthorized" && (
+          <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2">
+            <p className="text-xs font-medium text-red-300">
+              HubcapDB rejected the request. Check your API key.
+            </p>
+          </div>
+        )}
+
+        {providerCheckState === "auth-required" && providerCheckReason === "forbidden" && (
+          <div className="mb-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-3 py-2">
+            <p className="text-xs font-medium text-orange-300">
+              Your HubcapDB account does not have access to this package.
+            </p>
+          </div>
+        )}
+
+        {providerCheckState === "rate-limited" && (
+          <div className="mb-3 rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-3 py-2">
+            <p className="text-xs font-medium text-yellow-300">
+              HubcapDB rate limit reached. Try again later.
+            </p>
+          </div>
+        )}
+
+        {/* Primary action button */}
         <div className="space-y-2">
           <button
             type="button"
-            disabled={!canDownload}
-            onClick={onDownload}
+            disabled={!buttonConfig.enabled}
+            onClick={buttonConfig.onClick}
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
-            {isChecking
-              ? "Checking sources..."
-              : isReady && canDownload
-                ? getDownloadLabel(selectedSource, luaInstalled)
-                : isNone
-                  ? "No Sources Available"
-                  : needsRetry
-                    ? "Source check failed"
-                    : "No Sources Available"}
-            
+            {buttonConfig.label}
           </button>
 
           <button
@@ -275,8 +482,30 @@ export default function StoreGameSummaryPanel({
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isChecking ? "Checking sources..." : isReady ? "Change Source" : "Sources: None"}
-            
           </button>
+
+          {/* Check again / Retry / Checking... */}
+          {showSecondaryCheckAgain && (
+            <button
+              type="button"
+              onClick={onCheckForUpdates}
+              disabled={!onCheckForUpdates}
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Check again
+            </button>
+          )}
+          {isProviderChecking && isInstalled && (
+            <button
+              type="button"
+              disabled={true}
+              className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-muted) opacity-50"
+            >
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              Checking...
+            </button>
+          )}
 
           {needsRetry && onRefreshSources && (
             <button

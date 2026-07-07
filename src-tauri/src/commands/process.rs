@@ -212,6 +212,54 @@ pub fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct FileMetadata {
+    pub exists: bool,
+    pub size: Option<u64>,
+    pub modified_unix_s: Option<f64>,
+    pub created_unix_s: Option<f64>,
+}
+
+#[tauri::command]
+pub fn get_file_metadata(path: String) -> FileMetadata {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return FileMetadata {
+            exists: false,
+            size: None,
+            modified_unix_s: None,
+            created_unix_s: None,
+        };
+    }
+
+    match std::fs::metadata(&p) {
+        Ok(meta) => {
+            let modified = meta.modified().ok().map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0)
+            });
+            let created = meta.created().ok().map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0)
+            });
+            FileMetadata {
+                exists: true,
+                size: Some(meta.len()),
+                modified_unix_s: modified,
+                created_unix_s: created,
+            }
+        }
+        Err(_) => FileMetadata {
+            exists: true,
+            size: None,
+            modified_unix_s: None,
+            created_unix_s: None,
+        },
+    }
+}
+
 #[tauri::command]
 pub fn focus_game_window(pid: u32) -> Result<(), String> {
     unsafe {

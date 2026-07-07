@@ -891,6 +891,22 @@ export async function runBootTasks(): Promise<void> {
           // Log performance counter summary after boot settles (deferred via microtask)
           const { logBootPerfSummary } = await import("./perfCounters");
           setTimeout(() => logBootPerfSummary(), 100);
+
+          // Deferred installed Lua scanner — runs after UI is interactive
+          if (_cachedSettings?.luaPath) {
+            setTimeout(() => {
+              const luaDir = _cachedSettings!.luaPath!;
+              const hubcapSettings = _cachedSettings!.providers?.hubcapdb;
+              const hubcapConfig = hubcapSettings?.enabled && hubcapSettings?.baseUrl && hubcapSettings?.apiKey
+                ? { baseUrl: hubcapSettings.baseUrl, apiKey: hubcapSettings.apiKey }
+                : undefined;
+              import("./installedLuaScanner").then(({ runInstalledLuaScan }) => {
+                runInstalledLuaScan({ luaDir, hubcapConfig }).catch((err: unknown) => {
+                  console.warn("[PACKAGE_SCAN][ERROR]", String(err));
+                });
+              });
+            }, 2000);
+          }
         })(),
         timeoutPromise,
       ]);

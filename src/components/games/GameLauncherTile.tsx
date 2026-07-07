@@ -235,6 +235,21 @@ export default function GameLauncherTile({
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
+  // Subscribe to Lua update status
+  const [luaUpdateStatus, setLuaUpdateStatus] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    import("../../services/installedLuaScanner").then((mod) => {
+      if (cancelled) return;
+      const s = game.appId ? mod.getUpdateStatus(game.appId) : undefined;
+      if (!cancelled) setLuaUpdateStatus(s);
+      const unsub = mod.subscribeUpdateStatus(() => {
+        if (!cancelled && game.appId) setLuaUpdateStatus(mod.getUpdateStatus(game.appId));
+      });
+      return unsub;
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [game.appId]);
 
   function handleCardClick() {
     setMenuOpen(false);
@@ -287,6 +302,11 @@ export default function GameLauncherTile({
           </div>
         )}
         <div className="absolute inset-0 rounded-t-2xl bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none" />
+        {luaUpdateStatus === "update-available" && (
+          <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-black">
+            Update
+          </span>
+        )}
       </div>
 
       {/* Title + actions row */}

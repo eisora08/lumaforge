@@ -37,3 +37,20 @@ pub struct HubcapDepotKeysResponse {
     pub status: String,
     pub count: i64,
 }
+
+#[derive(Serialize)]
+pub struct HubcapAppStatusResponse {
+    pub ok: bool,
+    pub status: String,
+    pub app_id: Option<String>,
+    pub game_name: Option<String>,
+    pub manifest_file_exists: Option<bool>,
+    pub auto_update_enabled: Option<bool>,
+    pub update_in_progress: Option<bool>,
+    pub file_size: Option<i64>,
+    pub file_modified: Option<String>,
+    pub file_age_days: Option<f64>,
+    pub needs_update: Option<bool>,
+    pub update_reason: Option<String>,
+    pub timestamp: Option<String>,
+}

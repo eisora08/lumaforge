@@ -185,6 +185,12 @@ export function buildSourceAvailabilityFromProviders(
   totalProviderCount: number
 ): SourceAvailabilityGameEntry {
   const availableSources = sources.filter((s) => s.available);
+  // Safety guard: never cache auth headers
+  for (const s of availableSources) {
+    if (s.authHeaders) {
+      console.log(`[SOURCE_CACHE][AUTH_STRIPPED] provider=${s.providerName} reason=do-not-cache-secrets`);
+    }
+  }
   const status: SourceCheckStatus = availableSources.length > 0 ? "ready" : "none";
   return {
     appId,
