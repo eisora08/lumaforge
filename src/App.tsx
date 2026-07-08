@@ -34,6 +34,7 @@ import { runBootTasks } from "./services/appBootCoordinator";
 import AppRouteTransition from "./components/common/AppRouteTransition";
 import { ConfirmProvider } from "./services/confirmService";
 import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
+import { setAppFullscreen, toggleAppFullscreen } from "./services/windowModeService";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -132,12 +133,33 @@ function App() {
     prevPageRef.current = activePage;
   }, [activePage]);
 
+  // F11 fullscreen toggle — only active in Console Mode
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "F11") return;
+      if (activePage !== "console") return;
+      e.preventDefault();
+      toggleAppFullscreen();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activePage]);
+
   function handleNavigate(page: AppPage) {
     if (page === activePage) return;
     const startTime = NAV_PERF_ENABLED ? performance.now() : 0;
 
     // Phase 9: Mark navigation timestamp so services can defer background work
     markNavigation();
+
+    const isEnteringConsole = page === "console";
+    const isLeavingConsole = activePage === "console" && !isEnteringConsole;
+
+    if (isEnteringConsole) {
+      setAppFullscreen(true);
+    } else if (isLeavingConsole) {
+      setAppFullscreen(false);
+    }
 
     if (page === "game-details") {
       setGameDetailsPrevPage(activePage);
