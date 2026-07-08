@@ -114,7 +114,13 @@ export async function resolveSteamAppMetadata(
   });
 }
 
-
+export async function fetchSteamStoreDrmNotice(
+  appId: number,
+): Promise<string | null> {
+  return await invoke<string | null>("fetch_steam_store_drm_notice", {
+    appId,
+  });
+}
 
 export async function resolveSteamReviewSummaries(
   appIds: number[]

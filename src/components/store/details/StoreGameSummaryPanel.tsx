@@ -362,12 +362,12 @@ export default function StoreGameSummaryPanel({
                 );
               })()}
 
-            {inLibrary && (
+            {/* {inLibrary && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-300">
                 <Library className="h-3.5 w-3.5" />
                 In Library
               </span>
-            )}
+            )} */}
 
             {!steamOwned && !isSteamInstalled && !luaInstalled && installStatus === "not-installed" && isReady && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-(--color-muted)">

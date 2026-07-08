@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-07T00:00:00Z",
+  "sources": [
+    {
+      "id": "pcgamingwiki",
+      "name": "PCGamingWiki",
+      "url": "https://www.pcgamingwiki.com/wiki/List_of_games_that_have_Denuvo_Anti-Tamper"
+    },
+    {
+      "id": "denuvowatch-steam",
+      "name": "Denuvo Watch Steam Curator",
+      "url": "https://store.steampowered.com/curator/45075546-Denuvo-Watch/"
+    },
+    {
+      "id": "steam-store",
+      "name": "Official Steam Store Page",
+      "url": "https://store.steampowered.com/"
+    },
+    {
+      "id": "manual-curation",
+      "name": "Manual curation",
+      "url": ""
+    }
+  ],
+  "entries": [
+    {
+      "appId": "3768760",
+      "title": "007 First Light",
+      "normalizedTitle": "007 first light",
+      "series": "007",
+      "developers": ["IO Interactive A/S"],
+      "publishers": ["IO Interactive A/S"],
+      "releaseDate": "2025-12-09",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "1196590",
+      "title": "Resident Evil Village",
+      "normalizedTitle": "resident evil village",
+      "series": "Resident Evil",
+      "developers": ["CAPCOM Co., Ltd."],
+      "publishers": ["CAPCOM Co., Ltd."],
+      "releaseDate": "2021-05-07",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "1446780",
+      "title": "MONSTER HUNTER RISE",
+      "normalizedTitle": "monster hunter rise",
+      "series": "Monster Hunter",
+      "developers": ["CAPCOM Co., Ltd."],
+      "publishers": ["CAPCOM Co., Ltd."],
+      "releaseDate": "2022-01-12",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "740130",
+      "title": "Tales of Arise",
+      "normalizedTitle": "tales of arise",
+      "series": "Tales",
+      "developers": ["Bandai Namco Entertainment"],
+      "publishers": ["Bandai Namco Entertainment"],
+      "releaseDate": "2021-09-10",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "1700180",
+      "title": "Persona 5 Royal",
+      "normalizedTitle": "persona 5 royal",
+      "series": "Persona",
+      "developers": ["ATLUS"],
+      "publishers": ["SEGA"],
+      "releaseDate": "2022-10-21",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "1237320",
+      "title": "Sonic Frontiers",
+      "normalizedTitle": "sonic frontiers",
+      "series": "Sonic the Hedgehog",
+      "developers": ["SEGA"],
+      "publishers": ["SEGA"],
+      "releaseDate": "2022-11-08",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "removed",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "manual-curation"]
+      }
+    },
+    {
+      "appId": "1364780",
+      "title": "Street Fighter 6",
+      "normalizedTitle": "street fighter 6",
+      "series": "Street Fighter",
+      "developers": ["CAPCOM Co., Ltd."],
+      "publishers": ["CAPCOM Co., Ltd."],
+      "releaseDate": "2023-06-02",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "1795970",
+      "title": "TEKKEN 8",
+      "normalizedTitle": "tekken 8",
+      "series": "Tekken",
+      "developers": ["Bandai Namco Entertainment"],
+      "publishers": ["Bandai Namco Entertainment"],
+      "releaseDate": "2024-01-26",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "990080",
+      "title": "Hogwarts Legacy",
+      "normalizedTitle": "hogwarts legacy",
+      "series": null,
+      "developers": ["Avalanche Software"],
+      "publishers": ["Warner Bros. Games"],
+      "releaseDate": "2023-02-10",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "2337820",
+      "title": "S.T.A.L.K.E.R. 2: Heart of Chornobyl",
+      "normalizedTitle": "stalker 2 heart of chornobyl",
+      "series": "S.T.A.L.K.E.R.",
+      "developers": ["GSC Game World"],
+      "publishers": ["GSC Game World"],
+      "releaseDate": "2024-11-20",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "active",
+        "confidence": "high",
+        "sourceIds": ["steam-store", "manual-curation"]
+      }
+    },
+    {
+      "appId": "1868140",
+      "title": "Dead Space",
+      "normalizedTitle": "dead space",
+      "series": "Dead Space",
+      "developers": ["Motive Studio"],
+      "publishers": ["Electronic Arts"],
+      "releaseDate": "2023-01-27",
+      "platforms": ["Windows"],
+      "drm": {
+        "hasDenuvo": true,
+        "type": "Denuvo Anti-Tamper",
+        "status": "removed",
+        "confidence": "high",
+        "sourceIds": ["pcgamingwiki", "manual-curation"]
+      }
+    }
+  ]
+}

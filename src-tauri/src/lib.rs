@@ -54,6 +54,7 @@ pub fn run() {
             commands::lua::delete_lua_script,
             commands::game::resolve_steam_app_names,
             commands::metadata::resolve_steam_app_metadata,
+            commands::metadata::fetch_steam_store_drm_notice,
             commands::reviews::resolve_steam_review_summaries,
             commands::store::resolve_steam_featured_categories,
             commands::store_search::resolve_steam_store_search,

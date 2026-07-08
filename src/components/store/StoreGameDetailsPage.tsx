@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Languages, Puzzle, Star } from "lucide-react";
+import { ArrowLeft, Languages, Puzzle, Star, ShieldAlert } from "lucide-react";
 
 import type { PackageGame, PackageSource } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
+import { extractStoreDrmInfo } from "../../features/drm/storeDrmInfo";
+import type { StoreDrmInfo } from "../../features/drm/storeDrmInfo";
+import { resolveStoreDrmInfoForDetails } from "../../features/drm/resolveStoreDrmInfo";
 import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SourceCheckStatus } from "../../services/sourceAvailabilityCacheService";
 import type { StoreDetailsSourceState } from "../../services/storeDetailsSourceState";
@@ -191,6 +194,8 @@ export default function StoreGameDetailsPage({
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
   const [englishMovies, setEnglishMovies] = useState<SteamAppMetadata["movies"] | null>(null);
+  const [refinedDrmInfo, setRefinedDrmInfo] = useState<StoreDrmInfo | null>(null);
+  const _drmResolveReqRef = useRef(0);
   const _mediaEnrichReqRef = useRef(0);
 
   console.log(
@@ -683,6 +688,29 @@ export default function StoreGameDetailsPage({
       : metadata;
     return buildStoreMedia(mediaMeta, englishMovies ? "english" : undefined, englishMovies ? "US" : undefined);
   }, [metadata, englishMovies]);
+
+  // Resolve DRM info asynchronously (curated index + optional Steam Store HTML fetch)
+  // for the currently visible details appId only.
+  useEffect(() => {
+    const reqId = ++_drmResolveReqRef.current;
+    const names = metadata?.developer ? [metadata.developer] : [];
+    const publishers = metadata?.publishers || [];
+    resolveStoreDrmInfoForDetails({
+      appId: game.appId,
+      metadata,
+      title: metadata?.name || game.title,
+      developerNames: names,
+      publisherNames: publishers,
+    }).then((info) => {
+      if (reqId !== _drmResolveReqRef.current) return;
+      setRefinedDrmInfo(info);
+    });
+  }, [game.appId, metadata]);
+
+  const drmInfo = useMemo(() => {
+    return refinedDrmInfo ?? extractStoreDrmInfo(metadata);
+  }, [metadata, refinedDrmInfo]);
+
   const platforms = getPlatforms(game, metadata);
   const languagesLabel = getLanguagesLabel(metadata);
   const dlcLabel = getDlcLabel(metadata);
@@ -696,6 +724,16 @@ export default function StoreGameDetailsPage({
 
   const reviewsState = !reviewSummary ? "unavailable" : !reviewSummary.resolved ? "unavailable" : reviewSummary.total_reviews === 0 ? "no-reviews" : "available";
   console.log(`[STORE][REVIEWS_STATE] appid=${game.appId} state=${reviewsState} total=${reviewSummary?.total_reviews ?? 0} resolved=${reviewSummary?.resolved ?? false} source=steam-appreviews`);
+
+  const drmLogRef = useRef("");
+  useEffect(() => {
+    const key = `${game.appId}|${drmInfo.hasDenuvo}|${drmInfo.hasThirdPartyDrm}|${drmInfo.source}`;
+    if (drmLogRef.current === key) return;
+    drmLogRef.current = key;
+    console.log(
+      `[STORE][DRM_INFO] appid=${game.appId} hasDenuvo=${drmInfo.hasDenuvo} hasThirdPartyDrm=${drmInfo.hasThirdPartyDrm} source=${drmInfo.source} matched="${drmInfo.matchedText ?? ""}"`,
+    );
+  }, [game.appId, drmInfo]);
 
   // Save main game metadata to store cache when resolved — stable deps only
   // NOTE: does NOT enqueue media downloads — Store display images must NOT
@@ -986,6 +1024,17 @@ export default function StoreGameDetailsPage({
                 description="Supported languages from Steam metadata."
               />
             </div>
+
+            {drmInfo.hasThirdPartyDrm && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs text-amber-300">
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  {drmInfo.hasDenuvo
+                    ? "Denuvo Anti-Tamper"
+                    : "3rd-party DRM"}
+                </span>
+              </div>
+            )}
 
             <StoreGameOverviewSection title={title} metadata={metadata} />
           </section>

@@ -1,4 +1,7 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ChevronLeft,
+  ChevronRight,
   Gamepad2,
   Star,
 } from "lucide-react";
@@ -63,6 +66,44 @@ export default function StoreMoreLikeThisSection({
   games,
   onOpenGame,
 }: StoreMoreLikeThisSectionProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollState = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 4);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    updateScrollState();
+    el.addEventListener("scroll", updateScrollState, { passive: true });
+    const ro = new ResizeObserver(updateScrollState);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", updateScrollState);
+      ro.disconnect();
+    };
+  }, [updateScrollState]);
+
+  useEffect(() => {
+    updateScrollState();
+  }, [games, updateScrollState]);
+
+  const scroll = (direction: "left" | "right") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const amount = el.clientWidth * 0.75;
+    el.scrollBy({ left: direction === "left" ? -amount : amount, behavior: "smooth" });
+  };
+
+  const btnClass =
+    "absolute top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex disabled:opacity-30 disabled:cursor-not-allowed";
+
   return (
     <section className="rounded-3xl border border-(--surface-active-border) bg-white/5 p-4">
       <div className="flex items-end justify-between gap-3">
@@ -82,8 +123,22 @@ export default function StoreMoreLikeThisSection({
           No hay recomendaciones disponibles todavía.
         </div>
       ) : (
-        <div className="mt-4 flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {games.map(({ game, metadata, reviewSummary }) => {
+        <div className="group/row relative mt-4">
+          <button
+            type="button"
+            aria-label="Scroll More Like This left"
+            disabled={!canScrollLeft}
+            onClick={() => scroll("left")}
+            className={`left-1 ${btnClass}`}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+
+          <div
+            ref={scrollRef}
+            className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {games.map(({ game, metadata, reviewSummary }) => {
             const title = getTitle(game, metadata);
             const developer = getDeveloper(game, metadata);
             const imageUrl = getImage(game, metadata);
@@ -126,6 +181,17 @@ export default function StoreMoreLikeThisSection({
               </button>
             );
           })}
+          </div>
+
+          <button
+            type="button"
+            aria-label="Scroll More Like This right"
+            disabled={!canScrollRight}
+            onClick={() => scroll("right")}
+            className={`right-1 ${btnClass}`}
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
         </div>
       )}
     </section>

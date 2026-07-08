@@ -42,6 +42,8 @@ pub struct SteamAppMetadata {
     pub short_description: Option<String>,
     pub detailed_description: Option<String>,
     pub about_the_game: Option<String>,
+    pub legal_notice: Option<String>,
+    pub store_drm_notice: Option<String>,
     pub genres: Vec<String>,
     pub publishers: Vec<String>,
     pub release_date: Option<String>,

@@ -25,6 +25,17 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
         console.log(`[STORE][CACHE_MOVIES_STALE] appid=${appId} reason=resolved-but-no-movies forcing-refetch`);
         return null;
       }
+      // Schema version check: if legal_notice field is completely absent,
+      // the cache was written by an older Rust parser that didn't capture it.
+      // Force a refetch to populate it (may be null if Steam API omits it).
+      if (meta.resolved === true && !("legal_notice" in meta)) {
+        console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-legal-notice-schema forcing-refetch`);
+        return null;
+      }
+      if (meta.resolved === true && !("store_drm_notice" in meta)) {
+        console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-store-drm-notice-schema forcing-refetch`);
+        return null;
+      }
       return meta;
     }
   } catch {

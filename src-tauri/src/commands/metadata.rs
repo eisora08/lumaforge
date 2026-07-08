@@ -190,6 +190,11 @@ pub fn resolve_steam_app_metadata(
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
 
+        let legal_notice = data
+            .get("legal_notice")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
         let genres = parse_genres(data);
 
         let publishers = data
@@ -334,6 +339,8 @@ pub fn resolve_steam_app_metadata(
             short_description,
             detailed_description,
             about_the_game,
+            legal_notice,
+            store_drm_notice: None,
             genres,
             publishers,
             release_date,
@@ -415,6 +422,8 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         short_description: None,
         detailed_description: None,
         about_the_game: None,
+        legal_notice: None,
+        store_drm_notice: None,
         genres: Vec::new(),
         publishers: Vec::new(),
         release_date: None,
@@ -427,6 +436,98 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
         movies: Vec::new(),
         resolved: false,
     }
+}
+
+#[tauri::command]
+pub fn fetch_steam_store_drm_notice(
+    app_id: u32,
+) -> Result<Option<String>, String> {
+    let url = format!(
+        "https://store.steampowered.com/app/{}?l=english&cc=us",
+        app_id
+    );
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("LumaForge/0.1.0")
+        .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("[HTTP][CLIENT] Failed to build client: {}", e))?;
+
+    let response = match client.get(&url).send() {
+        Ok(r) => r,
+        Err(e) => {
+            println!("[STORE][DRM_HTML_FETCH] appid={} ok=false error=fetch-failed msg=\"{}\"", app_id, e);
+            return Ok(None);
+        }
+    };
+
+    if !response.status().is_success() {
+        println!("[STORE][DRM_HTML_FETCH] appid={} ok=false error=http-{}", app_id, response.status().as_u16());
+        return Ok(None);
+    }
+
+    let html = match response.text() {
+        Ok(t) => t,
+        Err(e) => {
+            println!("[STORE][DRM_HTML_FETCH] appid={} ok=false error=read-failed msg=\"{}\"", app_id, e);
+            return Ok(None);
+        }
+    };
+
+    let notice = extract_drm_notice_from_html(&html);
+
+    println!(
+        "[STORE][DRM_HTML_FETCH] appid={} ok=true found={} notice=\"{}\"",
+        app_id,
+        notice.is_some(),
+        notice.as_deref().unwrap_or("")
+    );
+
+    Ok(notice)
+}
+
+fn extract_drm_notice_from_html(html: &str) -> Option<String> {
+    // Look for <div class="DRM_notice">...content...</div>
+    let marker = "class=\"DRM_notice\"";
+    let start = html.find(marker)?;
+
+    // Find the opening > of the div tag that contains the marker
+    let content_start = html[start..].find('>')? + start + 1;
+
+    // Find the closing </div>
+    let closing = html[content_start..].find("</div>")?;
+    let raw = &html[content_start..content_start + closing];
+
+    // Strip HTML tags (e.g. <br>)
+    let mut notice = String::new();
+    let mut in_tag = false;
+    for ch in raw.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => notice.push(ch),
+            _ => {}
+        }
+    }
+
+    // Decode common HTML entities
+    let decoded = notice
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ");
+
+    let trimmed = decoded.trim().to_string();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed)
 }
 
 fn parse_platforms(data: &serde_json::Value) -> Vec<String> {
