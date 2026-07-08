@@ -436,7 +436,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   onOpenGame?.();
                 }}
                 onContextMenu={(e) => handleContextMenu(e, game)}
-                className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors ${isSelected
+                className={`flex w-full cursor-pointer items-center justify-center rounded-xl px-1 py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 ${isSelected
                   ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
                   : "hover:bg-white/[0.06]"
                   }`}
@@ -474,7 +474,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 onOpenGame?.();
               }}
               onContextMenu={(e) => handleContextMenu(e, game)}
-              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isSelected
+              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors focus-visible:ring-2 focus-visible:ring-(--color-accent)/20 ${isSelected
                 ? "bg-(--color-accent)/10 text-(--color-accent)"
                 : "text-(--color-text) hover:bg-white/[0.06]"
                 }`}

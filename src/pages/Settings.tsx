@@ -592,6 +592,108 @@ export default function Settings() {
             </SettingsSection>
 
             <SettingsSection
+              title="Biblioteca"
+              description="Ajusta la visualización de la cuadrícula de juegos."
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Tamaño de tarjeta
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryCardSize}px — ancho mínimo por tarjeta
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">160</span>
+                    <input
+                      type="range"
+                      min={160}
+                      max={280}
+                      step={5}
+                      value={settings.libraryCardSize}
+                      onChange={(e) => updateSetting("libraryCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">280</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Espaciado entre tarjetas
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryGridGap}px
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">16</span>
+                    <input
+                      type="range"
+                      min={16}
+                      max={48}
+                      step={4}
+                      value={settings.libraryGridGap}
+                      onChange={(e) => updateSetting("libraryGridGap", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">48</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Ancho del panel de filtros
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryFilterPanelWidth}px
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">240</span>
+                    <input
+                      type="range"
+                      min={240}
+                      max={360}
+                      step={10}
+                      value={settings.libraryFilterPanelWidth}
+                      onChange={(e) => updateSetting("libraryFilterPanelWidth", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">360</span>
+                  </div>
+                </div>
+
+                <ToggleOption
+                  label="Usar ancho completo"
+                  description="La cuadrícula ocupa todo el ancho disponible en lugar de estar centrada con límite."
+                  enabled={settings.libraryUseFullWidth}
+                  onChange={(enabled) => updateSetting("libraryUseFullWidth", enabled)}
+                />
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateSetting("libraryCardSize", 200);
+                      updateSetting("libraryGridGap", 28);
+                      updateSetting("libraryUseFullWidth", true);
+                      updateSetting("libraryFilterPanelWidth", 280);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text)"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Restaurar diseño de biblioteca
+                  </button>
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
               title="Achievement Notifications"
               description="Control how achievement unlock notifications are delivered."
             >

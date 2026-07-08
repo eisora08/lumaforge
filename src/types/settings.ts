@@ -36,6 +36,10 @@ export type AppSettings = {
   achievementAutoSyncIntervalSeconds: number;
 
   libraryCardArtworkMode: "landscape" | "poster";
+  libraryCardSize: number;
+  libraryGridGap: number;
+  libraryUseFullWidth: boolean;
+  libraryFilterPanelWidth: number;
   mediaCacheProfile: "minimal" | "playnite-balanced" | "full";
 
   gameScanFolders: string[];
