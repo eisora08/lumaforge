@@ -7,7 +7,7 @@ import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleHomeRail from "./ConsoleHomeRail";
 import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleCategoryBar from "./ConsoleCategoryBar";
-import ConsoleSettingsOverlay from "./ConsoleSettingsOverlay";
+import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 
 const RAIL_CONFIGS = [
   { title: "Continue Playing", subtitle: "Jump back into your games" },
@@ -32,6 +32,8 @@ type Props = {
   onSelectCategory: (index: number) => void;
   settings: ConsoleSettings;
   onSettingsPatch: (patch: Partial<ConsoleSettings>) => void;
+  allGames?: LibraryGame[];
+  onRefreshLibrary?: () => void;
 };
 
 export default function ConsoleSpotlightLayout({
@@ -40,6 +42,7 @@ export default function ConsoleSpotlightLayout({
   cardVariant = "landscape", onNavigate,
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
+  allGames, onRefreshLibrary,
 }: Props) {
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -136,12 +139,16 @@ export default function ConsoleSpotlightLayout({
         />
       </div>
 
-      {/* Settings overlay */}
-      <ConsoleSettingsOverlay
+      {/* Settings panel v2 */}
+      <ConsoleSettingsPanelV2
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         settings={settings}
         onPatch={onSettingsPatch}
+        onNavigate={onNavigate}
+        allGames={allGames}
+        onSelectGame={onSelectGame}
+        onRefreshLibrary={onRefreshLibrary}
       />
     </div>
   );

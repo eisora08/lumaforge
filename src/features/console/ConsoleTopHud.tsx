@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { LayoutPanelTop, Monitor, Settings } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { LayoutPanelTop, Monitor } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
 import { getAvatarPreset } from "../profile/profilePresets";
@@ -32,6 +32,7 @@ export default function ConsoleTopHud({
 }: Props) {
   const [profile] = useUserProfile();
   const [time, setTime] = useState(formatTime);
+  const profileRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const id = setInterval(() => setTime(formatTime()), 60_000);
@@ -49,10 +50,16 @@ export default function ConsoleTopHud({
 
   return (
     <div className="relative z-20 flex shrink-0 items-center justify-between px-6 pt-5 pb-3">
-      {/* Left: avatar + name */}
-      <div className="flex items-center gap-3">
+      {/* Left: avatar + name — clickable to open settings */}
+      <button
+        ref={profileRef}
+        onClick={() => onOpenSettings?.()}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenSettings?.(); } }}
+        className="flex cursor-pointer items-center gap-3 rounded-2xl px-2 py-1 transition hover:bg-(--color-accent)/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent)/60"
+        aria-label="Open console settings"
+      >
         <div
-          className="flex h-10 w-10 items-center justify-center rounded-full ring-2 ring-(--color-accent)/15"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-2 ring-(--color-accent)/15"
           style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
         >
           {avatarDisplayUrl ? (
@@ -66,7 +73,7 @@ export default function ConsoleTopHud({
             {profile.displayName}
           </span>
         </div>
-      </div>
+      </button>
 
       {/* Center: source branding */}
       <div className="hidden select-none md:block">
@@ -75,17 +82,8 @@ export default function ConsoleTopHud({
         </span>
       </div>
 
-      {/* Right: settings + time + layout toggle + Desktop */}
+      {/* Right: time + layout toggle + Desktop */}
       <div className="flex items-center gap-2">
-        {onOpenSettings && (
-          <button
-            onClick={onOpenSettings}
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-(--color-surface)/40 text-(--color-muted) backdrop-blur-sm transition hover:bg-(--color-surface) hover:text-(--color-text)"
-            aria-label="Console settings"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
-        )}
         {showClock && (
           <span className="text-sm font-medium tabular-nums text-(--color-muted) drop-shadow-md">
             {time}

@@ -164,6 +164,37 @@ export function resetAllConsoleSettings(): ConsoleSettings {
   return defaults;
 }
 
+export const VISUAL_DEFAULTS: Pick<ConsoleSettings,
+  "themeMode" | "backgroundTexture" | "focusShine"
+> = {
+  themeMode: "follow-app",
+  backgroundTexture: "none",
+  focusShine: true,
+};
+
+export function resetConsoleVisualSettings(): ConsoleSettings {
+  const current = loadConsoleSettings();
+  const patched = { ...current, ...VISUAL_DEFAULTS };
+  persistConsoleSettings(patched);
+  return patched;
+}
+
+export const INPUT_DEFAULTS: Pick<ConsoleSettings,
+  "inputHints" | "showButtonHints" | "showBottomHints"
+> = {
+  inputHints: "xbox",
+  showButtonHints: true,
+  showBottomHints: true,
+};
+
+export function resetConsoleInputSettings(): ConsoleSettings {
+  const current = loadConsoleSettings();
+  const patched = { ...current, ...INPUT_DEFAULTS };
+  persistConsoleSettings(patched);
+  return patched;
+}
+
+
 export function useConsoleSettings(): [ConsoleSettings, (patch: Partial<ConsoleSettings>) => void] {
   const [settings, setSettings] = useState<ConsoleSettings>(loadConsoleSettings);
 

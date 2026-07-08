@@ -150,6 +150,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     onSelectCategory: focusRail,
     settings: consoleSettings,
     onSettingsPatch: patchConsoleSettings,
+    allGames: enrichedGames,
   };
 
   const layout = consoleSettings.layoutMode === "spotlight"

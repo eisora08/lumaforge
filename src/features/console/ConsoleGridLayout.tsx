@@ -13,7 +13,7 @@ import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleGameCard from "./ConsoleGameCard";
 import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleCategoryBar from "./ConsoleCategoryBar";
-import ConsoleSettingsOverlay from "./ConsoleSettingsOverlay";
+import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 
 const DEBUG_CONSOLE_MODE = false;
 
@@ -32,6 +32,8 @@ type Props = {
   onSelectCategory: (index: number) => void;
   settings: ConsoleSettings;
   onSettingsPatch: (patch: Partial<ConsoleSettings>) => void;
+  allGames?: LibraryGame[];
+  onRefreshLibrary?: () => void;
 };
 
 function formatRelativeTime(ts: number): string {
@@ -81,6 +83,7 @@ export default function ConsoleGridLayout({
   cardVariant = "poster", onNavigate,
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
+  allGames, onRefreshLibrary,
 }: Props) {
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -360,12 +363,16 @@ export default function ConsoleGridLayout({
         />
       </div>
 
-      {/* Settings overlay */}
-      <ConsoleSettingsOverlay
+      {/* Settings panel v2 */}
+      <ConsoleSettingsPanelV2
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         settings={settings}
         onPatch={onSettingsPatch}
+        onNavigate={onNavigate}
+        allGames={allGames}
+        onSelectGame={onSelectGame}
+        onRefreshLibrary={onRefreshLibrary}
       />
     </div>
   );
