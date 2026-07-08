@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
+import AppTitleBar from "./AppTitleBar";
 import { SearchProvider } from "../../context/SearchContext";
 import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
 import { GameActivityProvider } from "../../context/GameActivityContext";
@@ -116,14 +117,16 @@ export default function AppLayout({
 
   return (
     <div
-      className="relative h-screen overflow-hidden bg-(--color-bg) text-(--color-text)"
+      className="relative flex h-screen flex-col overflow-hidden bg-(--color-bg) text-(--color-text)"
       style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <div className="lf-backdrop" />
 
+      <AppTitleBar />
+
       <LibraryGamesProvider>
         <GameActivityProvider>
-        <div className="relative z-10 flex h-screen w-full">
+        <div className="relative z-10 flex flex-1 w-full overflow-hidden">
           <Sidebar
             mode={effectiveMode}
             isDrawerOpen={drawerOpen}
