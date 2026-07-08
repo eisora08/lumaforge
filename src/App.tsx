@@ -27,6 +27,8 @@ import { AppPage } from "./types/navigation";
 import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
+import ModeSwitchSplash from "./components/splash/ModeSwitchSplash";
+import type { ModeSwitchMode } from "./components/splash/ModeSwitchSplash";
 import LibraryLoadProgressCard from "./components/loading/LibraryLoadProgressCard";
 import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
 import BackgroundJobDebugPanel from "./components/common/BackgroundJobDebugPanel";
@@ -106,6 +108,9 @@ function App() {
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
   const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
   const [bootStarted, setBootStarted] = useState(false);
+  const [showModeSwitch, setShowModeSwitch] = useState(false);
+  const [modeSwitchMode, setModeSwitchMode] = useState<ModeSwitchMode>("enter-console");
+  const modeSwitchKeyRef = useRef(0);
   const [, startTransition] = useTransition();
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
@@ -154,6 +159,13 @@ function App() {
 
     const isEnteringConsole = page === "console";
     const isLeavingConsole = activePage === "console" && !isEnteringConsole;
+
+    // Show mode switch splash for Desktop ↔ Console transitions
+    if (isEnteringConsole || isLeavingConsole) {
+      modeSwitchKeyRef.current += 1;
+      setModeSwitchMode(isEnteringConsole ? "enter-console" : "exit-console");
+      setShowModeSwitch(true);
+    }
 
     if (isEnteringConsole) {
       setAppFullscreen(true);
@@ -240,6 +252,15 @@ function App() {
       <InstallerProgressListener />
       <GameToastViewport />
       {import.meta.env.DEV && <BackgroundJobDebugPanel />}
+      {/* Mode switch splash — covers Desktop ↔ Console transitions */}
+      {showModeSwitch && (
+        <ModeSwitchSplash
+          key={modeSwitchKeyRef.current}
+          mode={modeSwitchMode}
+          visible={true}
+          onComplete={() => setShowModeSwitch(false)}
+        />
+      )}
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
       <LibraryLoadProgressCard />
