@@ -12,6 +12,7 @@ type AppLayoutProps = {
   activePage: AppPage;
   onNavigate: (page: AppPage) => void;
   children: React.ReactNode;
+  isConsoleMode?: boolean;
 };
 
 const BP_DRAWER = 900;
@@ -36,7 +37,20 @@ export default function AppLayout({
   activePage,
   onNavigate,
   children,
+  isConsoleMode,
 }: AppLayoutProps) {
+  if (isConsoleMode) {
+    return (
+      <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg) text-(--color-text)">
+        <div className="lf-backdrop" />
+        <LibraryGamesProvider>
+          <GameActivityProvider>
+            {children}
+          </GameActivityProvider>
+        </LibraryGamesProvider>
+      </div>
+    );
+  }
   countRender("AppLayout");
   const [manualMode, setManualMode] = useState<"auto" | "expanded" | "collapsed">("auto");
   const [autoMode, setAutoMode] = useState<SidebarMode>("expanded");

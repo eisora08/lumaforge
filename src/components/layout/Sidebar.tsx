@@ -94,7 +94,7 @@ export default function Sidebar({
   const sidebarContent = (
     <div
       className={`flex h-full flex-col lf-sidebar-panel ${
-        isCollapsed ? "w-[72px]" : mode === "compact" ? "w-[340px]" : "w-[360px]"
+        isCollapsed ? "w-18" : mode === "compact" ? "w-85" : "w-90"
       }`}
     >
       {/* Header — shrink-0 */}
@@ -229,7 +229,7 @@ export default function Sidebar({
         {/* Restart Steam */}
         <button
           title={isCollapsed ? "Reiniciar Steam" : undefined}
-          className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 transition-colors hover:bg-white/[0.04] hover:text-(--color-muted) lf-press-effect ${
+          className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 transition-colors hover:bg-white/4 hover:text-(--color-muted) lf-press-effect ${
             isCollapsed ? "justify-center" : ""
           }`}
         >
@@ -312,7 +312,7 @@ export default function Sidebar({
   return (
     <aside
       className={`relative z-10 lf-sidebar-panel ${
-        isCollapsed ? "w-[72px]" : mode === "compact" ? "w-[340px]" : "w-[360px]"
+        isCollapsed ? "w-18" : mode === "compact" ? "w-85" : "w-90"
       }`}
     >
       {sidebarContent}
@@ -358,7 +358,7 @@ function SidebarSection({
               className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors lf-press-effect lf-hover-lift ${
                 isActive
                   ? "bg-(--color-accent)/8 text-(--color-text) lf-active-glow"
-                  : "text-(--color-muted) hover:bg-white/[0.06] hover:text-(--color-text)"
+                  : "text-(--color-muted) hover:bg-white/6 hover:text-(--color-text)"
               } ${isCollapsed ? "justify-center" : ""}`}
             >
               <Icon

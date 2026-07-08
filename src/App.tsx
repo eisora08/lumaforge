@@ -208,7 +208,7 @@ function App() {
       <AchievementWatcherInit />
       <GameDetailsProvider>
         <GameSessionHUD onNavigate={handleNavigate} />
-        <AppLayout activePage={activePage} onNavigate={handleNavigate}>
+        <AppLayout activePage={activePage} onNavigate={handleNavigate} isConsoleMode={activePage === "console"}>
           <AppRouteTransition routeKey={activePage}>
             {renderPage()}
           </AppRouteTransition>

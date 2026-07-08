@@ -12,6 +12,8 @@ type Props = {
   focusedRail: number;
   focusedIndex: number;
   onSelectGame?: (game: LibraryGame) => void;
+  cardCompact?: boolean;
+  cardVariant?: "landscape" | "poster";
 };
 
 export default function ConsoleHomeRail({
@@ -22,6 +24,8 @@ export default function ConsoleHomeRail({
   focusedRail,
   focusedIndex,
   onSelectGame,
+  cardCompact,
+  cardVariant = "landscape",
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -84,6 +88,8 @@ export default function ConsoleHomeRail({
               game={game}
               isFocused={isFocusedRail && focusedIndex === i}
               onClick={() => onSelectGame?.(game)}
+              compact={cardCompact}
+              variant={cardVariant}
             />
           ))}
         </div>

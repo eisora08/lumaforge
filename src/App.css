@@ -1116,3 +1116,16 @@ html[data-compact="true"] .lf-launch-bar {
 .lf-card-hover-overlay:hover .lf-card-overlay {
   background: rgba(0, 0, 0, 0.35);
 }
+
+/* Console Mode card focus shine */
+@keyframes console-shine-sweep {
+  0% { transform: translateX(-120%); }
+  40% { transform: translateX(120%); }
+  100% { transform: translateX(120%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-card-shine {
+    display: none !important;
+  }
+}
