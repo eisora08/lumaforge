@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Search } from "lucide-react";
 
-import { searchSteamStore } from "../../services/steamStoreSearchResolver";
-import type { SteamStoreSearchItem } from "../../types/steamStoreSearch";
 import type { StoreSearchDropdownItem } from "./PackagesToolbar";
+import {
+  enrichGameSearchResult,
+  mapEnrichedGameSearchResultToStoreSearchDropdownItem,
+} from "../../features/search/gameSearchMapper";
+import { useGameOwnershipLookup } from "../../features/search/useGameOwnershipLookup";
+import { useGameSearch } from "../../features/search/useGameSearch";
 import { SkeletonBox } from "../common/Skeleton";
 
 type PackagesToolbarSearchProps = {
@@ -28,48 +32,18 @@ export default function PackagesToolbarSearch({
   onSubmit,
   onViewAll,
 }: PackagesToolbarSearchProps) {
-  const [query, setQuery] = useState("");
-  const [searchItems, setSearchItems] = useState<SteamStoreSearchItem[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  const normalizedQuery = query.trim();
+  const {
+    query,
+    setQuery,
+    normalizedQuery,
+    results,
+    loading: searchLoading,
+  } = useGameSearch({ debounceMs: SEARCH_DEBOUNCE_MS });
 
-  useEffect(() => {
-    if (normalizedQuery.length < 2) {
-      setSearchItems([]);
-      setSearchLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const timeoutId = window.setTimeout(async () => {
-      setSearchLoading(true);
-
-      try {
-        const items = await searchSteamStore(normalizedQuery);
-
-        if (!cancelled) {
-          setSearchItems(items);
-        }
-      } catch {
-        if (!cancelled) {
-          setSearchItems([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setSearchLoading(false);
-        }
-      }
-    }, SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [normalizedQuery]);
+  const ownershipLookup = useGameOwnershipLookup();
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -100,21 +74,23 @@ export default function PackagesToolbarSearch({
   }, []);
 
   const dropdownItems: StoreSearchDropdownItem[] = useMemo(() => {
-    return searchItems.map((item) => ({
-      appId: String(item.app_id),
-      title: item.name,
-      subtitle: `AppID ${item.app_id}`,
-      imageUrl: item.image_url || undefined,
-      priceLabel: item.price_label || undefined,
-      discountLabel: item.discount_label || undefined,
-    }));
-  }, [searchItems]);
+    return results.map((result) => {
+      const luaActive = ownershipLookup.isLuaActive(result.appId);
+      const enriched = enrichGameSearchResult(result, {
+        owned: ownershipLookup.isOwned(result.appId),
+        installed: ownershipLookup.isSteamInstalled(result.appId),
+        luaActive,
+      });
+      console.log(`[GLOBAL_SEARCH][RESULT_STATE] appid=${enriched.appId} owned=${enriched.owned} installed=${enriched.installed} luaInstalled=${luaActive} inLibrary=${enriched.inLibrary} badges=${enriched.badges.join(",") || "none"}`);
+      return mapEnrichedGameSearchResultToStoreSearchDropdownItem(enriched);
+    });
+  }, [results, ownershipLookup]);
 
   const visibleSearchItems = useMemo(() => {
     return dropdownItems.slice(0, MAX_VISIBLE_SEARCH_ITEMS);
   }, [dropdownItems]);
 
-  const hasMoreResults = searchItems.length > MAX_VISIBLE_SEARCH_ITEMS;
+  const hasMoreResults = results.length > MAX_VISIBLE_SEARCH_ITEMS;
 
   const shouldShowDropdown =
     dropdownOpen &&
@@ -124,7 +100,6 @@ export default function PackagesToolbarSearch({
   function handleSelectItem(item: StoreSearchDropdownItem) {
     setDropdownOpen(false);
     setQuery("");
-    setSearchItems([]);
     onSelectItem?.(item);
   }
 
@@ -249,6 +224,20 @@ export default function PackagesToolbarSearch({
                           </div>
 
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            {item.owned && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                                Owned
+                              </span>
+                            )}
+
+                            {!item.installed && item.inLibrary && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                                In Library
+                              </span>
+                            )}
+
                             {item.installed && (
                               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />

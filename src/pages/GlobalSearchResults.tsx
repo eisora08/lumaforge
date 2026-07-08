@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { ArrowLeft, Gamepad2, Search } from "lucide-react";
 import PageContainer from "../components/layout/PageContainer";
 import { useSearch } from "../context/SearchContext";
 import { useGameDetails } from "../context/GameDetailsContext";
-import { searchSteamStore } from "../services/steamStoreSearchResolver";
-import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
+import { useGameSearch } from "../features/search/useGameSearch";
+import { useGameOwnershipLookup } from "../features/search/useGameOwnershipLookup";
+import { enrichGameSearchResult } from "../features/search/gameSearchMapper";
+import type { GameSearchResult } from "../features/search/gameSearchTypes";
 
 type Props = {
   onBack?: () => void;
@@ -12,39 +14,43 @@ type Props = {
 };
 
 export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
-  const { query } = useSearch();
+  const { query: searchContextQuery } = useSearch();
   const { selectGame } = useGameDetails();
 
-  const [items, setItems] = useState<SteamStoreSearchItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    setQuery,
+    results,
+    loading,
+    error,
+  } = useGameSearch({ debounceMs: 0, minQueryLength: 1 });
+
+  const ownershipLookup = useGameOwnershipLookup();
+
+  const enrichedResults = useMemo(() => {
+    return results.map((result) => {
+      return enrichGameSearchResult(result, {
+        owned: ownershipLookup.isOwned(result.appId),
+        installed: ownershipLookup.isSteamInstalled(result.appId),
+        luaActive: ownershipLookup.isLuaActive(result.appId),
+      });
+    });
+  }, [results, ownershipLookup]);
+
+  const displayError = error
+    ? error instanceof Error
+      ? error.message
+      : String(error)
+    : null;
 
   useEffect(() => {
-    if (!query.trim()) {
-      setItems([]);
-      return;
-    }
+    setQuery(searchContextQuery);
+  }, [searchContextQuery, setQuery]);
 
-    setLoading(true);
-    setError(null);
-
-    searchSteamStore(query.trim())
-      .then((steamResults) => {
-        setItems(steamResults);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : "Search failed");
-        setItems([]);
-        setLoading(false);
-      });
-  }, [query]);
-
-  function handleSelectItem(item: SteamStoreSearchItem) {
+  function handleSelectItem(result: GameSearchResult) {
     selectGame({
-      appId: String(item.app_id),
-      title: item.name,
-      imageUrl: item.image_url || undefined,
+      appId: result.appId,
+      title: result.title,
+      imageUrl: result.imageUrl,
     });
     onNavigate?.("game-details");
   }
@@ -69,11 +75,11 @@ export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
             </div>
             <div>
               <h1 className="text-xl font-bold text-(--color-text) lg:text-2xl">
-                Search Results for "{query}"
+                Search Results for "{searchContextQuery}"
               </h1>
               {!loading && (
                 <p className="mt-0.5 text-sm text-(--color-muted)">
-                  {items.length} result{items.length === 1 ? "" : "s"} found
+                  {results.length} result{results.length === 1 ? "" : "s"} found
                 </p>
               )}
             </div>
@@ -88,14 +94,14 @@ export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
             </div>
           )}
 
-          {error && (
+          {displayError && (
             <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
               <p className="font-semibold text-(--color-text)">Search failed</p>
-              <p className="mt-1.5 text-sm text-(--color-muted)">{error}</p>
+              <p className="mt-1.5 text-sm text-(--color-muted)">{displayError}</p>
             </div>
           )}
 
-          {!loading && !error && items.length === 0 && query.trim() && (
+          {!loading && !displayError && results.length === 0 && searchContextQuery.trim() && (
             <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
               <Gamepad2 className="mx-auto h-10 w-10 text-(--color-muted)" />
               <h2 className="mt-4 font-semibold text-(--color-text)">
@@ -107,20 +113,20 @@ export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
             </div>
           )}
 
-          {!loading && items.length > 0 && (
+          {!loading && results.length > 0 && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {items.map((item) => (
+              {enrichedResults.map((result) => (
                 <button
-                  key={item.app_id}
+                  key={result.appId}
                   type="button"
-                  onClick={() => handleSelectItem(item)}
+                  onClick={() => handleSelectItem(result)}
                   className="flex items-center gap-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-4 text-left transition hover:bg-white/[0.06]"
                 >
                   <div className="h-16 w-28 shrink-0 overflow-hidden rounded-xl bg-white/5">
-                    {item.image_url ? (
+                    {result.imageUrl ? (
                       <img
-                        src={item.image_url}
-                        alt={item.name}
+                        src={result.imageUrl}
+                        alt={result.title}
                         className="h-full w-full object-cover"
                         loading="lazy"
                       />
@@ -132,14 +138,34 @@ export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="line-clamp-2 text-sm font-semibold text-(--color-text)">
-                      {item.name}
+                      {result.title}
                     </p>
                     <p className="mt-1 text-xs text-(--color-muted)">
-                      AppID {item.app_id}
+                      AppID {result.appId}
                     </p>
-                    {item.discount_label && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      {result.owned && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                          Owned
+                        </span>
+                      )}
+                      {!result.installed && result.inLibrary && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                          In Library
+                        </span>
+                      )}
+                      {result.installed && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                          Installed
+                        </span>
+                      )}
+                    </div>
+                    {result.discountLabel && (
                       <span className="mt-1.5 inline-block rounded-md bg-lime-500/20 px-2 py-0.5 text-[11px] font-bold text-lime-300">
-                        {item.discount_label}
+                        {result.discountLabel}
                       </span>
                     )}
                   </div>

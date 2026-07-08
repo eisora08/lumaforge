@@ -40,8 +40,16 @@ function getImage(game: PackageGame, metadata?: SteamAppMetadata) {
 }
 
 function getReviewLabel(summary?: SteamReviewSummary) {
-  if (!summary || !summary.resolved || summary.total_reviews === 0) {
-    return "No reviews";
+  if (!summary) {
+    return "Review summary unavailable";
+  }
+
+  if (!summary.resolved) {
+    return "Review summary unavailable";
+  }
+
+  if (summary.resolved && summary.total_reviews === 0) {
+    return "No reviews yet";
   }
 
   if (typeof summary.positive_percent === "number") {

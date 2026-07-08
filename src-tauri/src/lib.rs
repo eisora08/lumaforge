@@ -125,6 +125,8 @@ pub fn run() {
             commands::store_cache::write_store_review_summary,
             commands::store_cache::get_store_media_cache,
             commands::store_cache::cache_store_remote_media,
+            commands::store_cache::read_store_discovery_index,
+            commands::store_cache::write_store_discovery_index,
             commands::store_cache::clear_store_cache,
             commands::library_cache::read_library_appinfo,
             commands::library_cache::write_library_appinfo,
@@ -214,6 +216,7 @@ pub fn run() {
             commands::scan_state::read_scan_state,
             commands::scan_state::write_scan_state,
             commands::steam_owned::fetch_steam_owned_games,
+            commands::steam_owned::read_steam_owned_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

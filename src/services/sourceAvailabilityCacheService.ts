@@ -150,6 +150,22 @@ export async function updateSourceAvailability(
 ): Promise<void> {
   await loadSourceAvailabilityIndex();
   if (!cachedIndex) return;
+
+  // Guard: do not overwrite a non-empty cache with an empty result
+  // Prevents transient "none" results from permanently blocking known providers
+  const existing = cachedIndex.games[appId];
+  const wouldBeEmptyWrite = entry.availableSources.length === 0 && entry.status !== "checking";
+  const hadGoodData = existing && existing.availableSources.length > 0 && existing.status !== "checking";
+  if (wouldBeEmptyWrite && hadGoodData) {
+    console.log(`[STORE][SOURCE_CACHE_EMPTY_WRITE_BLOCKED] appid=${appId} previousCount=${existing.availableSources.length} newCount=0`);
+    // Bump TTL on existing entry so it doesn't expire from under a retrying user
+    existing.updatedAt = Math.floor(Date.now() / 1000);
+    existing.status = entry.status === "timeout" ? "timeout" : "none";
+    pruneCache();
+    scheduleSave();
+    return;
+  }
+
   cachedIndex.games[appId] = entry;
   cachedIndex.updatedAt = Math.floor(Date.now() / 1000);
   pruneCache();
@@ -164,7 +180,12 @@ export async function markSourceUnavailable(
   await loadSourceAvailabilityIndex();
   if (!cachedIndex) return;
   const existing = cachedIndex.games[appId];
-  if (existing) {
+  if (existing && existing.availableSources.length > 0) {
+    // Preserve good cache: just mark status as timeout instead of clearing sources
+    existing.status = "timeout";
+    existing.updatedAt = Math.floor(Date.now() / 1000);
+    console.log(`[STORE][SOURCE_NONE_PERSIST_BLOCKED] appid=${appId} reason=preserving-existing-sources`);
+  } else if (existing) {
     existing.status = "none";
     existing.luaReady = false;
     existing.availableSources = [];

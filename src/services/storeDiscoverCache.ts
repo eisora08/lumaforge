@@ -3,6 +3,62 @@
 // Survives component mount/unmount cycles so re-entering Store is instant.
 // ---------------------------------------------------------------------------
 
+/** Increment when scoring/filtering logic changes to force cache rebuild. */
+export const DISCOVER_SCORING_VERSION = 4;
+
+/**
+ * Increment when Discovery Index format or scoring changes.
+ * Must stay aligned with DISCOVER_SCORING_VERSION so the index is always
+ * rebuilt when scoring logic changes.
+ */
+export const DISCOVERY_INDEX_VERSION = 4;
+
+/** Steam genre ID → display name mapping. Used by discovery index for normalization. */
+export const STEAM_GENRE_IDS: Record<string, string> = {
+  "1": "Action",
+  "2": "Strategy",
+  "3": "RPG",
+  "4": "Casual",
+  "5": "VR",
+  "6": "Simulation",
+  "7": "Racing",
+  "8": "Sports",
+  "9": "Racing",
+  "18": "Sports",
+  "23": "Indie",
+  "24": "Adventure",
+  "25": "Adventure",
+  "28": "Simulation",
+  "29": "Massively Multiplayer",
+  "30": "Free to Play",
+  "37": "Free to Play",
+  "70": "Early Access",
+};
+
+/** Display genres used for Store genre rails. */
+export const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter", "RPG", "Adventure"];
+
+/**
+ * Quality-gate thresholds for Store Discovery sections.
+ * Prevents low-quality / no-data games from appearing in curated sections.
+ */
+export const QG_TOP_PICK_MIN_REVIEWS = 100;
+export const QG_TOP_PICK_MIN_SCORE = 7;
+export const QG_TOP_PICK_MIN_PCT = 80;
+
+export const QG_FEATURED_MIN_REVIEWS = 50;
+export const QG_FEATURED_MIN_PCT = 75;
+
+export const QG_GENRE_MIN_REVIEWS = 50;
+export const QG_GENRE_MIN_SCORE = 6;
+export const QG_GENRE_MIN_PCT = 70;
+
+export const QG_TOP_RATED_MIN_REVIEWS = 500;
+export const QG_TOP_RATED_MIN_SCORE = 8;
+export const QG_TOP_RATED_MIN_PCT = 85;
+
+export const QG_NEW_RELEASE_DAYS = 90;
+
 // Using loose types for cache items to avoid import/re-export incompatibilities
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -13,6 +69,76 @@ export type StoreGame = {
   imageUrl?: string;
   platforms: string[];
   sources: any[];
+};
+
+/**
+ * Per-app score breakdown stored in the Discovery Index.
+ * Used for quality-gated section queries and diagnostics.
+ */
+export type DiscoveryAppScore = {
+  final: number;
+  reviewScore: number;
+  reviewCount: number;
+  positivePct: number | null;
+  popularityProxy: number;
+  metadataCompleteness: number;
+  genreMatches: string[];
+  reasons: string[];
+};
+
+/**
+ * A single enriched app entry in the Discovery Index.
+ * Compiled from available metadata + reviews, never fetched fresh for index builds.
+ */
+export type DiscoveryAppEntry = {
+  appid: string;
+  name: string;
+  type?: string;
+  genres?: string[];
+  genreIds?: string[];
+  categories?: string[];
+  developers?: string[];
+  publishers?: string[];
+  releaseDate?: string | null;
+  images: {
+    header?: string;
+    capsule?: string;
+    background?: string;
+  };
+  reviews?: {
+    resolved: boolean;
+    total: number;
+    score: number;
+    label: string;
+    positivePct: number | null;
+  };
+  updatedAt: number;
+};
+
+/**
+ * The derived Discovery Index — a snapshot of enriched metadata + scores
+ * for the top discovery candidates. Built progressively from cached data.
+ */
+export type StoreDiscoveryIndex = {
+  version: number;
+  builtAt: number;
+  source: string;
+  catalogSize: number;
+  maxCandidates: number;
+  stats: {
+    enrichedApps: number;
+    withGenres: number;
+    withReviews: number;
+    withImages: number;
+    withReleaseDate: number;
+  };
+  sections: {
+    topPicks: string[];
+    featured: string[];
+    forYou: string[];
+    genres: Record<string, string[]>;
+  };
+  scores: Record<string, DiscoveryAppScore>;
 };
 
 /** Section source tag for honest labeling. */
@@ -38,6 +164,7 @@ export type CacheStatus = "empty" | "partial" | "complete";
 
 export interface CacheEntry {
   catalogFingerprint: string;
+  scoringVersion: number;
   rankedSteamCatalog: { appid: number; name: string }[];
   highQualityPool: { appId: string; title: string; score: number; hasSource: boolean; hasMeta: boolean }[];
   dynamicDiscoverSections: StoreSectionModel[];
@@ -48,6 +175,8 @@ export interface CacheEntry {
   browseGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
   luaReadyGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
   builtAt: number;
+  /** The compiled Discovery Index (enriched metadata + quality-gated scores). */
+  discoveryIndex?: StoreDiscoveryIndex;
   /** If true, the cached Discover sections are incomplete and should be rebuilt. */
   isPartialCache?: boolean;
   /** Explicit cache completeness status. Derived from isPartialCache + thresholds. */

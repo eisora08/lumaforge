@@ -124,3 +124,16 @@ pub fn fetch_steam_owned_games(
     println!("[SteamOwned] fetched {} games", games.len());
     Ok(games)
 }
+
+#[tauri::command]
+pub fn read_steam_owned_cache(app_handle: AppHandle) -> Result<Vec<OwnedGame>, String> {
+    let cache_path = get_cache_path(&app_handle)?;
+    if !cache_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&cache_path)
+        .map_err(|e| format!("Failed to read steam_owned_cache: {}", e))?;
+    let cache: OwnedGamesCache = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse steam_owned_cache: {}", e))?;
+    Ok(cache.games)
+}

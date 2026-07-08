@@ -29,18 +29,20 @@ import { useSettings } from "../context/SettingsContext";
 import { useProviderSearch } from "../hooks/useProviderSearch";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
 
-import {
-  downloadAndInstallPackage,
-  scanInstalledLuaScripts,
-} from "../services/tauri";
+import { scanInstalledLuaScripts } from "../services/tauri";
 
 import { getBestAvailableSource, getSourceKey } from "../utils/sourceHelpers";
 import { isHttpUrl } from "../services/libraryLocalCacheService";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { parseReleaseDate } from "../services/globalCatalogService";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
-import { searchSteamStore } from "../services/steamStoreSearchResolver";
-import { resolveProviderOverlaysForStoreGames, loadStoreProviderOverlayCache } from "../services/storeProviderOverlay";
+import {
+  enrichGameSearchResult,
+  mapEnrichedGameSearchResultToStoreSearchDropdownItem,
+} from "../features/search/gameSearchMapper";
+import { useGameSearch } from "../features/search/useGameSearch";
+import { useGameOwnershipLookup } from "../features/search/useGameOwnershipLookup";
+import { resolveProviderOverlaysForStoreGames, loadStoreProviderOverlayCache, invalidateOverlayCacheForAppId } from "../services/storeProviderOverlay";
 import {
   loadSourceAvailabilityIndex,
   getSourceAvailability,
@@ -61,9 +63,29 @@ import {
   getCachedStoreMetadata,
   setCachedStoreMetadata,
   isCacheComplete,
+  invalidateStoreDiscoverCache,
+  DISCOVER_SCORING_VERSION,
+  DISCOVERY_INDEX_VERSION,
+  QG_GENRE_MIN_REVIEWS,
+  QG_GENRE_MIN_SCORE,
+  QG_GENRE_MIN_PCT,
 } from "../services/storeDiscoverCache";
-import type { CacheEntry as StoreDiscoverCacheEntry } from "../services/storeDiscoverCache";
+import type { CacheEntry as StoreDiscoverCacheEntry, StoreDiscoveryIndex } from "../services/storeDiscoverCache";
 import type { StoreDiscoverSection, StoreGame } from "../services/storeDiscoverCache";
+import {
+  compileDiscoveryIndex,
+  getCachedDiscoveryIndex,
+  setCachedDiscoveryIndex,
+  invalidateDiscoveryIndex,
+  loadDiscoveryIndexFromDisk,
+  saveDiscoveryIndexToDisk,
+  queryIndexTopPicks,
+  queryIndexFeatured,
+  qualifiesTopRated,
+  qualifiesNew,
+  logDiscoveryIndexValidation,
+  logSteamDbSchema,
+} from "../services/storeDiscoveryIndexService";
 import {
   getDiscoverState,
   setDiscoverState,
@@ -76,8 +98,7 @@ import {
   getStoreImageCacheSize,
   getStoreImageCacheVersion,
 } from "../services/storeImageCache";
-import { saveProviderStatusAfterInstall, saveProviderStatusAuthError, type ProviderStatusOptions } from "../services/providerStatusService";
-import { getEffectiveProviderAuthHeaders } from "../services/providerSearch";
+import { downloadFromSource as sharedDownloadFromSource } from "../features/download/downloadFromSource";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 const DEBUG_STORE_RENDER_VERBOSE = false;
@@ -126,11 +147,7 @@ function log(origin: string, ...args: unknown[]) {
 }
 
 
-import {
-  showError,
-  showSuccess,
-  showWarning,
-} from "../components/toast/GameToast";
+import { showWarning } from "../components/toast/GameToast";
 
 import type { PackageGame, PackageSource } from "../types/package";
 import type { InstalledLuaScript } from "../types/installedLua";
@@ -179,6 +196,9 @@ const RANKING_WEIGHTS = {
   recency: 0.15,
   userInterest: 0.10,
 } as const;
+
+/** Maximum age in days for the "New" badge to show. */
+const MIN_NEW_RELEASE_DAYS = 90;
 
 type InteractionEvent = {
   type: "view" | "click" | "download";
@@ -284,14 +304,14 @@ export default function Store() {
   const { settings } = useSettings();
   const { addJob, updateJob } = useDownloadQueue();
 
-  const [storeSearchQuery, setStoreSearchQuery] = useState("");
   const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
 
-  const [steamSearchItems, setSteamSearchItems] = useState<
-    StoreSearchDropdownItem[]
-  >([]);
-
-  const [steamSearchLoading, setSteamSearchLoading] = useState(false);
+  const {
+    query: storeSearchQuery,
+    setQuery: setStoreSearchQuery,
+    results: storeGameSearchResults,
+    loading: steamSearchLoading,
+  } = useGameSearch({ debounceMs: 350 });
 
   const [steamSubmittedSearchGames, setSteamSubmittedSearchGames] = useState<
     PackageGame[]
@@ -314,6 +334,9 @@ export default function Store() {
   const [reviewSummaryByAppId, setReviewSummaryByAppId] = useState<
     Record<number, SteamReviewSummary>
   >({});
+
+  /** Incremented after each review batch completes, forces cache rebuild in discovery sections. */
+  const [reviewVersion, setReviewVersion] = useState(0);
 
   const [providerOverlayByAppId, setProviderOverlayByAppId] = useState<
     Record<string, PackageGame>
@@ -339,6 +362,8 @@ export default function Store() {
   >(null);
 
   const [browsePage, setBrowsePage] = useState(1);
+
+
 
   const [sourcesLoadingByAppId, setSourcesLoadingByAppId] = useState<
     Record<string, boolean>
@@ -404,6 +429,22 @@ export default function Store() {
   }, []);
 
   const catalogFingerprint = steamCatalog.length > 0 ? buildCatalogFingerprint(steamCatalog) : "";
+  // Invalidate cache if scoring version changed — forces rebuild with new ranking/filtering
+  const cachedDiscover = getCachedStoreDiscover();
+  if (cachedDiscover && cachedDiscover.scoringVersion !== DISCOVER_SCORING_VERSION) {
+    console.log(`[STORE][DISCOVERY_CACHE_INVALIDATE] reason=scoring-version-changed old=${cachedDiscover.scoringVersion} new=${DISCOVER_SCORING_VERSION}`);
+    invalidateStoreDiscoverCache();
+    invalidateDiscoveryIndex();
+  } else if (cachedDiscover && cachedDiscover.scoringVersion === DISCOVER_SCORING_VERSION) {
+    console.log(`[STORE][DISCOVERY_CACHE_VERSION] version=${DISCOVER_SCORING_VERSION} valid=true`);
+  }
+
+  // Invalidate discovery index if index version changed
+  const cachedIndex = getCachedDiscoveryIndex();
+  if (cachedIndex && cachedIndex.version !== DISCOVERY_INDEX_VERSION) {
+    console.log(`[STORE][DISCOVERY_INDEX_INVALIDATE] reason=index-version-changed old=${cachedIndex.version} new=${DISCOVERY_INDEX_VERSION}`);
+    invalidateDiscoveryIndex();
+  }
   const cacheHitLogged = useRef(false);
 
   // On unmount, persist Store UI state for instant restore on re-entry
@@ -463,7 +504,8 @@ export default function Store() {
     };
   }, []);
 
-  const { refresh: libraryRefresh, games } = useLibraryGames();
+  const { refresh: libraryRefresh } = useLibraryGames();
+  const ownershipLookup = useGameOwnershipLookup();
 
   const refreshInstalledScripts = useCallback(async () => {
     if (!settings.luaPath) {
@@ -486,6 +528,19 @@ export default function Store() {
   }, [settings.luaPath]);
 
   const pendingAppIdRef = useRef<string | null>(null);
+
+  // Load persisted discovery index from disk on mount
+  const indexLoadedRef = useRef(false);
+  useEffect(() => {
+    if (indexLoadedRef.current) return;
+    indexLoadedRef.current = true;
+    loadDiscoveryIndexFromDisk().then((loaded) => {
+      if (loaded && !_mountedRef.current) return;
+      if (loaded) {
+        console.log(`[STORE][DISCOVERY_INDEX_DISK_LOAD] version=${loaded.version} topPicks=${loaded.sections.topPicks.length} featured=${loaded.sections.featured.length}`);
+      }
+    }).catch(() => {});
+  }, []);
 
   // On mount, consume any pending store detail appId set by dashboard discovery sections
   useEffect(() => {
@@ -521,6 +576,7 @@ export default function Store() {
         if (!cancelled) {
           setSteamCatalog(data);
           console.log(`[STORE][CATALOG_SOURCE] total=${data.length} source=steamdb.json`);
+          logSteamDbSchema(data);
         }
       })
       .catch((err) => {
@@ -714,32 +770,82 @@ export default function Store() {
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] highQualityPool catalogSize=${rankedSteamCatalog.length}`);
     return rankedSteamCatalog.map((entry) => {
       const id = String(entry.appid);
+      const appIdNum = entry.appid;
       const overlay = providerOverlayByAppId[id];
-      const meta = storeMetadataByAppId[entry.appid];
+      const meta = storeMetadataByAppId[appIdNum];
+      const review = reviewSummaryByAppId[appIdNum];
       const interaction = interactionScoreByAppId[id] ?? 0;
 
       const metaScore = (meta?.header_image || meta?.capsule_image_v5) ? 1 : (meta ? 0.5 : 0);
       const provScore = (overlay && overlay.sources.some((s) => s.available)) ? 1 : 0;
-      const recScore = Math.min(1, entry.appid / 400000);
+      const recScore = Math.min(1, appIdNum / 400000);
+
+      const totalReviews = review?.total_reviews ?? 0;
+      const positivePct = review?.positive_percent ?? 0;
+      const reviewQuality = totalReviews > 0
+        ? Math.min(1, totalReviews / 50000) * 0.4 + (positivePct / 100) * 0.6
+        : 0;
+      const reviewConfidence = review?.resolved === true ? 1 : (review ? 0.5 : 0);
+
       const userScore = Math.min(1, interaction / 5);
       const predictionBoost = meta?.genres
         ? meta.genres.reduce((sum, g) => sum + (genreConfidence[g] ?? 0), 0) * PREDICTION_BOOST_MULTIPLIER
         : 0;
 
+      const score =
+        RANKING_WEIGHTS.popularity * reviewQuality * reviewConfidence +
+        RANKING_WEIGHTS.metadata * metaScore +
+        RANKING_WEIGHTS.provider * provScore +
+        RANKING_WEIGHTS.recency * recScore +
+        RANKING_WEIGHTS.userInterest * (userScore + predictionBoost);
+
       return {
         appId: id,
         title: entry.name,
-        score:
-          RANKING_WEIGHTS.popularity * 0 +
-          RANKING_WEIGHTS.metadata * metaScore +
-          RANKING_WEIGHTS.provider * provScore +
-          RANKING_WEIGHTS.recency * recScore +
-          RANKING_WEIGHTS.userInterest * (userScore + predictionBoost),
+        score,
         hasSource: provScore > 0,
         hasMeta: metaScore > 0,
       };
     }).sort((a, b) => b.score - a.score);
-  }, [rankedSteamCatalog, providerOverlayByAppId, storeMetadataByAppId, interactionScoreByAppId, genreConfidence, catalogFingerprint]);
+  }, [rankedSteamCatalog, providerOverlayByAppId, storeMetadataByAppId, reviewSummaryByAppId, interactionScoreByAppId, genreConfidence, catalogFingerprint]);
+
+  // ── Compiled Discovery Index ──
+  // A derived snapshot of enriched metadata + quality-gated scores for top candidates.
+  // Compiled from already-cached data — no async I/O.
+  const compiledDiscoveryIndex = useMemo<StoreDiscoveryIndex | null>(() => {
+    if (highQualityPool.length === 0) return null;
+
+    const cached = getCachedDiscoveryIndex();
+    const cachedDiscover = getCachedStoreDiscover();
+    // Return cached index when fingerprint matches and no new reviews have arrived
+    if (cached && cached.version === DISCOVERY_INDEX_VERSION && Object.keys(reviewSummaryByAppId).length > 0) {
+      if (cachedDiscover && cachedDiscover.catalogFingerprint === catalogFingerprint) {
+        return cached;
+      }
+    }
+
+    const index = compileDiscoveryIndex(
+      highQualityPool,
+      storeMetadataByAppId,
+      reviewSummaryByAppId,
+      genreConfidence,
+      interactionScoreByAppId,
+      rankedSteamCatalog.length || steamCatalog.length,
+    );
+
+    setCachedDiscoveryIndex(index);
+    logDiscoveryIndexValidation(index);
+    return index;
+  }, [highQualityPool, storeMetadataByAppId, reviewSummaryByAppId, genreConfidence, interactionScoreByAppId, catalogFingerprint, steamCatalog.length]);
+
+  // Save compiled discovery index to disk after build
+  const indexSaveRef = useRef<number>(0);
+  useEffect(() => {
+    if (!compiledDiscoveryIndex) return;
+    if (indexSaveRef.current === compiledDiscoveryIndex.builtAt) return;
+    indexSaveRef.current = compiledDiscoveryIndex.builtAt;
+    saveDiscoveryIndexToDisk(compiledDiscoveryIndex).catch(() => {});
+  }, [compiledDiscoveryIndex]);
 
   const trendingScoreByAppId = useMemo(() => {
     const scores: Record<string, number> = {};
@@ -798,75 +904,30 @@ export default function Store() {
     return map;
   }, [installedScripts]);
 
-  const steamInstalledByAppId = useMemo(() => {
-    const set = new Set<string>();
-    games.forEach((g) => {
-      if (g.appId && g.steamInstalled) set.add(g.appId);
+  const steamSearchItems: StoreSearchDropdownItem[] = useMemo(() => {
+    return storeGameSearchResults.map((result) => {
+      const luaActive = ownershipLookup.isLuaActive(result.appId) || installedStatusByAppId.get(result.appId) === "active";
+      const enriched = enrichGameSearchResult(result, {
+        owned: ownershipLookup.isOwned(result.appId),
+        installed: ownershipLookup.isSteamInstalled(result.appId),
+        luaActive,
+      });
+      const badgeLabels = enriched.owned
+        ? enriched.installed
+          ? "Owned, Installed"
+          : "Owned, In Library"
+        : enriched.installed
+          ? "Installed"
+          : luaActive
+            ? "In Library"
+            : "none";
+      console.log(
+        `[STORE][SEARCH_RESULT_STATE] appid=${result.raw.app_id} owned=${enriched.owned} installed=${enriched.installed} luaInstalled=${luaActive} inLibrary=${enriched.inLibrary} badgeLabels=${badgeLabels}`,
+      );
+      return mapEnrichedGameSearchResultToStoreSearchDropdownItem(enriched);
     });
-    return set;
-  }, [games]);
-
-  const luaInstalledByAppId = useMemo(() => {
-    const set = new Set<string>();
-    for (const [appId, status] of installedStatusByAppId) {
-      if (status === "active") set.add(appId);
-    }
-    return set;
-  }, [installedStatusByAppId]);
-
-  useEffect(() => {
-    const query = storeSearchQuery.trim();
-
-    if (query.length < 2) {
-      setSteamSearchItems([]);
-      setSteamSearchLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        setSteamSearchLoading(true);
-
-        const steamItems = await searchSteamStore(query);
-
-        if (cancelled) {
-          return;
-        }
-
-        const steamDropdownItems: StoreSearchDropdownItem[] = steamItems.map(
-          (item) => ({
-            appId: String(item.app_id),
-            title: item.name,
-            subtitle: `AppID ${item.app_id}`,
-            imageUrl: item.image_url || undefined,
-            priceLabel: item.price_label || undefined,
-            discountLabel: item.discount_label || undefined,
-            installed: installedStatusByAppId.has(String(item.app_id)),
-          })
-        );
-
-        setSteamSearchItems(steamDropdownItems);
-      } catch (error) {
-        console.error(error);
-
-        if (!cancelled) {
-          setSteamSearchItems([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setSteamSearchLoading(false);
-        }
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [storeSearchQuery, installedStatusByAppId]);
-
+  }, [storeGameSearchResults, ownershipLookup, installedStatusByAppId]);
+ 
   useEffect(() => {
     const allGames = [...catalogGames];
 
@@ -1027,9 +1088,11 @@ export default function Store() {
   // ── Rich Discover sections (new model) ──
   const discoverSections = useMemo(() => {
     const cached = getCachedStoreDiscover();
-    // Bypass partial/incomplete cache — rebuild sections when metadata becomes available.
-    // This ensures genre sections appear after metadata loads, even if first render cached nothing.
-    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache) {
+    const hasReviewsLoaded = Object.keys(reviewSummaryByAppId).length > 0;
+    // Bypass partial/incomplete cache — rebuild sections when metadata or reviews become available.
+    // Only return cached data when no reviews have been loaded yet (cold cache from prior session).
+    // Once reviews arrive, rebuild to apply review-based quality gates.
+    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache && !hasReviewsLoaded) {
       return cached.discoverSections;
     }
 
@@ -1128,15 +1191,32 @@ export default function Store() {
       }
     }
 
-    // --- Top Picks (top scored from high quality pool) ---
-    const topPicks = topGames.slice(0, 20);
-    const topUsed = new Set(usedIds);
-    const topFiltered = topPicks.filter((g) => !topUsed.has(g.appId));
-    if (topFiltered.length >= 4) {
-      const items = takeUnique(topFiltered, 20);
-      if (items.length > 0) {
+    // --- Top Picks (quality-gated: requires real review data + images) ---
+    // Use compiled discovery index for pre-computed quality-gated picks when available
+    // If the index has no picks after reviews are loaded, the section is hidden — no fallback garbage.
+    const hasResolvedReviews = Object.values(reviewSummaryByAppId).some(
+      (r) => r?.resolved === true && (r?.total_reviews ?? 0) > 0,
+    );
+    const topPickAppIds = compiledDiscoveryIndex ? queryIndexTopPicks(compiledDiscoveryIndex, 20) : [];
+    if (topPickAppIds.length > 0) {
+      const items = takeUnique(
+        topPickAppIds
+          .map((appId) => topGames.find((g) => g.appId === appId))
+          .filter((g): g is StoreGame => g !== undefined),
+        20,
+      );
+      if (items.length >= 2) {
         sections.push({ id: "top-picks", title: "Top Picks", type: "featured", items, source: "catalog" });
+        console.log(`[STORE][DISCOVERY_SECTION] name=Top Picks count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
+      } else {
+        console.log(`[STORE][DISCOVERY_FALLBACK] section=Top Picks reason=not-enough-unique items=${items.length}`);
       }
+    } else if (!compiledDiscoveryIndex && !hasResolvedReviews) {
+      // No index yet AND no reviews loaded — still waiting for data
+      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Top Picks reason=waiting-for-reviews`);
+    } else {
+      // Reviews are loaded but no candidates passed the quality gate — hide section
+      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Top Picks reason=no-qualified-candidates`);
     }
 
     // --- New and Noteworthy (by release date) ---
@@ -1162,16 +1242,43 @@ export default function Store() {
     }
     for (const genre of DISPLAY_GENRES) {
       const candidates = rawGenreGroups.get(genre);
-      if (!candidates || candidates.length < minGenreItems) continue;
+      if (!candidates || candidates.length < minGenreItems) {
+        console.log(`[STORE][DISCOVERY_NO_SECTION] section=${genre} reason=no-qualified-candidates`);
+        continue;
+      }
+      // Quality gate: only include candidates with resolved reviews + review threshold
+      const qualityGated = candidates.filter((g) => {
+        const review = reviewSummaryByAppId[Number(g.appId)];
+        return review?.resolved === true &&
+          (review.total_reviews ?? 0) >= QG_GENRE_MIN_REVIEWS &&
+          (review.review_score ?? 0) >= QG_GENRE_MIN_SCORE &&
+          (review.positive_percent ?? 0) >= QG_GENRE_MIN_PCT;
+      });
+      // If reviews are loaded but no candidates pass quality gate, use metadata-only as fallback
+      // (genre match + hasImage is still meaningful, just without review quality signal)
+      const effective = (hasResolvedReviews && qualityGated.length < minGenreItems)
+        ? candidates.filter((g) => {
+            const meta = storeMetadataByAppId[Number(g.appId)];
+            return meta?.header_image || meta?.capsule_image_v5;
+          })
+        : qualityGated.length >= minGenreItems ? qualityGated : candidates;
+      if (effective.length < minGenreItems && hasResolvedReviews) {
+        console.log(`[STORE][DISCOVERY_NO_SECTION] section=${genre} reason=no-qualified-candidates`);
+        continue;
+      }
       // First try excluding globally usedIds; fallback to raw deduped list
-      const uniqueNotUsed = candidates.filter((g) => !usedIds.has(g.appId));
-      const dedupedCandidates = [...new Map(candidates.map((g) => [g.appId, g])).values()];
+      const uniqueNotUsed = effective.filter((g) => !usedIds.has(g.appId));
+      const dedupedCandidates = [...new Map(effective.map((g) => [g.appId, g])).values()];
       const items = uniqueNotUsed.length >= minGenreItems
         ? takeUnique([...uniqueNotUsed], 20)
         : dedupedCandidates.slice(0, 20);
       if (items.length >= minGenreItems) {
         sections.push({ id: `genre-${genre.toLowerCase()}`, title: genre, type: "genre", items, source: "genre" });
-        console.log(`[STORE][GENRE_SECTION_READY] genre=${genre} count=${items.length}`);
+        if (items.length <= 10) {
+          console.log(`[STORE][DISCOVERY_SECTION] name=${genre} count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
+        }
+      } else {
+        console.log(`[STORE][DISCOVERY_NO_SECTION] section=genre-${genre.toLowerCase()} reason=no-qualified-candidates`);
       }
     }
 
@@ -1190,16 +1297,24 @@ export default function Store() {
       }
     }
 
-    // --- Featured (high quality with media, was "Top Rated") ---
-    const featuredCandidates = topGames.filter((g) => {
-      const meta = storeMetadataByAppId[Number(g.appId)];
-      return meta?.header_image || meta?.capsule_image_v5;
-    });
-    if (featuredCandidates.length >= 4) {
-      const items = takeUnique(featuredCandidates, 20);
+    // --- Featured (high quality with media, requires review/rating data) ---
+    // No fallback garbage — if index has no featured candidates after reviews loaded, hide section.
+    const featuredAppIds = compiledDiscoveryIndex ? queryIndexFeatured(compiledDiscoveryIndex, 20) : [];
+    if (featuredAppIds.length > 0) {
+      const items = takeUnique(
+        featuredAppIds
+          .map((appId) => topGames.find((g) => g.appId === appId))
+          .filter((g): g is StoreGame => g !== undefined),
+        20,
+      );
       if (items.length > 0) {
         sections.push({ id: "featured", title: "Featured", type: "featured", items, source: "catalog" });
+        console.log(`[STORE][DISCOVERY_SECTION] name=Featured count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
       }
+    } else if (!compiledDiscoveryIndex && !hasResolvedReviews) {
+      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=waiting-for-reviews`);
+    } else {
+      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=no-qualified-candidates`);
     }
 
     // --- Lua Ready Picks (catalog games with available download sources) ---
@@ -1224,7 +1339,7 @@ export default function Store() {
       console.log(`[STORE][DISCOVER_SECTIONS_BUILD] sections=${sections.length} genres=${genreReady} more=${highQualityPool.length}`);
     }
     return sections;
-  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, catalogFingerprint]);
+  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, reviewVersion, catalogFingerprint, compiledDiscoveryIndex]);
 
   // Backward-compat StoreSectionModel[] for consumers that still need it
   const sectionModels = useMemo<StoreSectionModel[]>(
@@ -1242,6 +1357,12 @@ export default function Store() {
   const moreToExploreGames = useMemo(() => {
     const effectiveDiscoverCount = discoverMoreVisibleCount > 0 ? discoverMoreVisibleCount : INITIAL_VISIBLE_COUNT;
 
+    // Build score lookup from highQualityPool for sorting More to Explore
+    const scoreLookup = new Map<string, number>();
+    for (const hq of highQualityPool) {
+      scoreLookup.set(hq.appId, hq.score);
+    }
+
     // Phase 8: Use module-level cached pool to avoid re-filtering 162k entries.
     // Only rebuild pool when catalog or exclusions change.
     const excludeFp = computeExcludeFingerprint(featuredGames, sectionModels);
@@ -1257,7 +1378,21 @@ export default function Store() {
         seen.add(appId);
         return true;
       });
+      // Sort by score descending for better quality in More to Explore
+      pool.sort((a, b) => {
+        const sa = scoreLookup.get(String(a.appid)) ?? 0;
+        const sb = scoreLookup.get(String(b.appid)) ?? 0;
+        return sb - sa;
+      });
       _cachedMorePool = { catalogFp: catalogFingerprint, excludeFp, pool };
+    } else {
+      // Re-sort if scoreLookup changed (e.g., reviews loaded)
+      const pool = _cachedMorePool.pool;
+      pool.sort((a, b) => {
+        const sa = scoreLookup.get(String(a.appid)) ?? 0;
+        const sb = scoreLookup.get(String(b.appid)) ?? 0;
+        return sb - sa;
+      });
     }
     const pool = _cachedMorePool.pool;
 
@@ -1282,7 +1417,7 @@ export default function Store() {
       console.log(`[STORE][MORE_WINDOW] logicalVisible=${effectiveDiscoverCount} mounted=${mounted} start=${windowStart} end=${windowEnd}`);
     }
     return games;
-  }, [rankedSteamCatalog, discoverMoreVisibleCount, featuredGames, sectionModels, storeMetadataByAppId, catalogFingerprint]);
+  }, [rankedSteamCatalog, discoverMoreVisibleCount, featuredGames, sectionModels, storeMetadataByAppId, highQualityPool, catalogFingerprint]);
 
   const allStoreSections = useMemo(() => {
     // Phase 5: Priority chain — primary state > complete cache > computed
@@ -1437,6 +1572,7 @@ export default function Store() {
             console.log(`[STORE][DISCOVER_CACHE_BUILD] partial=true featured=${featuredGames.length} sections=${discoverSections.length} more=${moreToExploreGames.length} elapsedMs=${elapsedMs}`);
             setCachedStoreDiscover({
               catalogFingerprint,
+              scoringVersion: DISCOVER_SCORING_VERSION,
               rankedSteamCatalog,
               highQualityPool,
               dynamicDiscoverSections: sectionModels,
@@ -1446,6 +1582,7 @@ export default function Store() {
               featuredGames,
               browseGames: browseGames as unknown as StoreDiscoverCacheEntry["browseGames"],
               luaReadyGames: luaReadyGames as unknown as StoreDiscoverCacheEntry["luaReadyGames"],
+              discoveryIndex: compiledDiscoveryIndex || undefined,
               builtAt: Date.now(),
               isPartialCache: true,
             });
@@ -1455,19 +1592,21 @@ export default function Store() {
           const upgradeMsg = !existing || existing.isPartialCache ? "partial-to-complete" : currentGenreCount > existingGenreCount ? "more-genres" : "more-sections";
           console.log(`[STORE][DISCOVER_CACHE_UPGRADE] reason=${upgradeMsg}`);
           console.log(`[STORE][DISCOVER_CACHE_BUILD] complete=true featured=${featuredGames.length} sections=${discoverSections.length} more=${moreToExploreGames.length} elapsedMs=${elapsedMs}`);
-          setCachedStoreDiscover({
-            catalogFingerprint,
-            rankedSteamCatalog,
-            highQualityPool,
-            dynamicDiscoverSections: sectionModels,
-            discoverSections,
-            lumaForgeSections,
-            allStoreSections,
-            featuredGames,
-            browseGames: browseGames as unknown as StoreDiscoverCacheEntry["browseGames"],
-            luaReadyGames: luaReadyGames as unknown as StoreDiscoverCacheEntry["luaReadyGames"],
-            builtAt: Date.now(),
-          });
+           setCachedStoreDiscover({
+             catalogFingerprint,
+             scoringVersion: DISCOVER_SCORING_VERSION,
+             rankedSteamCatalog,
+             highQualityPool,
+             dynamicDiscoverSections: sectionModels,
+             discoverSections,
+             lumaForgeSections,
+             allStoreSections,
+             featuredGames,
+             browseGames: browseGames as unknown as StoreDiscoverCacheEntry["browseGames"],
+             luaReadyGames: luaReadyGames as unknown as StoreDiscoverCacheEntry["luaReadyGames"],
+             discoveryIndex: compiledDiscoveryIndex || undefined,
+             builtAt: Date.now(),
+           });
         }
       }
 
@@ -1491,7 +1630,7 @@ export default function Store() {
     catalogFingerprint, rankedSteamCatalog, storeMetadataByAppId,
     featuredGames, discoverSections, moreToExploreGames,
     sectionModels, lumaForgeSections, browseGames,
-    luaReadyGames, selectedHeroIndex,
+    luaReadyGames, selectedHeroIndex, compiledDiscoveryIndex,
   ]);
 
   const newsItems = useMemo<StoreNewsItem[]>(() => {
@@ -1688,6 +1827,7 @@ export default function Store() {
 
   // Stable key for visibleAppIds to prevent render loops
   const appIdScopeKeyRef = useRef("");
+  const reviewScopeKeyRef = useRef("");
 
   // Visible appIds for metadata loading - does NOT depend on storeMetadataByAppId
   // Window includes: INITIAL_VISIBLE_COUNT base + current browse page window when on browse tab
@@ -1774,6 +1914,10 @@ export default function Store() {
     let cancelled = false;
 
     async function loadStoreMetadata() {
+      if (DEBUG_STORE_RENDER_VERBOSE) {
+        const isDetailOpen = !!selectedDetailGame;
+        console.log(`[STORE][METADATA_RESOLVE_SCOPE] count=${visibleAppIds.length} scope=${isDetailOpen ? "discovery+detail" : "discovery"} detail=${isDetailOpen ? selectedDetailGame.appId : "none"}`);
+      }
       try {
         const metadata = await batchedLoad(
           visibleAppIds,
@@ -1923,7 +2067,8 @@ export default function Store() {
   }, [visibleAppIdsKey, storeMetadataByAppId]);
 
   useEffect(() => {
-    if (visibleAppIdsKey === appIdScopeKeyRef.current) return;
+    if (visibleAppIdsKey === reviewScopeKeyRef.current) return;
+    reviewScopeKeyRef.current = visibleAppIdsKey;
 
     if (visibleAppIds.length === 0) {
       setReviewSummaryByAppId({});
@@ -1933,15 +2078,25 @@ export default function Store() {
     let cancelled = false;
 
     async function loadReviewSummaries() {
+      const appIdSet = new Set(visibleAppIds);
+      const appIdList = Array.from(appIdSet);
+      console.log(`[STORE][REVIEWS_FETCH_START] appids=${JSON.stringify(appIdList)} count=${appIdList.length}`);
       try {
         const summaries = await batchedLoad(
-          visibleAppIds,
+          appIdList,
           resolveGameReviewSummaries,
           REVIEW_CONCURRENCY
         );
 
         if (!cancelled) {
+          const resolvedCount = Object.values(summaries).filter((s: SteamReviewSummary) => s.resolved).length;
+          for (const [appId, summary] of Object.entries(summaries)) {
+            const s = summary as SteamReviewSummary;
+            console.log(`[STORE][REVIEWS_FETCH_RESULT] appid=${appId} resolved=${s.resolved} total=${s.total_reviews} score=${s.review_score} label=${s.review_score_desc} pct=${s.positive_percent}`);
+          }
           setReviewSummaryByAppId(summaries);
+          setReviewVersion((v) => v + 1);
+          console.log(`[STORE][REVIEWS_FETCH_DONE] count=${Object.keys(summaries).length} resolved=${resolvedCount}`);
         }
       } catch (error) {
         console.error(error);
@@ -1960,42 +2115,171 @@ export default function Store() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleAppIdsKey]);
 
+  // Part 8: Dedicated review fetch for the selected detail game.
+  // Ensures the details page gets review data even if the main batch didn't include it yet.
+  useEffect(() => {
+    const detailAppId = selectedDetailGameWithOverlay?.appId;
+    if (!detailAppId) return;
+
+    const appIdNum = Number(detailAppId);
+    if (!Number.isFinite(appIdNum)) return;
+
+    // If review already loaded, just log state and return
+    const existing = reviewSummaryByAppId[appIdNum];
+    if (existing) {
+      const state = existing.resolved && existing.total_reviews > 0 ? "available" : existing.resolved && existing.total_reviews === 0 ? "no-reviews" : "unavailable";
+      console.log(`[STORE][REVIEWS_DETAIL_STATE] appid=${detailAppId} state=${state} source=cached`);
+      return;
+    }
+
+    let cancelled = false;
+    async function fetchDetailReview() {
+      console.log(`[STORE][REVIEWS_DETAIL_FETCH_START] appid=${detailAppId}`);
+      try {
+        const summaries = await resolveGameReviewSummaries([appIdNum]);
+        if (cancelled) return;
+        const summary = summaries[appIdNum];
+        if (summary) {
+          console.log(`[STORE][REVIEWS_DETAIL_FETCH_RESULT] appid=${detailAppId} resolved=${summary.resolved} total=${summary.total_reviews} score=${summary.review_score} label=${summary.review_score_desc} pct=${summary.positive_percent}`);
+        }
+        setReviewSummaryByAppId((prev) => ({ ...prev, ...summaries }));
+        setReviewVersion((v) => v + 1);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+    fetchDetailReview();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDetailGameWithOverlay?.appId]);
+
   const selectedDetailRelatedGames = useMemo<StoreMoreLikeThisGame[]>(() => {
     if (!selectedDetailGameWithOverlay) {
       return [];
     }
 
-    const relatedMap = new Map<string, PackageGame>();
+    const selectedId = selectedDetailGameWithOverlay.appId;
+    const selectedMeta = storeMetadataByAppId[Number(selectedId)];
+    const selectedDeveloper = selectedMeta?.developer?.toLowerCase() ?? "";
+    const selectedPublishers = selectedMeta?.publishers ?? [];
+    const selectedGenres = selectedMeta?.genres ?? [];
+
+    // Build a score lookup — prefer compiled discovery index for richer scores
+    const indexScoreMap = new Map<string, number>();
+    if (compiledDiscoveryIndex) {
+      for (const [appId, s] of Object.entries(compiledDiscoveryIndex.scores)) {
+        indexScoreMap.set(appId, s.final);
+      }
+    } else {
+      for (const hq of highQualityPool) {
+        indexScoreMap.set(hq.appId, hq.score);
+      }
+    }
+
+    const candidateMap = new Map<string, PackageGame>();
 
     catalogGames.forEach((game) => {
-      if (game.appId !== selectedDetailGameWithOverlay.appId) {
-        relatedMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
+      if (game.appId !== selectedId) {
+        candidateMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
       }
     });
 
     allStoreSections.forEach((section) => {
       section.games.forEach((game) => {
-        if (game.appId !== selectedDetailGameWithOverlay.appId) {
-          relatedMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
+        if (game.appId !== selectedId) {
+          candidateMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
         }
       });
     });
 
     results.forEach((game) => {
-      if (game.appId !== selectedDetailGameWithOverlay.appId) {
-        relatedMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
+      if (game.appId !== selectedId) {
+        candidateMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
       }
     });
 
-    return Array.from(relatedMap.values())
-      .slice(0, 16)
-      .map((game) => ({
-        game,
-        metadata: storeMetadataByAppId[Number(game.appId)],
-        reviewSummary: reviewSummaryByAppId[Number(game.appId)],
-        installStatus:
-          installedStatusByAppId.get(game.appId) ?? "not-installed",
-      }));
+    const scored = Array.from(candidateMap.values()).reduce<{ game: PackageGame; score: number; reasons: string[] }[]>((acc, game) => {
+      const meta = storeMetadataByAppId[Number(game.appId)];
+      const review = reviewSummaryByAppId[Number(game.appId)];
+      const reasons: string[] = [];
+      if (!meta || !meta.genres?.length) {
+        acc.push({ game, score: 0, reasons: ["no-metadata"] });
+        return acc;
+      }
+      let score = 0;
+      const dev = meta.developer?.toLowerCase() ?? "";
+      const pubs = meta.publishers ?? [];
+      const genres = meta.genres ?? [];
+      if (selectedDeveloper && dev === selectedDeveloper) { score += 4; reasons.push("same-dev"); }
+      for (const pub of pubs) {
+        if (selectedPublishers.some((sp) => sp.toLowerCase() === pub.toLowerCase())) {
+          score += 2;
+          reasons.push("same-pub");
+          break;
+        }
+      }
+      const sharedGenres = genres.filter((g) => selectedGenres.some((sg) => sg.toLowerCase() === g.toLowerCase()));
+      if (sharedGenres.length > 0) { score += sharedGenres.length; reasons.push(`genres=${sharedGenres.length}`); }
+      // Review/popularity boost — use review count as popularity proxy
+      if (review && review.resolved && (review.total_reviews ?? 0) > 0) {
+        const reviewCountFactor = Math.min(1, (review.total_reviews ?? 0) / 50000);
+        const positivePctFactor = (review.positive_percent ?? 50) / 100;
+        const reviewBoost = (reviewCountFactor * 0.5 + positivePctFactor * 0.5) * 3;
+        score += reviewBoost;
+        reasons.push(`review=${review.total_reviews}`);
+      }
+      // Image availability bonus
+      if (meta?.header_image || meta?.capsule_image_v5) {
+        score += 1;
+        reasons.push("has-image");
+      }
+      // Discovery index score bonus (prefers games with metadata/reviews)
+      const idxScore = indexScoreMap.get(game.appId) ?? 0;
+      if (idxScore > 0) {
+        score += idxScore * 2;
+        reasons.push(`idx=${idxScore.toFixed(2)}`);
+      }
+      if (score === 0) {
+        reasons.push("no-relevance-match");
+      }
+      acc.push({ game, score, reasons });
+      return acc;
+    }, []);
+
+    // Log per-candidate scores for the selected game
+    const scoredWithReasons = scored.filter((s) => s.score > 0).slice(0, 15);
+    for (const s of scoredWithReasons) {
+      console.log(`[STORE][MORE_LIKE_SCORE] target=${selectedId} candidate=${s.game.appId} score=${s.score.toFixed(2)} reasons=${s.reasons.join(",")} title=${s.game.title}`);
+    }
+    // Log candidates filtered out (score === 0)
+    const filteredOut = scored.filter((s) => s.score === 0).slice(0, 5);
+    for (const s of filteredOut) {
+      console.log(`[STORE][MORE_LIKE_FILTER] target=${selectedId} candidate=${s.game.appId} reason=score-zero ${s.reasons.join(",")} title=${s.game.title}`);
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.filter((s) => s.score > 0).slice(0, 12);
+
+    const maxScore = top.length > 0 ? top[0].score : 0;
+
+    const rawCount = candidateMap.size;
+    const keptCount = top.length;
+    const appIds = top.slice(0, keptCount).map((s) => s.game.appId);
+    console.log(`[STORE][MORE_LIKE_RAW] appid=${selectedId} source=catalog candidateCount=${rawCount}`);
+    console.log(`[STORE][MORE_LIKE_NORMALIZED] appid=${selectedId} count=${keptCount} maxScore=${maxScore.toFixed(2)} appids=${JSON.stringify(appIds)}`);
+
+    if (keptCount === 0) {
+      console.log(`[STORE][MORE_LIKE_FALLBACK] appid=${selectedId} reason=hidden-no-relevant-candidates maxScore=${maxScore}`);
+      return [];
+    }
+
+    return top.map(({ game }) => ({
+      game,
+      metadata: storeMetadataByAppId[Number(game.appId)],
+      reviewSummary: reviewSummaryByAppId[Number(game.appId)],
+      installStatus:
+        installedStatusByAppId.get(game.appId) ?? "not-installed",
+    }));
   }, [
     selectedDetailGameWithOverlay,
     catalogGames,
@@ -2005,6 +2289,8 @@ export default function Store() {
     storeMetadataByAppId,
     reviewSummaryByAppId,
     installedStatusByAppId,
+    highQualityPool,
+    compiledDiscoveryIndex,
   ]);
 
   function handleToolbarQueryChange(value: string) {
@@ -2198,7 +2484,13 @@ export default function Store() {
         }));
 
         const entry = buildSourceAvailabilityFromProviders(appId, title, result.allSources, result.totalEnabled);
-        updateSourceAvailability(appId, entry).catch(() => {});
+        // Only save partial results when at least one source is available or pending
+        // Prevents onEarlyResult from overwriting "checking" with "none" before all providers finish
+        if (entry.status !== "none") {
+          updateSourceAvailability(appId, entry).catch(() => {});
+        } else {
+          log("store-search", `early-skip-empty { appId: "${appId}", provider: "${result.providerName}", availability: ${result.source.available} }`);
+        }
 
         if (result.source.available) {
           const currentEntry = getSourceAvailability(appId);
@@ -2241,6 +2533,9 @@ export default function Store() {
           const timedOut = resolvedGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
           const skipped = resolvedGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("cooldown")).length;
           console.log(`[STORE][PROVIDER_DISCOVERY_BACKGROUND_DONE] appid=${appId} total=${totalProviders} successes=${successes} skipped=${skipped} timedOut=${timedOut}`);
+          resolvedGame.sources.forEach(s => {
+            console.log(`[STORE][PROVIDER_DISCOVERY_RESULT_DETAIL] appid=${appId} provider=${s.providerId} success=${s.available} available=${s.available} timedOut=${(s.error?.toLowerCase().includes("timeout"))} reason="${s.error || "ok"}"`);
+          });
 
           const entry = buildSourceAvailabilityFromProviders(
             appId,
@@ -2251,10 +2546,14 @@ export default function Store() {
           const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
           if (!savedProvider || savedProvider === "none") {
             console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
+            console.log(`[STORE][SOURCE_NO_PROVIDER_TRANSITION] appid=${appId} nextState=retryable`);
             console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
             const existing = getSourceAvailability(appId);
             if (existing && existing.availableSources.length > 0) {
               log("store-search", `preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
+              updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            } else if (existing) {
+              // Transition "checking" cache to "timeout" so UI doesn't stay stuck on "checking" state
               updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
             }
             return;
@@ -2315,7 +2614,6 @@ export default function Store() {
     setSubmittedSearchQuery("");
     setQuery("");
     setActiveSectionId(null);
-    setSteamSearchItems([]);
     setSteamSubmittedSearchGames([]);
 
     // Open details immediately — source resolution (+ cache hydration) happens inside openDetailsForGame
@@ -2327,7 +2625,6 @@ export default function Store() {
     setStoreSearchQuery("");
     setSubmittedSearchQuery("");
     setQuery("");
-    setSteamSearchItems([]);
     setSteamSubmittedSearchGames([]);
   }
 
@@ -2337,7 +2634,6 @@ export default function Store() {
     setActiveSectionId(null);
     setActiveGenreSectionId(null);
     setSelectedDetailGame(null);
-    setSteamSearchItems([]);
     setSteamSubmittedSearchGames([]);
     setStoreSearchQuery("");
     setSubmittedSearchQuery("");
@@ -2350,192 +2646,15 @@ export default function Store() {
   }
 
   async function downloadFromSource(game: PackageGame, source: PackageSource) {
-    if (!_mountedRef.current) return;
-
-    if (!source.available) {
-      showWarning("Selecciona una fuente disponible antes de descargar.", {
-        title: "Fuente requerida",
-      });
-      return;
-    }
-
-    if (!source.downloadUrl) {
-      showError("Esta fuente no tiene una URL de descarga válida.", {
-        title: "URL inválida",
-      });
-      return;
-    }
-
-    if (!settings.luaPath || !settings.depotcachePath) {
-      showWarning("Configura o detecta las rutas de Steam antes de instalar.", {
-        title: "Rutas requeridas",
-      });
-      return;
-    }
-
-    // Check HubcapDB API key before attempting download
-    const hubcapId = "hubcapdb";
-    const isHubcapProvider = source.providerId === hubcapId || source.providerName === "HubcapDB";
-    if (isHubcapProvider) {
-      const hubcapSettings = settings.providers?.hubcapdb;
-      if (!hubcapSettings?.apiKey) {
-        console.log(`[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=false authMode=bearer action=blocked`);
-        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "missing-api-key");
-        showWarning("HubcapDB API key required.", { title: "Auth required" });
-        return;
-      }
-    }
-
-    // Rebuild auth headers from settings at request time (never from cache — overlay strips authHeaders)
-    const effectiveHeaders = source.authHeaders ?? getEffectiveProviderAuthHeaders(source.providerId, settings);
-    const sourceHadHeaders = Boolean(source.authHeaders);
-    const rebuiltHeaders = !sourceHadHeaders && Boolean(effectiveHeaders);
-    if (isHubcapProvider) {
-      console.log(
-        `[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=true` +
-        ` authMode=bearer sourceHadHeaders=${sourceHadHeaders} rebuiltHeaders=${rebuiltHeaders}`
-      );
-    }
-
-    const job = addJob({
-      appId: game.appId,
-      gameTitle: game.title,
-      providerId: source.providerId,
-      providerName: source.providerName,
-      fileType: source.fileType,
-      downloadUrl: source.downloadUrl,
+    await sharedDownloadFromSource(game, source, {
+      settings,
+      addJob,
+      updateJob,
+      libraryRefresh,
+      refreshInstalledScripts,
+      mountedRef: _mountedRef,
+      updateSourceAvailability,
     });
-
-    try {
-      const result = await downloadAndInstallPackage({
-        jobId: job.id,
-        downloadUrl: source.downloadUrl,
-        luaTarget: settings.luaPath,
-        depotcacheTarget: settings.depotcachePath,
-        createBackups: settings.createBackups,
-        headers: effectiveHeaders,
-        tempFolder: settings.tempFolder,
-      });
-
-      if (!_mountedRef.current) {
-        console.log(`[STORE][ASYNC_CANCELLED] appid=${game.appId} stage=after-download`);
-        return;
-      }
-
-      updateJob(job.id, {
-        status: "done",
-        progress: 100,
-        bytesRead: result.bytes_read,
-        totalBytes: result.total_bytes,
-      });
-
-      showSuccess(result.message, {
-        title: "Paquete instalado",
-      });
-
-      refreshInstalledScripts();
-
-      // Save provider-status local snapshot after successful install
-      const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
-        ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
-        : undefined;
-      const providerOpts: ProviderStatusOptions = {
-        luaDir: settings.luaPath || undefined,
-        steamRoot: settings.steamRoot || undefined,
-      };
-      await saveProviderStatusAfterInstall(game.appId, source.providerId, hubcapConfig, providerOpts);
-
-      if (!_mountedRef.current) return;
-
-      // Auto-register newly installed Lua package with library games context
-      console.log(`[LUA][REGISTER_PACKAGE] appid=${game.appId} provider=${source.providerName} title="${game.title}"`);
-      libraryRefresh().then(() => {
-        if (!_mountedRef.current) return;
-        console.log(`[LIBRARY][GAME_UPSERT] appid=${game.appId} action=refresh`);
-      }).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[LIBRARY][GAME_UPSERT] appid=${game.appId} error="${msg}"`);
-      });
-    } catch (error) {
-      if (!_mountedRef.current) {
-        console.log(`[STORE][ASYNC_CANCELLED] appid=${game.appId} stage=error`);
-        return;
-      }
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : typeof error === "string"
-            ? error
-            : "No se pudo instalar el paquete.";
-
-      updateJob(job.id, {
-        status: "failed",
-        progress: 0,
-        error: message,
-      });
-
-      // Parse HTTP status code from Rust error message (e.g. "Status: 401")
-      const statusMatch = message.match(/Status:\s*(\d+)/);
-      const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
-
-      if (statusCode === 401) {
-        // Unauthorized — save provider auth error, do NOT mark sources as failed
-        console.log(
-          `[PACKAGE][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=401 reason=unauthorized`,
-        );
-        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "unauthorized");
-        showError(
-          source.providerName === "HubcapDB"
-            ? "HubcapDB rejected the request. Check your API key."
-            : `${source.providerName} rechazó la descarga. Verifica la API key o permisos. (HTTP 401)`,
-          { title: "Descarga fallida" },
-        );
-      } else if (statusCode === 403) {
-        // Forbidden — save provider auth error, do NOT mark sources as failed
-        console.log(
-          `[PACKAGE][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=403 reason=forbidden`,
-        );
-        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "forbidden");
-        showError(
-          "Your HubcapDB account does not have access to this package.",
-          { title: "Acceso denegado" },
-        );
-      } else if (statusCode === 429) {
-        // Rate limited — save provider rate-limit error, do NOT mark sources as failed
-        console.log(
-          `[PACKAGE][DOWNLOAD_RATE_LIMITED] appid=${game.appId} provider=${source.providerName} status=429`,
-        );
-        await saveProviderStatusAuthError(game.appId, source.providerId, "rate-limited", "rate-limited");
-        showError(
-          "HubcapDB rate limit reached. Try again later.",
-          { title: "Rate limited" },
-        );
-      } else {
-        // Non-auth errors: update source availability
-        updateSourceAvailability(game.appId, {
-          appId: game.appId,
-          title: game.title,
-          status: "error",
-          luaReady: false,
-          availableSources: game.sources.filter((s) => s.available).map((s) => ({
-            id: s.providerId,
-            name: s.providerName,
-            type: s.fileType,
-            status: "ready",
-            packageUrl: s.downloadUrl,
-            updatedAt: Math.floor(Date.now() / 1000),
-          })),
-          sourceCount: game.sources.filter((s) => s.available).length,
-          totalProviderCount: game.sources.length,
-          updatedAt: Math.floor(Date.now() / 1000),
-        }).catch(() => {});
-
-        showError(message, {
-          title: "Instalación fallida",
-        });
-      }
-    }
   }
 
   async function handleDownloadSource(source: PackageSource) {
@@ -2585,7 +2704,6 @@ export default function Store() {
     const overlay = providerOverlayByAppId[appId];
     const interaction = interactionScoreByAppId[appId] ?? 0;
     const isInstalled = installedStatusByAppId.has(appId);
-    const appIdNum = Number(appId);
 
     // Priority order: Recommended > Trending > Top Rated > Popular > New > Has Sources
     const candidates: { type: StoreBadge["type"]; label: string; score: number }[] = [];
@@ -2595,13 +2713,16 @@ export default function Store() {
       candidates.push({ type: "recommended", label: "Recommended", score: 6 });
     }
 
-    // 2. Trending: high interaction or has sources + recent
-    if (interaction >= 2 || (overlay && overlay.sources.some((s) => s.available) && appIdNum > 200000)) {
+    // 2. Trending: high interaction or has sources + not every game
+    if (interaction >= 2 || (overlay && overlay.sources.some((s) => s.available) && (interaction >= 1))) {
       candidates.push({ type: "trending", label: "Trending", score: 5 });
     }
 
-    // 3. Top Rated: has metadata with images
-    if (meta?.header_image || meta?.capsule_image_v5) {
+    // 3. Top Rated: only shown when compiled discovery index exists (reviews loaded + scored)
+    const isTopRated = compiledDiscoveryIndex
+      ? qualifiesTopRated(compiledDiscoveryIndex, appId)
+      : false;
+    if (isTopRated) {
       candidates.push({ type: "top-rated", label: "Top Rated", score: 4 });
     }
 
@@ -2610,8 +2731,18 @@ export default function Store() {
       candidates.push({ type: "popular", label: "Popular", score: 3 });
     }
 
-    // 5. New: high appId (recently added to Steam)
-    if (appIdNum > 300000) {
+    // 5. New: uses discovery index if available; otherwise release_date check
+    const isNew = compiledDiscoveryIndex
+      ? qualifiesNew(meta)
+      : (meta?.release_date ? (() => {
+          const releaseTs = parseReleaseDate(meta.release_date);
+          if (releaseTs > 0) {
+            const ageDays = (Date.now() - releaseTs) / (1000 * 60 * 60 * 24);
+            return ageDays >= 0 && ageDays <= MIN_NEW_RELEASE_DAYS;
+          }
+          return false;
+        })() : false);
+    if (isNew) {
       candidates.push({ type: "new", label: "New", score: 2 });
     }
 
@@ -2621,7 +2752,11 @@ export default function Store() {
     }
 
     candidates.sort((a, b) => b.score - a.score);
-    return candidates.slice(0, MAX_BADGES).map(({ type, label }) => ({ type, label }));
+    const selected = candidates.slice(0, MAX_BADGES).map(({ type, label }) => ({ type, label }));
+    if (selected.length > 0) {
+      console.log(`[STORE][BADGE_DECISION] appid=${appId} badges=${JSON.stringify(selected)} reasons=${JSON.stringify(candidates.map(c => c.type + "=" + c.score))}`);
+    }
+    return selected;
   }
 
   function renderStoreCard(game: PackageGame) {
@@ -2725,8 +2860,9 @@ export default function Store() {
             installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
             "not-installed"
           }
-          isSteamInstalled={steamInstalledByAppId.has(selectedDetailGameWithOverlay.appId)}
-          luaInstalled={luaInstalledByAppId.has(selectedDetailGameWithOverlay.appId)}
+          isSteamInstalled={ownershipLookup.isSteamInstalled(selectedDetailGameWithOverlay.appId)}
+          luaInstalled={installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) === "active"}
+          steamOwned={ownershipLookup.isOwned(selectedDetailGameWithOverlay.appId)}
           selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
           sourceStatus={sourceStatus}
           isBackgroundChecking={isBackgroundChecking}
@@ -2767,6 +2903,9 @@ export default function Store() {
               updatedAt: Math.floor(Date.now() / 1000),
             }).catch(() => {});
 
+            // Invalidate overlay cache so retry actually calls providers instead of returning stale cached data
+            invalidateOverlayCacheForAppId(appId);
+
             const retryForegroundStartedAt = Date.now();
             const onRetryEarlyResult: ProviderProgressCallback = (result) => {
               if (requestId !== sourceResolveReqRef.current) return;
@@ -2782,7 +2921,11 @@ export default function Store() {
               }));
 
               const retryEntry = buildSourceAvailabilityFromProviders(appId, game.title, result.allSources, result.totalEnabled);
-              updateSourceAvailability(appId, retryEntry).catch(() => {});
+              if (retryEntry.status !== "none") {
+                updateSourceAvailability(appId, retryEntry).catch(() => {});
+              } else {
+                log("store-search", `retry-early-skip-empty { appId: "${appId}", provider: "${result.providerName}", availability: ${result.source.available} }`);
+              }
 
               if (result.source.available) {
                 const currentEntry = getSourceAvailability(appId);
@@ -2819,6 +2962,9 @@ export default function Store() {
                 const successes = resolvedGame.sources.filter(s => s.available).length;
                 const timedOut = resolvedGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
                 console.log(`[STORE][PROVIDER_DISCOVERY_BACKGROUND_DONE] appid=${appId} total=${totalProviders} successes=${successes} timedOut=${timedOut}`);
+                resolvedGame.sources.forEach(s => {
+                  console.log(`[STORE][PROVIDER_DISCOVERY_RESULT_DETAIL] appid=${appId} provider=${s.providerId} success=${s.available} available=${s.available} timedOut=${(s.error?.toLowerCase().includes("timeout"))} reason="${s.error || "ok"}"`);
+                });
 
                 const entry = buildSourceAvailabilityFromProviders(
                   appId,
@@ -2830,6 +2976,7 @@ export default function Store() {
                 const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
                 if (!savedProvider || savedProvider === "none") {
                   console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
+                  console.log(`[STORE][SOURCE_NO_PROVIDER_TRANSITION] appid=${appId} nextState=retryable`);
                   console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
                   const existing = getSourceAvailability(appId);
                   if (existing && existing.availableSources.length > 0) {

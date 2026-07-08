@@ -1,11 +1,12 @@
 import { mockPackages } from "../data/mockPackages";
 import { defaultApiProviders } from "../data/providers";
-import { checkProviderAvailability } from "./tauri";
+import { checkProviderAvailability, hubcapAppStatus } from "./tauri";
 import {
   shouldSkipProvider,
   getHealthyProviders,
   recordProviderSuccess,
   recordProviderFailure,
+  resetProviderHealth,
 } from "./providerHealthService";
 
 import type { AppSettings } from "../types/settings";
@@ -101,11 +102,24 @@ async function searchRealProviderAvailability(
 
   const sortedProviders = getHealthyProviders(targetProviders);
 
+  console.log(`[PROVIDER][DISCOVERY_START] appid=${appId} providers=[${sortedProviders.map(p => `${p.id}`).join(",")}]`);
+
   for (const provider of sortedProviders) {
     const userSettings = settings.providers?.[provider.id];
 
-    if (shouldSkipProvider(provider.id)) {
-      console.log(`[PROVIDER_SKIP] provider=${provider.id} reason=cooldown`);
+    // Reset HubcapDB health before check so cooldown doesn't block retry
+    if (provider.id === "hubcapdb") {
+      resetProviderHealth("hubcapdb");
+    }
+
+    const inCooldown = shouldSkipProvider(provider.id);
+    const hasApiKey = !!userSettings?.apiKey;
+    const enabled = userSettings ? userSettings.enabled : provider.enabledByDefault;
+    const willExecute = enabled && !inCooldown && (!provider.requiresApiKey || hasApiKey) && true;
+    console.log(`[PROVIDER][DISCOVERY_PROVIDER] appid=${appId} provider=${provider.id} enabled=${enabled} hasApiKey=${hasApiKey} requiresKey=${provider.requiresApiKey} cooldown=${inCooldown} canSearch=${provider.capabilities.includes("availability-check")} willExecute=${willExecute}`);
+
+    if (inCooldown) {
+      console.log(`[PROVIDER][DISCOVERY_SKIP] appid=${appId} provider=${provider.id} reason=cooldown`);
       providerReports.push({
         providerId: provider.id,
         providerName: provider.name,
@@ -129,6 +143,7 @@ async function searchRealProviderAvailability(
     }
 
     if (provider.requiresApiKey && !userSettings?.apiKey) {
+      console.log(`[PROVIDER][DISCOVERY_SKIP] appid=${appId} provider=${provider.id} reason=missing-api-key`);
       providerReports.push({
         providerId: provider.id,
         providerName: provider.name,
@@ -173,6 +188,7 @@ async function searchRealProviderAvailability(
     const authHeaders = buildProviderAuthHeaders(provider, settings);
 
     if (!availabilityUrl) {
+      console.log(`[PROVIDER][DISCOVERY_SKIP] appid=${appId} provider=${provider.id} reason=no-availability-url`);
       providerReports.push({
         providerId: provider.id,
         providerName: provider.name,
@@ -200,6 +216,7 @@ async function searchRealProviderAvailability(
     }
 
     if (!downloadUrl) {
+      console.log(`[PROVIDER][DISCOVERY_SKIP] appid=${appId} provider=${provider.id} reason=no-download-url`);
       providerReports.push({
         providerId: provider.id,
         providerName: provider.name,
@@ -226,29 +243,59 @@ async function searchRealProviderAvailability(
       continue;
     }
 
+    console.log(`[PROVIDER][DISCOVERY_EXECUTE] appid=${appId} provider=${provider.id}`);
+
     const startedAt = Date.now();
 
     try {
       log(`start { appId: "${appId}", provider: "${provider.id}" }`);
-      console.log(`[STORE][PROVIDER_DISCOVERY_REQUEST] appid=${appId} provider=${provider.id} url=${availabilityUrl} timeoutMs=${timeoutMs}`);
-      const availability = await withTimeout(
-        checkProviderAvailability({
-          url: availabilityUrl,
-          successCode: provider.successCode,
-          unavailableCode: provider.unavailableCode,
-          headers: authHeaders,
-        }),
-        timeoutMs,
-        `checkProviderAvailability(${provider.id}, ${appId})`
-      );
+
+      let availability: { available: boolean; status_code: number; message: string };
+
+      if (provider.id === "hubcapdb") {
+        // Use dedicated hubcapAppStatus for HubcapDB — GET + JSON body parsing
+        // Generic HEAD check may miss HubcapDB's rich status response
+        const hubcapSettings = settings.providers?.hubcapdb;
+        const baseUrl = hubcapSettings?.baseUrl || "https://hubcapmanifest.com";
+        const apiKey = hubcapSettings?.apiKey || "";
+
+        console.log(`[HUBCAP][SOURCE_CHECK_START] appid=${appId} url=${baseUrl}/api/v1/status/${appId} hasApiKey=${!!apiKey} authMode=bearer`);
+
+        const statusResponse = await withTimeout(
+          hubcapAppStatus(baseUrl, apiKey, appId),
+          timeoutMs,
+          `hubcapAppStatus(${appId})`
+        );
+
+        console.log(`[HUBCAP][SOURCE_CHECK_APPID] appid=${appId} normalizedAppId=${appId}`);
+        console.log(`[HUBCAP][SOURCE_CHECK_RESPONSE] appid=${appId} ok=${statusResponse.ok} status=${statusResponse.status} bodyKeys=${Object.keys(statusResponse).join(",")}`);
+        console.log(`[HUBCAP][SOURCE_CHECK_BODY] appid=${appId} status=${statusResponse.status} manifestFileExists=${statusResponse.manifest_file_exists} fileModified=${statusResponse.file_modified} fileSize=${statusResponse.file_size} needsUpdate=${statusResponse.needs_update} updateInProgress=${statusResponse.update_in_progress}`);
+
+        const hubcapAvailable = !!(statusResponse.ok && statusResponse.status === "available" && statusResponse.manifest_file_exists);
+        console.log(`[HUBCAP][SOURCE_MAP] appid=${appId} available=${hubcapAvailable} reason=${statusResponse.status} manifestFileExists=${statusResponse.manifest_file_exists}`);
+        console.log(`[STORE][PROVIDER_RESULT_MAP] appid=${appId} provider=HubcapDB available=${hubcapAvailable} reason=${statusResponse.status}`);
+
+        availability = {
+          available: hubcapAvailable,
+          status_code: 200,
+          message: hubcapAvailable ? "Available" : (statusResponse.status || "Not available"),
+        };
+      } else {
+        console.log(`[STORE][PROVIDER_DISCOVERY_REQUEST] appid=${appId} provider=${provider.id} url=${availabilityUrl} timeoutMs=${timeoutMs}`);
+        availability = await withTimeout(
+          checkProviderAvailability({
+            url: availabilityUrl,
+            successCode: provider.successCode,
+            unavailableCode: provider.unavailableCode,
+            headers: authHeaders,
+          }),
+          timeoutMs,
+          `checkProviderAvailability(${provider.id}, ${appId})`
+        );
+      }
+
       const elapsedMs = Date.now() - startedAt;
       recordProviderSuccess(provider.id, elapsedMs);
-
-      if (availability.available) {
-        log(`exact appId match { appId: "${appId}", provider: "${provider.id}" }`);
-      } else {
-        log(`no sources { appId: "${appId}", provider: "${provider.id}" }`);
-      }
       console.log(`[STORE][PROVIDER_DISCOVERY_RESPONSE] appid=${appId} provider=${provider.id} available=${availability.available} statusCode=${availability.status_code} latencyMs=${elapsedMs}`);
 
       providerReports.push({
@@ -295,6 +342,14 @@ async function searchRealProviderAvailability(
       const elapsedMs = Date.now() - startedAt;
       const isTimeout = message.toLowerCase().includes("timeout");
       recordProviderFailure(provider.id, isTimeout ? "timeout" : "error", elapsedMs);
+
+      if (provider.id === "hubcapdb") {
+        if (isTimeout) {
+          console.log(`[HUBCAP][SOURCE_CHECK_TIMEOUT] appid=${appId} timeoutMs=${timeoutMs}`);
+        } else {
+          console.log(`[HUBCAP][SOURCE_CHECK_ERROR] appid=${appId} status=error error="${message}"`);
+        }
+      }
 
       console.warn(`[STORE][PROVIDER_DISCOVERY_RESPONSE] appid=${appId} provider=${provider.id} error="${message}" latencyMs=${elapsedMs}`);
 

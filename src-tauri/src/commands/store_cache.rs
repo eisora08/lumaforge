@@ -105,6 +105,10 @@ fn get_appinfo_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_store_dir(app_handle)?.join("appinfo.json"))
 }
 
+fn get_discovery_index_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    Ok(get_store_dir(app_handle)?.join("discovery-index.json"))
+}
+
 fn get_details_path(app_handle: &AppHandle, app_id: u32) -> Result<PathBuf, String> {
     Ok(get_details_dir(app_handle)?.join(format!("{}.json", app_id)))
 }
@@ -460,6 +464,51 @@ pub fn cache_store_remote_media(
 
     log_store(&format!("media cached for {}", app_id));
     Ok(entry)
+}
+
+// ---------------------------------------------------------------------------
+// Discovery index  —  app_data/store/discovery-index.json
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn read_store_discovery_index(app_handle: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let path = get_discovery_index_path(&app_handle)?;
+
+    if !path.exists() {
+        log_store("discovery index loaded (none on disk)");
+        return Ok(None);
+    }
+
+    match fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(value) => {
+                log_store("discovery index loaded");
+                Ok(Some(value))
+            }
+            Err(_) => {
+                log_store("discovery index corrupt — ignoring");
+                Ok(None)
+            }
+        },
+        Err(e) => {
+            log_store(&format!("discovery index read error: {}", e));
+            Ok(None)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn write_store_discovery_index(app_handle: AppHandle, data: serde_json::Value) -> Result<(), String> {
+    let path = get_discovery_index_path(&app_handle)?;
+
+    let content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("Failed to serialize discovery index: {}", e))?;
+
+    fs::write(&path, &content)
+        .map_err(|e| format!("Failed to write discovery index: {}", e))?;
+
+    log_store(&format!("discovery index saved ({} bytes)", content.len()));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

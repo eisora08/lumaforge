@@ -15,7 +15,7 @@ import {
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata, resolveGameMetadataForMedia } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
-import { resolveProviderOverlaysForStoreGames } from "../../services/storeProviderOverlay";
+import { resolveProviderOverlaysForStoreGames, invalidateOverlayCacheForAppId } from "../../services/storeProviderOverlay";
 import { resolveStoreDetailsPreviewImage, logDetailsMedia } from "../../services/storeDetailsMediaResolver";
 import { buildStoreMedia } from "../../services/storeMediaService";
 import {
@@ -57,6 +57,7 @@ type StoreGameDetailsPageProps = {
   installStatus?: PackageInstallStatus;
   isSteamInstalled?: boolean;
   luaInstalled?: boolean;
+  steamOwned?: boolean;
   moreLikeThisGames?: StoreMoreLikeThisGame[];
   selectedSource?: PackageSource | null;
   sourceStatus?: SourceCheckStatus;
@@ -125,8 +126,16 @@ function getDlcLabel(metadata?: SteamAppMetadata) {
 }
 
 function getReviewLabel(summary?: SteamReviewSummary) {
-  if (!summary || !summary.resolved || summary.total_reviews === 0) {
-    return "No reviews";
+  if (!summary) {
+    return "Review summary unavailable";
+  }
+
+  if (!summary.resolved) {
+    return "Review summary unavailable";
+  }
+
+  if (summary.resolved && summary.total_reviews === 0) {
+    return "No reviews yet";
   }
 
   if (typeof summary.positive_percent === "number") {
@@ -137,8 +146,16 @@ function getReviewLabel(summary?: SteamReviewSummary) {
 }
 
 function getReviewSubLabel(summary?: SteamReviewSummary) {
-  if (!summary || !summary.resolved || summary.total_reviews === 0) {
+  if (!summary) {
     return "Steam review summary unavailable.";
+  }
+
+  if (!summary.resolved) {
+    return "Steam review summary unavailable.";
+  }
+
+  if (summary.resolved && summary.total_reviews === 0) {
+    return "No reviews available for this game.";
   }
 
   return `${summary.total_reviews.toLocaleString()} reviews · ${summary.total_positive.toLocaleString()} positive`;
@@ -163,6 +180,7 @@ export default function StoreGameDetailsPage({
   selectedSource,
   sourceStatus,
   isBackgroundChecking = false,
+  steamOwned = false,
   onBack,
   onDownloadSource,
   onOpenGame,
@@ -174,6 +192,18 @@ export default function StoreGameDetailsPage({
   const [dlcMetadata, setDlcMetadata] = useState<SteamAppMetadata[]>([]);
   const [englishMovies, setEnglishMovies] = useState<SteamAppMetadata["movies"] | null>(null);
   const _mediaEnrichReqRef = useRef(0);
+
+  console.log(
+    `[STORE][DETAILS_PROPS_RECEIVED] appid=${game.appId} installStatus=${installStatus} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} steamOwned=${steamOwned}`,
+  );
+
+  // Log ownership state once on mount
+  useEffect(() => {
+    const isInstalled = isSteamInstalled || (installStatus === "active" && !luaInstalled);
+    const inLibrary = (!steamOwned && luaInstalled) || (steamOwned && !isInstalled);
+    const source = steamOwned ? "steam-owned-cache" : luaInstalled ? "lua" : isSteamInstalled ? "steam-library" : "none";
+    console.log(`[STORE][OWNERSHIP_STATE] appid=${game.appId} title=${getTitle(game, metadata)} owned=${steamOwned} installed=${isSteamInstalled} luaInstalled=${luaInstalled} inLibrary=${inLibrary} source=${source}`);
+  }, [game.appId, steamOwned, isSteamInstalled, luaInstalled, installStatus]);
 
   // Fetch English-language media metadata for trailers
   useEffect(() => {
@@ -231,8 +261,12 @@ export default function StoreGameDetailsPage({
   const effectiveRefreshSources = onRefreshSources ?? (() => {
     const requestId = ++sourceResolveReqRef.current;
     const appId = game.appId;
+    const savedProvider = getStoreDetailsState(appId)?.selectedProvider;
 
     sourceLog("retry (internal)", { appId });
+    console.log(`[STORE][SOURCE_RETRY_CLICK] appid=${appId} reason=user-retry savedProvider=${savedProvider || "none"}`);
+    console.log(`[STORE][SOURCE_RETRY_CLEAR_TRANSIENT] appid=${appId}`);
+    console.log(`[STORE][SOURCE_RETRY_START] appid=${appId}`);
 
     setInternalSourceStatus("checking");
     updateSourceAvailability(appId, {
@@ -245,6 +279,9 @@ export default function StoreGameDetailsPage({
       totalProviderCount: 0,
       updatedAt: Math.floor(Date.now() / 1000),
     }).catch(() => {});
+
+    // Invalidate overlay cache so retry actually calls providers instead of returning stale cached data
+    invalidateOverlayCacheForAppId(appId);
 
     resolveProviderOverlaysForStoreGames([game], settings)
       .then((overlays) => {
@@ -261,13 +298,20 @@ export default function StoreGameDetailsPage({
           resolvedGame.sources,
           totalProviders
         );
+        const successes = resolvedGame.sources.filter(s => s.available).length;
+        const timedOut = resolvedGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
         const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
+        console.log(`[STORE][SOURCE_RETRY_RESULT] appid=${appId} total=${totalProviders} successes=${successes} timedOut=${timedOut} selectedProvider=${savedProvider}`);
         if (!savedProvider || savedProvider === "none") {
           console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
+          console.log(`[STORE][SOURCE_RETRY_FAILED] appid=${appId} retryable=true reason=no-provider`);
           setInternalSourceStatus("timeout");
           const existing = getSourceAvailability(appId);
           if (existing && existing.availableSources.length > 0) {
             sourceLog("preserve", { appId, previousSources: existing.availableSources.length });
+            updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+          } else if (existing) {
+            // Transition "checking" cache to "timeout" so UI doesn't stay stuck
             updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
           }
           return;
@@ -281,6 +325,7 @@ export default function StoreGameDetailsPage({
         const message = error instanceof Error ? error.message : String(error);
         const isTimeout = message.toLowerCase().includes("timeout");
         sourceLog(isTimeout ? "timeout" : "error", { appId, message });
+        console.log(`[STORE][SOURCE_RETRY_FAILED] appid=${appId} retryable=${!message.toLowerCase().includes("cooldown")} reason=${isTimeout ? "timeout" : "error"}`);
         if (isTimeout) {
           const existing = getSourceAvailability(appId);
           if (existing && existing.availableSources.length > 0) {
@@ -320,6 +365,14 @@ export default function StoreGameDetailsPage({
       await loadSourceAvailabilityIndex();
       if (cancelled) return;
 
+      // Step 1: Try to rebuild selectedSource from saved store details state
+      const detailsState = getStoreDetailsState(appId);
+      const savedProvider = detailsState?.selectedProvider;
+      const hadProviderResults = (detailsState?.providerResults ?? 0) > 0;
+      if (savedProvider && hadProviderResults) {
+        sourceLog("saved provider", { appId, provider: savedProvider, providerResults: detailsState!.providerResults });
+      }
+
       const cached = getSourceAvailability(appId);
       if (cached) {
         sourceLog("cache hit", { appId, status: cached.status });
@@ -337,18 +390,47 @@ export default function StoreGameDetailsPage({
           }
           return;
         }
-        if (cached.status === "none" || cached.status === "error" || cached.status === "timeout") {
+        if (cached.status === "none" || cached.status === "error" || cached.status === "timeout" || cached.status === "checking") {
+          // Step 2: Stale cache (including stuck "checking") but saved provider exists — try to rebuild from cache sources
+          if (savedProvider && cached.availableSources.length > 0) {
+            const matchingSource = cached.availableSources.find(
+              (s) => s.name === savedProvider || s.id === savedProvider,
+            );
+            if (matchingSource) {
+              const rebuilt: PackageSource = {
+                providerId: matchingSource.id as any,
+                providerName: matchingSource.name,
+                fileType: matchingSource.type as any,
+                available: matchingSource.status === "ready",
+                downloadUrl: matchingSource.packageUrl,
+              };
+              if (!cancelled) {
+                setInternalSources([rebuilt]);
+                setInternalSourceStatus("ready");
+                sourceLog("rebuilt from saved provider", { appId, provider: savedProvider });
+                console.log(`[STORE][SOURCE_REBUILD_FROM_CACHE] appid=${appId} provider=${savedProvider} success=true`);
+              }
+              return;
+            }
+            console.log(`[STORE][SOURCE_REBUILD_FROM_CACHE] appid=${appId} provider=${savedProvider} success=failure`);
+          }
+          // Treat stale "checking" as "timeout" to avoid infinite resolver loop
+          const resolvedStatus = cached.status === "checking" ? "timeout" : cached.status;
           if (!cancelled) {
             setInternalSources([]);
-            setInternalSourceStatus(cached.status);
+            setInternalSourceStatus(resolvedStatus);
+            sourceLog("stale cache resolved", { appId, from: cached.status, to: resolvedStatus });
           }
           return;
         }
       } else {
         sourceLog("cache miss", { appId });
+        if (savedProvider && hadProviderResults) {
+          console.log(`[STORE][SOURCE_RESTORE_MISS] appid=${appId} action=show-retry`);
+        }
       }
 
-      // Not cached or still checking — run resolver
+      // Not cached — run resolver
       setInternalSourceStatus("checking");
       setInternalSources([]);
 
@@ -376,6 +458,9 @@ export default function StoreGameDetailsPage({
           const existing = getSourceAvailability(appId);
           if (existing && existing.availableSources.length > 0) {
             sourceLog("preserve", { appId, previousSources: existing.availableSources.length });
+            await updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) });
+          } else if (existing) {
+            // Transition "checking" cache to "timeout" so UI doesn't stay stuck
             await updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) });
           }
           return;
@@ -435,6 +520,9 @@ export default function StoreGameDetailsPage({
   const imageUrl = getBestImage(game, metadata);
 
   const isChecking = (effectiveSourceStatus === "checking" || effectiveSourceStatus === "idle") && !isBackgroundChecking;
+  const providerResults = game.sources.length;
+  const availableSourceCount = effectiveSources.filter(s => s.available).length;
+  console.log(`[STORE][SOURCE_CHECK_STATE] appid=${game.appId} checking=${isChecking} sourceStatus=${effectiveSourceStatus} providerResults=${providerResults} available=${availableSourceCount}`);
 
   // Resolve preview image independent of checking state
   const previewResult = resolveStoreDetailsPreviewImage({
@@ -570,9 +658,18 @@ export default function StoreGameDetailsPage({
         : game.sources.some(s => s.available) ? "ready"
         : game.sources.length > 0 ? "missing"
         : "idle";
+    const prevState = getStoreDetailsState(game.appId);
+    const currentSelectedName = effectiveSelectedSource?.providerName
+      || game.sources.find(s => s.available)?.providerName
+      || null;
+    const currentSavedName = (effectiveSelectedSource && game.sources.length > 0)
+      ? effectiveSelectedSource.providerName
+      : (game.sources.length > 0 && prevState?.savedSelectedProvider)
+        ? prevState.savedSelectedProvider
+        : null;
     setStoreDetailsState(game.appId, buildStoreDetailsState(game.appId, {
-      selectedProvider: effectiveSelectedSource?.providerName || null,
-      savedSelectedProvider: (effectiveSelectedSource && game.sources.length > 0) ? effectiveSelectedSource.providerName : null,
+      selectedProvider: currentSelectedName,
+      savedSelectedProvider: currentSavedName,
       providerResults: game.sources.length,
       hasCatalogMedia: !!imageUrl,
       hasSelectedMedia: !!previewResult.url,
@@ -596,6 +693,9 @@ export default function StoreGameDetailsPage({
   );
   const reviewLabel = getReviewLabel(reviewSummary);
   const reviewSubLabel = getReviewSubLabel(reviewSummary);
+
+  const reviewsState = !reviewSummary ? "unavailable" : !reviewSummary.resolved ? "unavailable" : reviewSummary.total_reviews === 0 ? "no-reviews" : "available";
+  console.log(`[STORE][REVIEWS_STATE] appid=${game.appId} state=${reviewsState} total=${reviewSummary?.total_reviews ?? 0} resolved=${reviewSummary?.resolved ?? false} source=steam-appreviews`);
 
   // Save main game metadata to store cache when resolved — stable deps only
   // NOTE: does NOT enqueue media downloads — Store display images must NOT
@@ -838,6 +938,10 @@ export default function StoreGameDetailsPage({
     );
   }
 
+  console.log(
+    `[STORE][SUMMARY_PROPS_FORWARD] appid=${game.appId} installStatus=${installStatus} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} steamOwned=${steamOwned}`,
+  );
+
   return (
     <div className="space-y-6">
       <button
@@ -910,7 +1014,7 @@ export default function StoreGameDetailsPage({
               providerRemoteFileModified={providerRemoteFileModified}
               providerRemoteFileSize={providerRemoteFileSize}
               hasLocalPackage={luaInstalled}
-              steamOwned={false}
+              steamOwned={steamOwned}
               isProviderChecking={isProviderChecking}
               onCheckForUpdates={handleCheckForUpdates}
             />

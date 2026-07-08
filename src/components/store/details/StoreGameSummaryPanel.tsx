@@ -66,7 +66,7 @@ type StoreGameSummaryPanelProps = {
   onCheckForUpdates?: () => void;
 };
 
-function getStatusBadge(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean) {
+function getStatusBadge(isSteamInstalled: boolean, installStatus: PackageInstallStatus, luaInstalled: boolean, steamOwned: boolean) {
   if (isSteamInstalled || (installStatus === "active" && luaInstalled === false)) {
     return {
       label: "Installed",
@@ -88,6 +88,14 @@ function getStatusBadge(isSteamInstalled: boolean, installStatus: PackageInstall
       label: "Disabled",
       icon: PauseCircle,
       className: "border-yellow-500/20 bg-yellow-500/10 text-yellow-300",
+    };
+  }
+
+  if (steamOwned) {
+    return {
+      label: "Owned",
+      icon: Gamepad2,
+      className: "border-blue-500/20 bg-blue-500/10 text-blue-300",
     };
   }
 
@@ -123,57 +131,55 @@ function getButtonConfig(
   if (isChecking) {
     return { label: "Checking sources...", enabled: false, onClick: undefined, reason: "checking-sources" };
   }
+
+  // Installed games: isNone/needsRetry should not override provider status
+  if (luaInstalled || isSteamInstalled) {
+    if (steamOwned) {
+      return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
+    }
+    switch (providerCheckState) {
+      case "update-available":
+        return { label: "Update Package", enabled: true, onClick: onDownload, reason: "update-available" };
+      case "no-data":
+        return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "no-provider-data" };
+      case "up-to-date":
+        return { label: "Up to date", enabled: false, onClick: undefined, reason: "up-to-date" };
+      case "unknown":
+        return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "unknown-no-local-data" };
+      case "provider-updating":
+        return { label: "Provider updating", enabled: false, onClick: undefined, reason: "provider-updating" };
+      case "provider-needs-refresh":
+        return { label: "Provider needs refresh", enabled: false, onClick: undefined, reason: "provider-needs-refresh" };
+      case "provider-unavailable":
+        return { label: "Provider unavailable", enabled: false, onClick: undefined, reason: "provider-unavailable" };
+      case "auth-required":
+        return { label: "Auth required", enabled: false, onClick: undefined, reason: "auth-required" };
+      case "rate-limited":
+        return { label: "Rate limited", enabled: false, onClick: undefined, reason: "rate-limited" };
+      case "error":
+        return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "provider-error" };
+      default:
+        return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "default" };
+    }
+  }
+
+  // Non-installed
   if (isNone) {
     return { label: "No Sources Available", enabled: false, onClick: undefined, reason: "no-sources" };
   }
   if (needsRetry) {
     return { label: "Source check failed", enabled: false, onClick: undefined, reason: "source-check-failed" };
   }
-
-  // Non-installed: show download action, provider status is secondary
-  if (!luaInstalled && !isSteamInstalled) {
-    if (steamOwned) {
-      return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
-    }
-    if (!canDownload) {
-      return { label: "Select a Source", enabled: false, onClick: undefined, reason: "no-source-selected" };
-    }
-    let label = "Download";
-    if (selectedSource?.fileType === "lua") label = "Download Lua";
-    else if (selectedSource?.fileType === "zip") label = "Download Package";
-    return { label, enabled: true, onClick: onDownload, reason: "download-ready" };
-  }
-
-  // Installed: owned-blocked
   if (steamOwned) {
     return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
   }
-
-  // Installed: button depends on provider check state
-  switch (providerCheckState) {
-    case "no-data":
-      return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "no-provider-data" };
-    case "update-available":
-      return { label: "Update Package", enabled: true, onClick: onDownload, reason: "update-available" };
-    case "up-to-date":
-      return { label: "Up to date", enabled: false, onClick: undefined, reason: "up-to-date" };
-    case "unknown":
-      return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "unknown-no-local-data" };
-    case "provider-updating":
-      return { label: "Provider updating", enabled: false, onClick: undefined, reason: "provider-updating" };
-    case "provider-needs-refresh":
-      return { label: "Provider needs refresh", enabled: false, onClick: undefined, reason: "provider-needs-refresh" };
-    case "provider-unavailable":
-      return { label: "Provider unavailable", enabled: false, onClick: undefined, reason: "provider-unavailable" };
-    case "auth-required":
-      return { label: "Auth required", enabled: false, onClick: undefined, reason: "auth-required" };
-    case "rate-limited":
-      return { label: "Rate limited", enabled: false, onClick: undefined, reason: "rate-limited" };
-    case "error":
-      return { label: "Check again", enabled: true, onClick: onCheckForUpdates, reason: "provider-error" };
-    default:
-      return { label: "Check for updates", enabled: true, onClick: onCheckForUpdates, reason: "default" };
+  if (!canDownload) {
+    return { label: "Select a Source", enabled: false, onClick: undefined, reason: "no-source-selected" };
   }
+  let label = "Download";
+  if (selectedSource?.fileType === "lua") label = "Download Lua";
+  else if (selectedSource?.fileType === "zip") label = "Download Package";
+  return { label, enabled: true, onClick: onDownload, reason: "download-ready" };
 }
 
 function getProviderStatusBadge(checkState: ProviderCheckState): { label: string; icon: typeof AlertTriangle; className: string } | null {
@@ -228,18 +234,24 @@ export default function StoreGameSummaryPanel({
   isProviderChecking = false,
   onCheckForUpdates,
 }: StoreGameSummaryPanelProps) {
-  const isChecking = sourceStatus === "checking" && !isBackgroundChecking;
+  const isChecking = (sourceStatus === "checking" || sourceStatus === "idle") && !isBackgroundChecking;
   const isReady = sourceStatus === "ready" || availableSources > 0;
   const isNone = sourceStatus === "none" && availableSources === 0;
   const isError = sourceStatus === "error";
   const isTimeout = sourceStatus === "timeout";
 
-  const statusBadge = getStatusBadge(isSteamInstalled, installStatus, luaInstalled);
+  const statusBadge = getStatusBadge(isSteamInstalled, installStatus, luaInstalled, steamOwned);
   const canDownload = isReady && !!selectedSource?.available;
   const needsRetry = isError || isTimeout;
+  const canRetry = onRefreshSources !== undefined && !isReady;
 
-  const isInstalled = luaInstalled || isSteamInstalled;
+  const isInstalled = isSteamInstalled;
+  const inLibrary = steamOwned || luaInstalled;
   const actionState = steamOwned ? "owned-blocked" : canDownload ? "download-available" : "none";
+
+  console.log(
+    `[PACKAGE][BUTTON_INPUTS] appid=${game.appId} sourceStatus=${sourceStatus} isChecking=${isChecking} isReady=${isReady} isNone=${isNone} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} installStatus=${installStatus} providerCheckState=${providerCheckState} actionState=${actionState} hasLocalPackage=${hasLocalPackage} steamOwned=${steamOwned} canDownload=${canDownload} needsRetry=${needsRetry} selectedSource=${selectedSource?.providerName ?? "none"}`,
+  );
 
   const buttonConfig = getButtonConfig(
     providerCheckState,
@@ -255,8 +267,35 @@ export default function StoreGameSummaryPanel({
     onCheckForUpdates,
   );
 
+  console.log(
+    `[PACKAGE][BUTTON_RESOLVE] appid=${game.appId} label="${buttonConfig.label}" enabled=${buttonConfig.enabled} reason=${buttonConfig.reason}`,
+  );
+
   const providerStatusBadge = isInstalled ? getProviderStatusBadge(providerCheckState) : null;
 
+  if (luaInstalled || isSteamInstalled) {
+    console.log(
+      `[PACKAGE][ACTION_RESOLVE] appid=${game.appId} providerStatus=${providerCheckState} selectedProvider=${selectedSource?.providerName || "none"} selectedSource=${!!selectedSource} action=${buttonConfig.label}`,
+    );
+    if (providerCheckState === "update-available" && !selectedSource) {
+      console.log(`[PACKAGE][MISSING_SOURCE_FOR_PROVIDER] appid=${game.appId} provider=hubcapdb action=retry-source`);
+    }
+  }
+
+  console.log(
+    `[STORE][DETAILS_STATE_DERIVE] appid=${game.appId} owned=${steamOwned} steamInstalled=${isSteamInstalled} hasLua=${luaInstalled} installed=${isInstalled} inLibrary=${inLibrary}`,
+  );
+
+  console.log(
+    `[STORE][OWNED_UI_CLEAN] appid=${game.appId} hideSourcePill=${steamOwned} hidePackageActions=${steamOwned} owned=${steamOwned} installed=${isInstalled} inLibrary=${inLibrary}`,
+  );
+  if (steamOwned) {
+    console.log(`[STORE][OWNED_CARD_THEME] appid=${game.appId} themeTokens=true hardcodedBlue=false`);
+    console.log(`[PACKAGE][OWNED_BLOCK] appid=${game.appId} reason=steam-owned`);
+  }
+  console.log(
+    `[STORE][DETAILS_ACTION_GATE] appid=${game.appId} owned=${steamOwned} actionState=${actionState} packageActionsVisible=${!steamOwned} packageActionsEnabled=${!steamOwned && buttonConfig.enabled}`,
+  );
   console.debug(
     `[PACKAGE][SUMMARY_STATE] appid=${game.appId} actionState=${actionState} providerCheckState=${providerCheckState} reason=${buttonConfig.reason} hasLocal=${hasLocalPackage} hasRemote=${providerCheckState !== "no-data"}`,
   );
@@ -271,6 +310,16 @@ export default function StoreGameSummaryPanel({
     console.debug(
       `[PACKAGE][REMOTE_INFO_RENDER] appid=${game.appId} fileModified=${providerRemoteFileModified} fileSize=${providerRemoteFileSize}`,
     );
+  }
+
+  if (canRetry) {
+    console.log(`[STORE][SOURCE_RETRY_RENDER] appid=${game.appId} visible=true reason=${needsRetry ? "retry-failed" : isNone ? "none" : "idle"}`);
+  }
+  if (!isChecking && !isReady && !isNone && !needsRetry && !canRetry) {
+    console.log(`[STORE][SOURCE_NONE_LABEL_BLOCKED] appid=${game.appId} reason=no-retry-available`);
+  }
+  if (!steamOwned && isNone) {
+    console.log(`[STORE][NO_SOURCES_RENDER_GUARD] appid=${game.appId} allowed=${!canRetry} sourceStatus=${sourceStatus} availableSources=${availableSources} canRetry=${canRetry} selectedSource=${!!selectedSource}`);
   }
 
   return (
@@ -313,39 +362,46 @@ export default function StoreGameSummaryPanel({
                 );
               })()}
 
-            {!isSteamInstalled && !luaInstalled && installStatus === "not-installed" && isReady && (
+            {inLibrary && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-300">
+                <Library className="h-3.5 w-3.5" />
+                In Library
+              </span>
+            )}
+
+            {!steamOwned && !isSteamInstalled && !luaInstalled && installStatus === "not-installed" && isReady && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-(--color-muted)">
                 <SquareArrowOutUpRight className="h-3.5 w-3.5" />
                 Not in Library
               </span>
             )}
 
-            {isChecking && (
+            {!steamOwned && isChecking && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/15 px-2.5 py-1 text-xs font-medium text-yellow-300">
                 Checking sources...
               </span>
             )}
 
-            {isNone && (
+            {!steamOwned && isNone && !canRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
                 No Sources Available
               </span>
             )}
 
-            {needsRetry && (
+            {!steamOwned && needsRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
                 Source check failed
               </span>
             )}
 
-            {(totalSources > 0 && !isChecking) || isBackgroundChecking ? (
+            {!steamOwned && ((totalSources > 0 && !isChecking) || isBackgroundChecking) ? (
               <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
                 {availableSources}/{totalSources} Sources
                 {isBackgroundChecking && " · scanning..."}
               </span>
             ) : null}
 
-            {isInstalled && providerStatusBadge &&
+            {!steamOwned && isInstalled && providerStatusBadge &&
               (() => {
                 const Icon = providerStatusBadge.icon;
                 return (
@@ -361,6 +417,34 @@ export default function StoreGameSummaryPanel({
         </div>
       </div>
 
+      {steamOwned ? (
+        <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
+          <p className="text-sm font-medium text-(--color-text)">
+            This game is already in your Steam account.
+          </p>
+          <p className="mt-1 text-xs text-(--color-muted)">
+            {isInstalled ? "Installed and ready to play via Steam." : "You can install it from Steam at any time."}
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onOpenSteam}
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Steam
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSteamDb}
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            >
+              <Database className="h-3.5 w-3.5" />
+              SteamDB
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
         {isChecking && (
           <div className="mb-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2">
@@ -412,18 +496,16 @@ export default function StoreGameSummaryPanel({
               </span>
             </div>
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
-              <span>{isNone ? "None" : needsRetry ? "Check failed" : "None"}</span>
+              {isNone ? (
+                <span>None — no packages found</span>
+              ) : needsRetry ? (
+                <span>Check failed — retry below</span>
+              ) : canRetry ? (
+                <span>Check sources to find packages</span>
+              ) : (
+                <span>None</span>
+              )}
             </div>
-          </div>
-        )}
-
-        {/* Provider-status info block — auto-baselined from remote, no manual action needed */}
-
-        {isInstalled && providerCheckState === "update-available" && steamOwned && (
-          <div className="mb-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2">
-            <p className="text-xs text-blue-300">
-              Provider update available, but this game is already in your Steam account.
-            </p>
           </div>
         )}
 
@@ -481,7 +563,11 @@ export default function StoreGameSummaryPanel({
             onClick={onChangeSource}
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {isChecking ? "Checking sources..." : isReady ? "Change Source" : "Sources: None"}
+            {isChecking
+              ? "Checking sources..."
+              : isReady
+                ? "Change Source"
+                : "Sources: None — Check below"}
           </button>
 
           {/* Check again / Retry / Checking... */}
@@ -507,13 +593,16 @@ export default function StoreGameSummaryPanel({
             </button>
           )}
 
-          {needsRetry && onRefreshSources && (
+          {canRetry && (
             <button
               type="button"
-              onClick={onRefreshSources}
+              onClick={() => {
+                console.log(`[STORE][SOURCE_RETRY_CLICK] appid=${game.appId} reason=${needsRetry || isNone ? "retry-failed" : "initial-check"}`);
+                onRefreshSources?.();
+              }}
               className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-4 py-2 text-sm font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
             >
-              Retry Sources
+              {needsRetry || isNone ? "Retry Sources" : "Check sources"}
             </button>
           )}
 
@@ -526,7 +615,6 @@ export default function StoreGameSummaryPanel({
               <ExternalLink className="h-3.5 w-3.5" />
               Steam
             </button>
-
             <button
               type="button"
               onClick={onOpenSteamDb}
@@ -538,6 +626,7 @@ export default function StoreGameSummaryPanel({
           </div>
         </div>
       </div>
+      )}
 
       <div className="rounded-2xl border border-(--surface-active-border) bg-black/20 p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
@@ -548,22 +637,26 @@ export default function StoreGameSummaryPanel({
           <SummaryLine label="AppID" value={game.appId} />
           <SummaryLine
             label="Status"
-            value={statusBadge?.label ?? "Not in Library"}
+            value={statusBadge?.label ?? (inLibrary ? "In Library" : steamOwned ? "Owned" : "Not in Library")}
           />
           <SummaryLine
             label="Sources"
             value={
-              isChecking
-                ? "Checking..."
-                : isBackgroundChecking
-                  ? `${availableSources}/${totalSources} · scanning...`
-                  : isReady
-                    ? `${availableSources}/${totalSources} available`
-                    : isNone
-                      ? "None"
-                      : needsRetry
-                        ? "Check failed"
-                        : "None"
+              steamOwned
+                ? "Steam account"
+                : isChecking
+                  ? "Checking..."
+                  : isBackgroundChecking
+                    ? `${availableSources}/${totalSources} · scanning...`
+                    : isReady
+                      ? `${availableSources}/${totalSources} available`
+                      : isNone
+                        ? "None found"
+                        : needsRetry
+                          ? "Check failed"
+                          : canRetry
+                            ? "Check pending"
+                            : "None"
             }
           />
           <SummaryLine label="Developer" value={developer} />

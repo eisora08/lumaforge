@@ -105,7 +105,7 @@ pub fn resolve_steam_review_summaries(
             total_negative,
             total_reviews,
             positive_percent,
-            resolved: total_reviews > 0,
+            resolved: true,
         });
     }
 

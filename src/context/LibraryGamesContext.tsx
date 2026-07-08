@@ -652,11 +652,111 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           });
         },
       });
-      const enriched = await enrichWithStats(result.games);
+      let enriched = await enrichWithStats(result.games);
+
+      // ── Lua-only fallback when TTL/Store guard blocked resolveLibraryGames ──
+      // After a Lua package download, the full Steam scan is TTL-blocked for 10 min.
+      // We scan Lua scripts directly so newly installed Lua-only games appear in Library
+      // immediately instead of requiring an app restart.
+      // Also updates existing LibraryGame entries when a Lua script now exists for that appId.
+      if (result.games.length === 0 && gamesRef.current.length > 0 && s.luaPath) {
+        console.log(`[LIBRARY][REFRESH_START] reason=ttl-or-store current=${gamesRef.current.length}`);
+        try {
+          const { scanInstalledLuaScripts } = await import("../services/tauri");
+          const currentGames = gamesRef.current;
+          const scripts = await scanInstalledLuaScripts(s.luaPath);
+          console.log(`[LIBRARY][LUA_SCAN_RUNTIME] entries=${scripts.length} path=${s.luaPath}`);
+
+          // Group scripts by appId (a game could have multiple .lua files)
+          const luaByAppId = new Map<number, (typeof scripts)[number][]>();
+          for (const script of scripts) {
+            const list = luaByAppId.get(script.app_id) || [];
+            list.push(script);
+            luaByAppId.set(script.app_id, list);
+          }
+
+          // Resolve canonical names for new appIds
+          let resolvedNames: Record<string, string> = {};
+          try {
+            const { resolveCanonicalName } = await import("../services/gameCacheService");
+            const existingAppIds = new Set(currentGames.map((g) => g.appId).filter(Boolean));
+            await Promise.allSettled(
+              [...luaByAppId.keys()]
+                .filter((id) => !existingAppIds.has(String(id)))
+                .map(async (id) => {
+                  const name = await resolveCanonicalName(String(id));
+                  if (name) resolvedNames[String(id)] = name;
+                }),
+            );
+          } catch { /* name resolution is optional */ }
+
+          // Phase 1: Update existing games that now have Lua scripts
+          let updatedCount = 0;
+          const updatedGames = currentGames.map((g) => {
+            if (!g.appId) return g;
+            const appScripts = luaByAppId.get(Number(g.appId));
+            if (!appScripts) return g;
+            updatedCount++;
+            console.log(`[LIBRARY][UPSERT_FROM_LUA] appid=${g.appId} inserted=false updated=true luaActive=${appScripts.some(s => !s.is_disabled)}`);
+            return {
+              ...g,
+              luaScripts: appScripts,
+              hasLua: true,
+              isLuaActive: appScripts.some((s) => !s.is_disabled),
+              isLuaDisabled: appScripts.every((s) => s.is_disabled),
+            };
+          });
+
+          // Phase 2: Insert brand-new Lua-only games
+          const currentAppIds = new Set(updatedGames.map((g) => g.appId).filter(Boolean));
+          const newLuaGames: LibraryGame[] = [];
+          for (const [appIdNum, appScripts] of luaByAppId) {
+            const appIdStr = String(appIdNum);
+            if (!currentAppIds.has(appIdStr)) {
+              const title = resolvedNames[appIdStr] || `Steam App ${appIdStr}`;
+              newLuaGames.push({
+                id: `lua-${appIdStr}`,
+                appId: appIdStr,
+                title,
+                source: "lua",
+                isPlayable: false,
+                isInstallable: false,
+                steamInstalled: false,
+                luaScripts: appScripts,
+                hasLua: true,
+                isLuaActive: appScripts.some((s) => !s.is_disabled),
+                isLuaDisabled: appScripts.every((s) => s.is_disabled),
+                hasLuaSource: false,
+                sources: [],
+              } as LibraryGame);
+              console.log(`[LIBRARY][UPSERT_FROM_LUA] appid=${appIdStr} inserted=true updated=false title="${title}"`);
+            }
+          }
+
+          const inserted = newLuaGames.length;
+          if (updatedCount > 0 || newLuaGames.length > 0) {
+            enriched = [...updatedGames, ...newLuaGames].sort((a, b) =>
+              (a.title || "").localeCompare(b.title || ""),
+            );
+            console.log(`[LIBRARY][REFRESH_LUA_FALLBACK] current=${currentGames.length} inserted=${inserted} updated=${updatedCount} total=${enriched.length}`);
+            // Persist to reconciled store for crash recovery (same pattern as install/uninstall handlers)
+            try {
+              const { setReconciledGames } = await import("../services/gameStore");
+              setReconciledGames(enriched);
+              console.log(`[LIBRARY][RECONCILED_WRITE] source=lua-fallback count=${enriched.length}`);
+            } catch {
+              console.log(`[LIBRARY][RECONCILED_WRITE] source=lua-fallback error=failed`);
+            }
+          }
+        } catch (err) {
+          console.log(`[LIBRARY][REFRESH_RESULT] reason=lua-scan-error error=${String(err)}`);
+        }
+      }
+
       reportLibraryProgress({ phase: "updating-cache", source: "unknown" });
       await saveCachedGames(enriched, result.warnings);
       if (enriched.length === 0 && gamesRef.current.length > 0) {
-        console.log(`[LIBRARY_CONTEXT][REFRESH_EMPTY_IGNORED] current=${gamesRef.current.length}`);
+        console.log(`[LIBRARY_CONTEXT][REFRESH_EMPTY_IGNORED] total=${gamesRef.current.length}`);
         reportLibraryProgress({ phase: "done", source: "steam", itemsFound: 0 });
         return;
       }

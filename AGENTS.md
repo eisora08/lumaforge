@@ -1916,3 +1916,117 @@ Two context menus had "Uninstall" actions that showed a confirm dialog then a fa
 - `tsc --noEmit` ✅ (no errors)
 - `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Global Search → Store Details Source/Ownership Hydration
+
+### Problem
+Global search navigation created a bare `PackageGame { sources: [] }` and passed it to `StoreGameDetailsPage` without source cache hydration or ownership state, causing "No Sources Available" on cached games.
+
+### Root cause
+- `GameDetailsPage` bypassed `openDetailsForGame`'s cache hydration (source availability, overlay cache)
+- Ownership state (`steamOwned`, `steamInstalled`, `luaInstalled`) was never resolved
+- `StoreGameDetailsPage` internal check found no sources and no ownership context → showed empty state during async gap
+
+### Fix
+- Added async hydration effect in `GameDetails.tsx` on `selectedGame?.appId` change
+- Source hydration: loads `sourceAvailabilityIndex` → if `getSourceAvailability(appId)` has `"ready"` status, builds `PackageSource[]` and sets `hydratedStatus="ready"`; cache miss leaves `hydratedStatus=undefined` so internal discovery fires
+- Ownership resolution: `useLibraryGames().games` for `steamInstalled`, `readSteamOwnedCache()` for `steamOwned`, `scanInstalledLuaScripts(settings.luaPath)` for `luaInstalled`
+- `displayGame` useMemo merges hydrated sources into PackageGame
+- `effectiveSourceStatus` passes `"ready"` only on cache hit, else `undefined`
+- Diagnostic logs: `[STORE][DETAILS_STATE_RESTORE]`, `[STORE][SOURCE_RESTORE_FROM_CACHE]`, `[STORE][SOURCE_EMPTY_GUARD]`, `[STORE][OWNERSHIP_STATE]`
+- No new files, services, hooks, or components created
+
+### Key Files Changed
+- `src/pages/GameDetails.tsx` — hydration effect, ownership resolution, updated StoreGameDetailsPage props
+
+### Build
+- `tsc --noEmit` ✅ (no errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Search result badges + "Sources: None" retry fix
+
+### Goal
+Fix global search result badges (ownership/library/install state) and replace "Sources: None" dead-end with retry/re-check UX.
+
+### Part 1: Global search result badges
+- `PackagesToolbarSearch.tsx` — added `useLibraryGames()` for `games` and `steamInstalledSet` (computed from `games` with `steamInstalled=true`)
+- Added `steamOwnedSet` loaded once on mount via `readSteamOwnedCache()`
+- Added `luaInstalledSet` computed from `games` filtered by `hasLua`
+- `dropdownItems` enriched with `owned`, `installed`, `inLibrary` fields
+- Removed stale dynamic import (`scanInstalledLuaScripts`/`getInstalledAppIds` — not exported by module)
+
+### Part 2: StoreGameSummaryPanel — retry/re-check UX everywhere
+- `isChecking` now includes `"idle"` status (was excluded, causing "Sources: None" before check fires)
+- `canRetry` now returns true for ANY non-ready, non-checking state (idle → check pending, none → no sources found, needsRetry → check failed)
+- Retry button shows for all `canRetry` states (was only `needsRetry`)
+- Summary "Sources" label text updated: `"Check pending"` (idle), `"None found"` (isNone), `"Check failed"` (needsRetry)
+- Selected Source area shows contextual text per state
+- "Sources: None" button label appends " — Check below"
+- Diagnostic logs: `[STORE][SOURCE_RETRY_RENDER]`, `[STORE][SOURCE_NONE_LABEL_BLOCKED]`, `[STORE][NO_SOURCES_RENDER_GUARD]`
+- Moved `[STORE][NO_SOURCES_RENDER_GUARD]` out of JSX expression into component body
+
+### Part 3: Source restore priority (already correct)
+- Existing `GameDetails.tsx` hydration effect checks `getSourceAvailability` cache first — if "ready" with sources, sets `hydratedStatus="ready"` and passes `sourceStatus="ready"` to StoreGameDetailsPage → `effectiveSourceStatus="ready"` → parent controls source status
+- On cache miss: `hydratedStatus=undefined` → `effectiveSourceStatus=undefined` → internal check in StoreGameDetailsPage fires via `"idle"` path → provider discovery runs
+- Owned games (`steamOwned=true`) already handled by Summary panel (hide source actions)
+- Provider health/cooldown: existing `needsRetry`/`canRetry`/`isNone` logic handles all failure states
+
+### Key Files Changed
+- `src/components/packages/PackagesToolbarSearch.tsx` — ownership/install sets, enriched dropdownItems
+- `src/components/store/details/StoreGameSummaryPanel.tsx` — retry/re-check UX, diagnostic logs, "Sources:" label state text
+
+### Build
+- `tsc --noEmit` ✅ (no errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Provider/Source stale-none cache fix, Lua inLibrary derivation, source retry
+
+### Problem
+1. **Lua inLibrary vs installed confusion**: `isInstalled = luaInstalled || isSteamInstalled` made lua-only games appear "installed", causing `inLibrary = steamOwned && !isInstalled` to exclude them from the "In Library" badge.
+2. **Empty "none" result overwrites good cache**: `onEarlyResult` in Store.tsx called `updateSourceAvailability` with `buildSourceAvailabilityFromProviders` which produced `status: "none"` when no available sources yet — overwriting "checking" status before final `.then()` ran, so the preserve-early-return path never fired.
+3. **No source rebuild from saved state**: When cache was stale/empty but `getStoreDetailsState` had `selectedProvider` + `providerResults > 0`, no code rebuilt a `PackageSource` from that data.
+4. **Provider status blocked by "No Sources"**: `getButtonConfig` checked `isNone`/`needsRetry` before provider-status, blocking "Update Package" button for installed games with valid provider status.
+
+### Part 1: Lua inLibrary derivation
+- `StoreGameSummaryPanel.tsx` — `isInstalled = isSteamInstalled` (was `luaInstalled || isSteamInstalled`)
+- `inLibrary = steamOwned || luaInstalled` (was `steamOwned && !isInstalled`)
+- Status SummaryLine uses `inLibrary` not `steamOwned`
+- `[STORE][DETAILS_STATE_DERIVE]` diagnostic log
+
+### Part 2: Block empty "none" cache writes
+- `Store.tsx:2572` — `onEarlyResult` guards `updateSourceAvailability` with `if (entry.status !== "none")`
+- Same guard in `onRetryEarlyResult`
+- `sourceAvailabilityCacheService.ts` `updateSourceAvailability` blocks overwriting existing non-empty cache with empty entry (`[STORE][SOURCE_CACHE_EMPTY_WRITE_BLOCKED]`)
+- `markSourceUnavailable` preserves existing sources with `status: "timeout"` instead of clearing
+
+### Part 3: Source rebuild from saved state
+- `StoreGameDetailsPage.tsx` `checkSources()` now checks `getStoreDetailsState` for `selectedProvider` + `providerResults > 0`
+- On cache miss/stale, tries to find source by provider name and rebuild `PackageSource` with `sourceLog("rebuilt from saved provider")`
+- `[STORE][SOURCE_REBUILD_FROM_CACHE]` / `[STORE][SOURCE_RESTORE_START/MISS]` diagnostic logs
+
+### Part 4: Retry clear (already correct)
+- Existing `updateSourceAvailability({ status: "checking" })` overwrites stale "none" before discovery starts
+- Part 2 guard prevents re-introducing empty "none"
+
+### Part 5: No Sources guard + provider status unblocked
+- `StoreGameSummaryPanel.tsx` badge guarded with `!canRetry` — only shows when retry is impossible
+- `getButtonConfig` restructured — installed games check provider status FIRST, skip `isNone`/`needsRetry`
+- `[PACKAGE][ACTION_RESOLVE]` / `[PACKAGE][MISSING_SOURCE_FOR_PROVIDER]` diagnostics
+
+### Part 7: Global search (already correct)
+- `[GLOBAL_SEARCH][RESULT_STATE]` log added in `PackagesToolbarSearch.tsx`
+
+### Key Files Changed
+- `src/components/store/details/StoreGameSummaryPanel.tsx` — Lua derivation, No Sources guard, button config
+- `src/components/store/StoreGameDetailsPage.tsx` — source rebuild from saved state
+- `src/pages/Store.tsx` — `onEarlyResult` empty-save guard
+- `src/services/sourceAvailabilityCacheService.ts` — empty-write guard, markSourceUnavailable preserve guard
+- `src/services/storeDetailsSourceState.ts` — `getStoreDetailsState` import
+- `src/components/packages/PackagesToolbarSearch.tsx` — `[GLOBAL_SEARCH][RESULT_STATE]` log
+
+### Build
+- `tsc --noEmit` ✅ (no errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)

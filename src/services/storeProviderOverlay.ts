@@ -261,3 +261,19 @@ export function loadStoreProviderOverlayCache(): OverlayCache {
 export function clearStoreProviderOverlayCache() {
   localStorage.removeItem(CACHE_KEY);
 }
+
+export function invalidateOverlayCacheForAppId(appId: string) {
+  const cache = loadCache();
+  const prefix = `${appId}::`;
+  let removed = 0;
+  for (const key of Object.keys(cache)) {
+    if (key.startsWith(prefix)) {
+      delete cache[key];
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    saveCache(cache);
+    console.log(`[STORE][OVERLAY_CACHE_INVALIDATED] appid=${appId} entries=${removed}`);
+  }
+}

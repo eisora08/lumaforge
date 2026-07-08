@@ -169,6 +169,10 @@ export async function fetchSteamOwnedGames(apiKey: string, steamId: string): Pro
   return await invoke<OwnedSteamGame[]>("fetch_steam_owned_games", { apiKey, steamId });
 }
 
+export async function readSteamOwnedCache(): Promise<OwnedSteamGame[]> {
+  return await invoke<OwnedSteamGame[]>("read_steam_owned_cache");
+}
+
 export async function scanSteamInstalledGames(params?: {
   steamPath?: string;
   luaPath?: string;
@@ -909,6 +913,14 @@ export async function cacheStoreRemoteMedia(
 
 export async function clearStoreCache(): Promise<void> {
   return await invoke("clear_store_cache");
+}
+
+export async function readStoreDiscoveryIndex(): Promise<unknown | null> {
+  return await invoke<unknown | null>("read_store_discovery_index");
+}
+
+export async function writeStoreDiscoveryIndex(data: unknown): Promise<void> {
+  return await invoke<void>("write_store_discovery_index", { data });
 }
 
 // --- Library cache ---
