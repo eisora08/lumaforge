@@ -19,7 +19,7 @@ import {
 
 import type { AppPage } from "../../types/navigation";
 import SidebarLibraryList from "./SidebarLibraryList";
-import { useUserProfile, saveUserProfile } from "../../features/profile/userProfile";
+import { useUserProfile, saveUserProfile, resolveProfileMediaUrl } from "../../features/profile/userProfile";
 import { getAvatarPreset } from "../../features/profile/profilePresets";
 import ProfileModal from "../../features/profile/ProfileModal";
 
@@ -76,6 +76,7 @@ export default function Sidebar({
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const profileBtnRef = useRef<HTMLButtonElement | null>(null);
   const avatarPreset = getAvatarPreset(profile.avatarPreset);
+  const avatarDisplayUrl = resolveProfileMediaUrl(profile.avatarUrl);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -276,9 +277,9 @@ export default function Sidebar({
                 }`}
                 style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
               >
-                {profile.avatarUrl ? (
+                {avatarDisplayUrl ? (
                   <img
-                    src={profile.avatarUrl}
+                    src={avatarDisplayUrl}
                     alt=""
                     className="h-full w-full rounded-full object-cover"
                   />

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { X, Check, RotateCcw, Pencil, ImagePlus, Trash2, Sparkles } from "lucide-react";
 import type { UserProfile } from "./userProfile";
-import { DEFAULT_USER_PROFILE } from "./userProfile";
+import { DEFAULT_USER_PROFILE, resolveProfileMediaUrl } from "./userProfile";
 import { getAvatarPreset, getBannerPreset } from "./profilePresets";
 import ProfileMediaPickerModal from "./ProfileMediaPickerModal";
 import type { ProfileMediaKind } from "./ProfileMediaPickerModal";
@@ -61,6 +61,9 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
 
   const avatarPreset = useMemo(() => getAvatarPreset(draft.avatarPreset), [draft.avatarPreset]);
   const bannerPreset = useMemo(() => getBannerPreset(draft.bannerPreset), [draft.bannerPreset]);
+
+  const avatarDisplayUrl = useMemo(() => resolveProfileMediaUrl(draft.avatarUrl), [draft.avatarUrl]);
+  const bannerDisplayUrl = useMemo(() => resolveProfileMediaUrl(draft.bannerUrl), [draft.bannerUrl]);
 
   const hasCustomAvatar = !!draft.avatarUrl;
   const hasCustomBanner = !!draft.bannerUrl;
@@ -194,7 +197,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               className="group relative block h-36 w-full rounded-t-2xl bg-cover bg-center text-left outline-none transition"
               style={{
                 background: bannerPreset?.gradient ?? "var(--color-accent)",
-                ...(draft.bannerUrl ? { backgroundImage: `url(${draft.bannerUrl})` } : {}),
+                ...(bannerDisplayUrl ? { backgroundImage: `url(${bannerDisplayUrl})` } : {}),
               }}
               aria-label="Change banner"
             >
@@ -222,8 +225,8 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
                 className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-(--color-bg) ring-2 ring-white/10 transition"
                 style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
               >
-                {draft.avatarUrl ? (
-                  <img src={draft.avatarUrl} alt="" className="h-full w-full object-cover" />
+                {avatarDisplayUrl ? (
+                  <img src={avatarDisplayUrl} alt="" className="h-full w-full object-cover" />
                 ) : (
                   <span className="text-3xl">{avatarPreset?.icon ?? "🎮"}</span>
                 )}

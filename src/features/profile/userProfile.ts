@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 const DEBUG_PROFILE_SAVE = false;
 
@@ -32,12 +33,33 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   updatedAt: Date.now(),
 };
 
+function isStaleBlobUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return url.startsWith("data:") || url.startsWith("blob:");
+}
+
+function migrateUrl(url: string | null | undefined): string | null | undefined {
+  if (isStaleBlobUrl(url)) return null;
+  return url ?? null;
+}
+
 function loadUserProfile(): UserProfile {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       const merged = { ...DEFAULT_USER_PROFILE, ...parsed, updatedAt: Date.now() };
+
+      // Migrate stale blob/data URLs to null (use preset fallback instead)
+      if (isStaleBlobUrl(merged.avatarUrl)) {
+        merged.avatarUrl = null;
+        merged.avatarIsGif = false;
+      }
+      if (isStaleBlobUrl(merged.bannerUrl)) {
+        merged.bannerUrl = null;
+        merged.bannerIsGif = false;
+      }
+
       if (DEBUG_PROFILE_SAVE) console.log("[PROFILE][LOAD] source=localStorage", merged);
       return merged;
     }
@@ -46,16 +68,22 @@ function loadUserProfile(): UserProfile {
 }
 
 function persistUserProfile(profile: UserProfile): void {
+  const cleaned = {
+    ...profile,
+    // Never persist stale blob/data URLs
+    avatarUrl: migrateUrl(profile.avatarUrl),
+    bannerUrl: migrateUrl(profile.bannerUrl),
+  };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
     if (DEBUG_PROFILE_SAVE) {
       console.log("[PROFILE][SAVE]", {
-        displayName: profile.displayName,
-        hasAvatarUrl: !!profile.avatarUrl,
-        hasBannerUrl: !!profile.bannerUrl,
-        avatarIsGif: profile.avatarIsGif,
-        bannerIsGif: profile.bannerIsGif,
-        accentMode: profile.accentMode,
+        displayName: cleaned.displayName,
+        hasAvatarUrl: !!cleaned.avatarUrl,
+        hasBannerUrl: !!cleaned.bannerUrl,
+        avatarIsGif: cleaned.avatarIsGif,
+        bannerIsGif: cleaned.bannerIsGif,
+        accentMode: cleaned.accentMode,
       });
     }
   } catch {}
@@ -90,4 +118,23 @@ export function useUserProfile(): [UserProfile, (patch: Partial<UserProfile>) =>
   }, []);
 
   return [profile, patchProfile];
+}
+
+/**
+ * Converts a profile media path to a displayable URL.
+ * - null/undefined → null (preset fallback)
+ * - data: URLs → null (stale, migrated away)
+ * - http:// or https:// → returned as-is (GIPHY URLs)
+ * - file paths → converted via convertFileSrc for Tauri asset protocol
+ */
+export function resolveProfileMediaUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith("data:") || url.startsWith("blob:")) return null;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  // File path — convert to asset:// URL
+  try {
+    return convertFileSrc(url, "asset");
+  } catch {
+    return null;
+  }
 }

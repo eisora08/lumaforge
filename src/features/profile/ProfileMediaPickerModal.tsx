@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { X, Upload, Search, Loader2, ImageOff, Grid3x3 } from "lucide-react";
 import { getRecentMedia, addRecentMedia, type ProfileMediaEntry } from "./profileRecentMedia";
 import { searchProfileGifs, getTrendingProfileGifs, getGifServiceStatus, type ProfileGifResult } from "./profileGifService";
+import { saveProfileMedia } from "../../services/tauri";
+import { resolveProfileMediaUrl } from "./userProfile";
 
 export type ProfileMediaKind = "avatar" | "banner";
 
@@ -26,12 +28,24 @@ function detectIsGif(url: string): boolean {
   }
 }
 
-function readFileAsDataURL(file: File): Promise<string> {
+function extensionFromFile(file: File): string {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".png")) return "png";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "jpg";
+  if (name.endsWith(".webp")) return "webp";
+  if (name.endsWith(".gif")) return "gif";
+  return "png";
+}
+
+async function readFileAsBytes(file: File): Promise<number[]> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
+    reader.onload = () => {
+      const buf = reader.result as ArrayBuffer;
+      resolve(Array.from(new Uint8Array(buf)));
+    };
     reader.onerror = reject;
-    reader.readAsDataURL(file);
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -119,10 +133,16 @@ export default function ProfileMediaPickerModal({ kind, open, onClose, onSelect 
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
-    const dataUrl = await readFileAsDataURL(file);
-    const isGif = file.type === "image/gif" || detectIsGif(file.name);
-    addRecentMedia({ kind, source: "upload", url: dataUrl, isGif });
-    onSelect(dataUrl, isGif, "upload");
+    try {
+      const bytes = await readFileAsBytes(file);
+      const ext = extensionFromFile(file);
+      const savedPath = await saveProfileMedia(kind, ext, bytes);
+      const isGif = file.type === "image/gif" || detectIsGif(file.name);
+      addRecentMedia({ kind, source: "upload", url: savedPath, isGif });
+      onSelect(savedPath, isGif, "upload");
+    } catch (err) {
+      setError(`Failed to save file: ${err}`);
+    }
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -292,7 +312,7 @@ export default function ProfileMediaPickerModal({ kind, open, onClose, onSelect 
                     }`}
                   >
                     <img
-                      src={entry.url}
+                      src={resolveProfileMediaUrl(entry.url) ?? entry.url}
                       alt={entry.label || `Recent ${kind}`}
                       loading="lazy"
                       className="h-full w-full object-cover"

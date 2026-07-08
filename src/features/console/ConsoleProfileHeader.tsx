@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { useUserProfile } from "../profile/userProfile";
+import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
 import { getAvatarPreset, getBannerPreset } from "../profile/profilePresets";
 
 export default function ConsoleProfileHeader() {
@@ -12,6 +12,7 @@ export default function ConsoleProfileHeader() {
 
   const avatarPreset = useMemo(() => getAvatarPreset(profile.avatarPreset), [profile.avatarPreset]);
   const bannerPreset = useMemo(() => getBannerPreset(profile.bannerPreset), [profile.bannerPreset]);
+  const avatarDisplayUrl = useMemo(() => resolveProfileMediaUrl(profile.avatarUrl), [profile.avatarUrl]);
 
   const stats = useMemo(() => {
     const total = games.length;
@@ -45,8 +46,8 @@ export default function ConsoleProfileHeader() {
         className="relative z-10 flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl ring-2 ring-white/20"
         style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
       >
-        {profile.avatarUrl ? (
-          <img src={profile.avatarUrl} alt="" className="h-full w-full rounded-2xl object-cover" />
+        {avatarDisplayUrl ? (
+          <img src={avatarDisplayUrl} alt="" className="h-full w-full rounded-2xl object-cover" />
         ) : (
           <span className="text-2xl">{avatarPreset?.icon ?? "🎮"}</span>
         )}

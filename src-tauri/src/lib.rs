@@ -220,6 +220,8 @@ pub fn run() {
             commands::scan_state::write_scan_state,
             commands::steam_owned::fetch_steam_owned_games,
             commands::steam_owned::read_steam_owned_cache,
+            commands::profile::save_profile_media,
+            commands::profile::delete_profile_media,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

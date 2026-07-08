@@ -21,10 +21,20 @@ function emptyStore(): RecentMediaStore {
   return { avatars: [], banners: [] };
 }
 
+function isStaleBlobUrl(url: string): boolean {
+  return url.startsWith("data:") || url.startsWith("blob:");
+}
+
 function loadStore(): RecentMediaStore {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as RecentMediaStore;
+    if (raw) {
+      const store = JSON.parse(raw) as RecentMediaStore;
+      // Migrate: filter out stale data/blob URLs
+      store.avatars = store.avatars.filter((e) => !isStaleBlobUrl(e.url));
+      store.banners = store.banners.filter((e) => !isStaleBlobUrl(e.url));
+      return store;
+    }
   } catch {}
   return emptyStore();
 }

@@ -1894,3 +1894,13 @@ export async function readScanState(): Promise<ScanState | null> {
 export async function writeScanState(payload: string): Promise<void> {
   await invoke("write_scan_state", { payload });
 }
+
+// --- Profile Media ---
+
+export async function saveProfileMedia(kind: "avatar" | "banner", extension: string, data: number[]): Promise<string> {
+  return await invoke<string>("save_profile_media", { kind, extension, data });
+}
+
+export async function deleteProfileMedia(path: string): Promise<void> {
+  await invoke("delete_profile_media", { path });
+}

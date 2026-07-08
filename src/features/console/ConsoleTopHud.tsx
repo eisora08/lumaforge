@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { LayoutPanelTop, Monitor, Settings } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
-import { useUserProfile } from "../profile/userProfile";
+import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
 import { getAvatarPreset } from "../profile/profilePresets";
 import type { ConsoleSettings } from "./consoleSettings";
 
@@ -39,6 +39,7 @@ export default function ConsoleTopHud({
   }, []);
 
   const avatarPreset = useMemo(() => getAvatarPreset(profile.avatarPreset), [profile.avatarPreset]);
+  const avatarDisplayUrl = useMemo(() => resolveProfileMediaUrl(profile.avatarUrl), [profile.avatarUrl]);
 
   if (DEBUG_CONSOLE_MODE) {
     console.log(`[CONSOLE][HUD] layout=${layoutMode} name=${profile.displayName}`);
@@ -54,8 +55,8 @@ export default function ConsoleTopHud({
           className="flex h-10 w-10 items-center justify-center rounded-full ring-2 ring-(--color-accent)/15"
           style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
         >
-          {profile.avatarUrl ? (
-            <img src={profile.avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
+          {avatarDisplayUrl ? (
+            <img src={avatarDisplayUrl} alt="" className="h-full w-full rounded-full object-cover" />
           ) : (
             <span className="text-sm">{avatarPreset?.icon ?? "🎮"}</span>
           )}
