@@ -6,9 +6,10 @@ import { useFavorites } from "../../context/FavoritesContext";
 type Props = {
   game: LibraryGame;
   isFocused?: boolean;
+  onClick?: () => void;
 };
 
-export default function ConsoleGameCard({ game, isFocused }: Props) {
+export default function ConsoleGameCard({ game, isFocused, onClick }: Props) {
   const { isFavorite } = useFavorites();
   const fav = game.appId ? isFavorite(game.appId) : false;
 
@@ -20,9 +21,13 @@ export default function ConsoleGameCard({ game, isFocused }: Props) {
 
   return (
     <div
+      role="button"
+      tabIndex={isFocused ? 0 : -1}
+      aria-label={game.title}
+      onClick={onClick}
       className={`group/card w-[280px] shrink-0 snap-start cursor-pointer rounded-2xl border bg-(--color-surface)/20 transition-all duration-200 hover:bg-(--color-surface)/40 ${
         isFocused
-          ? "border-(--color-accent)/60 ring-2 ring-(--color-accent)/30"
+          ? "border-(--color-accent)/60 ring-2 ring-(--color-accent)/30 scale-[1.02]"
           : "border-(--surface-active-border) hover:border-(--color-accent)/30"
       }`}
     >

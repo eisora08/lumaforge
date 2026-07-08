@@ -194,7 +194,7 @@ function App() {
       case "library-game-detail":
         return <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
       case "console":
-        return <ConsoleModePage />;
+        return <ConsoleModePage onNavigate={handleNavigate} />;
       default:
         return <Home />;
     }

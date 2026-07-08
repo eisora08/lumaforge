@@ -1,30 +1,179 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
+
+type UseConsoleNavigationParams = {
+  railLengths: number[];
+  onSelectGame?: (railIndex: number, cardIndex: number) => void;
+  onGoBack?: () => void;
+};
 
 export type ConsoleNavigationState = {
   focusedRail: number;
   focusedIndex: number;
-  navigateUp: () => void;
-  navigateDown: () => void;
-  navigateLeft: () => void;
-  navigateRight: () => void;
+  moveUp: () => void;
+  moveDown: () => void;
+  moveLeft: () => void;
+  moveRight: () => void;
+  tabForward: () => void;
+  tabBackward: () => void;
   selectFocused: () => void;
   goBack: () => void;
+  focusRail: (railIndex: number, cardIndex?: number) => void;
 };
 
-export function useConsoleNavigation(): ConsoleNavigationState {
-  const noop = useCallback(() => {}, []);
+export function useConsoleNavigation(params: UseConsoleNavigationParams): ConsoleNavigationState {
+  const { railLengths, onSelectGame, onGoBack } = params;
+  const [focusedRail, setFocusedRail] = useState(-1);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+
+  const railCount = railLengths.length;
+
+  const clampIndex = useCallback(
+    (rail: number, index: number) => Math.min(index, Math.max(railLengths[rail] - 1, 0)),
+    [railLengths],
+  );
+
+  const moveUp = useCallback(() => {
+    if (focusedRail < 0) {
+      if (railCount > 0) {
+        const last = railCount - 1;
+        setFocusedRail(last);
+        setFocusedIndex(clampIndex(last, 0));
+      }
+      return;
+    }
+    if (focusedRail <= 0) {
+      const last = railCount - 1;
+      setFocusedRail(last);
+      setFocusedIndex(clampIndex(last, focusedIndex));
+      return;
+    }
+    const newRail = focusedRail - 1;
+    setFocusedRail(newRail);
+    setFocusedIndex(clampIndex(newRail, focusedIndex));
+  }, [focusedRail, focusedIndex, railCount, railLengths, clampIndex]);
+
+  const moveDown = useCallback(() => {
+    if (focusedRail < 0) {
+      if (railCount > 0) {
+        setFocusedRail(0);
+        setFocusedIndex(0);
+      }
+      return;
+    }
+    if (focusedRail >= railCount - 1) {
+      setFocusedRail(0);
+      setFocusedIndex(clampIndex(0, focusedIndex));
+      return;
+    }
+    const newRail = focusedRail + 1;
+    setFocusedRail(newRail);
+    setFocusedIndex(clampIndex(newRail, focusedIndex));
+  }, [focusedRail, focusedIndex, railCount, railLengths, clampIndex]);
+
+  const moveLeft = useCallback(() => {
+    if (focusedRail < 0) {
+      if (railCount > 0) {
+        setFocusedRail(0);
+        setFocusedIndex(0);
+      }
+      return;
+    }
+    const len = railLengths[focusedRail];
+    if (len <= 0) return;
+    if (focusedIndex <= 0) {
+      setFocusedIndex(len - 1);
+    } else {
+      setFocusedIndex(focusedIndex - 1);
+    }
+  }, [focusedRail, focusedIndex, railLengths, railCount]);
+
+  const moveRight = useCallback(() => {
+    if (focusedRail < 0) {
+      if (railCount > 0) {
+        setFocusedRail(0);
+        setFocusedIndex(0);
+      }
+      return;
+    }
+    const len = railLengths[focusedRail];
+    if (len <= 0) return;
+    if (focusedIndex >= len - 1) {
+      setFocusedIndex(0);
+    } else {
+      setFocusedIndex(focusedIndex + 1);
+    }
+  }, [focusedRail, focusedIndex, railLengths, railCount]);
+
+  const tabForward = useCallback(() => {
+    if (railCount === 0) return;
+    if (focusedRail < 0) {
+      setFocusedRail(0);
+      setFocusedIndex(0);
+      return;
+    }
+    if (focusedRail >= railCount - 1) {
+      setFocusedRail(0);
+      setFocusedIndex(clampIndex(0, focusedIndex));
+    } else {
+      const newRail = focusedRail + 1;
+      setFocusedRail(newRail);
+      setFocusedIndex(clampIndex(newRail, focusedIndex));
+    }
+  }, [focusedRail, focusedIndex, railCount, railLengths, clampIndex]);
+
+  const tabBackward = useCallback(() => {
+    if (railCount === 0) return;
+    if (focusedRail < 0) {
+      const last = railCount - 1;
+      setFocusedRail(last);
+      setFocusedIndex(clampIndex(last, 0));
+      return;
+    }
+    if (focusedRail <= 0) {
+      const last = railCount - 1;
+      setFocusedRail(last);
+      setFocusedIndex(clampIndex(last, focusedIndex));
+    } else {
+      const newRail = focusedRail - 1;
+      setFocusedRail(newRail);
+      setFocusedIndex(clampIndex(newRail, focusedIndex));
+    }
+  }, [focusedRail, focusedIndex, railCount, railLengths, clampIndex]);
+
+  const selectFocused = useCallback(() => {
+    if (focusedRail >= 0 && focusedIndex >= 0) {
+      onSelectGame?.(focusedRail, focusedIndex);
+    }
+  }, [focusedRail, focusedIndex, onSelectGame]);
+
+  const goBack = useCallback(() => {
+    onGoBack?.();
+  }, [onGoBack]);
+
+  const focusRail = useCallback(
+    (railIndex: number, cardIndex?: number) => {
+      if (railIndex >= 0 && railIndex < railCount) {
+        setFocusedRail(railIndex);
+        setFocusedIndex(cardIndex ?? 0);
+      }
+    },
+    [railCount],
+  );
 
   return useMemo(
     () => ({
-      focusedRail: -1,
-      focusedIndex: -1,
-      navigateUp: noop,
-      navigateDown: noop,
-      navigateLeft: noop,
-      navigateRight: noop,
-      selectFocused: noop,
-      goBack: noop,
+      focusedRail,
+      focusedIndex,
+      moveUp,
+      moveDown,
+      moveLeft,
+      moveRight,
+      tabForward,
+      tabBackward,
+      selectFocused,
+      goBack,
+      focusRail,
     }),
-    [noop],
+    [focusedRail, focusedIndex, moveUp, moveDown, moveLeft, moveRight, tabForward, tabBackward, selectFocused, goBack, focusRail],
   );
 }

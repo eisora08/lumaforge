@@ -1,4 +1,4 @@
-import { useRef, useMemo } from "react";
+import { useRef, useEffect, useMemo, useCallback } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import { deduplicateByAppId } from "../../services/gameCacheService";
@@ -8,20 +8,45 @@ type Props = {
   title: string;
   subtitle?: string;
   games: LibraryGame[];
+  railIndex: number;
+  focusedRail: number;
+  focusedIndex: number;
   onSelectGame?: (game: LibraryGame) => void;
 };
 
-export default function ConsoleHomeRail({ title, subtitle, games, onSelectGame }: Props) {
+export default function ConsoleHomeRail({
+  title,
+  subtitle,
+  games,
+  railIndex,
+  focusedRail,
+  focusedIndex,
+  onSelectGame,
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const deduped = useMemo(() => deduplicateByAppId(games), [games]);
 
-  function scroll(direction: "left" | "right") {
+  const isFocusedRail = focusedRail === railIndex;
+  const focusedCardIndex = isFocusedRail ? focusedIndex : -1;
+
+  useEffect(() => {
+    if (focusedCardIndex < 0) return;
+    const container = scrollRef.current;
+    if (!container) return;
+    const cards = container.children;
+    const card = cards[focusedCardIndex] as HTMLElement | undefined;
+    if (card) {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    }
+  }, [focusedCardIndex]);
+
+  const scroll = useCallback((direction: "left" | "right") => {
     const el = scrollRef.current;
     if (!el) return;
     const amount = Math.round(el.clientWidth * 0.85);
     el.scrollBy({ left: direction === "left" ? -amount : amount, behavior: "smooth" });
-  }
+  }, []);
 
   if (deduped.length === 0) return null;
 
@@ -53,13 +78,13 @@ export default function ConsoleHomeRail({ title, subtitle, games, onSelectGame }
           ref={scrollRef}
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
         >
-          {deduped.map((game) => (
-            <div
+          {deduped.map((game, i) => (
+            <ConsoleGameCard
               key={"console:rail:" + game.appId}
+              game={game}
+              isFocused={isFocusedRail && focusedIndex === i}
               onClick={() => onSelectGame?.(game)}
-            >
-              <ConsoleGameCard game={game} />
-            </div>
+            />
           ))}
         </div>
 
