@@ -6,6 +6,12 @@ import type {
   ProviderStatusResult,
 } from "./tauri";
 import { notifyProviderStatusWritten as storeNotifyProviderStatusWritten } from "./providerStatusStore";
+import {
+  getSnapshotEntry,
+  loadSnapshot,
+  toSnapshotEntry,
+  updateSnapshotEntry,
+} from "./providerStatusSnapshotService";
 
 export type {
   ProviderStatusFile,
@@ -114,7 +120,8 @@ export function providerStatusLogPath(appId: string, providerId: string): string
 }
 
 /** Load cached provider-status JSON from disk. Returns null if not found or corrupt.
- *  Session-level cache + in-flight dedup prevents redundant reads during the same session.
+ *  Checks snapshot first (fast startup hydration), then session cache, then in-flight,
+ *  then falls back to individual file read.
  */
 export async function loadProviderStatus(
   appId: string,
@@ -123,10 +130,33 @@ export async function loadProviderStatus(
   const normalizedId = normalizeProviderId(providerId);
   const cacheKey = `${appId}:${normalizedId}`;
 
+  // Snapshot cache hit (fast startup hydration — no disk I/O)
+  const snapshotEntry = getSnapshotEntry(appId, normalizedId);
+  if (snapshotEntry) {
+    if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
+      console.log(`[PROVIDER_STATUS][LOAD_SKIP] appId=${appId} provider=${normalizedId} reason=snapshot`);
+    }
+    // Build a minimal ProviderStatusFile from the snapshot entry
+    return snapshotEntryToProviderStatusFile(snapshotEntry);
+  }
+
   // Session cache hit
   if (_loadCache.has(cacheKey)) {
     if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
-      console.log(`[PROVIDER_STATUS][LOAD_CACHE] appId=${appId} provider=${normalizedId} cached=${_loadCache.get(cacheKey) !== null}`);
+      console.log(`[PROVIDER_STATUS][LOAD_SKIP] appId=${appId} provider=${normalizedId} reason=session-cache`);
+    }
+    return _loadCache.get(cacheKey) ?? null;
+  }
+
+  // Ensure snapshot is loaded (may already have been loaded by first call)
+  await loadSnapshot();
+
+  // Check snapshot again after load
+  const snapshotAfterLoad = getSnapshotEntry(appId, normalizedId);
+  if (snapshotAfterLoad) {
+    _loadCache.set(cacheKey, snapshotEntryToProviderStatusFile(snapshotAfterLoad));
+    if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
+      console.log(`[PROVIDER_STATUS][LOAD_SKIP] appId=${appId} provider=${normalizedId} reason=snapshot`);
     }
     return _loadCache.get(cacheKey) ?? null;
   }
@@ -135,7 +165,7 @@ export async function loadProviderStatus(
   const inFlight = _loadInFlight.get(cacheKey);
   if (inFlight) {
     if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
-      console.log(`[PROVIDER_STATUS][LOAD_INFLIGHT] appId=${appId} provider=${normalizedId} waiting`);
+      console.log(`[PROVIDER_STATUS][LOAD_SKIP] appId=${appId} provider=${normalizedId} reason=in-flight`);
     }
     return inFlight;
   }
@@ -144,6 +174,14 @@ export async function loadProviderStatus(
     try {
       const data = await readProviderStatus(appId, normalizedId);
       _loadCache.set(cacheKey, data);
+      if (data) {
+        // Seed snapshot cache so subsequent reads skip file I/O
+        const entry = toSnapshotEntry(data);
+        updateSnapshotEntry(appId, normalizedId, entry).catch(() => {});
+      } else {
+        // Negative cache: remember that this file is missing
+        _loadCache.set(cacheKey, null);
+      }
       if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
         console.log(
           `[PROVIDER_STATUS][LOAD] appId=${appId} provider=${normalizedId} found=${data !== null}`,
@@ -165,6 +203,55 @@ export async function loadProviderStatus(
   return promise;
 }
 
+/** Convert a lightweight snapshot entry to a minimal ProviderStatusFile.
+ *  Callers (StoreGameDetailsPage) use this for fast hydration.
+ */
+function snapshotEntryToProviderStatusFile(
+  entry: import("./tauri").ProviderStatusSnapshotEntry,
+): ProviderStatusFile {
+  return {
+    appId: entry.appId,
+    providerId: entry.providerId,
+    providerName: entry.providerName ?? entry.providerId,
+    checkedAt: entry.checkedAt ?? 0,
+    installedAt: entry.installedAt ?? null,
+    local: entry.local
+      ? {
+          packagePath: null,
+          luaPath: null,
+          fileSizeAtInstall: entry.local.fileSizeAtInstall ?? null,
+          fileModifiedAtInstall: entry.local.fileModifiedAtInstall ?? null,
+          fileCreatedAtInstall: null,
+          metadataSource: null,
+          providerTimestampAtInstall: null,
+          checksumAtInstall: null,
+          versionAtInstall: entry.local.versionAtInstall ?? null,
+          manifestIdsAtInstall: [],
+          depotIdsAtInstall: [],
+        }
+      : null,
+    remote: entry.remote
+      ? {
+          status: entry.remote.status ?? "",
+          gameName: null,
+          manifestFileExists: null,
+          autoUpdateEnabled: null,
+          updateInProgress: null,
+          fileSize: entry.remote.fileSize ?? null,
+          fileModified: entry.remote.fileModified ?? null,
+          fileAgeDays: null,
+          needsUpdate: entry.remote.needsUpdate ?? null,
+          updateReason: entry.remote.updateReason ?? null,
+          timestamp: null,
+        }
+      : null,
+    result: {
+      status: entry.status,
+      reason: entry.reason ?? "",
+    },
+  };
+}
+
 /** Save (write) a full ProviderStatusFile to disk as sidecar JSON. */
 export async function saveProviderStatus(
   appId: string,
@@ -176,6 +263,9 @@ export async function saveProviderStatus(
 
   try {
     await writeProviderStatus(appId, normalizedId, payload);
+    // Update snapshot cache so subsequent loadProviderStatus skips file I/O
+    const entry = toSnapshotEntry(status);
+    updateSnapshotEntry(appId, normalizedId, entry).catch(() => {});
     // Invalidate session cache so next loadProviderStatus reads fresh data
     clearProviderStatusCache(appId, providerId);
     if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {

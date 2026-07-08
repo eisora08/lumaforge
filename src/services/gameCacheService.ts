@@ -18,6 +18,7 @@ import {
   repairAppinfoMediaPaths,
   repairMediaRoles,
   writeMediaManifest as writeMediaManifestTauri,
+  readMediaManifest as readMediaManifestTauri,
   getMediaManifestsBatch,
 } from "./tauri";
 import { invalidateCanonicalMediaCache, notifyMediaUpdated } from "./startupSnapshotService";
@@ -335,6 +336,7 @@ export function normalizeMediaPathForIndex(path: string | null | undefined): str
 // ---------------------------------------------------------------------------
 
 const DEBUG_SIDEBAR_FILTER = false;
+const _sidebarFilteredLogged = new Set<string>();
 
 export function hasActiveInstalledLuaScript(game: LibraryGame): boolean {
   if (!Array.isArray(game.luaScripts) || game.luaScripts.length === 0) {
@@ -403,8 +405,11 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
       `source=${game.source} included=${included}`
     );
   }
-  if (game.source === "lua" && !included) {
-    console.log(`[LUA][SIDEBAR_FILTERED_OUT] appId=${game.appId} title="${game.title}" hasLua=${game.hasLua} scripts=${game.luaScripts?.length ?? 0} luaActive=${luaActive} steamInstalled=${steamInstalled}`);
+  if (game.source === "lua" && !included && game.appId) {
+    if (!_sidebarFilteredLogged.has(game.appId)) {
+      _sidebarFilteredLogged.add(game.appId);
+      console.log(`[LUA][SIDEBAR_FILTERED_OUT] appId=${game.appId} title="${game.title}" hasLua=${game.hasLua} scripts=${game.luaScripts?.length ?? 0} luaActive=${luaActive} steamInstalled=${steamInstalled}`);
+    }
   }
 
   return included;
@@ -2126,6 +2131,9 @@ export async function runMigration(): Promise<void> {
 // Media Manifest generation
 // ---------------------------------------------------------------------------
 
+/** In-flight dedup: prevents duplicate manifest writes for the same appId. */
+const _mediaManifestWriteInFlight = new Map<string, Promise<void>>();
+
 export async function generateMediaManifest(
   appId: string,
   media: GameMediaPaths | null,
@@ -2147,8 +2155,6 @@ export async function generateMediaManifest(
     const relPath = media[`${role}Path` as keyof typeof media] as string | null;
     const existsKey = `${role}Exists` as keyof GameMediaPathsResult;
     const pathKey = `${role}Path` as keyof GameMediaPathsResult;
-    // Rust get_game_media_paths checks actual disk files with correct extensions
-    // for all roles — always consult it first when available
     if (resolved) {
       const exists = !!(resolved[existsKey] as boolean);
       const resolvedPath = resolved[pathKey] as string | null;
@@ -2161,7 +2167,6 @@ export async function generateMediaManifest(
       }
       return { path: manifestPath, exists, size: null, modifiedAt: null };
     }
-    // No Rust result — use input path or fallback placeholder
     if (!relPath) {
       return { path: `media/${role}.jpg`, exists: false, size: null, modifiedAt: null };
     }
@@ -2183,13 +2188,50 @@ export async function generateMediaManifest(
     } as MediaManifestFiles,
   };
 
-  await writeMediaManifestTauri(appId, manifest);
-  if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
-    const roleLog = (r: string, f: { path: string; exists: boolean }) => `role=${r} path=${f.path} exists=${f.exists}`;
-    console.log(`[MEDIA][MANIFEST_WRITE] appid=${appId} ${roleLog("cover", manifest.files.cover)} ${roleLog("landscape", manifest.files.landscape)} ${roleLog("background", manifest.files.background)} ${roleLog("logo", manifest.files.logo)} ${roleLog("icon", manifest.files.icon)}`);
-  } else {
-    console.log(`[MEDIA][MANIFEST] written appid=${appId} coverPath=${manifest.files.cover.path} landscapePath=${manifest.files.landscape.path} backgroundPath=${manifest.files.background.path} logoPath=${manifest.files.logo.path} iconPath=${manifest.files.icon.path}`);
+  // Part 2: In-flight dedup — if a write for this appId is already running, await it
+  const existingInFlight = _mediaManifestWriteInFlight.get(appId);
+  if (existingInFlight) {
+    console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=in-flight`);
+    await existingInFlight;
+    return;
   }
+
+  // Part 3: Content comparison — read existing manifest and skip if unchanged
+  let existing: MediaManifest | null = null;
+  try {
+    existing = await readMediaManifestTauri(appId);
+  } catch {
+    existing = null;
+  }
+  if (existing) {
+    const sameProvider = existing.provider === manifest.provider;
+    const sameCover = existing.files.cover.path === manifest.files.cover.path && existing.files.cover.exists === manifest.files.cover.exists;
+    const sameLandscape = existing.files.landscape.path === manifest.files.landscape.path && existing.files.landscape.exists === manifest.files.landscape.exists;
+    const sameBackground = existing.files.background.path === manifest.files.background.path && existing.files.background.exists === manifest.files.background.exists;
+    const sameLogo = existing.files.logo.path === manifest.files.logo.path && existing.files.logo.exists === manifest.files.logo.exists;
+    const sameIcon = existing.files.icon.path === manifest.files.icon.path && existing.files.icon.exists === manifest.files.icon.exists;
+    if (sameProvider && sameCover && sameLandscape && sameBackground && sameLogo && sameIcon) {
+      console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=no-content-change`);
+      return;
+    }
+  }
+
+  // Track in-flight
+  const writePromise = (async () => {
+    try {
+      await writeMediaManifestTauri(appId, manifest);
+      if (import.meta.env.DEV && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
+        const roleLog = (r: string, f: { path: string; exists: boolean }) => `role=${r} path=${f.path} exists=${f.exists}`;
+        console.log(`[MEDIA][MANIFEST_WRITE] appid=${appId} ${roleLog("cover", manifest.files.cover)} ${roleLog("landscape", manifest.files.landscape)} ${roleLog("background", manifest.files.background)} ${roleLog("logo", manifest.files.logo)} ${roleLog("icon", manifest.files.icon)}`);
+      } else {
+        console.log(`[MEDIA][MANIFEST] written appid=${appId} coverPath=${manifest.files.cover.path} landscapePath=${manifest.files.landscape.path} backgroundPath=${manifest.files.background.path} logoPath=${manifest.files.logo.path} iconPath=${manifest.files.icon.path}`);
+      }
+    } finally {
+      _mediaManifestWriteInFlight.delete(appId);
+    }
+  })();
+  _mediaManifestWriteInFlight.set(appId, writePromise);
+  await writePromise;
 }
 
 // ---------------------------------------------------------------------------

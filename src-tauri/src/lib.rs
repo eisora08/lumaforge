@@ -214,6 +214,8 @@ pub fn run() {
             commands::hubcap::hubcap_app_status,
             commands::provider_status_cache::read_provider_status,
             commands::provider_status_cache::write_provider_status,
+            commands::provider_status_cache::read_provider_status_snapshot,
+            commands::provider_status_cache::write_provider_status_snapshot,
             commands::scan_state::read_scan_state,
             commands::scan_state::write_scan_state,
             commands::steam_owned::fetch_steam_owned_games,

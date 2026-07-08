@@ -1828,6 +1828,48 @@ export async function writeProviderStatus(appId: string, providerId: string, pay
   await invoke("write_provider_status", { appId, providerId, payload });
 }
 
+// --- Provider Status Snapshot ---
+
+export interface ProviderStatusSnapshotEntryLocal {
+  fileSizeAtInstall?: number | null;
+  fileModifiedAtInstall?: string | null;
+  versionAtInstall?: string | null;
+}
+
+export interface ProviderStatusSnapshotEntryRemote {
+  status?: string | null;
+  fileSize?: number | null;
+  fileModified?: string | null;
+  needsUpdate?: boolean | null;
+  updateReason?: string | null;
+}
+
+export interface ProviderStatusSnapshotEntry {
+  appId: string;
+  providerId: string;
+  providerName?: string;
+  status: string;
+  reason?: string;
+  checkedAt?: number;
+  installedAt?: number;
+  local?: ProviderStatusSnapshotEntryLocal;
+  remote?: ProviderStatusSnapshotEntryRemote;
+}
+
+export interface ProviderStatusSnapshot {
+  schemaVersion: number;
+  updatedAt: number;
+  entries: Record<string, ProviderStatusSnapshotEntry>;
+}
+
+export async function readProviderStatusSnapshot(): Promise<ProviderStatusSnapshot | null> {
+  return await invoke<ProviderStatusSnapshot | null>("read_provider_status_snapshot");
+}
+
+export async function writeProviderStatusSnapshot(payload: string): Promise<void> {
+  await invoke("write_provider_status_snapshot", { payload });
+}
+
 // --- Scan State ---
 
 export interface ScanStateSummary {
