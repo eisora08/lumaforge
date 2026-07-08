@@ -16,6 +16,7 @@ import Tools from "./pages/Tools";
 import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
 import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
+import ConsoleModePage from "./features/console/ConsoleModePage";
 import { GameDetailsProvider } from "./context/GameDetailsContext";
 import { GameSessionProvider, useGameSession } from "./context/GameSessionContext";
 import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
@@ -38,7 +39,7 @@ const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
   "home", "library", "games", "store", "downloads",
   "achievements", "activity", "verification", "tools",
-  "settings", "game-details", "library-game-detail", "global-search",
+  "settings", "game-details", "library-game-detail", "global-search", "console",
 ]);
 
 function restoreActivePage(): AppPage {
@@ -192,6 +193,8 @@ function App() {
         return <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
       case "library-game-detail":
         return <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
+      case "console":
+        return <ConsoleModePage />;
       default:
         return <Home />;
     }
