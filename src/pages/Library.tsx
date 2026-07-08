@@ -491,8 +491,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                       <div
                         className="grid lf-card-stagger"
                         style={{
-                          gridTemplateColumns: `repeat(auto-fill, minmax(${settings.libraryCardSize}px, 1fr))`,
-                          gap: `${settings.libraryGridGap}px`,
+                          gridTemplateColumns: `repeat(auto-fill, minmax(${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeCardSize : settings.libraryCardSize}px, 1fr))`,
+                          gap: `${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeGap : settings.libraryGridGap}px`,
                         }}>
                         {paginatedGames.map((game) => (
                           <GameLauncherTile

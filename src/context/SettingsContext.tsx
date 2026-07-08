@@ -55,6 +55,17 @@ export const defaultSettings: AppSettings = {
   libraryGridGap: 28,
   libraryUseFullWidth: true,
   libraryFilterPanelWidth: 280,
+
+  dashboardCardSize: 260,
+  dashboardFeaturedCardSize: 340,
+  dashboardGridGap: 16,
+  dashboardContentWidth: 1760,
+  useExpandedDashboard: false,
+
+  libraryLandscapeCardSize: 200,
+  libraryLandscapeGap: 28,
+  maxLandscapeColumns: 0,
+
   mediaCacheProfile: "playnite-balanced",
   gameScanFolders: [],
   scanLocalGames: false,

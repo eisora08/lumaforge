@@ -40,6 +40,17 @@ export type AppSettings = {
   libraryGridGap: number;
   libraryUseFullWidth: boolean;
   libraryFilterPanelWidth: number;
+
+  dashboardCardSize: number;
+  dashboardFeaturedCardSize: number;
+  dashboardGridGap: number;
+  dashboardContentWidth: number;
+  useExpandedDashboard: boolean;
+
+  libraryLandscapeCardSize: number;
+  libraryLandscapeGap: number;
+  maxLandscapeColumns: number;
+
   mediaCacheProfile: "minimal" | "playnite-balanced" | "full";
 
   gameScanFolders: string[];

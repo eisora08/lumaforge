@@ -14,6 +14,8 @@ import {
   Gamepad2,
   Cog,
   Trophy,
+  LayoutDashboard,
+  Columns3,
 } from "lucide-react";
 
 import {
@@ -587,6 +589,194 @@ export default function Settings() {
                       onSelect={setSurfaceMode}
                     />
                   ))}
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Dashboard Layout"
+              description="Adjust card sizes, spacing and width for the Home dashboard."
+            >
+              <div className="space-y-4">
+                <div className="mb-2 flex items-center gap-2 text-sm text-(--color-accent)">
+                  <LayoutDashboard className="h-4 w-4" />
+                  Dashboard
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Content max width
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardContentWidth}px — max width of dashboard content area
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">1200</span>
+                    <input
+                      type="range"
+                      min={1200}
+                      max={2400}
+                      step={40}
+                      value={settings.dashboardContentWidth}
+                      onChange={(e) => updateSetting("dashboardContentWidth", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">2400</span>
+                  </div>
+                </div>
+
+                <ToggleOption
+                  label="Expanded dashboard"
+                  description="Remove content max-width so dashboard fills the full window width."
+                  enabled={settings.useExpandedDashboard}
+                  onChange={(enabled) => updateSetting("useExpandedDashboard", enabled)}
+                />
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Featured card size
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardFeaturedCardSize}px — Continue Playing cards
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">280</span>
+                    <input
+                      type="range"
+                      min={280}
+                      max={480}
+                      step={10}
+                      value={settings.dashboardFeaturedCardSize}
+                      onChange={(e) => updateSetting("dashboardFeaturedCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">480</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Standard card size
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardCardSize}px — all other dashboard section cards
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">200</span>
+                    <input
+                      type="range"
+                      min={200}
+                      max={400}
+                      step={10}
+                      value={settings.dashboardCardSize}
+                      onChange={(e) => updateSetting("dashboardCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">400</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Card gap
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardGridGap}px — spacing between cards in scroll rows
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">8</span>
+                    <input
+                      type="range"
+                      min={8}
+                      max={48}
+                      step={4}
+                      value={settings.dashboardGridGap}
+                      onChange={(e) => updateSetting("dashboardGridGap", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">48</span>
+                  </div>
+                </div>
+
+                <div className="mb-2 mt-6 flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Columns3 className="h-4 w-4" />
+                  Library Landscape
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Landscape card size
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryLandscapeCardSize}px — used when artwork mode is Landscape
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">160</span>
+                    <input
+                      type="range"
+                      min={160}
+                      max={300}
+                      step={5}
+                      value={settings.libraryLandscapeCardSize}
+                      onChange={(e) => updateSetting("libraryLandscapeCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">300</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Landscape grid gap
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryLandscapeGap}px — spacing between landscape cards
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">16</span>
+                    <input
+                      type="range"
+                      min={16}
+                      max={56}
+                      step={4}
+                      value={settings.libraryLandscapeGap}
+                      onChange={(e) => updateSetting("libraryLandscapeGap", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">56</span>
+                  </div>
+                </div>
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateSetting("dashboardContentWidth", 1760);
+                      updateSetting("useExpandedDashboard", false);
+                      updateSetting("dashboardCardSize", 260);
+                      updateSetting("dashboardFeaturedCardSize", 340);
+                      updateSetting("dashboardGridGap", 16);
+                      updateSetting("libraryLandscapeCardSize", 200);
+                      updateSetting("libraryLandscapeGap", 28);
+                      updateSetting("maxLandscapeColumns", 0);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text)"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Restore display layout defaults
+                  </button>
                 </div>
               </div>
             </SettingsSection>

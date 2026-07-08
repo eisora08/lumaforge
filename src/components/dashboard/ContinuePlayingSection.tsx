@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Play, Clock } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Play, Clock } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
+import { useSettings } from "../../context/SettingsContext";
 import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
 
 const DEBUG_MEDIA_DASH = false;
@@ -11,6 +12,7 @@ import { getCachedPlaytimeStore } from "../../services/playtimeService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
+import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 type Props = {
   snapshot: StartupSnapshot | null;
@@ -83,9 +85,9 @@ function formatLastPlayed(ts: number | null): string | null {
 }
 
 export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAppId }: Props) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const { sessions } = useGameSession();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
+  const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
   const [titleMap, setTitleMap] = useState<Record<string, string>>({});
 
@@ -150,13 +152,6 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
 
   if (games.length === 0) return null;
 
-  function scroll(direction: "left" | "right") {
-    const el = scrollRef.current;
-    if (!el) return;
-    const amount = Math.round(el.clientWidth * 0.85);
-    el.scrollBy({ left: direction === "left" ? -amount : amount, behavior: "smooth" });
-  }
-
   function handleOpen(game: SnapshotGame) {
     if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
@@ -180,96 +175,76 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
         </div>
       </div>
 
-      <div className="group/row relative">
-        <button
-          type="button"
-          onClick={() => scroll("left")}
-          className="absolute -left-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </button>
+      <DashboardHorizontalRail gap={settings.dashboardGridGap}>
+        {deduplicateByAppId(games).map((game) => {
+          const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
+          const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
+          const lastPlayedStr = formatLastPlayed(game.lastPlayed);
+          const isRunning = Object.values(sessions).some(
+            (s) => s.state === "running" && s.appId === game.appId,
+          );
 
-        <div
-          ref={scrollRef}
-          className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
-        >
-          {deduplicateByAppId(games).map((game) => {
-            const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
-            const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
-            const lastPlayedStr = formatLastPlayed(game.lastPlayed);
-            const isRunning = Object.values(sessions).some(
-              (s) => s.state === "running" && s.appId === game.appId,
-            );
-
-            return (
-              <div
-                key={"dashboard:continue:steam:" + game.appId}
-                className="w-[min(80vw,340px)] shrink-0 snap-start"
-              >
-                <div className="group/card relative cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">
-                  <div className="relative aspect-video overflow-hidden">
-                    {imgUrl ? (
-                      <AsyncImage
-                        src={imgUrl}
-                        alt={displayTitle}
-                        className="h-full w-full object-cover"
-                        fallback={
-                          <div className="flex h-full w-full items-center justify-center bg-white/5">
-                            <Clock className="h-6 w-6 text-(--color-muted)/40" />
-                          </div>
-                        }
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-white/5">
-                        <Clock className="h-6 w-6 text-(--color-muted)/40" />
-                      </div>
-                    )}
-                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
-                    {isRunning && (
-                      <div className="absolute left-2 top-2 rounded-full bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
-                        Playing
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="p-3">
-                    <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                      {displayTitle}
-                    </h3>
-                    <div className="mt-1.5 flex items-center gap-2">
-                      {lastPlayedStr && (
-                        <span className="text-[11px] text-(--color-muted)">
-                          {lastPlayedStr}
-                        </span>
-                      )}
-                      {game.playtime != null && (
-                        <span className="text-[11px] text-(--color-muted)">
-                          {game.playtime}m
-                        </span>
-                      )}
+          return (
+            <div
+              key={"dashboard:continue:steam:" + game.appId}
+              className="shrink-0 snap-start"
+              style={{ width: `min(80vw, ${settings.dashboardFeaturedCardSize}px)` }}
+            >
+              <div className="group/card relative cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">
+                <div className="relative aspect-video overflow-hidden">
+                  {imgUrl ? (
+                    <AsyncImage
+                      src={imgUrl}
+                      alt={displayTitle}
+                      className="h-full w-full object-cover"
+                      fallback={
+                        <div className="flex h-full w-full items-center justify-center bg-white/5">
+                          <Clock className="h-6 w-6 text-(--color-muted)/40" />
+                        </div>
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-white/5">
+                      <Clock className="h-6 w-6 text-(--color-muted)/40" />
                     </div>
-                    <button
-                      onClick={() => handleOpen(game)}
-                      className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent)/10 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
-                    >
-                      <Play className="h-3 w-3" />
-                      Play
-                    </button>
+                  )}
+                  <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
+                  {isRunning && (
+                    <div className="absolute left-2 top-2 rounded-full bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
+                      Playing
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3">
+                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                    {displayTitle}
+                  </h3>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    {lastPlayedStr && (
+                      <span className="text-[11px] text-(--color-muted)">
+                        {lastPlayedStr}
+                      </span>
+                    )}
+                    {game.playtime != null && (
+                      <span className="text-[11px] text-(--color-muted)">
+                        {game.playtime}m
+                      </span>
+                    )}
                   </div>
+                  <button
+                    onClick={() => handleOpen(game)}
+                    className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent)/10 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
+                  >
+                    <Play className="h-3 w-3" />
+                    Play
+                  </button>
                 </div>
               </div>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => scroll("right")}
-          className="absolute -right-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronRight className="h-5 w-5" />
-        </button>
-      </div>
+            </div>
+          );
+        })}
+      </DashboardHorizontalRail>
     </section>
   );
 }
