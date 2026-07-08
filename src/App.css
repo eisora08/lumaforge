@@ -1129,3 +1129,63 @@ html[data-compact="true"] .lf-launch-bar {
     display: none !important;
   }
 }
+
+/* =========================
+   CONSOLE THEME: SOLARIS DARK
+   Dark bluish-purple palette
+========================= */
+
+[data-console-theme="solaris-dark"] {
+  --color-bg: #0f0d1a;
+  --color-surface: #1a1833;
+  --color-surface-soft: #14122a;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-text: #e8e6f0;
+  --color-muted: #8b87a0;
+  --color-accent: #7c6ff0;
+}
+
+/* =========================
+   CONSOLE THEME: STEAM DECK
+   Dark blue-gray with green accent
+========================= */
+
+[data-console-theme="steam-deck"] {
+  --color-bg: #111215;
+  --color-surface: #1b1d22;
+  --color-surface-soft: #16171c;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-text: #e8eaed;
+  --color-muted: #8b8f9a;
+  --color-accent: #4c9a76;
+}
+
+/* =========================
+   CONSOLE THEME: MIDNIGHT
+   Deep blue-black
+========================= */
+
+[data-console-theme="midnight"] {
+  --color-bg: #0a0e1a;
+  --color-surface: #121726;
+  --color-surface-soft: #0e1320;
+  --color-border: rgba(255, 255, 255, 0.07);
+  --color-text: #dce0f0;
+  --color-muted: #7a7f99;
+  --color-accent: #4f7cf7;
+}
+
+/* =========================
+   CONSOLE THEME: AMOLED
+   True black
+========================= */
+
+[data-console-theme="amoled"] {
+  --color-bg: #000000;
+  --color-surface: #0a0a0a;
+  --color-surface-soft: #050505;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-text: #e0e0e0;
+  --color-muted: #666666;
+  --color-accent: #888888;
+}

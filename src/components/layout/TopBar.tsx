@@ -3,6 +3,7 @@ import { Bell, Gamepad2, Menu, Monitor } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useSearch } from "../../context/SearchContext";
 import { useGameDetails } from "../../context/GameDetailsContext";
+
 import PackagesToolbarSearch from "../packages/PackagesToolbarSearch";
 import type { StoreSearchDropdownItem } from "../packages/PackagesToolbar";
 import PackageUpdatePanel from "../notifications/PackageUpdatePanel";

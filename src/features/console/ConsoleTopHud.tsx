@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
-import { Gamepad2, LayoutPanelTop, Monitor, Settings } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { LayoutPanelTop, Monitor, Settings } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
+import { useUserProfile } from "../profile/userProfile";
+import { getAvatarPreset } from "../profile/profilePresets";
+import type { ConsoleSettings } from "./consoleSettings";
 
 const DEBUG_CONSOLE_MODE = false;
 
 type Props = {
-  displayName?: string;
-  playtimeHours?: number;
   layoutMode: "spotlight" | "grid";
   onToggleLayout: () => void;
   onNavigate?: (page: AppPage) => void;
   onOpenSettings?: () => void;
+  settings?: ConsoleSettings;
 };
 
 function formatTime(): string {
@@ -22,13 +24,13 @@ function formatTime(): string {
 }
 
 export default function ConsoleTopHud({
-  displayName = "Gamer",
-  playtimeHours,
   layoutMode,
   onToggleLayout,
   onNavigate,
   onOpenSettings,
+  settings,
 }: Props) {
+  const [profile] = useUserProfile();
   const [time, setTime] = useState(formatTime);
 
   useEffect(() => {
@@ -36,26 +38,32 @@ export default function ConsoleTopHud({
     return () => clearInterval(id);
   }, []);
 
+  const avatarPreset = useMemo(() => getAvatarPreset(profile.avatarPreset), [profile.avatarPreset]);
+
   if (DEBUG_CONSOLE_MODE) {
-    console.log(`[CONSOLE][HUD] layout=${layoutMode} name=${displayName}`);
+    console.log(`[CONSOLE][HUD] layout=${layoutMode} name=${profile.displayName}`);
   }
+
+  const showClock = settings?.showClock !== false;
 
   return (
     <div className="relative z-20 flex shrink-0 items-center justify-between px-6 pt-5 pb-3">
-      {/* Left: avatar + name + playtime */}
+      {/* Left: avatar + name */}
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-(--color-accent)/20 ring-2 ring-(--color-accent)/15">
-          <Gamepad2 className="h-5 w-5 text-(--color-accent)" />
+        <div
+          className="flex h-10 w-10 items-center justify-center rounded-full ring-2 ring-(--color-accent)/15"
+          style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
+        >
+          {profile.avatarUrl ? (
+            <img src={profile.avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
+          ) : (
+            <span className="text-sm">{avatarPreset?.icon ?? "🎮"}</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold text-(--color-text) drop-shadow-md">
-            {displayName}
+            {profile.displayName}
           </span>
-          {typeof playtimeHours === "number" && playtimeHours > 0 && (
-            <span className="hidden rounded bg-(--color-surface) px-1.5 py-0.5 text-[10px] font-medium text-(--color-muted) sm:inline-block">
-              {playtimeHours}h
-            </span>
-          )}
         </div>
       </div>
 
@@ -77,9 +85,11 @@ export default function ConsoleTopHud({
             <Settings className="h-4 w-4" />
           </button>
         )}
-        <span className="text-sm font-medium tabular-nums text-(--color-muted) drop-shadow-md">
-          {time}
-        </span>
+        {showClock && (
+          <span className="text-sm font-medium tabular-nums text-(--color-muted) drop-shadow-md">
+            {time}
+          </span>
+        )}
         <button
           onClick={onToggleLayout}
           className="flex h-9 w-9 items-center justify-center rounded-xl bg-(--color-surface)/40 text-(--color-muted) backdrop-blur-sm transition hover:bg-(--color-surface) hover:text-(--color-text)"

@@ -89,7 +89,7 @@ export default function ConsoleGridLayout({
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
   const heroSrc = getConsoleHeroBackground(focusedGame);
 
-  const hints = useMemo(() => getConsoleInputHints(settings.inputGlyphs), [settings.inputGlyphs]);
+  const hints = useMemo(() => getConsoleInputHints(settings.inputHints), [settings.inputHints]);
 
   const achievementSummary = useMemo(() => {
     return focusedGame ? getGameAchievementSummary(focusedGame) : null;
@@ -125,11 +125,11 @@ export default function ConsoleGridLayout({
     <div className="flex h-screen flex-col bg-(--color-bg)">
       {/* HUD */}
       <ConsoleTopHud
-        displayName="Gamer"
         layoutMode={layoutMode}
         onToggleLayout={onToggleLayout}
         onNavigate={onNavigate}
         onOpenSettings={() => setSettingsOpen(true)}
+        settings={settings}
       />
 
       {/* Main content: scrollable grid + preview panel */}
@@ -356,7 +356,7 @@ export default function ConsoleGridLayout({
           counts={categoryCounts}
           onSelect={onSelectCategory}
           showHints
-          inputGlyphs={settings.inputGlyphs}
+          inputHints={settings.inputHints}
         />
       </div>
 

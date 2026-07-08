@@ -1,4 +1,4 @@
-export type ConsoleInputGlyphStyle = "xbox" | "playstation" | "keyboard";
+export type ConsoleInputHintStyle = "xbox" | "playstation" | "keyboard" | "auto";
 
 export type ConsoleInputHints = {
   selectPlay: string;
@@ -9,7 +9,7 @@ export type ConsoleInputHints = {
   filter: string;
 };
 
-const HINT_MAP: Record<ConsoleInputGlyphStyle, ConsoleInputHints> = {
+const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints> = {
   xbox: {
     selectPlay: "[A] Play",
     details: "[X] Details",
@@ -36,6 +36,11 @@ const HINT_MAP: Record<ConsoleInputGlyphStyle, ConsoleInputHints> = {
   },
 };
 
-export function getConsoleInputHints(style: ConsoleInputGlyphStyle = "xbox"): ConsoleInputHints {
+export function getConsoleInputHints(style: ConsoleInputHintStyle = "xbox"): ConsoleInputHints {
+  if (style === "auto") {
+    const prefersPlayStation = typeof navigator !== "undefined"
+      && navigator.platform?.toLowerCase().includes("mac");
+    return prefersPlayStation ? HINT_MAP.playstation : HINT_MAP.xbox;
+  }
   return HINT_MAP[style] ?? HINT_MAP.xbox;
 }

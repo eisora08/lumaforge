@@ -14,10 +14,14 @@ import {
   Flame,
   PanelLeftOpen,
   PanelLeftClose,
+  Ellipsis,
 } from "lucide-react";
 
 import type { AppPage } from "../../types/navigation";
 import SidebarLibraryList from "./SidebarLibraryList";
+import { useUserProfile, saveUserProfile } from "../../features/profile/userProfile";
+import { getAvatarPreset } from "../../features/profile/profilePresets";
+import ProfileModal from "../../features/profile/ProfileModal";
 
 export type SidebarMode = "expanded" | "compact" | "collapsed" | "drawer";
 
@@ -66,6 +70,27 @@ export default function Sidebar({
   const isCollapsed = mode === "collapsed";
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [profile] = useUserProfile();
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const profileBtnRef = useRef<HTMLButtonElement | null>(null);
+  const avatarPreset = getAvatarPreset(profile.avatarPreset);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        profileMenuRef.current &&
+        !profileMenuRef.current.contains(e.target as Node) &&
+        profileBtnRef.current &&
+        !profileBtnRef.current.contains(e.target as Node)
+      ) {
+        setProfileMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   function handleNavigate(page: AppPage) {
     onNavigate(page);
@@ -226,50 +251,108 @@ export default function Sidebar({
       <div className={`shrink-0 ${
         showLabels ? "px-4 pt-2 pb-4" : "px-3 pt-2 pb-3"
       }`}>
-        {/* Restart Steam */}
-        <button
-          title={isCollapsed ? "Reiniciar Steam" : undefined}
-          className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 transition-colors hover:bg-white/4 hover:text-(--color-muted) lf-press-effect ${
-            isCollapsed ? "justify-center" : ""
-          }`}
-        >
-          <RotateCcw className="h-5 w-5 shrink-0 text-(--color-muted)" />
-          <span
-            className={`lf-sidebar-label ${
-              showLabels
-                ? "lf-sidebar-label-visible"
-                : "lf-sidebar-label-hidden"
+        {/* Profile block */}
+        <div className="relative">
+          <button
+            onClick={() => setProfileModalOpen(true)}
+            className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl transition-colors lf-press-effect ${
+              isCollapsed
+                ? "justify-center p-2"
+                : "px-3 py-2.5 hover:bg-white/4"
             }`}
+            title={isCollapsed ? `${profile.displayName} — ${profile.status}` : undefined}
           >
-            Reiniciar Steam
-          </span>
-        </button>
-
-        {/* System status */}
-        <div
-          className={`lf-surface rounded-2xl ${
-            isCollapsed ? "p-2" : "p-3"
-          }`}
-          title={isCollapsed ? "Sistema listo" : undefined}
-        >
-          {isCollapsed ? (
-            <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10">
-              <Store className="h-4 w-4 text-emerald-400" />
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center gap-2 text-sm font-medium text-(--color-text)">
-                <div className="flex h-2 w-2 items-center justify-center">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
-                </div>
-                Sistema listo
+            <div className="relative shrink-0">
+              <div
+                className={`flex items-center justify-center rounded-full ring-1 ring-white/10 ${
+                  isCollapsed ? "h-9 w-9" : "h-8 w-8"
+                }`}
+                style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
+              >
+                {profile.avatarUrl ? (
+                  <img
+                    src={profile.avatarUrl}
+                    alt=""
+                    className="h-full w-full rounded-full object-cover"
+                  />
+                ) : (
+                  <span className={isCollapsed ? "text-base" : "text-sm"}>
+                    {avatarPreset?.icon ?? "🎮"}
+                  </span>
+                )}
               </div>
-              {mode === "expanded" && (
-                <p className="mt-1.5 text-[11px] text-(--color-muted)">
-                  Esperando detección de Steam.
-                </p>
-              )}
-            </>
+              <span
+                className={`absolute -bottom-0.5 -right-0.5 rounded-full border-2 border-(--color-bg) ${
+                  isCollapsed ? "h-3 w-3" : "h-2.5 w-2.5"
+                }`}
+                style={{ background: "var(--color-accent)" }}
+              />
+            </div>
+
+            {!isCollapsed && (
+              <div className="flex min-w-0 flex-1 flex-col items-start text-left">
+                <span
+                  className={`text-sm font-medium text-(--color-text) ${
+                    showLabels
+                      ? "lf-sidebar-label lf-sidebar-label-visible"
+                      : "lf-sidebar-label lf-sidebar-label-hidden"
+                  }`}
+                >
+                  {profile.displayName}
+                </span>
+                <span
+                  className={`text-[11px] text-(--color-muted)/70 truncate max-w-[120px] ${
+                    showLabels
+                      ? "lf-sidebar-label lf-sidebar-label-visible"
+                      : "lf-sidebar-label lf-sidebar-label-hidden"
+                  }`}
+                >
+                  {profile.status}
+                </span>
+              </div>
+            )}
+
+            {!isCollapsed && (
+              <button
+                ref={profileBtnRef}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setProfileMenuOpen((p) => !p);
+                }}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted)/40 opacity-0 transition hover:bg-white/8 hover:text-(--color-muted) group-hover:opacity-100"
+                aria-label="Profile menu"
+              >
+                <Ellipsis className="h-4 w-4" />
+              </button>
+            )}
+          </button>
+
+          {/* Dropdown menu */}
+          {profileMenuOpen && (
+            <div
+              ref={profileMenuRef}
+              className="absolute bottom-full left-0 mb-1 w-48 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-xl"
+            >
+              <button
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                  onNavigate("settings");
+                }}
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-(--color-text) transition hover:bg-white/8"
+              >
+                <Settings className="h-4 w-4 text-(--color-muted)" />
+                Configuración
+              </button>
+              <button
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-(--color-muted)/70 transition hover:bg-white/8 hover:text-(--color-text)"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reiniciar Steam
+              </button>
+            </div>
           )}
         </div>
 
@@ -279,6 +362,14 @@ export default function Sidebar({
           </p>
         )}
       </div>
+
+      {/* Profile Modal */}
+      <ProfileModal
+        open={profileModalOpen}
+        profile={profile}
+        onSave={(updated) => saveUserProfile(updated)}
+        onClose={() => setProfileModalOpen(false)}
+      />
 
 
     </div>

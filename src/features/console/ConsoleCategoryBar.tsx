@@ -2,7 +2,7 @@ import {
   Play, HardDrive, Code, Heart, LayoutGrid,
 } from "lucide-react";
 import { getConsoleInputHints } from "./consoleInputHints";
-import type { ConsoleInputGlyphStyle } from "./consoleInputHints";
+import type { ConsoleInputHintStyle } from "./consoleInputHints";
 
 const CATEGORIES = [
   { label: "Continue", key: "continue", icon: Play },
@@ -17,7 +17,7 @@ type Props = {
   counts: number[];
   onSelect: (index: number) => void;
   showHints?: boolean;
-  inputGlyphs?: ConsoleInputGlyphStyle;
+  inputHints?: ConsoleInputHintStyle;
 };
 
 function HintTag({ children }: { children: string }) {
@@ -33,8 +33,8 @@ function HintTag({ children }: { children: string }) {
   );
 }
 
-export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, showHints, inputGlyphs = "xbox" }: Props) {
-  const hints = getConsoleInputHints(inputGlyphs);
+export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, showHints, inputHints = "xbox" }: Props) {
+  const hints = getConsoleInputHints(inputHints);
   return (
     <nav className="flex shrink-0 items-center justify-between px-6 py-2.5" aria-label="Category navigation">
       {/* Left spacer */}

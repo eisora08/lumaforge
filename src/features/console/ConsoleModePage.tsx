@@ -157,7 +157,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     : <ConsoleGridLayout {...sharedProps} />;
 
   return (
-    <div data-console-theme={consoleSettings.theme}>
+    <div data-console-theme={consoleSettings.themeMode}>
       {layout}
     </div>
   );

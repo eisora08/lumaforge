@@ -1,9 +1,7 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
-import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
 import { getConsoleHeroBackground } from "./consoleMedia";
 import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleHomeRail from "./ConsoleHomeRail";
@@ -43,19 +41,11 @@ export default function ConsoleSpotlightLayout({
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
 }: Props) {
-  const { games } = useLibraryGames();
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
   const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
-
-  const totalPlaytimeHours = useMemo(
-    () => games.length > 0
-      ? Math.round(games.reduce((acc, g) => acc + (g.appId ? getPlaytimeSecondsForAppId(g.appId) : 0), 0) / 3600)
-      : 0,
-    [games],
-  );
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
 
@@ -80,12 +70,11 @@ export default function ConsoleSpotlightLayout({
         {/* HUD on top of hero */}
         <div className="absolute inset-x-0 top-0">
           <ConsoleTopHud
-            displayName="Gamer"
-            playtimeHours={totalPlaytimeHours}
             layoutMode={layoutMode}
             onToggleLayout={onToggleLayout}
             onNavigate={onNavigate}
             onOpenSettings={() => setSettingsOpen(true)}
+            settings={settings}
           />
         </div>
 
@@ -143,7 +132,7 @@ export default function ConsoleSpotlightLayout({
           counts={categoryCounts}
           onSelect={onSelectCategory}
           showHints
-          inputGlyphs={settings.inputGlyphs}
+          inputHints={settings.inputHints}
         />
       </div>
 
