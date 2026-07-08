@@ -70,7 +70,7 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between px-4 lg:px-6">
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between px-4 lg:px-6 bg-(--shell-bg)" style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}>
       <div className="flex items-center gap-3">
         {sidebarDrawerMode && (
           <button

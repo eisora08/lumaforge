@@ -128,9 +128,10 @@ export default function Sidebar({
 
   const sidebarContent = (
     <div
-      className={`flex h-full flex-col lf-sidebar-panel ${
+      className={`flex h-full flex-col lf-sidebar-panel bg-(--shell-bg) ${
         isCollapsed ? "w-18" : mode === "compact" ? "w-85" : "w-90"
       }`}
+      style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}
     >
       {/* Header — shrink-0 */}
       <div
@@ -265,7 +266,7 @@ export default function Sidebar({
         <div className="relative">
           <button
             onClick={() => setProfileModalOpen(true)}
-            className={`group flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-(--color-border)/30 bg-(--color-surface)/30 p-3 text-left transition hover:border-(--color-border)/60 hover:bg-(--color-surface)/50 hover:ring-1 hover:ring-(--color-accent)/15 ${
+            className={`group flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-(--color-border)/30 bg-(--color-surface) p-3 text-left transition hover:border-(--color-border)/60 hover:brightness-110 hover:ring-1 hover:ring-(--color-accent)/15 ${
               isCollapsed ? "justify-center" : ""
             }`}
             title={isCollapsed ? `${profile.displayName} — ${profile.status}` : undefined}

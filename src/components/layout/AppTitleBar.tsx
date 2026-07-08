@@ -26,7 +26,7 @@ export default function AppTitleBar() {
   const iconHover = "group-hover:text-(--color-text)";
 
   return (
-    <div className="relative z-30 flex h-9 shrink-0 items-center border-b border-(--color-border) bg-(--color-surface) select-none">
+    <div className="relative z-30 flex h-9 shrink-0 items-center border-b border-(--color-border) bg-(--shell-bg) select-none" style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}>
       {/* draggable spacer — only this area has data-tauri-drag-region */}
       <div
         data-tauri-drag-region

@@ -18,7 +18,7 @@
 :root[data-surface="solid"] {
   --page-bg: var(--color-bg);
 
-  --shell-bg: var(--color-bg);
+  --shell-bg: var(--color-sidebar);
   --shell-border: transparent;
   --shell-blur: none;
 
@@ -31,6 +31,25 @@
   );
   --surface-active-shadow: none;
   --surface-active-blur: none;
+}
+
+/* Solid mode: flat background, no ambient gradients */
+:root[data-surface="solid"] body {
+  background: var(--color-bg);
+  background-image: none !important;
+}
+
+:root[data-surface="solid"] .lf-backdrop {
+  display: none;
+}
+
+:root[data-surface="solid"] .lf-shell {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+:root[data-surface="solid"] .lf-surface {
+  border-color: transparent;
 }
 
 
