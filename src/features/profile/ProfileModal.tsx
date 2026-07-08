@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, Check, RotateCcw, Upload, Trash2 } from "lucide-react";
+import { X, Check, RotateCcw, Pencil, ImagePlus, Trash2, Sparkles } from "lucide-react";
 import type { UserProfile } from "./userProfile";
 import { DEFAULT_USER_PROFILE } from "./userProfile";
-import { AVATAR_PRESETS, BANNER_PRESETS, getAvatarPreset, getBannerPreset } from "./profilePresets";
-
-const ACCEPTED_IMAGE_TYPES = "image/png,image/jpeg,image/webp,image/gif";
+import { getAvatarPreset, getBannerPreset } from "./profilePresets";
+import ProfileMediaPickerModal from "./ProfileMediaPickerModal";
+import type { ProfileMediaKind } from "./ProfileMediaPickerModal";
 
 type Props = {
   open: boolean;
@@ -14,31 +14,46 @@ type Props = {
   onClose: () => void;
 };
 
-function detectIsGif(url: string): boolean {
-  try {
-    const path = new URL(url, window.location.href).pathname;
-    return path.toLowerCase().endsWith(".gif");
-  } catch {
-    return url.toLowerCase().endsWith(".gif");
-  }
-}
-
-function readFileAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 export default function ProfileModal({ open, profile, onSave, onClose }: Props) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-  const bannerInputRef = useRef<HTMLInputElement>(null);
+  const avatarMenuRef = useRef<HTMLDivElement>(null);
+  const bannerMenuRef = useRef<HTMLDivElement>(null);
+  const avatarTriggerRef = useRef<HTMLButtonElement>(null);
+  const bannerTriggerRef = useRef<HTMLButtonElement>(null);
 
   const [draft, setDraft] = useState<UserProfile>(() => ({ ...profile, updatedAt: Date.now() }));
+  const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
+  const [bannerMenuOpen, setBannerMenuOpen] = useState(false);
+  const [mediaPickerKind, setMediaPickerKind] = useState<ProfileMediaKind | null>(null);
+
+  // Animation state: mounted survives close until exit animation finishes
+  const [mounted, setMounted] = useState(false);
+  const [exiting, setExiting] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (open && !mounted && !exiting) {
+      setMounted(true);
+      setExiting(false);
+    }
+  }, [open, mounted, exiting]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  const animatedClose = useCallback(() => {
+    if (exiting) return;
+    setExiting(true);
+    closeTimerRef.current = window.setTimeout(() => {
+      setMounted(false);
+      setExiting(false);
+      onClose();
+    }, 200);
+  }, [exiting, onClose]);
 
   useEffect(() => {
     if (open) setDraft({ ...profile, updatedAt: Date.now() });
@@ -47,29 +62,63 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
   const avatarPreset = useMemo(() => getAvatarPreset(draft.avatarPreset), [draft.avatarPreset]);
   const bannerPreset = useMemo(() => getBannerPreset(draft.bannerPreset), [draft.bannerPreset]);
 
+  const hasCustomAvatar = !!draft.avatarUrl;
+  const hasCustomBanner = !!draft.bannerUrl;
+
+  // Close context menus on outside click
+  useEffect(() => {
+    if (!mounted && !exiting) return;
+    function handleClick(e: MouseEvent) {
+      if (
+        avatarMenuOpen &&
+        avatarMenuRef.current &&
+        !avatarMenuRef.current.contains(e.target as Node) &&
+        avatarTriggerRef.current &&
+        !avatarTriggerRef.current.contains(e.target as Node)
+      ) {
+        setAvatarMenuOpen(false);
+      }
+      if (
+        bannerMenuOpen &&
+        bannerMenuRef.current &&
+        !bannerMenuRef.current.contains(e.target as Node) &&
+        bannerTriggerRef.current &&
+        !bannerTriggerRef.current.contains(e.target as Node)
+      ) {
+        setBannerMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [mounted, exiting, avatarMenuOpen, bannerMenuOpen]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!open) return;
-    if (e.key === "Escape") { onClose(); return; }
-  }, [open, onClose]);
+    if (!mounted && !exiting) return;
+    if (e.key === "Escape") {
+      if (avatarMenuOpen) { setAvatarMenuOpen(false); return; }
+      if (bannerMenuOpen) { setBannerMenuOpen(false); return; }
+      animatedClose();
+    }
+  }, [mounted, exiting, animatedClose, avatarMenuOpen, bannerMenuOpen]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!mounted && !exiting) return;
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
+  }, [mounted, exiting, handleKeyDown]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!mounted) return;
     const panel = panelRef.current;
     if (!panel) return;
     const focusable = panel.querySelectorAll<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
     );
     if (focusable.length > 0) focusable[0].focus();
-  }, [open]);
+  }, [mounted]);
 
   useEffect(() => {
-    if (!open || !panelRef.current) return;
+    if (!mounted || !panelRef.current) return;
     const panel = panelRef.current;
     const focusable = panel.querySelectorAll<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
@@ -87,45 +136,19 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
     }
     panel.addEventListener("keydown", handleTab);
     return () => panel.removeEventListener("keydown", handleTab);
-  }, [open]);
+  }, [mounted]);
 
   function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === backdropRef.current) onClose();
+    if (e.target === backdropRef.current) animatedClose();
   }
 
   function patch(p: Partial<UserProfile>) {
     setDraft((prev) => ({ ...prev, ...p, updatedAt: Date.now() }));
   }
 
-  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const dataUrl = await readFileAsDataURL(file);
-    const isGif = file.type === "image/gif" || detectIsGif(file.name);
-    patch({ avatarUrl: dataUrl, avatarIsGif: isGif });
-    if (avatarInputRef.current) avatarInputRef.current.value = "";
-  }
-
-  async function handleBannerUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const dataUrl = await readFileAsDataURL(file);
-    const isGif = file.type === "image/gif" || detectIsGif(file.name);
-    patch({ bannerUrl: dataUrl, bannerIsGif: isGif });
-    if (bannerInputRef.current) bannerInputRef.current.value = "";
-  }
-
-  function handleClearAvatar() {
-    patch({ avatarUrl: null, avatarIsGif: false });
-  }
-
-  function handleClearBanner() {
-    patch({ bannerUrl: null, bannerIsGif: false });
-  }
-
   function handleSave() {
     onSave({ ...draft, updatedAt: Date.now() });
-    onClose();
+    animatedClose();
   }
 
   function handleReset() {
@@ -133,270 +156,307 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
     setDraft(defaults);
   }
 
-  if (!open) return null;
+  function handleMediaSelect(url: string, isGif: boolean, _source: "upload" | "gif" | "preset") {
+    if (mediaPickerKind === "avatar") {
+      patch({ avatarUrl: url, avatarIsGif: isGif, avatarPreset: "custom" });
+    } else if (mediaPickerKind === "banner") {
+      patch({ bannerUrl: url, bannerIsGif: isGif, bannerPreset: "custom" });
+    }
+    setMediaPickerKind(null);
+  }
 
-  const showCustomAvatar = draft.avatarUrl || draft.avatarIsGif;
-  const showCustomBanner = draft.bannerUrl || draft.bannerIsGif;
+  // Don't render at all after exit animation completes
+  if (!mounted && !exiting) return null;
+
+  const isAnimating = exiting;
+  const reducedMotionClass = "motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0 motion-reduce:opacity-100";
 
   return createPortal(
-    <div
-      ref={backdropRef}
-      onClick={handleBackdropClick}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Edit profile"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
+    <>
       <div
-        ref={panelRef}
-        className="relative mx-4 flex max-h-[85vh] w-full max-w-lg flex-col overflow-y-auto rounded-2xl border border-(--color-border) bg-(--color-bg) shadow-2xl"
+        ref={backdropRef}
+        onClick={handleBackdropClick}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit profile"
+        className={`fixed inset-0 z-50 flex items-center justify-center transition-all duration-200 ease-out ${isAnimating ? "bg-black/0 backdrop-blur-0" : "bg-black/60 backdrop-blur-sm"} ${reducedMotionClass}`}
       >
-        {/* ====== BANNER + AVATAR PREVIEW ====== */}
-        <div className="relative shrink-0">
-          <div
-            className="h-36 rounded-t-2xl bg-cover bg-center"
-            style={{
-              background: bannerPreset?.gradient ?? "var(--color-accent)",
-              ...(draft.bannerUrl ? { backgroundImage: `url(${draft.bannerUrl})` } : {}),
-            }}
-          />
-          <div className="absolute -bottom-12 left-6">
-            <div
-              className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-(--color-bg) ring-2 ring-white/10"
-              style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
+        <div
+          ref={panelRef}
+          className={`relative mx-4 w-full max-w-lg flex max-h-[85vh] flex-col overflow-y-auto rounded-2xl border border-(--color-border) bg-(--color-bg) shadow-2xl transition-all duration-200 ease-out ${isAnimating ? "scale-95 translate-y-2 opacity-0" : "scale-100 translate-y-0 opacity-100"} ${reducedMotionClass}`}
+        >
+          {/* ====== BANNER + AVATAR PREVIEW (clickable) ====== */}
+          <div className="relative shrink-0">
+            {/* Banner — clickable */}
+            <button
+              ref={bannerTriggerRef}
+              onClick={() => setBannerMenuOpen((p) => !p)}
+              className="group relative block h-36 w-full rounded-t-2xl bg-cover bg-center text-left outline-none transition"
+              style={{
+                background: bannerPreset?.gradient ?? "var(--color-accent)",
+                ...(draft.bannerUrl ? { backgroundImage: `url(${draft.bannerUrl})` } : {}),
+              }}
+              aria-label="Change banner"
             >
-              {draft.avatarUrl ? (
-                <img
-                  src={draft.avatarUrl}
-                  alt=""
-                  className={`h-full w-full object-cover ${draft.avatarIsGif ? "" : ""}`}
-                />
-              ) : (
-                <span className="text-3xl">{avatarPreset?.icon ?? "🎮"}</span>
+              {/* Hover pencil overlay — fully hidden by default, visible on group hover */}
+              <div className="absolute inset-0 flex items-center justify-center rounded-t-2xl opacity-0 transition-all duration-150 ease-out group-hover:opacity-100 group-hover:bg-black/30 motion-reduce:transition-none">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full scale-90 opacity-0 transition-all duration-150 ease-out group-hover:scale-100 group-hover:opacity-100 group-hover:bg-black/50 group-hover:text-white/90 group-hover:backdrop-blur-sm motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:opacity-100">
+                  <Pencil className="h-4 w-4" />
+                </span>
+              </div>
+              {draft.bannerIsGif && (
+                <span className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                  GIF
+                </span>
               )}
+            </button>
+
+            {/* Avatar — clickable */}
+            <button
+              ref={avatarTriggerRef}
+              onClick={() => setAvatarMenuOpen((p) => !p)}
+              className="group absolute -bottom-12 left-6 outline-none"
+              aria-label="Change avatar"
+            >
               <div
-                className="absolute bottom-1 right-1 h-3.5 w-3.5 rounded-full border-2 border-(--color-bg)"
+                className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-(--color-bg) ring-2 ring-white/10 transition"
+                style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
+              >
+                {draft.avatarUrl ? (
+                  <img src={draft.avatarUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-3xl">{avatarPreset?.icon ?? "🎮"}</span>
+                )}
+                {/* Hover pencil overlay — fully hidden by default, visible on group hover */}
+                <div className="absolute inset-0 flex items-center justify-center rounded-full opacity-0 transition-all duration-150 ease-out group-hover:opacity-100 group-hover:bg-black/40 motion-reduce:transition-none">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full scale-90 opacity-0 transition-all duration-150 ease-out group-hover:scale-100 group-hover:opacity-100 group-hover:bg-black/60 group-hover:text-white/90 group-hover:backdrop-blur-sm motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:opacity-100">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </span>
+                </div>
+              </div>
+              <span
+                className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-(--color-bg)"
                 style={{ background: draft.accentMode === "custom" && draft.accentColor ? draft.accentColor : "var(--color-accent)" }}
               />
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg bg-black/40 text-white/70 backdrop-blur-sm transition hover:bg-black/60 hover:text-white"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
-          {draft.bannerUrl && (
-            <button
-              onClick={handleClearBanner}
-              className="absolute bottom-3 right-3 flex items-center gap-1 rounded-lg bg-black/50 px-2 py-1 text-[10px] text-white/70 backdrop-blur-sm transition hover:bg-black/70 hover:text-white"
-              title="Clear custom banner"
-            >
-              <Trash2 className="h-3 w-3" />
-              Clear
-            </button>
-          )}
-        </div>
-
-        {/* Name + status under banner */}
-        <div className="mt-14 px-6 pb-2">
-          <h2 className="text-lg font-bold text-(--color-text)">{draft.displayName}</h2>
-          <p className="text-sm text-(--color-muted)">{draft.status}</p>
-        </div>
-
-        {/* ====== SECTIONS ====== */}
-        <div className="flex flex-col gap-5 px-6 pb-6">
-          {/* --- Identity --- */}
-          <Section title="Identity">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-(--color-muted)">Display Name</span>
-              <input
-                type="text"
-                value={draft.displayName}
-                onChange={(e) => patch({ displayName: e.target.value })}
-                maxLength={32}
-                className="w-full rounded-xl border border-(--color-border) bg-(--color-surface) px-3 py-2 text-sm text-(--color-text) outline-none transition focus:border-(--color-accent)/40"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-(--color-muted)">Status</span>
-              <input
-                type="text"
-                value={draft.status}
-                onChange={(e) => patch({ status: e.target.value })}
-                maxLength={48}
-                className="w-full rounded-xl border border-(--color-border) bg-(--color-surface) px-3 py-2 text-sm text-(--color-text) outline-none transition focus:border-(--color-accent)/40"
-              />
-            </label>
-          </Section>
-
-          {/* --- Avatar --- */}
-          <Section title="Avatar">
-            <div className="grid grid-cols-6 gap-2">
-              {AVATAR_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => patch({ avatarPreset: p.id, avatarUrl: null, avatarIsGif: false })}
-                  className={`flex aspect-square items-center justify-center rounded-xl transition hover:scale-105 active:scale-95 ${
-                    draft.avatarPreset === p.id && !showCustomAvatar
-                      ? "ring-2 ring-(--color-accent) ring-offset-2 ring-offset-(--color-bg)"
-                      : "ring-1 ring-white/10 opacity-60 hover:opacity-100"
-                  }`}
-                  style={{ background: p.gradient }}
-                  title={p.label}
-                >
-                  <span className="text-lg">{p.icon}</span>
-                </button>
-              ))}
-            </div>
-            <div className="mt-3 flex items-center gap-2">
-              <button
-                onClick={() => avatarInputRef.current?.click()}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-(--color-border) bg-(--color-surface) px-3 py-2 text-xs font-medium text-(--color-text) transition hover:bg-white/8"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                Upload Image
-              </button>
-              {showCustomAvatar && (
-                <button
-                  onClick={handleClearAvatar}
-                  className="flex items-center gap-1.5 rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2 text-xs font-medium text-rose-400 transition hover:bg-rose-500/15"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Clear
-                </button>
-              )}
               {draft.avatarIsGif && (
-                <span className="flex items-center gap-1 rounded-lg bg-(--color-accent)/10 px-2 py-1 text-[10px] font-medium text-(--color-accent)">
+                <span className="absolute -top-1 -right-1 rounded bg-(--color-accent)/80 px-1 text-[9px] font-bold text-white">
                   GIF
                 </span>
               )}
-            </div>
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept={ACCEPTED_IMAGE_TYPES}
-              onChange={handleAvatarUpload}
-              className="hidden"
-            />
-          </Section>
+            </button>
 
-          {/* --- Banner --- */}
-          <Section title="Banner">
-            <div className="grid grid-cols-3 gap-2">
-              {BANNER_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => patch({ bannerPreset: p.id, bannerUrl: null, bannerIsGif: false })}
-                  className={`flex h-14 items-center justify-center rounded-xl text-xs font-medium text-white/80 transition hover:scale-[1.02] active:scale-[0.98] ${
-                    draft.bannerPreset === p.id && !showCustomBanner
-                      ? "ring-2 ring-(--color-accent) ring-offset-2 ring-offset-(--color-bg)"
-                      : "ring-1 ring-white/10 opacity-60 hover:opacity-100"
-                  }`}
-                  style={{ background: p.gradient }}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <div className="mt-3 flex items-center gap-2">
-              <button
-                onClick={() => bannerInputRef.current?.click()}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-(--color-border) bg-(--color-surface) px-3 py-2 text-xs font-medium text-(--color-text) transition hover:bg-white/8"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                Upload Image
-              </button>
-              {showCustomBanner && (
-                <button
-                  onClick={handleClearBanner}
-                  className="flex items-center gap-1.5 rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2 text-xs font-medium text-rose-400 transition hover:bg-rose-500/15"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Clear
-                </button>
-              )}
-              {draft.bannerIsGif && (
-                <span className="flex items-center gap-1 rounded-lg bg-(--color-accent)/10 px-2 py-1 text-[10px] font-medium text-(--color-accent)">
-                  GIF
-                </span>
-              )}
-            </div>
-            <input
-              ref={bannerInputRef}
-              type="file"
-              accept={ACCEPTED_IMAGE_TYPES}
-              onChange={handleBannerUpload}
-              className="hidden"
-            />
-          </Section>
+            {/* Close button */}
+            <button
+              onClick={animatedClose}
+              className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-lg bg-black/40 text-white/70 backdrop-blur-sm transition hover:bg-black/60 hover:text-white"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
 
-          {/* --- Accent --- */}
-          <Section title="Accent Color">
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={() => patch({ accentMode: "follow-theme", accentColor: null })}
-                className={`rounded-xl px-3 py-2 text-sm transition ${
-                  draft.accentMode === "follow-theme"
-                    ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
-                    : "bg-(--color-surface) text-(--color-muted) ring-1 ring-(--color-border) hover:text-(--color-text)"
-                }`}
-              >
-                Follow Theme
-              </button>
-              <button
-                onClick={() => patch({ accentMode: "custom", accentColor: draft.accentColor ?? "#6366f1" })}
-                className={`rounded-xl px-3 py-2 text-sm transition ${
-                  draft.accentMode === "custom"
-                    ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
-                    : "bg-(--color-surface) text-(--color-muted) ring-1 ring-(--color-border) hover:text-(--color-text)"
-                }`}
-              >
-                Custom
-              </button>
-            </div>
-            {draft.accentMode === "custom" && (
-              <div className="mt-3 flex items-center gap-3">
+          {/* Name + status under banner */}
+          <div className="mt-14 px-6 pb-2">
+            <h2 className="text-lg font-bold text-(--color-text)">{draft.displayName}</h2>
+            <p className="text-sm text-(--color-muted)">{draft.status}</p>
+          </div>
+
+          {/* ====== SECTIONS ====== */}
+          <div className="flex flex-col gap-5 px-6 pb-6">
+            {/* --- Identity --- */}
+            <Section title="Identity">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-(--color-muted)">Display Name</span>
                 <input
-                  type="color"
-                  value={draft.accentColor ?? "#6366f1"}
-                  onChange={(e) => patch({ accentColor: e.target.value })}
-                  className="h-9 w-9 cursor-pointer rounded-lg border border-(--color-border) bg-transparent p-0.5"
+                  type="text"
+                  value={draft.displayName}
+                  onChange={(e) => patch({ displayName: e.target.value })}
+                  maxLength={32}
+                  className="w-full rounded-xl border border-(--color-border) bg-(--color-surface) px-3 py-2 text-sm text-(--color-text) outline-none transition focus:border-(--color-accent)/40"
                 />
-                <span className="text-xs text-(--color-muted)">{draft.accentColor ?? "#6366f1"}</span>
-              </div>
-            )}
-          </Section>
-        </div>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-(--color-muted)">Status</span>
+                <input
+                  type="text"
+                  value={draft.status}
+                  onChange={(e) => patch({ status: e.target.value })}
+                  maxLength={48}
+                  className="w-full rounded-xl border border-(--color-border) bg-(--color-surface) px-3 py-2 text-sm text-(--color-text) outline-none transition focus:border-(--color-accent)/40"
+                />
+              </label>
+            </Section>
 
-        {/* ====== FOOTER ====== */}
-        <div className="sticky bottom-0 flex items-center justify-between border-t border-(--color-border) bg-(--color-bg) px-6 py-4">
-          <button
-            onClick={handleReset}
-            className="flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-rose-400/80 transition hover:bg-rose-500/10 hover:text-rose-400"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Reset Profile
-          </button>
-          <div className="flex items-center gap-2">
+            {/* --- Accent --- */}
+            <Section title="Accent Color">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => patch({ accentMode: "follow-theme", accentColor: null })}
+                  className={`rounded-xl px-3 py-2 text-sm transition ${
+                    draft.accentMode === "follow-theme"
+                      ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
+                      : "bg-(--color-surface) text-(--color-muted) ring-1 ring-(--color-border) hover:text-(--color-text)"
+                  }`}
+                >
+                  Follow Theme
+                </button>
+                <button
+                  onClick={() => patch({ accentMode: "custom", accentColor: draft.accentColor ?? "#6366f1" })}
+                  className={`rounded-xl px-3 py-2 text-sm transition ${
+                    draft.accentMode === "custom"
+                      ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
+                      : "bg-(--color-surface) text-(--color-muted) ring-1 ring-(--color-border) hover:text-(--color-text)"
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
+              {draft.accentMode === "custom" && (
+                <div className="mt-3 flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={draft.accentColor ?? "#6366f1"}
+                    onChange={(e) => patch({ accentColor: e.target.value })}
+                    className="h-9 w-9 cursor-pointer rounded-lg border border-(--color-border) bg-transparent p-0.5"
+                  />
+                  <span className="text-xs text-(--color-muted)">{draft.accentColor ?? "#6366f1"}</span>
+                </div>
+              )}
+            </Section>
+          </div>
+
+          {/* ====== FOOTER ====== */}
+          <div className="sticky bottom-0 flex items-center justify-between border-t border-(--color-border) bg-(--color-bg) px-6 py-4">
             <button
-              onClick={onClose}
-              className="cursor-pointer rounded-xl border border-(--color-border) bg-(--color-surface) px-4 py-2 text-sm font-medium text-(--color-text) transition hover:bg-white/8"
+              onClick={handleReset}
+              className="flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-rose-400/80 transition hover:bg-rose-500/10 hover:text-rose-400"
             >
-              Cancel
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset Profile
             </button>
-            <button
-              onClick={handleSave}
-              className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-white transition hover:opacity-90 active:scale-[0.97]"
-            >
-              <Check className="h-4 w-4" />
-              Save
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={animatedClose}
+                className="cursor-pointer rounded-xl border border-(--color-border) bg-(--color-surface) px-4 py-2 text-sm font-medium text-(--color-text) transition hover:bg-white/8"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-white transition hover:opacity-90 active:scale-[0.97]"
+              >
+                <Check className="h-4 w-4" />
+                Save
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>,
+
+      {/* ====== AVATAR CONTEXT MENU ====== */}
+      {avatarMenuOpen && (
+        <div
+          ref={avatarMenuRef}
+          className="fixed z-[70] w-56 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-2xl"
+          style={{
+            top: typeof window !== "undefined" ? `${Math.max(80, window.innerHeight / 2 - 80)}px` : "80px",
+            left: typeof window !== "undefined" ? `${Math.max(16, window.innerWidth / 2 - 232)}px` : "16px",
+          }}
+        >
+          <ContextMenuItem
+            icon={ImagePlus}
+            label="Change Avatar"
+            onClick={() => {
+              setAvatarMenuOpen(false);
+              setMediaPickerKind("avatar");
+            }}
+          />
+          <ContextMenuItem
+            icon={Sparkles}
+            label="Change Avatar Decoration"
+            disabled
+            subtitle="Coming soon"
+          />
+          {hasCustomAvatar && (
+            <div className="my-1 border-t border-(--color-border)" />
+          )}
+          {hasCustomAvatar && (
+            <ContextMenuItem
+              icon={Trash2}
+              label="Remove Avatar"
+              danger
+              onClick={() => {
+                setAvatarMenuOpen(false);
+                patch({ avatarUrl: null, avatarIsGif: false, avatarPreset: "gamepad" });
+              }}
+            />
+          )}
+          <ContextMenuItem
+            icon={Sparkles}
+            label="Remove Avatar Decoration"
+            disabled
+            subtitle="Coming soon"
+          />
+        </div>
+      )}
+
+      {/* ====== BANNER CONTEXT MENU ====== */}
+      {bannerMenuOpen && (
+        <div
+          ref={bannerMenuRef}
+          className="fixed z-[70] w-56 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-2xl"
+          style={{
+            top: typeof window !== "undefined" ? `${Math.max(80, window.innerHeight / 2 - 80)}px` : "80px",
+            left: typeof window !== "undefined" ? `${Math.max(16, window.innerWidth / 2 - 28)}px` : "16px",
+          }}
+        >
+          <ContextMenuItem
+            icon={ImagePlus}
+            label="Change Banner"
+            onClick={() => {
+              setBannerMenuOpen(false);
+              setMediaPickerKind("banner");
+            }}
+          />
+          <ContextMenuItem
+            icon={Sparkles}
+            label="Change Profile Effect"
+            disabled
+            subtitle="Coming soon"
+          />
+          {hasCustomBanner && (
+            <div className="my-1 border-t border-(--color-border)" />
+          )}
+          {hasCustomBanner && (
+            <ContextMenuItem
+              icon={Trash2}
+              label="Remove Banner"
+              danger
+              onClick={() => {
+                setBannerMenuOpen(false);
+                patch({ bannerUrl: null, bannerIsGif: false, bannerPreset: "midnight" });
+              }}
+            />
+          )}
+          <ContextMenuItem
+            icon={Sparkles}
+            label="Remove Profile Effect"
+            disabled
+            subtitle="Coming soon"
+          />
+        </div>
+      )}
+
+      {/* ====== MEDIA PICKER MODAL ====== */}
+      <ProfileMediaPickerModal
+        kind={mediaPickerKind ?? "avatar"}
+        open={mediaPickerKind !== null}
+        onClose={() => {
+          setMediaPickerKind(null);
+        }}
+        onSelect={handleMediaSelect}
+      />
+    </>,
     document.body
   );
 }
@@ -407,5 +467,48 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h3 className="mb-2.5 text-xs font-semibold uppercase tracking-[0.1em] text-(--color-muted)">{title}</h3>
       <div className="flex flex-col gap-2.5">{children}</div>
     </div>
+  );
+}
+
+function ContextMenuItem({
+  icon: Icon,
+  label,
+  subtitle,
+  disabled,
+  danger,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  subtitle?: string;
+  disabled?: boolean;
+  danger?: boolean;
+  onClick?: () => void;
+}) {
+  if (disabled) {
+    return (
+      <div className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-(--color-muted)/40">
+        <Icon className="h-4 w-4 shrink-0 opacity-40" />
+        <div className="flex flex-col">
+          <span>{label}</span>
+          {subtitle && (
+            <span className="text-[10px] text-(--color-muted)/30">{subtitle}</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+        danger
+          ? "text-rose-400 hover:bg-rose-500/10"
+          : "text-(--color-text) hover:bg-white/8"
+      }`}
+    >
+      <Icon className={`h-4 w-4 shrink-0 ${danger ? "text-rose-400" : "text-(--color-muted)"}`} />
+      <span>{label}</span>
+    </button>
   );
 }

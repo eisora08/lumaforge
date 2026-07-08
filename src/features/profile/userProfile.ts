@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 
+const DEBUG_PROFILE_SAVE = false;
+
 export type UserProfile = {
   displayName: string;
   status: string;
@@ -35,7 +37,9 @@ function loadUserProfile(): UserProfile {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return { ...DEFAULT_USER_PROFILE, ...parsed, updatedAt: Date.now() };
+      const merged = { ...DEFAULT_USER_PROFILE, ...parsed, updatedAt: Date.now() };
+      if (DEBUG_PROFILE_SAVE) console.log("[PROFILE][LOAD] source=localStorage", merged);
+      return merged;
     }
   } catch {}
   return { ...DEFAULT_USER_PROFILE };
@@ -44,6 +48,16 @@ function loadUserProfile(): UserProfile {
 function persistUserProfile(profile: UserProfile): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+    if (DEBUG_PROFILE_SAVE) {
+      console.log("[PROFILE][SAVE]", {
+        displayName: profile.displayName,
+        hasAvatarUrl: !!profile.avatarUrl,
+        hasBannerUrl: !!profile.bannerUrl,
+        avatarIsGif: profile.avatarIsGif,
+        bannerIsGif: profile.bannerIsGif,
+        accentMode: profile.accentMode,
+      });
+    }
   } catch {}
 }
 
@@ -52,10 +66,12 @@ export function getUserProfile(): UserProfile {
 }
 
 export function saveUserProfile(profile: UserProfile): void {
+  if (DEBUG_PROFILE_SAVE) console.log("[PROFILE][SAVE] direct call", profile.displayName);
   persistUserProfile(profile);
 }
 
 export function resetUserProfile(): UserProfile {
+  if (DEBUG_PROFILE_SAVE) console.log("[PROFILE][RESET]");
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch {}

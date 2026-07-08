@@ -70,7 +70,7 @@ export default function Sidebar({
   const isCollapsed = mode === "collapsed";
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
-  const [profile] = useUserProfile();
+  const [profile, patchProfile] = useUserProfile();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
@@ -88,8 +88,17 @@ export default function Sidebar({
         setProfileMenuOpen(false);
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setProfileMenuOpen(false);
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   function handleNavigate(page: AppPage) {
@@ -249,23 +258,21 @@ export default function Sidebar({
 
       {/* Bottom block — shrink-0, pinned at bottom */}
       <div className={`shrink-0 ${
-        showLabels ? "px-4 pt-2 pb-4" : "px-3 pt-2 pb-3"
+        showLabels ? "px-4 pt-1 pb-4" : "px-3 pt-1 pb-3"
       }`}>
-        {/* Profile block */}
+        {/* Profile card — distinct from game rows */}
         <div className="relative">
           <button
             onClick={() => setProfileModalOpen(true)}
-            className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl transition-colors lf-press-effect ${
-              isCollapsed
-                ? "justify-center p-2"
-                : "px-3 py-2.5 hover:bg-white/4"
+            className={`group flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-(--color-border)/30 bg-(--color-surface)/30 p-3 text-left transition hover:border-(--color-border)/60 hover:bg-(--color-surface)/50 hover:ring-1 hover:ring-(--color-accent)/15 ${
+              isCollapsed ? "justify-center" : ""
             }`}
             title={isCollapsed ? `${profile.displayName} — ${profile.status}` : undefined}
           >
             <div className="relative shrink-0">
               <div
-                className={`flex items-center justify-center rounded-full ring-1 ring-white/10 ${
-                  isCollapsed ? "h-9 w-9" : "h-8 w-8"
+                className={`flex items-center justify-center overflow-hidden rounded-full ring-1 ring-white/10 ${
+                  isCollapsed ? "h-10 w-10" : "h-10 w-10"
                 }`}
                 style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
               >
@@ -276,37 +283,21 @@ export default function Sidebar({
                     className="h-full w-full rounded-full object-cover"
                   />
                 ) : (
-                  <span className={isCollapsed ? "text-base" : "text-sm"}>
-                    {avatarPreset?.icon ?? "🎮"}
-                  </span>
+                  <span className="text-lg">{avatarPreset?.icon ?? "🎮"}</span>
                 )}
               </div>
               <span
-                className={`absolute -bottom-0.5 -right-0.5 rounded-full border-2 border-(--color-bg) ${
-                  isCollapsed ? "h-3 w-3" : "h-2.5 w-2.5"
-                }`}
+                className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-(--color-bg)"
                 style={{ background: "var(--color-accent)" }}
               />
             </div>
 
             {!isCollapsed && (
               <div className="flex min-w-0 flex-1 flex-col items-start text-left">
-                <span
-                  className={`text-sm font-medium text-(--color-text) ${
-                    showLabels
-                      ? "lf-sidebar-label lf-sidebar-label-visible"
-                      : "lf-sidebar-label lf-sidebar-label-hidden"
-                  }`}
-                >
+                <span className="text-sm font-semibold text-(--color-text) truncate w-full">
                   {profile.displayName}
                 </span>
-                <span
-                  className={`text-[11px] text-(--color-muted)/70 truncate max-w-[120px] ${
-                    showLabels
-                      ? "lf-sidebar-label lf-sidebar-label-visible"
-                      : "lf-sidebar-label lf-sidebar-label-hidden"
-                  }`}
-                >
+                <span className="text-[11px] text-(--color-muted)/70 truncate max-w-32">
                   {profile.status}
                 </span>
               </div>
@@ -319,7 +310,7 @@ export default function Sidebar({
                   e.stopPropagation();
                   setProfileMenuOpen((p) => !p);
                 }}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted)/40 opacity-0 transition hover:bg-white/8 hover:text-(--color-muted) group-hover:opacity-100"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted)/30 opacity-0 transition hover:bg-white/8 hover:text-(--color-muted) group-hover:opacity-100"
                 aria-label="Profile menu"
               >
                 <Ellipsis className="h-4 w-4" />
@@ -327,11 +318,11 @@ export default function Sidebar({
             )}
           </button>
 
-          {/* Dropdown menu */}
+          {/* Dropdown menu — anchored to ellipsis button corner */}
           {profileMenuOpen && (
             <div
               ref={profileMenuRef}
-              className="absolute bottom-full left-0 mb-1 w-48 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-xl"
+              className="absolute right-0 bottom-full mb-2 w-48 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-2xl z-[100]"
             >
               <button
                 onClick={() => {
@@ -367,7 +358,10 @@ export default function Sidebar({
       <ProfileModal
         open={profileModalOpen}
         profile={profile}
-        onSave={(updated) => saveUserProfile(updated)}
+        onSave={(updated) => {
+          saveUserProfile(updated);
+          patchProfile(updated);
+        }}
         onClose={() => setProfileModalOpen(false)}
       />
 
