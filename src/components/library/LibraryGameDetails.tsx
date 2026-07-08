@@ -48,7 +48,7 @@ import {
   getSteamDbUrl,
 } from "../../utils/steamLinks";
 import toast from "react-hot-toast";
-import AsyncImage from "../common/AsyncImage";
+
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
 
@@ -308,12 +308,10 @@ export default function LibraryGameDetails({
 
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
-  const [heroFallbackPath, setHeroFallbackPath] = useState<string | null>(null);
 
   useEffect(() => {
     if (!rawImageUrl) {
       setImageUrl(undefined);
-      setHeroFallbackPath(null);
       return;
     }
     const resolve = async () => {
@@ -328,14 +326,12 @@ export default function LibraryGameDetails({
         if (pathAppIdMatch && pathAppIdMatch[1] !== game.appId) {
           console.log(`[MEDIA][BLOCKED] reason=cross-appid-media currentAppid=${game.appId} pathAppid=${pathAppIdMatch[1]} path=${resolved}`);
           setImageUrl(undefined);
-          setHeroFallbackPath(null);
           return;
         }
       }
       const isLocal = isLocalPath(resolved);
       const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
       setImageUrl(url);
-      setHeroFallbackPath(isLocal ? resolved : null);
     };
     resolve();
   }, [rawImageUrl, game.appId]);
@@ -976,13 +972,8 @@ export default function LibraryGameDetails({
   if (loading) {
     return (
       <div className="flex h-full flex-col overflow-y-auto">
-        <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
-          <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
-            <div className="h-4 w-32 animate-pulse rounded bg-white/10" />
-          </div>
-        </div>
-        <div className="h-72 animate-pulse bg-white/5 lg:h-96" />
-        <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
+        <div className="aspect-[21/9] min-h-[340px] max-h-[520px] animate-pulse bg-white/5" />
+        <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
           <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
             <div className="mb-2 h-9 w-24 animate-pulse rounded-xl bg-white/10" />
             <div className="flex flex-wrap gap-x-5 gap-y-1">
@@ -1017,56 +1008,79 @@ export default function LibraryGameDetails({
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      {/* Back bar */}
-      <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
-        <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex cursor-pointer items-center gap-2 text-sm text-(--color-muted) transition hover:text-(--color-text) focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Library
-          </button>
-        </div>
-      </div>
+      {/* Hero banner — Steam-style header */}
+      <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
+        {/* Back to Library — subtle at idle, lights up with theme accent */}
+        <button
+          type="button"
+          onClick={onBack}
+          className="absolute left-4 top-4 z-40 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-black/15 px-3 py-1.5 text-sm text-white/60 backdrop-blur-sm transition-all hover:bg-(--color-accent)/85 hover:text-white hover:shadow-lg hover:shadow-(--color-accent)/25 focus-visible:ring-2 focus-visible:ring-(--color-accent)/60"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Library
+        </button>
 
-      {/* Hero banner */}
-      <div className="relative h-72 shrink-0 overflow-hidden bg-white/5 lg:h-96">
-        <AsyncImage
-          src={imageUrl}
-          alt={detailTitle}
-          className="absolute inset-0 h-full w-full"
-          fallbackLocalPath={heroFallbackPath}
-          fallback={
-            <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-white/10 via-white/5 to-black/50">
+        {/* Layer 1 — Steam-style colorful blurred backdrop */}
+        {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
+            object-position: center ensures the same crop region as the sharp image. */}
+        <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt=""
+              className="h-full w-full scale-105 object-cover blur-2xl"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-black/40">
               <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
             </div>
-          }
-        />
-        <div className="absolute inset-0 bg-linear-to-t from-black/95 via-black/50 to-transparent" />
+          )}
+        </div>
 
-        {/* Logo overlay */}
-        {logoUrl ? (
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+        {/* Layer 2 — Main sharp image centered, with graduated side fade */}
+        {/* 0-4% transparent buffer → 4-12% linear fade-in → 12-88% full opacity → 88-96% fade-out → 96-100% transparent.
+            Wider 8% transition zone creates a smooth, invisible seam with the blurred backdrop. */}
+        <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
+          {imageUrl ? (
             <img
-              src={logoUrl}
-              alt={`${detailTitle} logo`}
-              loading="lazy"
-              decoding="async"
-              className="max-h-28 max-w-[300px] object-contain drop-shadow-2xl lg:max-h-36 lg:max-w-[420px]"
+              src={imageUrl}
+              alt={detailTitle}
+              className="block h-full w-auto max-w-none shrink-0 [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]"
             />
-          </div>
-        ) : null}
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
+            </div>
+          )}
+        </div>
 
-        <div className="absolute bottom-0 left-0 right-0">
-          <div className="mx-auto w-full max-w-[1440px] px-5 pb-5 lg:pb-6">
-            <h1 className="line-clamp-1 text-2xl font-black text-white drop-shadow-sm lg:text-3xl">
+        {/* Layer 3 — Gentle side vignette + bottom gradient */}
+        {/* Light enough that the colorful blur still shows through */}
+        <div className="absolute inset-y-0 left-0 z-20 w-[clamp(40px,5vw,100px)] bg-linear-to-r from-black/10 to-transparent pointer-events-none" />
+        <div className="absolute inset-y-0 right-0 z-20 w-[clamp(40px,5vw,100px)] bg-linear-to-l from-black/10 to-transparent pointer-events-none" />
+        {/* Bottom: readability gradient with minimal darkening */}
+        <div className="absolute inset-x-0 bottom-0 z-20 h-[clamp(80px,15vh,180px)] bg-linear-to-t from-black/60 via-black/5 to-transparent pointer-events-none" />
+
+        {/* Bottom content: logo + title */}
+        <div className="absolute bottom-0 left-0 right-0 z-30">
+          <div className="mx-auto w-full max-w-[1440px] px-5 pb-4 lg:pb-5">
+            {logoUrl ? (
+              <div className="mb-2">
+                <img
+                  src={logoUrl}
+                  alt={`${detailTitle} logo`}
+                  loading="lazy"
+                  decoding="async"
+                  className="max-h-14 max-w-[180px] object-contain drop-shadow-2xl lg:max-h-20 lg:max-w-[300px]"
+                />
+              </div>
+            ) : null}
+            <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
               {detailTitle}
             </h1>
 
             {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
-              <p className="mt-1 text-sm text-white/70">
+              <p className="mt-0.5 text-sm text-white/70">
                 {(localDetailsData as any)?.developer || game.metadata?.developer}
               </p>
             )}
@@ -1074,8 +1088,8 @@ export default function LibraryGameDetails({
         </div>
       </div>
 
-      {/* Compact action/stats row */}
-      <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
+      {/* Compact action/stats row with gradient transition */}
+      <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
         <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
