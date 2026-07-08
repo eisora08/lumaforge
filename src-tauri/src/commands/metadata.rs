@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use crate::models::steam_app_metadata::SteamAppMetadata;
 
+const DEBUG_STEAM_MEDIA: bool = false;
+
 #[tauri::command]
 pub fn resolve_steam_app_metadata(
     app_ids: Vec<u32>,
@@ -34,7 +36,7 @@ pub fn resolve_steam_app_metadata(
             url.push_str(&format!("&cc={}", cc));
         }
 
-        if language.is_some() || country.is_some() {
+        if DEBUG_STEAM_MEDIA && (language.is_some() || country.is_some()) {
             println!("[STORE][STEAM_MEDIA_FETCH] appid={} language={:?} country={:?} url={}", app_id, language, country, url);
         }
 
@@ -106,13 +108,15 @@ pub fn resolve_steam_app_metadata(
                         .join(", ")
                 })
                 .unwrap_or_default();
-            if has_movies {
-                println!("[STORE][STEAM_APPDETAILS_MOVIES] appid={} count={} names={}", app_id, movies_count, movies_names);
-                if language.is_some() || country.is_some() {
-                    println!("[STORE][STEAM_MEDIA_FETCH_RESULT] appid={} language={:?} movies={} names={}", app_id, language, movies_count, movies_names);
+            if DEBUG_STEAM_MEDIA {
+                if has_movies {
+                    println!("[STORE][STEAM_APPDETAILS_MOVIES] appid={} count={} names={}", app_id, movies_count, movies_names);
+                    if language.is_some() || country.is_some() {
+                        println!("[STORE][STEAM_MEDIA_FETCH_RESULT] appid={} language={:?} movies={} names={}", app_id, language, movies_count, movies_names);
+                    }
+                } else {
+                    println!("[STORE][STEAM_APPDETAILS_KEYS] appid={} has_movies=false keys={:?}", app_id, keys);
                 }
-            } else {
-                println!("[STORE][STEAM_APPDETAILS_KEYS] appid={} has_movies=false keys={:?}", app_id, keys);
             }
         }
 

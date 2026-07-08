@@ -1,7 +1,10 @@
 import { resolveSteamAppMetadata, readStoreGameDetails, writeStoreGameDetails } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
+const ENABLE_VERBOSE_APPDETAILS_FETCH = false;
 const inMemoryCache = new Map<number, SteamAppMetadata>();
+const metadataInFlight = new Map<string, Promise<Record<number, SteamAppMetadata>>>();
+const mediaInFlight = new Map<string, Promise<Record<number, SteamAppMetadata>>>();
 
 export function loadMetadataCache(): Record<string, SteamAppMetadata> {
   const result: Record<string, SteamAppMetadata> = {};
@@ -93,17 +96,38 @@ export async function resolveGameMetadata(
     return result;
   }
 
-  const resolved = await resolveSteamAppMetadata(toFetch);
+  // Dedup in-flight metadata requests for the same batch
+  const fetchKey = toFetch.join(",");
+  const pending = metadataInFlight.get(fetchKey);
+  if (pending) {
+    const resolved = await pending;
+    for (const [id, meta] of Object.entries(resolved)) {
+      result[Number(id)] = meta;
+    }
+    return result;
+  }
 
-  for (const meta of resolved) {
+  const fetchPromise = resolveSteamAppMetadata(toFetch).then((resolved) => {
+    const map: Record<number, SteamAppMetadata> = {};
+    for (const meta of resolved) {
+      map[meta.app_id] = meta;
+    }
+    return map;
+  });
+  metadataInFlight.set(fetchKey, fetchPromise);
+  const resolvedMap = await fetchPromise;
+
+  for (const [appId, meta] of Object.entries(resolvedMap)) {
     const moviesCount = meta.movies?.length ?? 0;
     const moviesNames = meta.movies?.map((m) => `"${m.name}"`).join(", ") ?? "";
-    console.log(`[STORE][STEAM_APPDETAILS_FETCH] appid=${meta.app_id} resolved=${meta.resolved} movies=${moviesCount} names=${moviesNames}`);
+    if (ENABLE_VERBOSE_APPDETAILS_FETCH) {
+      console.log(`[STORE][STEAM_APPDETAILS_FETCH] appid=${meta.app_id} resolved=${meta.resolved} movies=${moviesCount} names=${moviesNames}`);
+    }
     if (meta.resolved) {
       inMemoryCache.set(meta.app_id, meta);
       saveToAppCache(meta.app_id, meta);
     }
-    result[meta.app_id] = meta;
+    result[Number(appId)] = meta;
   }
 
   for (const appId of toFetch) {
@@ -112,6 +136,7 @@ export async function resolveGameMetadata(
     }
   }
 
+  metadataInFlight.delete(fetchKey);
   return result;
 }
 
@@ -148,44 +173,69 @@ export async function resolveGameMetadataForMedia(
     return result;
   }
 
-  // Step A — Try English media metadata
-  console.log(`[STORE][MEDIA_METADATA] appIds=[${toFetch.join(",")}] trying language=english cc=us`);
-  const englishResult = await resolveSteamAppMetadata(toFetch, "english", "US");
-
-  const needsFallback: number[] = [];
-
-  for (const meta of englishResult) {
-    const count = meta.movies?.length ?? 0;
-    if (meta.resolved && count > 0) {
-      console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=english movies=${count}`);
-      englishMediaCache.set(meta.app_id, meta);
-      result[meta.app_id] = meta;
-    } else {
-      needsFallback.push(meta.app_id);
+  // Dedup in-flight media metadata requests for the same batch
+  const mediaKey = `media:${toFetch.join(",")}`;
+  const mediaPending = mediaInFlight.get(mediaKey);
+  if (mediaPending) {
+    const resolved = await mediaPending;
+    for (const [id, meta] of Object.entries(resolved)) {
+      if (meta.resolved || id) {
+        result[Number(id)] = meta;
+      }
     }
+    return result;
   }
 
-  // Step B — Fallback to default language for those without English movies
-  if (needsFallback.length > 0) {
-    console.log(`[STORE][MEDIA_METADATA] appIds=[${needsFallback.join(",")}] fallback default language`);
-    const fallbackResult = await resolveSteamAppMetadata(needsFallback);
-    for (const meta of fallbackResult) {
+  const mediaPromise = (async () => {
+    // Step A — Try English media metadata
+    console.log(`[STORE][MEDIA_METADATA] appIds=[${toFetch.join(",")}] trying language=english cc=us`);
+    const englishResult = await resolveSteamAppMetadata(toFetch, "english", "US");
+
+    const needsFallback: number[] = [];
+    const stepResult: Record<number, SteamAppMetadata> = {};
+
+    for (const meta of englishResult) {
       const count = meta.movies?.length ?? 0;
-      console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=default movies=${count}`);
-      englishMediaCache.set(meta.app_id, meta);
-      result[meta.app_id] = meta;
+      if (meta.resolved && count > 0) {
+        console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=english movies=${count}`);
+        englishMediaCache.set(meta.app_id, meta);
+        stepResult[meta.app_id] = meta;
+      } else {
+        needsFallback.push(meta.app_id);
+      }
     }
-  }
 
-  // Step C — Fill any appIds that neither fetch could resolve
-  for (const appId of toFetch) {
-    if (!result[appId]) {
-      const placeholder = createFallbackMetadata(appId);
-      englishMediaCache.set(appId, placeholder);
-      result[appId] = placeholder;
+    // Step B — Fallback to default language for those without English movies
+    if (needsFallback.length > 0) {
+      console.log(`[STORE][MEDIA_METADATA] appIds=[${needsFallback.join(",")}] fallback default language`);
+      const fallbackResult = await resolveSteamAppMetadata(needsFallback);
+      for (const meta of fallbackResult) {
+        const count = meta.movies?.length ?? 0;
+        console.log(`[STORE][MEDIA_METADATA] appid=${meta.app_id} language=default movies=${count}`);
+        englishMediaCache.set(meta.app_id, meta);
+        stepResult[meta.app_id] = meta;
+      }
     }
-  }
 
+    // Step C — Fill any appIds that neither fetch could resolve
+    for (const appId of toFetch) {
+      if (!stepResult[appId]) {
+        const placeholder = createFallbackMetadata(appId);
+        englishMediaCache.set(appId, placeholder);
+        stepResult[appId] = placeholder;
+      }
+    }
+
+    return stepResult;
+  })();
+
+  mediaInFlight.set(mediaKey, mediaPromise);
+  const stepResult = await mediaPromise;
+  mediaInFlight.delete(mediaKey);
+
+  for (const [id, meta] of Object.entries(stepResult)) {
+    result[Number(id)] = meta;
+  }
   return result;
 }
 

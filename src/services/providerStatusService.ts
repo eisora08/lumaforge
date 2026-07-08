@@ -21,6 +21,28 @@ export interface HubcapProviderConfig {
 
 const ENABLE_VERBOSE_PROVIDER_STATUS_LOGS = false;
 
+// Session-level cache for loadProviderStatus: key = appId:providerId, value = ProviderStatusFile | null
+const _loadCache = new Map<string, ProviderStatusFile | null>();
+const _loadInFlight = new Map<string, Promise<ProviderStatusFile | null>>();
+
+export function clearProviderStatusCache(appId?: string, providerId?: string): void {
+  if (appId && providerId) {
+    const key = `${appId}:${normalizeProviderId(providerId)}`;
+    _loadCache.delete(key);
+    _loadInFlight.delete(key);
+  } else if (appId) {
+    for (const key of _loadCache.keys()) {
+      if (key.startsWith(`${appId}:`)) _loadCache.delete(key);
+    }
+    for (const key of _loadInFlight.keys()) {
+      if (key.startsWith(`${appId}:`)) _loadInFlight.delete(key);
+    }
+  } else {
+    _loadCache.clear();
+    _loadInFlight.clear();
+  }
+}
+
 export interface ProviderStatusOptions {
   /** Configured Lua directory from Settings → Paths → config/lua */
   luaDir?: string;
@@ -91,27 +113,56 @@ export function providerStatusLogPath(appId: string, providerId: string): string
   return `store/provider-status/${appId}/${normalizeProviderId(providerId)}.json`;
 }
 
-/** Load cached provider-status JSON from disk. Returns null if not found or corrupt. */
+/** Load cached provider-status JSON from disk. Returns null if not found or corrupt.
+ *  Session-level cache + in-flight dedup prevents redundant reads during the same session.
+ */
 export async function loadProviderStatus(
   appId: string,
   providerId: string,
 ): Promise<ProviderStatusFile | null> {
   const normalizedId = normalizeProviderId(providerId);
+  const cacheKey = `${appId}:${normalizedId}`;
 
-  try {
-    const data = await readProviderStatus(appId, normalizedId);
+  // Session cache hit
+  if (_loadCache.has(cacheKey)) {
     if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
-      console.log(
-        `[PROVIDER_STATUS][LOAD] appId=${appId} provider=${normalizedId} found=${data !== null}`,
-      );
+      console.log(`[PROVIDER_STATUS][LOAD_CACHE] appId=${appId} provider=${normalizedId} cached=${_loadCache.get(cacheKey) !== null}`);
     }
-    return data;
-  } catch (err) {
-    console.warn(
-      `[PROVIDER_STATUS][LOAD] appId=${appId} provider=${normalizedId} error=${err}`,
-    );
-    return null;
+    return _loadCache.get(cacheKey) ?? null;
   }
+
+  // In-flight dedup
+  const inFlight = _loadInFlight.get(cacheKey);
+  if (inFlight) {
+    if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
+      console.log(`[PROVIDER_STATUS][LOAD_INFLIGHT] appId=${appId} provider=${normalizedId} waiting`);
+    }
+    return inFlight;
+  }
+
+  const promise = (async () => {
+    try {
+      const data = await readProviderStatus(appId, normalizedId);
+      _loadCache.set(cacheKey, data);
+      if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
+        console.log(
+          `[PROVIDER_STATUS][LOAD] appId=${appId} provider=${normalizedId} found=${data !== null}`,
+        );
+      }
+      return data;
+    } catch (err) {
+      console.warn(
+        `[PROVIDER_STATUS][LOAD] appId=${appId} provider=${normalizedId} error=${err}`,
+      );
+      _loadCache.set(cacheKey, null);
+      return null;
+    } finally {
+      _loadInFlight.delete(cacheKey);
+    }
+  })();
+
+  _loadInFlight.set(cacheKey, promise);
+  return promise;
 }
 
 /** Save (write) a full ProviderStatusFile to disk as sidecar JSON. */
@@ -125,6 +176,8 @@ export async function saveProviderStatus(
 
   try {
     await writeProviderStatus(appId, normalizedId, payload);
+    // Invalidate session cache so next loadProviderStatus reads fresh data
+    clearProviderStatusCache(appId, providerId);
     if (ENABLE_VERBOSE_PROVIDER_STATUS_LOGS) {
       console.log(
         `[PROVIDER_STATUS][SAVE] appId=${appId} provider=${normalizedId} path=${providerStatusLogPath(appId, providerId)}`,
