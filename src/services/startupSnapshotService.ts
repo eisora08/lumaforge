@@ -56,9 +56,10 @@ let _fullRebuildDeferStart: number | null = null;  // first defer timestamp for 
 
 // Specific appIds for targeted debug logging regardless of ENABLE_VERBOSE flag
 const DEBUG_APP_IDS = new Set(["678950", "851850", "601150", "3017860"]);
+const DEBUG_BOOT_SNAPSHOT_MEDIA = false;
 
 function debugAppLog(appId: string, message: string): void {
-  if (DEBUG_APP_IDS.has(appId)) {
+  if (DEBUG_BOOT_SNAPSHOT_MEDIA && DEBUG_APP_IDS.has(appId)) {
     console.log(`[BootSnapshot:${appId}] ${message}`);
   }
 }

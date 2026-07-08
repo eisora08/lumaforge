@@ -268,12 +268,14 @@ pub fn write_provider_status(
     fs::write(&path, &payload)
         .map_err(|e| format!("Failed to write provider-status file: {}", e))?;
 
-    println!(
-        "[PROVIDER_STATUS][WRITE_OK] appid={} provider={} path=\"{}\"",
-        app_id,
-        provider_id,
-        path.display()
-    );
+    if DEBUG_PROVIDER_STATUS {
+        println!(
+            "[PROVIDER_STATUS][WRITE_OK] appid={} provider={} path=\"{}\"",
+            app_id,
+            provider_id,
+            path.display()
+        );
+    }
 
     Ok(())
 }

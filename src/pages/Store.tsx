@@ -102,6 +102,8 @@ import { downloadFromSource as sharedDownloadFromSource } from "../features/down
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 const DEBUG_STORE_RENDER_VERBOSE = false;
+const DEBUG_STORE_BADGE_DECISIONS = false;
+const DEBUG_STORE_DISCOVERY = false;
 
 // Module-level flag: prevents auto-open of pending detail from re-firing
 // when the user navigates back to Store later in the same session.
@@ -436,7 +438,9 @@ export default function Store() {
     invalidateStoreDiscoverCache();
     invalidateDiscoveryIndex();
   } else if (cachedDiscover && cachedDiscover.scoringVersion === DISCOVER_SCORING_VERSION) {
-    console.log(`[STORE][DISCOVERY_CACHE_VERSION] version=${DISCOVER_SCORING_VERSION} valid=true`);
+    if (DEBUG_STORE_DISCOVERY) {
+      console.log(`[STORE][DISCOVERY_CACHE_VERSION] version=${DISCOVER_SCORING_VERSION} valid=true`);
+    }
   }
 
   // Invalidate discovery index if index version changed
@@ -1132,7 +1136,7 @@ export default function Store() {
       const meta = storeMetadataByAppId[Number(g.appId)];
       return meta?.genres?.length;
     }).length;
-    if (metaCount > 0) {
+    if (metaCount > 0 && DEBUG_STORE_DISCOVERY) {
       console.log(`[STORE][GENRE_INDEX_READY] source=metadata games=${metaCount} topGamesWithGenres=${gamesWithMetaCount}`);
     }
     for (const game of topGames) {
@@ -1207,16 +1211,16 @@ export default function Store() {
       );
       if (items.length >= 2) {
         sections.push({ id: "top-picks", title: "Top Picks", type: "featured", items, source: "catalog" });
-        console.log(`[STORE][DISCOVERY_SECTION] name=Top Picks count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_SECTION] name=Top Picks count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
       } else {
-        console.log(`[STORE][DISCOVERY_FALLBACK] section=Top Picks reason=not-enough-unique items=${items.length}`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_FALLBACK] section=Top Picks reason=not-enough-unique items=${items.length}`);
       }
     } else if (!compiledDiscoveryIndex && !hasResolvedReviews) {
       // No index yet AND no reviews loaded — still waiting for data
-      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Top Picks reason=waiting-for-reviews`);
+      if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Top Picks reason=waiting-for-reviews`);
     } else {
       // Reviews are loaded but no candidates passed the quality gate — hide section
-      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Top Picks reason=no-qualified-candidates`);
+      if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Top Picks reason=no-qualified-candidates`);
     }
 
     // --- New and Noteworthy (by release date) ---
@@ -1237,13 +1241,13 @@ export default function Store() {
 
     // --- Genre rails (Action, Indie, Racing, Shooter, RPG, Adventure) with adaptive threshold ---
     const minGenreItems = metaCount < 100 ? 2 : 4;
-    if (metaCount > 0 && metaCount < 100) {
+    if (metaCount > 0 && metaCount < 100 && DEBUG_STORE_DISCOVERY) {
       console.log(`[STORE][GENRE_THRESHOLD] metaCount=${metaCount} minItems=${minGenreItems}`);
     }
     for (const genre of DISPLAY_GENRES) {
       const candidates = rawGenreGroups.get(genre);
       if (!candidates || candidates.length < minGenreItems) {
-        console.log(`[STORE][DISCOVERY_NO_SECTION] section=${genre} reason=no-qualified-candidates`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=${genre} reason=no-qualified-candidates`);
         continue;
       }
       // Quality gate: only include candidates with resolved reviews + review threshold
@@ -1263,7 +1267,7 @@ export default function Store() {
           })
         : qualityGated.length >= minGenreItems ? qualityGated : candidates;
       if (effective.length < minGenreItems && hasResolvedReviews) {
-        console.log(`[STORE][DISCOVERY_NO_SECTION] section=${genre} reason=no-qualified-candidates`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=${genre} reason=no-qualified-candidates`);
         continue;
       }
       // First try excluding globally usedIds; fallback to raw deduped list
@@ -1274,11 +1278,11 @@ export default function Store() {
         : dedupedCandidates.slice(0, 20);
       if (items.length >= minGenreItems) {
         sections.push({ id: `genre-${genre.toLowerCase()}`, title: genre, type: "genre", items, source: "genre" });
-        if (items.length <= 10) {
+        if (items.length <= 10 && DEBUG_STORE_DISCOVERY) {
           console.log(`[STORE][DISCOVERY_SECTION] name=${genre} count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
         }
       } else {
-        console.log(`[STORE][DISCOVERY_NO_SECTION] section=genre-${genre.toLowerCase()} reason=no-qualified-candidates`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=genre-${genre.toLowerCase()} reason=no-qualified-candidates`);
       }
     }
 
@@ -1293,7 +1297,7 @@ export default function Store() {
       const unique = genreCards.filter((g) => { if (seen.has(g.appId)) return false; seen.add(g.appId); return true; }).slice(0, 20);
       if (unique.length >= minGenreItems) {
         sections.push({ id: "popular-genres", title: "Popular Genres", type: "rail", items: unique, source: "catalog" });
-        console.log(`[STORE][POPULAR_GENRES_READY] genres=${availableGenres.length} items=${unique.length}`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][POPULAR_GENRES_READY] genres=${availableGenres.length} items=${unique.length}`);
       }
     }
 
@@ -1309,12 +1313,12 @@ export default function Store() {
       );
       if (items.length > 0) {
         sections.push({ id: "featured", title: "Featured", type: "featured", items, source: "catalog" });
-        console.log(`[STORE][DISCOVERY_SECTION] name=Featured count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_SECTION] name=Featured count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
       }
     } else if (!compiledDiscoveryIndex && !hasResolvedReviews) {
-      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=waiting-for-reviews`);
+      if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=waiting-for-reviews`);
     } else {
-      console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=no-qualified-candidates`);
+      if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=no-qualified-candidates`);
     }
 
     // --- Lua Ready Picks (catalog games with available download sources) ---
@@ -2753,7 +2757,7 @@ export default function Store() {
 
     candidates.sort((a, b) => b.score - a.score);
     const selected = candidates.slice(0, MAX_BADGES).map(({ type, label }) => ({ type, label }));
-    if (selected.length > 0) {
+    if (selected.length > 0 && DEBUG_STORE_BADGE_DECISIONS) {
       console.log(`[STORE][BADGE_DECISION] appid=${appId} badges=${JSON.stringify(selected)} reasons=${JSON.stringify(candidates.map(c => c.type + "=" + c.score))}`);
     }
     return selected;

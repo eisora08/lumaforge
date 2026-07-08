@@ -325,7 +325,7 @@ export default function StoreGameSummaryPanel({
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-2xl border border-(--surface-active-border) bg-black/20">
-        <div className="aspect-[16/9] overflow-hidden bg-white/5">
+        <div className="aspect-video overflow-hidden bg-white/5">
           <AsyncImage
             src={previewImageUrl || game.imageUrl}
             alt={game.title}

@@ -2,6 +2,8 @@ import { readProviderStatus } from "./tauri";
 import type { ProviderStatusFile } from "./tauri";
 import { normalizeProviderId } from "./providerStatusService";
 
+const DEBUG_PROVIDER_STATUS_WRITES = false;
+
 // --- Types ---
 
 export type UpdateStatus = "update-available" | "up-to-date" | "unknown" | "provider-unavailable" | "auth-required" | "provider-updating" | "provider-needs-refresh";
@@ -262,11 +264,12 @@ export async function notifyProviderStatusWritten(appId: string, providerId: str
   }
   _rebuildSummary();
 
-  console.log(`[PROVIDER_STATUS][WRITE_OK] appid=${appId} provider=${normalizedId} result=${statusFile?.result?.status ?? "unknown"} reason=${statusFile?.result?.reason ?? "n/a"}`);
-  console.log(`[PROVIDER_STATUS][CACHE_UPDATE] appid=${appId} provider=${normalizedId} status=${statusFile?.result?.status ?? "unknown"} reason=${statusFile?.result?.reason ?? "n/a"}`);
-
-  if (sc > 0) {
-    console.log(`[PROVIDER_STATUS][SUBSCRIBERS_NOTIFY] appid=${appId} provider=${normalizedId} subscribers=${sc}`);
+  if (DEBUG_PROVIDER_STATUS_WRITES) {
+    console.log(`[PROVIDER_STATUS][WRITE_OK] appid=${appId} provider=${normalizedId} result=${statusFile?.result?.status ?? "unknown"} reason=${statusFile?.result?.reason ?? "n/a"}`);
+    console.log(`[PROVIDER_STATUS][CACHE_UPDATE] appid=${appId} provider=${normalizedId} status=${statusFile?.result?.status ?? "unknown"} reason=${statusFile?.result?.reason ?? "n/a"}`);
+    if (sc > 0) {
+      console.log(`[PROVIDER_STATUS][SUBSCRIBERS_NOTIFY] appid=${appId} provider=${normalizedId} subscribers=${sc}`);
+    }
   }
 
   _notify();
