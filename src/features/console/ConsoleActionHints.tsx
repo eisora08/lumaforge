@@ -20,7 +20,7 @@ export default function ConsoleActionHints({ hintStyle, visible = true }: Props)
 
   const items = [
     { raw: hints.selectPlay, primary: true },
-    { raw: hints.details, primary: false },
+    { raw: hints.details, primary: !hints.selectPlay },
     { raw: hints.options, primary: false },
     { raw: hints.search, primary: false },
   ];

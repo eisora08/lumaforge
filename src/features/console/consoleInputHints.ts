@@ -12,7 +12,7 @@ export type ConsoleInputHints = {
 const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints> = {
   xbox: {
     selectPlay: "[A] Play",
-    details: "[X] Details",
+    details: "[X / Enter] Details",
     search: "[Y] Search",
     options: "[Menu] Options",
     back: "[B] Back",
@@ -20,17 +20,17 @@ const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints
   },
   playstation: {
     selectPlay: "[✕] Play",
-    details: "[▢] Details",
+    details: "[▢ / Enter] Details",
     search: "[△] Search",
     options: "[Options] Options",
     back: "[○] Back",
     filter: "[L1/R1] Filter",
   },
   keyboard: {
-    selectPlay: "[Enter] Play",
+    selectPlay: "",
     details: "[Enter] Details",
     search: "[/] Search",
-    options: "[Esc] Options",
+    options: "[O] Options",
     back: "[Esc] Back",
     filter: "[F] Filter",
   },

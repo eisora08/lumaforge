@@ -5,7 +5,7 @@ import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
 import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { getGameAchievementSummary } from "./consoleGameStats";
+import { getGameAchievementSummary, formatPlaytime, formatRelativeTime } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleSpotlightDock from "./ConsoleSpotlightDock";
@@ -64,22 +64,6 @@ const SECTION_LABELS: Record<string, string> = {
   "All Games": "All Games",
 };
 
-function formatPlaytime(seconds: number): string | null {
-  if (seconds < 60) return null;
-  const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${mins}m`;
-  return `${mins}m`;
-}
-
-function formatRelativeTime(ts: number): string {
-  const diff = Date.now() / 1000 - ts;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  const days = Math.floor(diff / 86400);
-  return days <= 7 ? `${days}d ago` : new Date(ts * 1000).toLocaleDateString();
-}
 
 type Props = {
   focusedGame: LibraryGame | null;

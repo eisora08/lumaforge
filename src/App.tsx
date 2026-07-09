@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import { countRender, logRenderSummary, startRenderSession, markNavigation } from "./services/perfCounters";
 
 import AppLayout from "./components/layout/AppLayout";
@@ -65,6 +65,9 @@ function restoreActivePage(): AppPage {
 
 const NAV_PERF_ENABLED = true;
 const DEBUG_ROUTE_RENDER = false;
+const DEBUG_ROUTE_SHELL = false;
+
+
 
 function SessionOverlayWrapper() {
   const { overlayEvent, clearOverlay } = useGameSession();
@@ -111,7 +114,6 @@ function App() {
   const [showModeSwitch, setShowModeSwitch] = useState(false);
   const [modeSwitchMode, setModeSwitchMode] = useState<ModeSwitchMode>("enter-console");
   const modeSwitchKeyRef = useRef(0);
-  const [, startTransition] = useTransition();
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
 
@@ -179,9 +181,10 @@ function App() {
 
     pauseBackgroundFill();
 
-    startTransition(() => {
-      setActivePage(page);
-    });
+    // CRITICAL: setActivePage must be synchronous — do NOT wrap in startTransition.
+    // Deferring activePage causes a race window where ModeSwitchSplash disappears
+    // before the new route mounts, leaving lf-route-visible empty.
+    setActivePage(page);
 
     if (NAV_PERF_ENABLED) {
       requestAnimationFrame(() => {
@@ -196,42 +199,61 @@ function App() {
   }
 
   function renderPage() {
-    // Phase 2: Confirm only the active route page renders
     if (DEBUG_ROUTE_RENDER && import.meta.env.DEV) {
-      console.log(`[ROUTE][PAGE_RENDER] active=${activePage} rendered=${activePage}`);
+      console.log(`[ROUTE][PAGE_RENDER] active=${activePage}`);
     }
+    let pageComponent: React.ReactNode = null;
     switch (activePage) {
       case "home":
-        return <Home onNavigate={handleNavigate} />;
+        pageComponent = <Home onNavigate={handleNavigate} />;
+        break;
       case "library":
-        return <Library onNavigate={handleNavigate} />;
+        pageComponent = <Library onNavigate={handleNavigate} />;
+        break;
       case "games":
-        return <Games />;
+        pageComponent = <Games />;
+        break;
       case "store":
-        return <Store />;
+        pageComponent = <Store />;
+        break;
       case "global-search":
-        return <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
+        pageComponent = <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
+        break;
       case "downloads":
-        return <Downloads onNavigate={handleNavigate} />;
+        pageComponent = <Downloads onNavigate={handleNavigate} />;
+        break;
       case "achievements":
-        return <Achievements />;
+        pageComponent = <Achievements />;
+        break;
       case "activity":
-        return <Activity />;
+        pageComponent = <Activity />;
+        break;
       case "verification":
-        return <Verification />;
+        pageComponent = <Verification />;
+        break;
       case "tools":
-        return <Tools />;
+        pageComponent = <Tools />;
+        break;
       case "settings":
-        return <Settings />;
+        pageComponent = <Settings />;
+        break;
       case "game-details":
-        return <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
+        pageComponent = <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
+        break;
       case "library-game-detail":
-        return <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
+        pageComponent = <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
+        break;
       case "console":
-        return <ConsoleModePage onNavigate={handleNavigate} />;
+        pageComponent = <ConsoleModePage onNavigate={handleNavigate} />;
+        break;
       default:
-        return <Home />;
+        pageComponent = <Home />;
+        break;
     }
+    if (DEBUG_ROUTE_SHELL) {
+      console.log(`[ROUTE][RENDER] activePage=${activePage} hasComponent=${!!pageComponent}`);
+    }
+    return pageComponent;
   }
 
 
@@ -244,7 +266,12 @@ function App() {
         <GameSessionHUD onNavigate={handleNavigate} />
         <AppLayout activePage={activePage} onNavigate={handleNavigate} isConsoleMode={activePage === "console"}>
           <AppRouteTransition routeKey={activePage}>
-            {renderPage()}
+            {renderPage() ?? (
+              <div className="flex h-full items-center justify-center text-(--color-muted)">
+                {DEBUG_ROUTE_SHELL && console.warn(`[ROUTE][EMPTY] activePage=${activePage} renderPage returned null`)}
+                <span>Page failed to render</span>
+              </div>
+            )}
           </AppRouteTransition>
         </AppLayout>
       </GameDetailsProvider>

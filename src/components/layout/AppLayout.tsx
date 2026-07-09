@@ -8,6 +8,7 @@ import { GameActivityProvider } from "../../context/GameActivityContext";
 import type { AppPage } from "../../types/navigation";
 import type { SidebarMode } from "./Sidebar";
 import { countRender } from "../../services/perfCounters";
+import RouteErrorBoundary from "../common/RouteErrorBoundary";
 
 type AppLayoutProps = {
   activePage: AppPage;
@@ -46,7 +47,9 @@ export default function AppLayout({
         <div className="lf-backdrop" />
         <LibraryGamesProvider>
           <GameActivityProvider>
-            {children}
+            <RouteErrorBoundary>
+              {children}
+            </RouteErrorBoundary>
           </GameActivityProvider>
         </LibraryGamesProvider>
       </div>
@@ -146,7 +149,9 @@ export default function AppLayout({
               />
 
               <main className="min-h-0 flex-1 overflow-y-auto">
-                {children}
+                <RouteErrorBoundary>
+                  {children}
+                </RouteErrorBoundary>
               </main>
             </SearchProvider>
           </div>

@@ -264,8 +264,11 @@ export default function Sidebar({
       }`}>
         {/* Profile card — distinct from game rows */}
         <div className="relative">
-          <button
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setProfileModalOpen(true)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setProfileModalOpen(true); } }}
             className={`group flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-(--color-border)/30 bg-(--color-surface) p-3 text-left transition hover:border-(--color-border)/60 hover:brightness-110 hover:ring-1 hover:ring-(--color-accent)/15 ${
               isCollapsed ? "justify-center" : ""
             }`}
@@ -318,7 +321,7 @@ export default function Sidebar({
                 <Ellipsis className="h-4 w-4" />
               </button>
             )}
-          </button>
+          </div>
 
           {/* Dropdown menu — anchored to ellipsis button corner */}
           {profileMenuOpen && (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -10,6 +10,7 @@ import { useConsoleSettings } from "./consoleSettings";
 import type { ConsoleLayoutMode } from "./consoleSettings";
 import ConsoleSwitchSpotlightLayout from "./ConsoleSwitchSpotlightLayout";
 import ConsoleGridLayout from "./ConsoleGridLayout";
+import ConsoleGameDetails from "./ConsoleGameDetails";
 import { useConsoleNavigation } from "./useConsoleNavigation";
 
 const DEBUG_CONSOLE_MODE = false;
@@ -24,6 +25,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const { favoriteIds } = useFavorites();
   const { settings: appSettings } = useSettings();
   const [consoleSettings, patchConsoleSettings] = useConsoleSettings();
+  const [detailGame, setDetailGame] = useState<LibraryGame | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -84,7 +86,15 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (DEBUG_CONSOLE_MODE) {
         console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId} title=${game.title}`);
       }
+      setDetailGame(game);
     }
+  }, []);
+
+  const closeDetails = useCallback(() => {
+    if (DEBUG_CONSOLE_MODE) {
+      console.log(`[CONSOLE][DETAILS_CLOSE]`);
+    }
+    setDetailGame(null);
   }, []);
 
   const hookOnSelect = useCallback((railIndex: number, cardIndex: number) => {
@@ -93,6 +103,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (DEBUG_CONSOLE_MODE) {
         console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId} title=${game.title}`);
       }
+      setDetailGame(game);
     }
   }, [rails]);
 
@@ -107,22 +118,36 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if (detailGame) {
+        return; // ConsoleGameDetails handles its own keyboard input (Escape with animation)
+      }
+      const target = e.target as HTMLElement;
+      const isInputActive = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+      const isInDialog = !!target.closest('[role="dialog"][aria-modal="true"]');
       switch (e.key) {
         case "ArrowUp": e.preventDefault(); moveUp(); break;
         case "ArrowDown": e.preventDefault(); moveDown(); break;
         case "ArrowLeft": e.preventDefault(); moveLeft(); break;
         case "ArrowRight": e.preventDefault(); moveRight(); break;
-        case "Enter": e.preventDefault(); selectFocused(); break;
+        case "Enter":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); selectFocused(); }
+          break;
         case "Escape": e.preventDefault(); goBack(); break;
         case "Tab":
           e.preventDefault();
           if (e.shiftKey) { tabBackward(); } else { tabForward(); }
           break;
+        case "x":
+        case "X":
+        case "d":
+        case "D":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); selectFocused(); }
+          break;
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [moveUp, moveDown, moveLeft, moveRight, tabForward, tabBackward, selectFocused, goBack]);
+  }, [moveUp, moveDown, moveLeft, moveRight, tabForward, tabBackward, selectFocused, goBack, detailGame, closeDetails]);
 
   const currentFocusedGame = useMemo(() => {
     if (focusedRail >= 0 && focusedRail < rails.length && focusedIndex >= 0) {
@@ -158,8 +183,20 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     : <ConsoleGridLayout {...sharedProps} />;
 
   return (
-    <div data-console-theme={consoleSettings.themeMode}>
-      {layout}
+    <div data-console-theme={consoleSettings.themeMode} className="relative h-full w-full">
+      {/* Always render the layout; dim when details overlay is open */}
+      <div className={detailGame ? "opacity-[0.15] pointer-events-none select-none" : ""}>
+        {layout}
+      </div>
+
+      {/* Details panel overlays on top of the layout */}
+      {detailGame && (
+        <ConsoleGameDetails
+          game={detailGame}
+          onClose={closeDetails}
+          settings={consoleSettings}
+        />
+      )}
     </div>
   );
 }
