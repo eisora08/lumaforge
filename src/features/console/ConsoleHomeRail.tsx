@@ -14,6 +14,10 @@ type Props = {
   onSelectGame?: (game: LibraryGame) => void;
   cardCompact?: boolean;
   cardVariant?: "landscape" | "poster";
+  cardWidth?: number;
+  cardGap?: number;
+  noCardLabels?: boolean;
+  hideHeader?: boolean;
 };
 
 export default function ConsoleHomeRail({
@@ -26,6 +30,10 @@ export default function ConsoleHomeRail({
   onSelectGame,
   cardCompact,
   cardVariant = "landscape",
+  cardWidth,
+  cardGap,
+  noCardLabels,
+  hideHeader,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -56,18 +64,20 @@ export default function ConsoleHomeRail({
 
   return (
     <section>
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-(--color-text)">
-            {title}
-          </h2>
-          {subtitle && (
-            <p className="mt-0.5 text-sm text-(--color-muted)">
-              {subtitle}
-            </p>
-          )}
+      {!hideHeader && (
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-(--color-text)">
+              {title}
+            </h2>
+            {subtitle && (
+              <p className="mt-0.5 text-sm text-(--color-muted)">
+                {subtitle}
+              </p>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="group/row relative">
         <button
@@ -78,20 +88,43 @@ export default function ConsoleHomeRail({
           <ChevronLeft className="h-5 w-5" />
         </button>
 
+        {/*
+          Outer wrapper provides VERTICAL padding so the focused card's
+          translateY(-44px) and scale(1.18) do not get clipped by the scroll
+          container's overflow.
+
+          The inner scroll container has overflow-x:auto for horizontal
+          scrolling but is wrapped in this overflow-visible parent so any
+          vertical overflow from card transforms extends outside the scroll
+          container boundaries and into the carousel stage (which itself has
+          overflow-visible). This allows the focused card to visually float
+          upward without being clipped.
+        */}
         <div
-          ref={scrollRef}
-          className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
+          className="relative overflow-visible"
+          style={{
+            paddingTop: "76px",
+            paddingBottom: "52px",
+          }}
         >
-          {deduped.map((game, i) => (
-            <ConsoleGameCard
-              key={"console:rail:" + game.appId}
-              game={game}
-              isFocused={isFocusedRail && focusedIndex === i}
-              onClick={() => onSelectGame?.(game)}
-              compact={cardCompact}
-              variant={cardVariant}
-            />
-          ))}
+          <div
+            ref={scrollRef}
+            className="flex snap-x overflow-x-auto overflow-y-visible scroll-smooth scrollbar-none"
+            style={{ gap: `${cardGap ?? 16}px` }}
+          >
+            {deduped.map((game, i) => (
+              <ConsoleGameCard
+                key={"console:rail:" + game.appId}
+                game={game}
+                isFocused={isFocusedRail && focusedIndex === i}
+                onClick={() => onSelectGame?.(game)}
+                compact={cardCompact}
+                variant={cardVariant}
+                cardWidth={cardWidth}
+                noTitle={noCardLabels}
+              />
+            ))}
+          </div>
         </div>
 
         <button

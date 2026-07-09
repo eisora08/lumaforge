@@ -283,13 +283,13 @@ function ConsoleVisualsSubPanel({
   onFocusChange: (i: number) => void;
   itemCount: React.MutableRefObject<number>;
 }) {
-  const totalItems = 4;
+  const totalItems = 8;
   itemCount.current = totalItems;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems - 1, focusedIndex + 1)); }
-    if (e.key === "Enter") { e.preventDefault(); if (focusedIndex === totalItems - 1) { const p = resetConsoleVisualSettings(); onPatch(p); } }
+    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems, focusedIndex + 1)); }
+    if (e.key === "Enter") { e.preventDefault(); if (focusedIndex === totalItems) { const p = resetConsoleVisualSettings(); onPatch(p); } }
     if (e.key === "Escape") { e.preventDefault(); onBack(); }
   };
 
@@ -299,9 +299,13 @@ function ConsoleVisualsSubPanel({
       <ButtonGroupRow label="Console Theme" options={THEME_OPTIONS} value={settings.themeMode} onChange={(v) => onPatch({ themeMode: v })} isFocused={focusedIndex === 1} />
       <ButtonGroupRow label="Background Texture" options={TEXTURE_OPTIONS} value={settings.backgroundTexture} onChange={(v) => onPatch({ backgroundTexture: v })} isFocused={focusedIndex === 2} />
       <ToggleRow label="Focus Shine Animation" description="Glow sweep on focused cards" enabled={settings.focusShine} onChange={() => onPatch({ focusShine: !settings.focusShine })} isFocused={focusedIndex === 3} />
+      <ToggleRow label="Hero Motion" description="Slow Ken Burns effect on hero background" enabled={settings.heroMotion} onChange={() => onPatch({ heroMotion: !settings.heroMotion })} isFocused={focusedIndex === 4} />
+      <ToggleRow label="Show Trailer Preview" description="Show mini trailer/artwork preview in Spotlight" enabled={settings.showTrailerPreview} onChange={() => onPatch({ showTrailerPreview: !settings.showTrailerPreview })} isFocused={focusedIndex === 5} />
+      <SliderRow label="Spotlight Card Width" value={settings.spotlightCardWidth} min={200} max={420} step={10} unit="px" onChange={(v) => onPatch({ spotlightCardWidth: v })} isFocused={focusedIndex === 6} />
+      <SliderRow label="Spotlight Card Gap" value={settings.spotlightCardGap} min={8} max={48} step={2} unit="px" onChange={(v) => onPatch({ spotlightCardGap: v })} isFocused={focusedIndex === 7} />
       <button
         onClick={() => { const p = resetConsoleVisualSettings(); onPatch(p); }}
-        className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${focusedIndex === 4 ? "ring-2 ring-amber-500/60" : ""}`}
+        className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${focusedIndex === 8 ? "ring-2 ring-amber-500/60" : ""}`}
       >
         Reset Visuals to Defaults
       </button>

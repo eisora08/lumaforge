@@ -32,6 +32,10 @@ export type ConsoleSettings = {
   horizontalScrolling: boolean;
   smoothScrolling: boolean;
   focusShine: boolean;
+  heroMotion: boolean;
+  spotlightCardWidth: number;
+  spotlightCardGap: number;
+  showTrailerPreview: boolean;
 };
 
 const STORAGE_KEY = "lumaforge-console-settings-v1";
@@ -57,6 +61,10 @@ export const DEFAULT_CONSOLE_SETTINGS: ConsoleSettings = {
   horizontalScrolling: false,
   smoothScrolling: true,
   focusShine: true,
+  heroMotion: true,
+  spotlightCardWidth: 320,
+  spotlightCardGap: 20,
+  showTrailerPreview: true,
 };
 
 export const LAYOUT_DEFAULTS: Pick<ConsoleSettings,
@@ -165,11 +173,15 @@ export function resetAllConsoleSettings(): ConsoleSettings {
 }
 
 export const VISUAL_DEFAULTS: Pick<ConsoleSettings,
-  "themeMode" | "backgroundTexture" | "focusShine"
+  "themeMode" | "backgroundTexture" | "focusShine" | "heroMotion" | "spotlightCardWidth" | "spotlightCardGap" | "showTrailerPreview"
 > = {
   themeMode: "follow-app",
   backgroundTexture: "none",
   focusShine: true,
+  heroMotion: true,
+  spotlightCardWidth: 320,
+  spotlightCardGap: 20,
+  showTrailerPreview: true,
 };
 
 export function resetConsoleVisualSettings(): ConsoleSettings {

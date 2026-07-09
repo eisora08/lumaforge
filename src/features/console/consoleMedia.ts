@@ -5,6 +5,7 @@ type ConsoleMediaShape = {
   coverSrc?: string | null;
   landscapeSrc?: string | null;
   backgroundSrc?: string | null;
+  logoSrc?: string | null;
 };
 
 export function getConsoleHeroBackground(game: LibraryGame | null): string | null {
@@ -46,6 +47,19 @@ export function getConsoleCardSrc(
     game.metadata?.header_image,
     game.metadata?.library_hero_image,
     game.imageUrl,
+  ];
+  return candidates.find(Boolean) ?? null;
+}
+
+export function getConsoleLogoSrc(game: LibraryGame | null): string | null {
+  if (!game) return null;
+
+  const cm = (game as { _consoleMedia?: ConsoleMediaShape })._consoleMedia;
+  if (cm?.logoSrc) return cm.logoSrc;
+
+  const candidates = [
+    game.metadata?.logo_image,
+    game.metadata?.library_logo_image,
   ];
   return candidates.find(Boolean) ?? null;
 }

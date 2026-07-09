@@ -1149,6 +1149,69 @@ html[data-compact="true"] .lf-launch-bar {
   }
 }
 
+/* Console Mode hero Ken Burns slow zoom/pan */
+@keyframes spotlight-hero-kenburns {
+  0% {
+    transform: scale(1) translate(0, 0);
+    transform-origin: center;
+  }
+  100% {
+    transform: scale(1.06) translate(-1%, 0.5%);
+    transform-origin: center;
+  }
+}
+
+.spotlight-hero-motion {
+  animation: spotlight-hero-kenburns 25s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-hero-motion {
+    animation: none !important;
+  }
+}
+
+/* Spotlight grain overlay — subtle film grain texture */
+.spotlight-grain-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-size: 512px 512px;
+  background-repeat: repeat;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-grain-overlay::after {
+    opacity: 0.01;
+  }
+}
+
+/* Spotlight vignette overlay */
+.spotlight-vignette {
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.35) 100%);
+  pointer-events: none;
+}
+
+/* Spotlight dock active glow pulse */
+@keyframes spotlight-dock-glow {
+  0%, 100% { box-shadow: 0 0 12px 0 var(--color-accent); }
+  50% { box-shadow: 0 0 20px 4px var(--color-accent); }
+}
+
+.spotlight-dock-active {
+  animation: spotlight-dock-glow 2.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-dock-active {
+    animation: none !important;
+  }
+}
+
 /* =========================
    CONSOLE THEME: SOLARIS DARK
    Dark bluish-purple palette

@@ -10,13 +10,22 @@ type Props = {
   compact?: boolean;
   variant?: "landscape" | "poster";
   noLabel?: boolean;
+  cardWidth?: number;
+  noTitle?: boolean;
 };
 
-export default function ConsoleGameCard({ game, isFocused, onClick, compact, variant = "landscape", noLabel }: Props) {
+export default function ConsoleGameCard({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle }: Props) {
   const { isFavorite } = useFavorites();
   const fav = game.appId ? isFavorite(game.appId) : false;
+  const isSpotlight = !compact;
 
   const src = getConsoleCardSrc(game, variant);
+
+  const widthStyle = cardWidth ? { width: `${cardWidth}px` } : undefined;
+
+  const spotlightFocusStyle = isFocused && isSpotlight ? {
+    boxShadow: "0 35px 80px -20px rgba(0,0,0,0.7), 0 0 50px color-mix(in srgb, var(--color-accent) 30%, transparent)",
+  } as React.CSSProperties : undefined;
 
   return (
     <div
@@ -24,13 +33,20 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
       tabIndex={isFocused ? 0 : -1}
       aria-label={game.title}
       onClick={onClick}
-      className={`relative cursor-pointer rounded-2xl border transition-all duration-300 ${
+      className={`relative cursor-pointer rounded-2xl border transition-all duration-[260ms] ease-out shrink-0 ${
         compact ? "" : variant === "poster" ? "w-[200px]" : "w-[280px]"
-      } ${
+      } ${cardWidth ? "" : "shrink-0"} ${
         isFocused
-          ? "z-10 scale-[1.04] border-(--color-accent) ring-3 ring-(--color-accent)/60 shadow-2xl shadow-(--color-accent)/25"
-          : "border-(--surface-active-border) hover:border-(--color-accent)/40 hover:shadow-lg hover:shadow-(--color-accent)/10"
+          ? `z-[80] border-(--color-accent) ring-3 ring-(--color-accent)/70 shadow-none saturate-[1.05] brightness-[1.03] ${
+              isSpotlight ? "scale-[1.18] -translate-y-11" : "scale-[1.04]"
+            }`
+          : `${
+              isSpotlight
+                ? "z-[5] scale-[0.96] opacity-[0.78] brightness-[0.88] hover:!z-[30] hover:!scale-[1.04] hover:!-translate-y-2.5 hover:!opacity-100 hover:!brightness-100"
+                : ""
+            } border-(--surface-active-border) hover:border-(--color-accent)/40 hover:shadow-lg hover:shadow-(--color-accent)/10`
       }`}
+      style={{ ...widthStyle, ...spotlightFocusStyle, willChange: "transform" }}
     >
       <div className={`relative overflow-hidden rounded-2xl ${
         variant === "poster" ? "aspect-[2/3]" : "aspect-[16/10]"
@@ -96,8 +112,8 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
           )}
         </div>
 
-        {/* Title gradient overlay for landscape variant */}
-        {variant !== "poster" && (
+        {/* Title gradient overlay for landscape variant — hidden with noTitle */}
+        {variant !== "poster" && !noTitle && (
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 pt-8 pb-2">
             <h3 className="line-clamp-2 text-sm font-semibold text-white leading-tight">
               {game.title}
@@ -106,8 +122,8 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
         )}
       </div>
 
-      {/* Title below for poster variant — hidden in Grid mode with noLabel */}
-      {variant === "poster" && !noLabel && (
+      {/* Title below for poster variant — hidden with noLabel or noTitle */}
+      {variant === "poster" && !noLabel && !noTitle && (
         <div className="px-1.5 pt-1.5 pb-1.5">
           <h3 className="line-clamp-2 text-xs font-semibold text-(--color-text) leading-snug">
             {game.title}

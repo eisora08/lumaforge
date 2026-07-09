@@ -8,7 +8,7 @@ import { useConsoleLibraryMedia } from "./consoleLibraryAdapter";
 import { isSidebarInstalledGame } from "../../services/gameCacheService";
 import { useConsoleSettings } from "./consoleSettings";
 import type { ConsoleLayoutMode } from "./consoleSettings";
-import ConsoleSpotlightLayout from "./ConsoleSpotlightLayout";
+import ConsoleSwitchSpotlightLayout from "./ConsoleSwitchSpotlightLayout";
 import ConsoleGridLayout from "./ConsoleGridLayout";
 import { useConsoleNavigation } from "./useConsoleNavigation";
 
@@ -154,7 +154,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   };
 
   const layout = consoleSettings.layoutMode === "spotlight"
-    ? <ConsoleSpotlightLayout {...sharedProps} />
+    ? <ConsoleSwitchSpotlightLayout {...sharedProps} />
     : <ConsoleGridLayout {...sharedProps} />;
 
   return (
