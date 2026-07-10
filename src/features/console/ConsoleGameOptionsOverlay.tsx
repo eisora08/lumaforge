@@ -1,12 +1,15 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import {
-  Play, Heart, Eye, Search, Image, RefreshCw, ExternalLink, Copy, ArrowLeft,
+  Play, Square, Heart, Eye, Search, Image, RefreshCw, ExternalLink, Copy, ArrowLeft,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
 import { getConsoleInputHints } from "./consoleInputHints";
 import { useFavorites } from "../../context/FavoritesContext";
+import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
+import { focusGameWindow } from "../../services/tauri";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
+import { showError } from "../../components/toast/GameToast";
 
 const FADE_DURATION = 180;
 
@@ -25,6 +28,13 @@ export default function ConsoleGameOptionsOverlay({
   game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, inDetails, inputHints,
 }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
+  const sessionCtx = useGameSession();
+  const gameKey = useMemo(() => computeGameKey(game), [game]);
+  const sessionState = sessionCtx.getState(gameKey);
+  const gameSession = sessionCtx.getSession(gameKey);
+  const isLaunching = sessionState === "launching";
+  const isRunning = sessionState === "running";
+  const isStopping = sessionState === "stopping";
   const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
   const hints = useMemo(() => getConsoleInputHints(inputHints), [inputHints]);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -75,15 +85,59 @@ export default function ConsoleGameOptionsOverlay({
     }[] = [];
 
     const action = getLauncherGamePrimaryAction(game);
-    const isPlayable = game.isPlayable && action === "play";
-    list.push({
-      id: "play",
-      label: isPlayable ? "Play" : `Play (${action})`,
-      icon: Play,
-      disabled: !isPlayable,
-      action: () => { if (isPlayable) { onPlayGame?.(game); onClose(); } },
-      highlight: false,
-    });
+
+    if (isRunning) {
+      list.push({
+        id: "stop",
+        label: "Stop Game",
+        icon: Square,
+        action: () => {
+          if (game?.appId) sessionCtx.stopGameByAppId(game.appId);
+          onClose();
+        },
+      });
+      if (gameSession?.pid != null) {
+        list.push({
+          id: "return",
+          label: "Return to Game",
+          icon: Play,
+          action: () => {
+            if (gameSession.pid != null) {
+              focusGameWindow(gameSession.pid).catch(() => {
+                showError("Game window could not be focused");
+              });
+            }
+            onClose();
+          },
+        });
+      }
+    } else if (isLaunching) {
+      list.push({
+        id: "play",
+        label: "Launching…",
+        icon: Play,
+        disabled: true,
+        action: () => {},
+      });
+    } else if (isStopping) {
+      list.push({
+        id: "play",
+        label: "Stopping…",
+        icon: Square,
+        disabled: true,
+        action: () => {},
+      });
+    } else {
+      const isPlayable = game.isPlayable && action === "play" && !isLaunching;
+      list.push({
+        id: "play",
+        label: isPlayable ? "Play" : `Play (${action})`,
+        icon: Play,
+        disabled: !isPlayable,
+        action: () => { if (isPlayable) { onPlayGame?.(game); onClose(); } },
+        highlight: false,
+      });
+    }
 
     list.push({
       id: "favorite",
@@ -150,7 +204,7 @@ export default function ConsoleGameOptionsOverlay({
     });
 
     return list;
-  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame]);
+  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame, isLaunching, isRunning, isStopping, gameSession, sessionCtx]);
 
   /* ── Clamp focus index after rows change ── */
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useCallback, useRef, useState } from "react";
 import {
-  ArrowLeft, Trophy, Heart, Gamepad2, Play, Clock, HardDrive, CheckCircle2,
+  ArrowLeft, Trophy, Heart, Gamepad2, Play, Square, Clock, HardDrive, CheckCircle2,
   Star, Languages, Layers,
 } from "lucide-react";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
@@ -32,10 +32,26 @@ import type { TrailerData } from "./consoleTrailerData";
 import { resolveConsoleDetailsArtwork, clearConsoleArtworkCache, consoleArtworkToBundle } from "./consoleArtworkResolver";
 import type { ConsoleArtwork, ConsoleArtworkOptions } from "./consoleArtworkResolver";
 import { stripHtml } from "../../utils/stripHtml";
+import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
+import { focusGameWindow } from "../../services/tauri";
+import { showWarning, showError } from "../../components/toast/GameToast";
 
 const DEBUG = false;
 const DEBUG_CONSOLE_ACHIEVEMENTS = false;
 const DEBUG_CONSOLE_PLAY = false;
+
+function getBlockedReason(action: string): string {
+  switch (action) {
+    case "install": return "Install required";
+    case "update": return "Update required";
+    case "download": return "Download required";
+    case "missing-path": return "Game files missing";
+    case "uninstalling": return "Game is being uninstalled";
+    case "open-steam": return "Open in Steam to play";
+    case "open-lua-folder": return "Configure Lua script to play";
+    default: return "This game is not playable yet";
+  }
+}
 const ENTER_DURATION = 280;
 const EXIT_DURATION = 200;
 const ENTER_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
@@ -119,6 +135,14 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
   const { settings: appSettings } = useSettings();
+  const sessionCtx = useGameSession();
+  const gameKey = useMemo(() => computeGameKey(game), [game]);
+  const sessionState = sessionCtx.getState(gameKey);
+  const gameSession = sessionCtx.getSession(gameKey);
+  const isLaunching = sessionState === "launching";
+  const isRunning = sessionState === "running";
+  const isStopping = sessionState === "stopping";
+  const allowPlay = !isLaunching && !isRunning && !isStopping;
   const hints = useMemo(() => getConsoleInputHints(settings.inputHints), [settings.inputHints]);
   const sheetRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLDivElement>(null);
@@ -219,16 +243,38 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     setTimeout(() => onClose(), EXIT_DURATION + 20);
   }, [phase, onClose]);
 
-  /* ── Play handler ── */
+  /* ── Session action handlers ── */
   const handlePlay = useCallback(() => {
-    if (!game) return;
+    if (!game || !game.appId) return;
+    if (isRunning) {
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_STOP] appid=${game.appId}`);
+      sessionCtx.stopGameByAppId(game.appId).catch(() => {});
+      return;
+    }
+    if (isLaunching || isStopping) return;
     const action = getLauncherGamePrimaryAction(game);
     if (action !== "play" || !game.isPlayable) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_BLOCKED] appid=${game.appId} action=${action}`);
+      showWarning(getBlockedReason(action), { id: `console-details-blocked-${game.appId}`, duration: 3000 });
       return;
     }
     onPlayGame?.(game);
-  }, [game, onPlayGame]);
+  }, [game, onPlayGame, isLaunching, isRunning, isStopping, sessionCtx]);
+
+  const handleStop = useCallback(() => {
+    if (!game?.appId) return;
+    if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_STOP] appid=${game.appId}`);
+    sessionCtx.stopGameByAppId(game.appId).catch(() => {});
+  }, [game, sessionCtx]);
+
+  const handleReturn = useCallback(async () => {
+    if (!gameSession?.pid) return;
+    try {
+      await focusGameWindow(gameSession.pid);
+    } catch {
+      showError("Game window could not be focused");
+    }
+  }, [gameSession]);
 
   /* ══════════════════════════════════════════
      KEYBOARD NAVIGATION — Focus zone model
@@ -830,16 +876,59 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                     )}
                   </div>
 
-                  {/* Action buttons — Play (visual-only) + Favorite (safe) */}
+                  {/* Action buttons — Play/Stop + Return + Favorite */}
                   <div className="mt-2 flex items-center gap-2.5">
-                    <button
-                      type="button"
-                      onClick={handlePlay}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 transition hover:brightness-110"
-                    >
-                      <Play className="h-4 w-4" />
-                      Play
-                    </button>
+                    {isRunning ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleStop}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110"
+                        >
+                          <Square className="h-4 w-4 fill-current" />
+                          Stop
+                        </button>
+                        {gameSession?.pid != null && (
+                          <button
+                            type="button"
+                            onClick={handleReturn}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40"
+                            title="Return to game"
+                          >
+                            <Play className="h-4 w-4" />
+                            Return
+                          </button>
+                        )}
+                      </>
+                    ) : isLaunching ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
+                      >
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                        Launching…
+                      </button>
+                    ) : isStopping ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/60 px-4 py-2 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
+                      >
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                        Stopping…
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handlePlay}
+                        disabled={!allowPlay}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Play className="h-4 w-4" />
+                        Play
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={handleFavoriteToggle}

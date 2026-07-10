@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
@@ -14,8 +15,22 @@ import ConsoleGameDetails from "./ConsoleGameDetails";
 import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
 import ConsoleSearchOverlay from "./ConsoleSearchOverlay";
 import { useConsoleNavigation } from "./useConsoleNavigation";
-import { useGameSession } from "../../context/GameSessionContext";
+import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
+import { showSuccess, showError, showWarning } from "../../components/toast/GameToast";
+
+function getBlockedReason(action: string): string {
+  switch (action) {
+    case "install": return "Install required";
+    case "update": return "Update required";
+    case "download": return "Download required";
+    case "missing-path": return "Game files missing";
+    case "uninstalling": return "Game is being uninstalled";
+    case "open-steam": return "Open in Steam to play";
+    case "open-lua-folder": return "Configure Lua script to play";
+    default: return "This game is not playable yet";
+  }
+}
 
 const DEBUG_CONSOLE_MODE = false;
 const DEBUG_CONSOLE_PLAY = false;
@@ -130,38 +145,71 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   }, []);
 
   const session = useGameSession();
-  const launchingRef = useRef(false);
+  const pendingLaunchToastRef = useRef<Map<string, string>>(new Map());
 
   const handleConsolePlay = useCallback(async (game: LibraryGame) => {
     if (!game?.appId) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=null reason=no-appId`);
       return;
     }
+    const gameKey = computeGameKey(game);
+    const currentState = session.getState(gameKey);
+    if (currentState === "launching" || currentState === "running" || currentState === "stopping") {
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} reason=session-state=${currentState}`);
+      return;
+    }
     const primaryAction = getLauncherGamePrimaryAction(game);
     if (primaryAction !== "play") {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} primaryAction=${primaryAction}`);
+      showWarning(getBlockedReason(primaryAction), { id: `console-blocked-${game.appId}`, duration: 3000 });
       return;
     }
     if (!game.isPlayable) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} reason=not-playable`);
-      return;
-    }
-    if (launchingRef.current) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} reason=in-flight`);
+      showWarning("This game is not playable yet", { id: `console-blocked-${game.appId}`, duration: 3000 });
       return;
     }
     if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][REQUEST] appid=${game.appId} title=${game.title} primaryAction=${primaryAction}`);
-    launchingRef.current = true;
+
+    const toastId = `console-launch-${game.appId}`;
+    pendingLaunchToastRef.current.set(game.appId, toastId);
+    toast.loading(`Launching ${game.title}…`, { id: toastId, duration: 30000 });
+
     try {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_START] appid=${game.appId}`);
       await session.launchGame(game);
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_SUCCESS] appid=${game.appId}`);
     } catch (err) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAIL] appid=${game.appId} error=${err}`);
-    } finally {
-      launchingRef.current = false;
+      pendingLaunchToastRef.current.delete(game.appId);
+      toast.dismiss(toastId);
+      showError(`Could not launch ${game.title}`, { title: "Launch failed" });
     }
   }, [session]);
+
+  /* Track session state transitions for launch toast feedback */
+  useEffect(() => {
+    const pending = pendingLaunchToastRef.current;
+    if (pending.size === 0) return;
+    for (const [appId, toastId] of pending) {
+      const gameKey = `app-${appId}`;
+      const state = session.getState(gameKey);
+      if (state === "running") {
+        if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][RUNNING_DETECTED] appid=${appId}`);
+        const game = currentFocusedGameRef.current;
+        pending.delete(appId);
+        toast.dismiss(toastId);
+        showSuccess(`${game?.title ?? "Game"} is running`, { title: "Game launched", duration: 3500 });
+      } else if (state === "idle") {
+        const existingSession = session.getSession(gameKey);
+        if (!existingSession && pending.has(appId)) {
+          if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAILED] appid=${appId} reason=session-cleared`);
+          pending.delete(appId);
+          toast.dismiss(toastId);
+          showError(`Could not launch the game`, { title: "Launch failed" });
+        }
+      }
+    }
+  }, [session.sessions, session, session.getState, session.getSession]);
 
   const hookOnSelect = useCallback((railIndex: number, cardIndex: number) => {
     const game: LibraryGame | undefined = rails[railIndex]?.[cardIndex];
