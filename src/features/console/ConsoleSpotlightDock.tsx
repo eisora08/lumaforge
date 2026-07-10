@@ -25,10 +25,11 @@ export default function ConsoleSpotlightDock({ activeIndex, counts, onSelect }: 
           const isActive = activeIndex === i;
           const Icon = cat.icon;
           return (
-            <button
-              key={cat.key}
-              onClick={() => onSelect(i)}
-              className={`relative flex items-center justify-center rounded-xl transition-all duration-200 ${
+              <button
+                key={cat.key}
+                tabIndex={-1}
+                onClick={() => onSelect(i)}
+                className={`relative flex items-center justify-center rounded-xl transition-all duration-200 ${
                 isActive
                   ? "bg-(--color-accent) text-white shadow-lg shadow-(--color-accent)/35 scale-105"
                   : "text-white/60 hover:text-white/85 hover:bg-white/[0.08]"

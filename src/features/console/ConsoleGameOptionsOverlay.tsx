@@ -5,6 +5,7 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
 import { getConsoleInputHints } from "./consoleInputHints";
+import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamepadInput";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { focusGameWindow } from "../../services/tauri";
@@ -220,7 +221,11 @@ export default function ConsoleGameOptionsOverlay({
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
+      if (DEBUG_CONSOLE_GAMEPAD) {
+        console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleGameOptionsOverlay target=${(e.target as any)?.tagName ?? typeof e.target}`);
+      }
       if (!activeRef.current) return;
+      if (e.key === "Alt" || e.key === "Meta") return;
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
 
@@ -242,18 +247,22 @@ export default function ConsoleGameOptionsOverlay({
           }
           break;
         case "Escape":
-        case "o":
-        case "O":
-        case "ContextMenu":
-        case "Apps":
           e.preventDefault();
           onClose();
+          break;
+        // V/View is reserved for Profile/Quick Menu — ignore in options context
+        case "v":
+        case "V":
+          e.preventDefault();
           break;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [open, rows, focusIndex, onClose]);
+
+  /* ── Gamepad input ── */
+  useConsoleGamepadInput(open);
 
   /* ── Render helpers ── */
   const overlayOpacity = visible ? 1 : 0;

@@ -35,6 +35,7 @@ import { stripHtml } from "../../utils/stripHtml";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { focusGameWindow } from "../../services/tauri";
 import { showWarning, showError } from "../../components/toast/GameToast";
+import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamepadInput";
 
 const DEBUG = false;
 const DEBUG_CONSOLE_ACHIEVEMENTS = false;
@@ -81,6 +82,7 @@ type Props = {
   settings: ConsoleSettings;
   onSearchOpen?: () => void;
   onPlayGame?: (game: LibraryGame) => void;
+  onProfileOpen?: () => void;
 };
 
 /* ── Media helpers ── */
@@ -131,7 +133,7 @@ const REVIEW_COLORS: Record<string, { bg: string; text: string; border: string }
 };
 const DEFAULT_REVIEW_COLOR = { bg: "bg-white/5", text: "text-(--color-muted)", border: "border-white/[0.04]" };
 
-export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame }: Props) {
+export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
   const { settings: appSettings } = useSettings();
@@ -280,17 +282,37 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
      KEYBOARD NAVIGATION — Focus zone model
      ══════════════════════════════════════════ */
   const handleZoneKeyDown = useCallback((e: KeyboardEvent) => {
-    // O / Menu key toggles options overlay
+    if (DEBUG_CONSOLE_GAMEPAD) {
+      console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleGameDetails target=${(e.target as any)?.tagName ?? typeof e.target}`);
+    }
+    // Ignore Alt/Meta — browser/OS synthetic from unmapped controller buttons
+    if (e.key === "Alt" || e.key === "Meta") return;
+
+    // O / Menu key opens options overlay (does not close — use B/Escape for that)
     if (e.key === "o" || e.key === "O" || e.key === "ContextMenu" || e.key === "Apps") {
       e.preventDefault();
-      setOptionsOpen((prev) => !prev);
+      if (!optionsOpen) setOptionsOpen(true);
       return;
     }
 
     // When options overlay is open, ignore all zone keys (overlay handles its own)
     if (optionsOpen) return;
 
+    // X = Play from any zone
+    if (e.key === "x" || e.key === "X") {
+      e.preventDefault();
+      handlePlay();
+      return;
+    }
+
     // Search key: / or Y opens search overlay
+    // V/View opens Profile/Quick Menu
+    if (e.key === "v" || e.key === "V") {
+      e.preventDefault();
+      onProfileOpen?.();
+      return;
+    }
+
     if (e.key === "/" || e.key === "y" || e.key === "Y") {
       e.preventDefault();
       onSearchOpen?.();
@@ -474,6 +496,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   useEffect(() => {
     setCarouselFocusIndex(carouselSelectedIndex);
   }, [carouselSelectedIndex]);
+
+  /* ── Gamepad input: enabled while visible and no inner overlay active ── */
+  useConsoleGamepadInput(!optionsOpen);
 
   /* ── Auto-focus left panel when entering left-info zone ── */
   useEffect(() => {
@@ -1283,12 +1308,15 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
               tabIndex={-1}
               onFocus={() => setFocusZone("footer-actions")}
             >
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.play}</HintLabel>
               <HintLabel focus={focusZone === "footer-actions"}>{hints.select}</HintLabel>
               <HintLabel focus={focusZone === "footer-actions"}>{hints.back}</HintLabel>
               <HintLabel focus={focusZone === "footer-actions"}>{hints.navigate}</HintLabel>
               <HintLabel focus={focusZone === "footer-actions"}>{hints.media}</HintLabel>
               <HintLabel focus={focusZone === "footer-actions"}>{hints.options}</HintLabel>
               <HintLabel focus={focusZone === "footer-actions"}>{hints.search}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.profile}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.page}</HintLabel>
             </div>
           </div>
         </div>

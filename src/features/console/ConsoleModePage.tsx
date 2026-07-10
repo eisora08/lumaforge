@@ -14,7 +14,9 @@ import ConsoleGridLayout from "./ConsoleGridLayout";
 import ConsoleGameDetails from "./ConsoleGameDetails";
 import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
 import ConsoleSearchOverlay from "./ConsoleSearchOverlay";
+import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import { useConsoleNavigation } from "./useConsoleNavigation";
+import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setOnGamepadAction } from "./useConsoleGamepadInput";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showSuccess, showError, showWarning } from "../../components/toast/GameToast";
@@ -34,13 +36,14 @@ function getBlockedReason(action: string): string {
 
 const DEBUG_CONSOLE_MODE = false;
 const DEBUG_CONSOLE_PLAY = false;
+const DEBUG_CONSOLE_GRID_NAV = false;
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
 };
 
 export default function ConsoleModePage({ onNavigate }: Props) {
-  const { games } = useLibraryGames();
+  const { games, refresh: refreshLibraryGames } = useLibraryGames();
   const enrichedGames = useConsoleLibraryMedia(games);
   const { favoriteIds } = useFavorites();
   const { settings: appSettings } = useSettings();
@@ -48,6 +51,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const [detailGame, setDetailGame] = useState<LibraryGame | null>(null);
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -223,6 +227,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   const {
     focusedRail, focusedIndex, moveUp, moveDown, moveLeft, moveRight,
+    pageLeft, pageRight,
     tabForward, tabBackward, selectFocused, goBack, focusRail,
   } = useConsoleNavigation({
     railLengths,
@@ -232,6 +237,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if (DEBUG_CONSOLE_GAMEPAD) {
+        console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleModePage target=${(e.target as any)?.tagName ?? typeof e.target}`);
+      }
       if (searchOpen) {
         return; // Search overlay handles its own keyboard
       }
@@ -241,24 +249,82 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (optionsGame) {
         return; // Options overlay handles its own keyboard
       }
+      if (profileOpen) {
+        // Do NOT preventDefault/stopPropagation/stopImmediatePropagation.
+        // Quick Menu (ConsoleSettingsPanelV2) owns ALL input while open.
+        // Its window handler will preventDefault + stopImmediatePropagation for
+        // every key it consumes. If we block here, the panel never receives events.
+        if (DEBUG_CONSOLE_GAMEPAD) {
+          console.log(`[CONSOLE_INPUT][IGNORED_BECAUSE_QUICK_MENU] key=${e.key}`);
+        }
+        return;
+      }
+      // Ignore Alt — can be synthesized by browser/OS from unmapped controller buttons (e.g. BACK/Guide)
+      if (e.key === "Alt" || e.key === "Meta") {
+        if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_GAMEPAD][IGNORED] key=${e.key} — browser/OS synthetic`);
+        return;
+      }
+
       const target = e.target as HTMLElement;
       const isInputActive = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
-      const isInDialog = !!target.closest('[role="dialog"][aria-modal="true"]');
+      const isInDialog = !!target.closest?.('[role="dialog"][aria-modal="true"]');
       switch (e.key) {
-        case "ArrowUp": e.preventDefault(); moveUp(); break;
-        case "ArrowDown": e.preventDefault(); moveDown(); break;
+        case "ArrowUp":
+          e.preventDefault();
+          if (layoutModeRef.current === "grid") {
+            const fr = focusedRailRef.current;
+            const fi = focusedIndexRef.current;
+            const r = railsRef.current;
+            const rail = fr >= 0 && fr < r.length ? r[fr] : null;
+            if (rail && rail.length > 0) {
+              const cols = Math.max(1, gridColumnsRef.current || consoleSettings.gridColumns || 8);
+              const next = fi - cols;
+              if (next >= 0) {
+                if (DEBUG_CONSOLE_GRID_NAV) console.log(`[CONSOLE_GRID_NAV][MOVE] direction=up from=${fi} to=${next} appid=${rail[next]?.appId}`);
+                focusRail(fr, next);
+              }
+            }
+          } else {
+            moveUp();
+          }
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          if (layoutModeRef.current === "grid") {
+            const fr = focusedRailRef.current;
+            const fi = focusedIndexRef.current;
+            const r = railsRef.current;
+            const rail = fr >= 0 && fr < r.length ? r[fr] : null;
+            if (rail && rail.length > 0) {
+              const cols = Math.max(1, gridColumnsRef.current || consoleSettings.gridColumns || 8);
+              const next = fi + cols;
+              const clamped = Math.min(next, rail.length - 1);
+              if (clamped !== fi) {
+                if (DEBUG_CONSOLE_GRID_NAV) {
+                  if (clamped !== next) console.log(`[CONSOLE_GRID_NAV][CLAMP] attempted=${next} clamped=${clamped} reason=short-last-row`);
+                  console.log(`[CONSOLE_GRID_NAV][MOVE] direction=down from=${fi} to=${clamped} appid=${rail[clamped]?.appId}`);
+                }
+                focusRail(fr, clamped);
+              }
+            }
+          } else {
+            moveDown();
+          }
+          break;
         case "ArrowLeft": e.preventDefault(); moveLeft(); break;
         case "ArrowRight": e.preventDefault(); moveRight(); break;
         case "Enter":
           if (!isInputActive && !isInDialog) { e.preventDefault(); selectFocused(); }
           break;
-        case "Escape": e.preventDefault(); goBack(); break;
+        case "Escape": e.preventDefault(); break; // no-op — only Quick Menu "Switch to Desktop Mode" can exit Console Mode
         case "Tab":
           e.preventDefault();
           if (e.shiftKey) { tabBackward(); } else { tabForward(); }
           break;
         case "x":
         case "X":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); const fg = currentFocusedGameRef.current; if (fg) handleConsolePlay(fg); }
+          break;
         case "d":
         case "D":
           if (!isInputActive && !isInDialog) { e.preventDefault(); selectFocused(); }
@@ -268,23 +334,65 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           break;
         case "y":
         case "Y":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); setSearchOpen(true); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); e.stopImmediatePropagation(); setSearchOpen(true); }
+          break;
+        case "PageUp":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); pageLeft(); }
+          break;
+        case "PageDown":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); pageRight(); }
           break;
         case "o":
         case "O":
         case "ContextMenu":
         case "Apps":
-          if (!isInputActive && !isInDialog) { e.preventDefault(); const fg = currentFocusedGameRef.current; if (fg) handleOptionsGame(fg); }
+          if (!isInputActive && !isInDialog) { e.preventDefault(); e.stopImmediatePropagation(); const fg = currentFocusedGameRef.current; if (fg) handleOptionsGame(fg); }
+          break;
+        case "q":
+        case "Q":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); tabBackward(); }
+          break;
+        case "e":
+        case "E":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); tabForward(); }
           break;
         case "p":
         case "P":
           if (!isInputActive && !isInDialog) { e.preventDefault(); const fg = currentFocusedGameRef.current; if (fg) handleConsolePlay(fg); }
           break;
+        case "v":
+        case "V":
+          if (!isInputActive && !isInDialog) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            setProfileOpen(prev => !prev);
+            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][OPEN_REQUEST] source=view profileOpen=${!profileOpen}`);
+          }
+          break;
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [moveUp, moveDown, moveLeft, moveRight, tabForward, tabBackward, selectFocused, goBack, detailGame, closeDetails, optionsGame, handleOptionsGame, searchOpen, handleConsolePlay]);
+  }, [moveUp, moveDown, moveLeft, moveRight, pageLeft, pageRight, tabForward, tabBackward, selectFocused, goBack, detailGame, closeDetails, optionsGame, handleOptionsGame, searchOpen, handleConsolePlay, profileOpen]);
+
+  /* ── Gamepad input: enabled when no overlay blocks navigation ── */
+  const gamepadEnabled = !searchOpen && !detailGame && !optionsGame && !profileOpen;
+  useConsoleGamepadInput(gamepadEnabled);
+
+  /* ── Mouse cursor: hide on gamepad action, show on mousemove ── */
+  const [cursorHidden, setCursorHidden] = useState(false);
+
+  useEffect(() => {
+    setOnGamepadAction(gamepadEnabled ? () => setCursorHidden(true) : null);
+    return () => { setOnGamepadAction(null); };
+  }, [gamepadEnabled]);
+
+  useEffect(() => {
+    if (!cursorHidden) return;
+    const onMouseMove = () => setCursorHidden(false);
+    window.addEventListener("mousemove", onMouseMove);
+    return () => window.removeEventListener("mousemove", onMouseMove);
+  }, [cursorHidden]);
 
   const currentFocusedGame = useMemo(() => {
     if (focusedRail >= 0 && focusedRail < rails.length && focusedIndex >= 0) {
@@ -299,6 +407,17 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   const currentFocusedGameRef = useRef(currentFocusedGame);
   currentFocusedGameRef.current = currentFocusedGame;
+
+  /* ── Refs for grid nav (avoid re-registering keyboard listener on every index change) ── */
+  const focusedRailRef = useRef(focusedRail);
+  focusedRailRef.current = focusedRail;
+  const focusedIndexRef = useRef(focusedIndex);
+  focusedIndexRef.current = focusedIndex;
+  const railsRef = useRef(rails);
+  railsRef.current = rails;
+  const gridColumnsRef = useRef(consoleSettings.gridColumns);
+  const layoutModeRef = useRef(consoleSettings.layoutMode);
+  layoutModeRef.current = consoleSettings.layoutMode;
 
   const sharedProps = {
     focusedGame: currentFocusedGame,
@@ -318,6 +437,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     settings: consoleSettings,
     onSettingsPatch: patchConsoleSettings,
     allGames: enrichedGames,
+    gridColumnsRef,
   };
 
   const layout = consoleSettings.layoutMode === "spotlight"
@@ -325,7 +445,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     : <ConsoleGridLayout {...sharedProps} />;
 
   return (
-    <div data-console-theme={consoleSettings.themeMode} className="relative h-full w-full">
+    <div data-console-theme={consoleSettings.themeMode} className={`relative h-full w-full ${cursorHidden ? "cursor-none" : ""}`}>
       {/* Always render the layout; dim when details overlay is open */}
       <div className={detailGame ? "opacity-[0.15] pointer-events-none select-none" : ""}>
         {layout}
@@ -339,6 +459,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           settings={consoleSettings}
           onSearchOpen={() => { setSearchOpen(true); }}
           onPlayGame={handleConsolePlay}
+          onProfileOpen={() => { setProfileOpen(true); }}
         />
       )}
 
@@ -364,6 +485,20 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onClose={() => setSearchOpen(false)}
           onSelectGame={handleSearchGame}
           inputHints={consoleSettings.inputHints}
+        />
+      )}
+
+      {/* Profile / Quick Menu panel */}
+      {profileOpen && (
+        <ConsoleSettingsPanelV2
+          open={profileOpen}
+          onClose={() => setProfileOpen(false)}
+          settings={consoleSettings}
+          onPatch={patchConsoleSettings}
+          onNavigate={onNavigate}
+          allGames={enrichedGames}
+          onSelectGame={handleSelectGame}
+          onRefreshLibrary={refreshLibraryGames}
         />
       )}
     </div>

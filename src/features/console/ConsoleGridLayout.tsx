@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import {
   Trophy,
 } from "lucide-react";
@@ -16,8 +16,10 @@ import ConsoleCategoryBar from "./ConsoleCategoryBar";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
+import { setScrollTarget } from "./useConsoleGamepadInput";
 
 const DEBUG_CONSOLE_MODE = false;
+const DEBUG_CONSOLE_GRID_NAV = false;
 
 type Props = {
   focusedGame: LibraryGame | null;
@@ -38,6 +40,7 @@ type Props = {
   onSettingsPatch: (patch: Partial<ConsoleSettings>) => void;
   allGames?: LibraryGame[];
   onRefreshLibrary?: () => void;
+  gridColumnsRef?: React.MutableRefObject<number>;
 };
 
 
@@ -62,9 +65,12 @@ export default function ConsoleGridLayout({
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
+  gridColumnsRef,
 }: Props) {
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const gridScrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
@@ -99,6 +105,48 @@ export default function ConsoleGridLayout({
     return focusedGame.metadata.genres.slice(0, 4);
   }, [focusedGame]);
 
+  /* ── Measure actual grid column count from CSS (auto-fill may differ from settings.gridColumns) ── */
+  useEffect(() => {
+    if (gridRef.current) {
+      const computed = getComputedStyle(gridRef.current).gridTemplateColumns;
+      const split = computed.split(/\s+/).filter(Boolean);
+      const actual = split.length;
+      if (actual > 0 && actual !== (gridColumnsRef?.current ?? 0)) {
+        if (gridColumnsRef) gridColumnsRef.current = actual;
+        if (DEBUG_CONSOLE_GRID_NAV) console.log(`[CONSOLE_GRID_NAV][COLUMNS] computed="${computed}" actual=${actual}`);
+      }
+    }
+  });
+
+  /* ── Register scroll target for right-stick gamepad scrolling ── */
+  useEffect(() => {
+    setScrollTarget(gridScrollRef.current);
+    return () => { setScrollTarget(null); };
+  }, []);
+
+  /* ── Scroll focused card into view when index changes ── */
+  useEffect(() => {
+    if (focusedIndex < 0 || !gridRef.current) return;
+    const card = gridRef.current.children[focusedIndex] as HTMLElement | undefined;
+    const container = gridScrollRef.current;
+    if (card && container) {
+      const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const containerRect = container.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      const relativeTop = cardRect.top - containerRect.top;
+      const targetPosition = containerRect.height * 0.28;
+      const lowerBound = containerRect.height * 0.12;
+      const upperBound = containerRect.height * 0.45;
+      if (relativeTop < lowerBound || relativeTop + cardRect.height > upperBound) {
+        const offset = relativeTop - targetPosition;
+        container.scrollBy({ top: offset, behavior: prefersReduced ? "auto" : "smooth" });
+        if (DEBUG_CONSOLE_GRID_NAV) {
+          console.log(`[CONSOLE_GRID_NAV][SCROLL_POSITION] index=${focusedIndex} appid=${currentRail[focusedIndex]?.appId} offset=${Math.round(offset)} relativeTop=${Math.round(relativeTop)} target=${Math.round(targetPosition)}`);
+        }
+      }
+    }
+  }, [focusedIndex, currentRail]);
+
   if (DEBUG_CONSOLE_MODE && focusedGame) {
     console.log(`[CONSOLE][GRID_PREVIEW] appid=${focusedGame.appId} title=${focusedGame.title}`);
   }
@@ -117,7 +165,7 @@ export default function ConsoleGridLayout({
       {/* Main content: scrollable grid + preview panel */}
       <div className="flex flex-1 overflow-hidden">
         {/* Scrollable game grid — settings-driven card size/gap/columns */}
-        <div className="flex-1 overflow-y-auto pb-5"
+        <div ref={gridScrollRef} className="flex-1 overflow-y-auto pb-5"
              style={{
                paddingLeft: "clamp(64px, 5vw, 120px)",
                paddingRight: "32px",
@@ -125,6 +173,7 @@ export default function ConsoleGridLayout({
              }}>
           {currentRail.length > 0 ? (
             <div
+              ref={gridRef}
               className="grid"
               style={{
                 gridTemplateColumns: `repeat(auto-fill, minmax(${settings.cardSize}px, 1fr))`,
@@ -324,9 +373,12 @@ export default function ConsoleGridLayout({
                 {/* Input hints — driven by settings */}
                 <div className="flex flex-wrap gap-x-5 gap-y-2">
                   {hints.select && <HintTag>{hints.select}</HintTag>}
+                  {hints.play && <HintTag>{hints.play}</HintTag>}
                   <HintTag>{hints.options}</HintTag>
                   <HintTag>{hints.search}</HintTag>
+                  <HintTag>{hints.profile}</HintTag>
                   <HintTag>{hints.back}</HintTag>
+                  {hints.page && <HintTag>{hints.page}</HintTag>}
                 </div>
               </div>
             </div>

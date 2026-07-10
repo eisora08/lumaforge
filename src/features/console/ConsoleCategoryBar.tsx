@@ -47,9 +47,10 @@ export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, show
           const Icon = cat.icon;
           return (
             <button
-              key={cat.key}
-              onClick={() => onSelect(i)}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-medium transition-all duration-150 ${
+                key={cat.key}
+                tabIndex={-1}
+                onClick={() => onSelect(i)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-medium transition-all duration-150 ${
                 isActive
                   ? "bg-(--color-accent)/25 text-(--color-accent) shadow-sm shadow-(--color-accent)/10"
                   : "text-white/50 hover:bg-white/10 hover:text-white/80"
@@ -69,7 +70,9 @@ export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, show
           <div className="hidden items-center gap-4 md:flex">
             <HintTag>{hints.back}</HintTag>
             <HintTag>{hints.select}</HintTag>
+            <HintTag>{hints.play}</HintTag>
             <HintTag>{hints.search}</HintTag>
+            <HintTag>{hints.profile}</HintTag>
             <HintTag>{hints.media}</HintTag>
           </div>
         </div>

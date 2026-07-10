@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
-  X, Shuffle, RefreshCw, Settings,
+  X, Shuffle, RefreshCw, Settings, LayoutGrid,
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
   Wrench, Gamepad2, Film,
   Maximize, Grid3X3, ChevronRight, ArrowLeft,
@@ -22,6 +22,7 @@ import {
   resetConsoleMediaSettings,
   resetConsoleInputSettings,
 } from "./consoleSettings";
+import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setScrollTarget, getScrollTarget } from "./useConsoleGamepadInput";
 
 type PanelPage =
   | "main"
@@ -73,6 +74,15 @@ const POSITION_OPTIONS: { value: ConsoleBottomBarPosition; label: string }[] = [
 ];
 
 const ANIM_DURATION_MS = 250;
+
+/* ── ALL gamepad-mapped keys that must be consumed when Quick Menu is open ── */
+const GAMEPAD_KEYS = new Set([
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "Enter", "Escape", "b", "B", "v", "V",
+  "x", "X", "y", "Y", "o", "O", "d", "D",
+  "q", "Q", "e", "E", "PageUp", "PageDown",
+  " ", "p", "P", "Alt", "ContextMenu", "Apps",
+]);
 
 // ============================================================
 // Option row
@@ -463,10 +473,11 @@ const MAIN_OPTIONS: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   description?: string;
-  action: "sub" | "navigate" | "random" | "refresh" | "coming-soon";
+  action: "sub" | "navigate" | "random" | "refresh" | "switch-view" | "coming-soon";
   subPage?: PanelPage;
 }[] = [
   { key: "random", icon: Shuffle, label: "Pick Random Game", description: "Surprise me", action: "random" },
+  { key: "switch-view", icon: LayoutGrid, label: "Switch View", description: "Toggle Grid / Spotlight", action: "switch-view" },
   { key: "refresh", icon: RefreshCw, label: "Update Library", description: "Rescan installed games", action: "refresh" },
   { key: "settings", icon: Settings, label: "Console Settings", description: "Layout, visuals, input", action: "sub", subPage: "settings" },
   { key: "tools", icon: Wrench, label: "Tools", description: "Utilities and diagnostics", action: "sub", subPage: "tools" },
@@ -482,12 +493,13 @@ const MAIN_OPTIONS: {
 // Settings category grid (Layout / Visuals / Input)
 // ============================================================
 function SettingsCategoryGrid({
-  onSelect, onBack, focusedIndex, onFocusChange,
+  onSelect, onBack, focusedIndex, onFocusChange, itemCount,
 }: {
   onSelect: (page: PanelPage) => void;
   onBack: () => void;
   focusedIndex: number;
   onFocusChange: (i: number) => void;
+  itemCount: React.MutableRefObject<number>;
 }) {
   const cats: { key: PanelPage; icon: React.ComponentType<{ className?: string }>; label: string; description: string }[] = [
     { key: "layout", icon: Grid3X3, label: "Layout", description: "Card size, columns, gaps" },
@@ -496,9 +508,13 @@ function SettingsCategoryGrid({
     { key: "input", icon: Gamepad2, label: "Input", description: "Hints style, visibility" },
   ];
 
+  const totalItems = cats.length;
+  itemCount.current = totalItems;
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(cats.length - 1, focusedIndex + 1)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems - 1, focusedIndex + 1)); }
+    if (e.key === "ArrowRight") { e.preventDefault(); const cat = cats[focusedIndex]; if (cat) onSelect(cat.key); }
     if (e.key === "Enter") { e.preventDefault(); const cat = cats[focusedIndex]; if (cat) onSelect(cat.key); }
     if (e.key === "Escape") { e.preventDefault(); onBack(); }
   };
@@ -544,8 +560,16 @@ export default function ConsoleSettingsPanelV2({
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [visible, setVisible] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const panelScrollRef = useRef<HTMLDivElement>(null);
   const subItemCount = useRef(0);
   const prevFocusRef = useRef<HTMLElement | null>(null);
+
+  /* ── Menu stack for hierarchical navigation ── */
+  type MenuStackEntry = { page: PanelPage; subPage: PanelPage | null; focusedIndex: number };
+  const menuStackRef = useRef<MenuStackEntry[]>([]);
+
+  /* ── Cooldown to ignore duplicate "v" events within 200ms of opening (gamepad debounce) ── */
+  const openedAtRef = useRef(0);
 
   const avatarPreset = useMemo(() => getAvatarPreset(profile.avatarPreset), [profile.avatarPreset]);
   const avatarDisplayUrl = useMemo(() => resolveProfileMediaUrl(profile.avatarUrl), [profile.avatarUrl]);
@@ -555,10 +579,13 @@ export default function ConsoleSettingsPanelV2({
   // Mount/unmount animation
   useEffect(() => {
     if (open) {
+      openedAtRef.current = Date.now();
       prevFocusRef.current = document.activeElement as HTMLElement | null;
+      menuStackRef.current = [];
       setPage("main");
       setSubPage(null);
       setFocusedIndex(0);
+      if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][OPENED]`);
       // Small RAF delay so the DOM renders before transition kicks in
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setVisible(true));
@@ -595,21 +622,210 @@ export default function ConsoleSettingsPanelV2({
     }, ANIM_DURATION_MS);
   }, [onClose]);
 
+  /* ── Override right-stick scroll target to panel content when open ── */
   useEffect(() => {
-    setFocusedIndex(0);
-    subItemCount.current = 0;
-  }, [page, subPage]);
+    const prev = getScrollTarget();
+    if (open && panelScrollRef.current) {
+      setScrollTarget(panelScrollRef.current);
+    }
+    return () => {
+      setScrollTarget(prev);
+    };
+  }, [open]);
+
+  /* ── Gamepad input: enabled while panel is open ── */
+  useConsoleGamepadInput(open);
+
+  /* ── Back navigation: pop stack, restore previous state ── */
+  const doBackNav = useCallback(() => {
+    const prev = menuStackRef.current.pop();
+    if (prev) {
+      setPage(prev.page);
+      setSubPage(prev.subPage);
+      setFocusedIndex(prev.focusedIndex);
+    } else {
+      handleClose();
+    }
+  }, [handleClose]);
+
+  /* ── Window-level keydown to catch gamepad-dispatched events ── */
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (DEBUG_CONSOLE_GAMEPAD) {
+        console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleSettingsPanelV2`);
+      }
+      // Block all gamepad-mapped keys from leaking to underlying grid
+      if (GAMEPAD_KEYS.has(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (DEBUG_CONSOLE_GAMEPAD) {
+          if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape", "b", "B", "v", "V"].includes(e.key)) {
+            console.log(`[QUICK_MENU_INPUT][KEY] key=${e.key} handled=true`);
+          } else {
+            console.log(`[CONSOLE_INPUT][BLOCKED_BEHIND_QUICK_MENU] key=${e.key}`);
+          }
+        }
+      }
+
+      const isMain = page === "main" && subPage === null;
+
+      if (isMain) {
+        // ── Main page navigation ──
+        switch (e.key) {
+          case "ArrowUp":
+            setFocusedIndex((i) => Math.max(0, i - 1));
+            break;
+          case "ArrowDown":
+            setFocusedIndex((i) => Math.min(MAIN_OPTIONS.length - 1, i + 1));
+            break;
+          case "ArrowRight":
+            {
+              const opt = MAIN_OPTIONS[focusedIndex];
+              if (!opt || opt.action !== "sub" || !opt.subPage) break;
+              menuStackRef.current.push({ page, subPage: null, focusedIndex });
+              if (opt.subPage === "settings") {
+                setPage(opt.subPage);
+              } else {
+                setSubPage(opt.subPage);
+              }
+              setFocusedIndex(0);
+            }
+            break;
+          case "Enter":
+            {
+              const opt = MAIN_OPTIONS[focusedIndex];
+              if (!opt) break;
+              switch (opt.action) {
+                case "sub":
+                  if (opt.subPage) {
+                    menuStackRef.current.push({ page, subPage: null, focusedIndex });
+                    if (opt.subPage === "settings") {
+                      setPage(opt.subPage);
+                    } else {
+                      setSubPage(opt.subPage);
+                    }
+                    setFocusedIndex(0);
+                  }
+                  break;
+                case "navigate":
+                  handleClose();
+                  onNavigate?.("home");
+                  break;
+                case "random":
+                  handleClose();
+                  if (allGames && allGames.length > 0 && onSelectGame) {
+                    const idx = Math.floor(Math.random() * allGames.length);
+                    onSelectGame(allGames[idx]);
+                  }
+                  break;
+                case "refresh":
+                  handleClose();
+                  onRefreshLibrary?.();
+                  break;
+                case "switch-view":
+                  {
+                    const from = settings.layoutMode;
+                    const to = from === "spotlight" ? "grid" : "spotlight";
+                    if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][ACTIVATE] id=switch-view source=gamepad`);
+                    if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][SWITCH_REQUEST] from=${from} to=${to}`);
+                    handleClose();
+                    onPatch({ layoutMode: to });
+                    if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][APPLIED] layoutMode=${to}`);
+                  }
+                  break;
+              }
+            }
+            break;
+          case "Escape":
+          case "b":
+          case "B":
+            handleClose();
+            break;
+          case "v":
+          case "V":
+            if (Date.now() - openedAtRef.current < 200) {
+              if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][IGNORED_SAME_EVENT] key=v ageMs=${Date.now() - openedAtRef.current}`);
+              break;
+            }
+            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][CLOSE_REQUEST] source=view`);
+            handleClose();
+            break;
+        }
+      } else {
+        // ── Sub-page / settings category navigation ──
+        const max = Math.max(0, subItemCount.current - 1);
+        const isOnLastItem = focusedIndex === max;
+        switch (e.key) {
+          case "ArrowUp":
+            setFocusedIndex((i) => Math.max(0, i - 1));
+            break;
+          case "ArrowDown":
+            setFocusedIndex((i) => Math.min(max, i + 1));
+            break;
+          case "ArrowRight":
+            if (page === "settings" && !subPage) {
+              const cats: PanelPage[] = ["layout", "visuals", "media", "input"];
+              if (cats[focusedIndex]) {
+                menuStackRef.current.push({ page, subPage: null, focusedIndex });
+                setSubPage(cats[focusedIndex]);
+                setFocusedIndex(0);
+              }
+            }
+            break;
+          case "ArrowLeft":
+            doBackNav();
+            break;
+          case "Enter":
+            if (page === "settings" && !subPage) {
+              const cats: PanelPage[] = ["layout", "visuals", "media", "input"];
+              if (cats[focusedIndex]) {
+                menuStackRef.current.push({ page, subPage: null, focusedIndex });
+                setSubPage(cats[focusedIndex]);
+                setFocusedIndex(0);
+              }
+            } else if (subPage && isOnLastItem) {
+              // Enter on last row triggers reset for the current sub-page
+              switch (subPage) {
+                case "layout": { const p = resetConsoleLayoutSettings(); onPatch(p); } break;
+                case "visuals": { const p = resetConsoleVisualSettings(); onPatch(p); } break;
+                case "media": { const p = resetConsoleMediaSettings(); onPatch(p); } break;
+                case "input": { const p = resetConsoleInputSettings(); onPatch(p); } break;
+              }
+            }
+            break;
+          case "Escape":
+          case "b":
+          case "B":
+            doBackNav();
+            break;
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, page, subPage, focusedIndex, handleClose, onNavigate, onSelectGame, onRefreshLibrary, allGames, settings, onPatch, doBackNav]);
 
   const handleMainKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "ArrowUp") { e.preventDefault(); setFocusedIndex((i) => Math.max(0, i - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIndex((i) => Math.min(MAIN_OPTIONS.length - 1, i + 1)); }
+    // Consume all gamepad-mapped keys
+    if (GAMEPAD_KEYS.has(e.key)) { e.preventDefault(); e.stopPropagation(); }
+    if (e.key === "ArrowUp") { setFocusedIndex((i) => Math.max(0, i - 1)); }
+    if (e.key === "ArrowDown") { setFocusedIndex((i) => Math.min(MAIN_OPTIONS.length - 1, i + 1)); }
     if (e.key === "Enter") {
-      e.preventDefault();
       const opt = MAIN_OPTIONS[focusedIndex];
       if (!opt) return;
       switch (opt.action) {
         case "sub":
-          if (opt.subPage) setPage(opt.subPage);
+          if (opt.subPage) {
+            menuStackRef.current.push({ page, subPage: null, focusedIndex });
+            if (opt.subPage === "settings") {
+              setPage(opt.subPage);
+            } else {
+              setSubPage(opt.subPage);
+            }
+            setFocusedIndex(0);
+          }
           break;
         case "navigate":
           handleClose();
@@ -626,22 +842,34 @@ export default function ConsoleSettingsPanelV2({
           handleClose();
           onRefreshLibrary?.();
           break;
+        case "switch-view":
+          {
+            const from = settings.layoutMode;
+            const to = from === "spotlight" ? "grid" : "spotlight";
+            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][ACTIVATE] id=switch-view source=keyboard`);
+            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][SWITCH_REQUEST] from=${from} to=${to}`);
+            handleClose();
+            onPatch({ layoutMode: to });
+            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][APPLIED] layoutMode=${to}`);
+          }
+          break;
       }
     }
     if (e.key === "Escape") { e.preventDefault(); handleClose(); }
     if (e.key === "b" || e.key === "B") { e.preventDefault(); handleClose(); }
-  }, [focusedIndex, allGames, handleClose, onNavigate, onSelectGame, onRefreshLibrary]);
+  }, [focusedIndex, allGames, handleClose, onNavigate, onSelectGame, onRefreshLibrary, settings, onPatch]);
 
   const handleGlobalKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Escape") { e.preventDefault(); handleClose(); }
-    if (e.key === "b" || e.key === "B") { e.preventDefault(); handleClose(); }
+    if (GAMEPAD_KEYS.has(e.key)) { e.preventDefault(); e.stopPropagation(); }
+    if (e.key === "Escape") { handleClose(); }
+    if (e.key === "b" || e.key === "B") { handleClose(); }
   }, [handleClose]);
 
   const renderSubPage = () => {
     const sharedSub = {
       settings,
       onPatch,
-      onBack: () => setSubPage(null),
+      onBack: doBackNav,
       focusedIndex,
       onFocusChange: setFocusedIndex,
       itemCount: subItemCount,
@@ -651,8 +879,8 @@ export default function ConsoleSettingsPanelV2({
       case "visuals": return <ConsoleVisualsSubPanel {...sharedSub} />;
       case "media": return <ConsoleMediaSubPanel {...sharedSub} />;
       case "input": return <ConsoleInputSubPanel {...sharedSub} />;
-      case "tools": return <ConsoleToolsSubPanel onBack={() => setSubPage(null)} />;
-      case "help": return <ConsoleHelpSubPanel onBack={() => setSubPage(null)} />;
+      case "tools": return <ConsoleToolsSubPanel onBack={doBackNav} />;
+      case "help": return <ConsoleHelpSubPanel onBack={doBackNav} />;
       default: return null;
     }
   };
@@ -671,7 +899,15 @@ export default function ConsoleSettingsPanelV2({
           onClick={() => {
             switch (opt.action) {
               case "sub":
-                if (opt.subPage) setPage(opt.subPage);
+                if (opt.subPage) {
+                  menuStackRef.current.push({ page, subPage: null, focusedIndex });
+                  if (opt.subPage === "settings") {
+                    setPage(opt.subPage);
+                  } else {
+                    setSubPage(opt.subPage);
+                  }
+                  setFocusedIndex(0);
+                }
                 break;
               case "navigate":
                 handleClose();
@@ -688,6 +924,17 @@ export default function ConsoleSettingsPanelV2({
                 handleClose();
                 onRefreshLibrary?.();
                 break;
+              case "switch-view":
+                {
+                  const from = settings.layoutMode;
+                  const to = from === "spotlight" ? "grid" : "spotlight";
+                  if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][ACTIVATE] id=switch-view source=click`);
+                  if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][SWITCH_REQUEST] from=${from} to=${to}`);
+                  handleClose();
+                  onPatch({ layoutMode: to });
+                  if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][APPLIED] layoutMode=${to}`);
+                }
+                break;
             }
           }}
         />
@@ -695,9 +942,19 @@ export default function ConsoleSettingsPanelV2({
     </div>
   );
 
-  const breadcrumbTitle = page === "settings" && !subPage ? "Console Settings" : subPage ? (
-    subPage === "layout" ? "Layout" : subPage === "visuals" ? "Visuals" : subPage === "media" ? "Media" : subPage === "input" ? "Input" : subPage === "tools" ? "Tools" : subPage === "help" ? "Help" : null
-  ) : null;
+  const subPageLabel = (sp: PanelPage): string => {
+    switch (sp) {
+      case "layout": return "Layout";
+      case "visuals": return "Visuals";
+      case "media": return "Media";
+      case "input": return "Input";
+      case "tools": return "Tools";
+      case "help": return "Help";
+      default: return "";
+    }
+  };
+
+  const breadcrumbTitle = page === "settings" && !subPage ? "Console Settings" : subPage ? subPageLabel(subPage) : null;
 
   if (!open && !visible) return null;
 
@@ -707,7 +964,7 @@ export default function ConsoleSettingsPanelV2({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-50 transition-all duration-[250ms] ease-out"
+        className="fixed inset-0 z-[300] transition-all duration-[250ms] ease-out"
         style={{
           backgroundColor: visible ? "rgba(0,0,0,0.25)" : "rgba(0,0,0,0)",
           backdropFilter: visible ? "blur(4px)" : "blur(0px)",
@@ -724,7 +981,7 @@ export default function ConsoleSettingsPanelV2({
         role="dialog"
         aria-modal="true"
         aria-label="Console settings panel"
-        className="fixed left-0 top-0 bottom-0 z-50 flex w-[480px] max-w-[90vw] flex-col bg-(--color-bg)/95 border-r border-(--color-border) shadow-2xl outline-none transition-all duration-[250ms] ease-out"
+        className="fixed left-0 top-0 bottom-0 z-[300] flex w-[480px] max-w-[90vw] flex-col bg-(--color-bg)/95 border-r border-(--color-border) shadow-2xl outline-none transition-all duration-[250ms] ease-out"
         style={{
           transform: visible ? "translateX(0)" : "translateX(-100%)",
           opacity: visible ? 1 : 0,
@@ -773,7 +1030,7 @@ export default function ConsoleSettingsPanelV2({
         </div>
 
         {/* Scrollable content area */}
-        <div className="flex flex-1 flex-col overflow-y-auto px-6 pt-[60px] pb-6">
+        <div ref={panelScrollRef} className="flex flex-1 flex-col overflow-y-auto px-6 pt-[60px] pb-6">
           {/* Display name + status */}
           <div className="mb-4">
             <h2 className="text-xl font-bold text-(--color-text)">{profile.displayName}</h2>
@@ -782,25 +1039,49 @@ export default function ConsoleSettingsPanelV2({
 
           {/* Breadcrumb */}
           {(page === "settings" || subPage) && breadcrumbTitle && (
-            <div className="mb-4 flex items-center gap-2 text-sm text-(--color-muted)/60">
+            <div className="mb-4 flex items-center gap-2 text-sm text-(--color-muted)/60 flex-wrap">
               <button
-                onClick={() => { if (subPage) { setSubPage(null); } else { setPage("main"); } }}
+                onClick={() => { menuStackRef.current = []; setPage("main"); setSubPage(null); }}
                 className="hover:text-(--color-text)"
               >
                 Settings
               </button>
-              <ChevronRight className="h-3 w-3" />
-              <span className="text-(--color-text)/80">{breadcrumbTitle}</span>
+              {page === "settings" && (
+                <>
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                  {subPage ? (
+                    <button
+                      onClick={() => { menuStackRef.current = []; setSubPage(null); }}
+                      className="hover:text-(--color-text)"
+                    >
+                      Console Settings
+                    </button>
+                  ) : (
+                    <span className="text-(--color-text)/80">Console Settings</span>
+                  )}
+                </>
+              )}
+              {subPage && (
+                <>
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                  <span className="text-(--color-text)/80">{breadcrumbTitle}</span>
+                </>
+              )}
             </div>
           )}
 
           {/* Page content */}
           {page === "settings" && !subPage ? (
             <SettingsCategoryGrid
-              onSelect={(p) => setSubPage(p)}
+              onSelect={(p) => {
+                menuStackRef.current.push({ page, subPage: null, focusedIndex });
+                setSubPage(p);
+                setFocusedIndex(0);
+              }}
               onBack={() => setPage("main")}
               focusedIndex={focusedIndex}
               onFocusChange={setFocusedIndex}
+              itemCount={subItemCount}
             />
           ) : subPage ? renderSubPage() : renderMain()}
         </div>

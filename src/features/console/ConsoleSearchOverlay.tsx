@@ -3,6 +3,7 @@ import { Search, X, Gamepad2 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
 import { getConsoleInputHints } from "./consoleInputHints";
+import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamepadInput";
 import { getConsoleCardSrc } from "./consoleMedia";
 
 const FADE_DURATION = 180;
@@ -126,9 +127,11 @@ export default function ConsoleSearchOverlay({
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
+      if (DEBUG_CONSOLE_GAMEPAD) {
+        console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleSearchOverlay target=${(e.target as any)?.tagName ?? typeof e.target}`);
+      }
       if (!isOpenRef.current) return;
-      const target = e.target as HTMLElement;
-      const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+      if (e.key === "Alt" || e.key === "Meta") return;
 
       switch (e.key) {
         case "ArrowDown":
@@ -150,19 +153,20 @@ export default function ConsoleSearchOverlay({
           e.preventDefault();
           handleClose();
           break;
-        case "y":
-        case "Y":
-          // Only close if input is empty (Y is a letter character too)
-          if (!isInput || query.length === 0) {
-            e.preventDefault();
-            handleClose();
-          }
+        // Y is reserved for opening search from gamepad — never closes it
+        // V/View is reserved for Profile/Quick Menu — ignore in search context
+        case "v":
+        case "V":
+          e.preventDefault();
           break;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [open, results, focusIndex, handleSelect, handleClose, query]);
+
+  /* ── Gamepad input ── */
+  useConsoleGamepadInput(open);
 
   const overlayOpacity = visible ? 1 : 0;
 

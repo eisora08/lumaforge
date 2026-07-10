@@ -6,6 +6,8 @@ type UseConsoleNavigationParams = {
   onGoBack?: () => void;
 };
 
+const PAGE_JUMP = 5;
+
 export type ConsoleNavigationState = {
   focusedRail: number;
   focusedIndex: number;
@@ -13,6 +15,8 @@ export type ConsoleNavigationState = {
   moveDown: () => void;
   moveLeft: () => void;
   moveRight: () => void;
+  pageLeft: () => void;
+  pageRight: () => void;
   tabForward: () => void;
   tabBackward: () => void;
   selectFocused: () => void;
@@ -104,6 +108,34 @@ export function useConsoleNavigation(params: UseConsoleNavigationParams): Consol
     }
   }, [focusedRail, focusedIndex, railLengths, railCount]);
 
+  const pageLeft = useCallback(() => {
+    if (focusedRail < 0) {
+      if (railCount > 0) {
+        setFocusedRail(0);
+        setFocusedIndex(0);
+      }
+      return;
+    }
+    const len = railLengths[focusedRail];
+    if (len <= 0) return;
+    const next = Math.max(0, focusedIndex - PAGE_JUMP);
+    setFocusedIndex(next);
+  }, [focusedRail, focusedIndex, railLengths, railCount]);
+
+  const pageRight = useCallback(() => {
+    if (focusedRail < 0) {
+      if (railCount > 0) {
+        setFocusedRail(0);
+        setFocusedIndex(0);
+      }
+      return;
+    }
+    const len = railLengths[focusedRail];
+    if (len <= 0) return;
+    const next = Math.min(len - 1, focusedIndex + PAGE_JUMP);
+    setFocusedIndex(next);
+  }, [focusedRail, focusedIndex, railLengths, railCount]);
+
   const tabForward = useCallback(() => {
     if (railCount === 0) return;
     if (focusedRail < 0) {
@@ -168,12 +200,14 @@ export function useConsoleNavigation(params: UseConsoleNavigationParams): Consol
       moveDown,
       moveLeft,
       moveRight,
+      pageLeft,
+      pageRight,
       tabForward,
       tabBackward,
       selectFocused,
       goBack,
       focusRail,
     }),
-    [focusedRail, focusedIndex, moveUp, moveDown, moveLeft, moveRight, tabForward, tabBackward, selectFocused, goBack, focusRail],
+    [focusedRail, focusedIndex, moveUp, moveDown, moveLeft, moveRight, pageLeft, pageRight, tabForward, tabBackward, selectFocused, goBack, focusRail],
   );
 }
