@@ -25,6 +25,7 @@ import {
 } from "./consoleGameStats";
 import ConsoleMediaGallery from "./ConsoleMediaGallery";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
+import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
 import { getConsoleInputHints } from "./consoleInputHints";
 import type { TrailerData } from "./consoleTrailerData";
 import { resolveConsoleDetailsArtwork, clearConsoleArtworkCache, consoleArtworkToBundle } from "./consoleArtworkResolver";
@@ -128,6 +129,7 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
   const [carouselFocusIndex, setCarouselFocusIndex] = useState<number>(0);
   const [carouselSelectedIndex, setCarouselSelectedIndex] = useState<number>(0);
   const [infoCardSide, setInfoCardSide] = useState<InfoCardSide>("achievements");
+  const [optionsOpen, setOptionsOpen] = useState(false);
 
   /* ── Multi-source artwork enrichment ── */
   const [artwork, setArtwork] = useState<ConsoleArtwork | null>(null);
@@ -202,6 +204,11 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  /* ── Close options overlay on game change ── */
+  useEffect(() => {
+    setOptionsOpen(false);
+  }, [game?.appId]);
+
   const handleClose = useCallback(() => {
     if (phase === "exit") return;
     setPhase("exit");
@@ -212,6 +219,16 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
      KEYBOARD NAVIGATION — Focus zone model
      ══════════════════════════════════════════ */
   const handleZoneKeyDown = useCallback((e: KeyboardEvent) => {
+    // O / Menu key toggles options overlay
+    if (e.key === "o" || e.key === "O" || e.key === "ContextMenu" || e.key === "Apps") {
+      e.preventDefault();
+      setOptionsOpen((prev) => !prev);
+      return;
+    }
+
+    // When options overlay is open, ignore all zone keys (overlay handles its own)
+    if (optionsOpen) return;
+
     if (e.key === "Escape") {
       if (focusZone === "back-button") {
         e.preventDefault();
@@ -378,7 +395,7 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
         break;
       }
     }
-  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId]);
+  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleZoneKeyDown);
@@ -1176,6 +1193,17 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Options overlay */}
+      {optionsOpen && (
+        <ConsoleGameOptionsOverlay
+          game={game}
+          open={optionsOpen}
+          onClose={() => setOptionsOpen(false)}
+          inDetails={true}
+          inputHints={settings.inputHints}
+        />
+      )}
     </div>
   );
 }

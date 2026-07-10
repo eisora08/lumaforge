@@ -71,6 +71,7 @@ type Props = {
   focusedRail: number;
   focusedIndex: number;
   onSelectGame: (game: LibraryGame) => void;
+  onOptionsGame?: (game: LibraryGame) => void;
   layoutMode: "spotlight" | "grid";
   onToggleLayout: () => void;
   cardVariant?: "landscape" | "poster";
@@ -86,7 +87,7 @@ type Props = {
 
 export default function ConsoleSwitchSpotlightLayout({
   focusedGame, rails, focusedRail, focusedIndex,
-  onSelectGame, layoutMode, onToggleLayout,
+  onSelectGame, onOptionsGame: _onOptionsGame, layoutMode, onToggleLayout,
   cardVariant = "landscape", onNavigate,
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,

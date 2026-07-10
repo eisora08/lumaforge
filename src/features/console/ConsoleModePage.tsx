@@ -11,6 +11,7 @@ import type { ConsoleLayoutMode } from "./consoleSettings";
 import ConsoleSwitchSpotlightLayout from "./ConsoleSwitchSpotlightLayout";
 import ConsoleGridLayout from "./ConsoleGridLayout";
 import ConsoleGameDetails from "./ConsoleGameDetails";
+import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
 import { useConsoleNavigation } from "./useConsoleNavigation";
 
 const DEBUG_CONSOLE_MODE = false;
@@ -26,6 +27,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const { settings: appSettings } = useSettings();
   const [consoleSettings, patchConsoleSettings] = useConsoleSettings();
   const [detailGame, setDetailGame] = useState<LibraryGame | null>(null);
+  const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -90,6 +92,23 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
   }, []);
 
+  const handleOptionsGame = useCallback((game: LibraryGame) => {
+    if (DEBUG_CONSOLE_MODE) {
+      console.log(`[CONSOLE][OPTIONS_OPEN] appid=${game.appId} title=${game.title}`);
+    }
+    setOptionsGame(game);
+  }, []);
+
+  const handleOverlayOpenDetails = useCallback(() => {
+    if (optionsGame) {
+      if (DEBUG_CONSOLE_MODE) {
+        console.log(`[CONSOLE][OPTIONS_VIEW_DETAILS] appid=${optionsGame.appId}`);
+      }
+      setDetailGame(optionsGame);
+      setOptionsGame(null);
+    }
+  }, [optionsGame]);
+
   const closeDetails = useCallback(() => {
     if (DEBUG_CONSOLE_MODE) {
       console.log(`[CONSOLE][DETAILS_CLOSE]`);
@@ -121,6 +140,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (detailGame) {
         return; // ConsoleGameDetails handles its own keyboard input (Escape with animation)
       }
+      if (optionsGame) {
+        return; // Options overlay handles its own keyboard
+      }
       const target = e.target as HTMLElement;
       const isInputActive = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
       const isInDialog = !!target.closest('[role="dialog"][aria-modal="true"]');
@@ -143,11 +165,17 @@ export default function ConsoleModePage({ onNavigate }: Props) {
         case "D":
           if (!isInputActive && !isInDialog) { e.preventDefault(); selectFocused(); }
           break;
+        case "o":
+        case "O":
+        case "ContextMenu":
+        case "Apps":
+          if (!isInputActive && !isInDialog) { e.preventDefault(); const fg = currentFocusedGameRef.current; if (fg) handleOptionsGame(fg); }
+          break;
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [moveUp, moveDown, moveLeft, moveRight, tabForward, tabBackward, selectFocused, goBack, detailGame, closeDetails]);
+  }, [moveUp, moveDown, moveLeft, moveRight, tabForward, tabBackward, selectFocused, goBack, detailGame, closeDetails, optionsGame, handleOptionsGame]);
 
   const currentFocusedGame = useMemo(() => {
     if (focusedRail >= 0 && focusedRail < rails.length && focusedIndex >= 0) {
@@ -160,12 +188,16 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     return null;
   }, [focusedRail, focusedIndex, rails]);
 
+  const currentFocusedGameRef = useRef(currentFocusedGame);
+  currentFocusedGameRef.current = currentFocusedGame;
+
   const sharedProps = {
     focusedGame: currentFocusedGame,
     rails,
     focusedRail,
     focusedIndex: focusedIndex,
     onSelectGame: handleSelectGame,
+    onOptionsGame: handleOptionsGame,
     layoutMode: consoleSettings.layoutMode,
     onToggleLayout: toggleLayout,
     cardVariant,
@@ -195,6 +227,18 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           game={detailGame}
           onClose={closeDetails}
           settings={consoleSettings}
+        />
+      )}
+
+      {/* Options overlay (from Spotlight/Grid — not from details) */}
+      {optionsGame && (
+        <ConsoleGameOptionsOverlay
+          game={optionsGame}
+          open={true}
+          onClose={() => setOptionsGame(null)}
+          onOpenDetails={handleOverlayOpenDetails}
+          inDetails={false}
+          inputHints={consoleSettings.inputHints}
         />
       )}
     </div>
