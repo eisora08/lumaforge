@@ -6,6 +6,7 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
 import { getConsoleInputHints } from "./consoleInputHints";
 import { useFavorites } from "../../context/FavoritesContext";
+import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 
 const FADE_DURATION = 180;
 
@@ -14,12 +15,14 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onOpenDetails?: () => void;
+  onOpenSearch?: () => void;
+  onPlayGame?: (game: LibraryGame) => void;
   inDetails: boolean;
   inputHints: ConsoleInputHintStyle;
 };
 
 export default function ConsoleGameOptionsOverlay({
-  game, open, onClose, onOpenDetails, inDetails, inputHints,
+  game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, inDetails, inputHints,
 }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
@@ -71,11 +74,15 @@ export default function ConsoleGameOptionsOverlay({
       highlight?: boolean;
     }[] = [];
 
+    const action = getLauncherGamePrimaryAction(game);
+    const isPlayable = game.isPlayable && action === "play";
     list.push({
       id: "play",
-      label: "Play",
+      label: isPlayable ? "Play" : `Play (${action})`,
       icon: Play,
-      action: () => showToast("Play action comes later"),
+      disabled: !isPlayable,
+      action: () => { if (isPlayable) { onPlayGame?.(game); onClose(); } },
+      highlight: false,
     });
 
     list.push({
@@ -99,8 +106,7 @@ export default function ConsoleGameOptionsOverlay({
       id: "search",
       label: "Search",
       icon: Search,
-      disabled: true,
-      action: () => showToast("Search comes later"),
+      action: () => { onOpenSearch?.(); onClose(); },
     });
 
     list.push({
@@ -144,7 +150,7 @@ export default function ConsoleGameOptionsOverlay({
     });
 
     return list;
-  }, [isFav, inDetails, onOpenDetails, game?.appId, handleFavToggle, showToast, onClose]);
+  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame]);
 
   /* ── Clamp focus index after rows change ── */
   useEffect(() => {

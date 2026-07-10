@@ -3,6 +3,7 @@ import {
   ArrowLeft, Trophy, Heart, Gamepad2, Play, Clock, HardDrive, CheckCircle2,
   Star, Languages, Layers,
 } from "lucide-react";
+import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleSettings } from "./consoleSettings";
 import type { GameAchievementsSummary } from "../../types/gameAchievements";
@@ -34,6 +35,7 @@ import { stripHtml } from "../../utils/stripHtml";
 
 const DEBUG = false;
 const DEBUG_CONSOLE_ACHIEVEMENTS = false;
+const DEBUG_CONSOLE_PLAY = false;
 const ENTER_DURATION = 280;
 const EXIT_DURATION = 200;
 const ENTER_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
@@ -61,6 +63,8 @@ type Props = {
   game: LibraryGame;
   onClose: () => void;
   settings: ConsoleSettings;
+  onSearchOpen?: () => void;
+  onPlayGame?: (game: LibraryGame) => void;
 };
 
 /* ── Media helpers ── */
@@ -111,7 +115,7 @@ const REVIEW_COLORS: Record<string, { bg: string; text: string; border: string }
 };
 const DEFAULT_REVIEW_COLOR = { bg: "bg-white/5", text: "text-(--color-muted)", border: "border-white/[0.04]" };
 
-export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
+export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
   const { settings: appSettings } = useSettings();
@@ -215,6 +219,17 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
     setTimeout(() => onClose(), EXIT_DURATION + 20);
   }, [phase, onClose]);
 
+  /* ── Play handler ── */
+  const handlePlay = useCallback(() => {
+    if (!game) return;
+    const action = getLauncherGamePrimaryAction(game);
+    if (action !== "play" || !game.isPlayable) {
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_BLOCKED] appid=${game.appId} action=${action}`);
+      return;
+    }
+    onPlayGame?.(game);
+  }, [game, onPlayGame]);
+
   /* ══════════════════════════════════════════
      KEYBOARD NAVIGATION — Focus zone model
      ══════════════════════════════════════════ */
@@ -228,6 +243,13 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
 
     // When options overlay is open, ignore all zone keys (overlay handles its own)
     if (optionsOpen) return;
+
+    // Search key: / or Y opens search overlay
+    if (e.key === "/" || e.key === "y" || e.key === "Y") {
+      e.preventDefault();
+      onSearchOpen?.();
+      return;
+    }
 
     if (e.key === "Escape") {
       if (focusZone === "back-button") {
@@ -270,7 +292,7 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
           setFocusZone("media-preview");
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          // Play is visual-only; Favorite is safe
+          handlePlay();
         }
         break;
       }
@@ -395,7 +417,7 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
         break;
       }
     }
-  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen]);
+  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen, onSearchOpen, handlePlay]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleZoneKeyDown);
@@ -547,17 +569,6 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
   const handleFavoriteToggle = useCallback(() => {
     if (game?.appId) toggleFavorite(game.appId);
   }, [game, toggleFavorite]);
-
-  /* ── Play button no-op toast ── */
-  const handlePlayNoop = useCallback(() => {
-    if (typeof window !== "undefined") {
-      const toast = document.createElement("div");
-      toast.className = "pointer-events-none fixed left-1/2 top-1/4 z-[200] -translate-x-1/2 rounded-lg bg-amber-600/80 px-4 py-2 text-sm font-medium text-white shadow-lg backdrop-blur-sm";
-      toast.textContent = "Play action comes later";
-      document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 2000);
-    }
-  }, []);
 
   /* ── Achievement mini rows (up to 2, compact) ── */
   const achievementMiniRows = useMemo(() => {
@@ -823,8 +834,8 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
                   <div className="mt-2 flex items-center gap-2.5">
                     <button
                       type="button"
-                      onClick={handlePlayNoop}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/50 px-4 py-2 text-sm font-semibold text-white opacity-70 transition hover:opacity-100"
+                      onClick={handlePlay}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 transition hover:brightness-110"
                     >
                       <Play className="h-4 w-4" />
                       Play
@@ -1200,6 +1211,8 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
           game={game}
           open={optionsOpen}
           onClose={() => setOptionsOpen(false)}
+          onOpenSearch={() => { setOptionsOpen(false); onSearchOpen?.(); }}
+          onPlayGame={(g) => { setOptionsOpen(false); onPlayGame?.(g); }}
           inDetails={true}
           inputHints={settings.inputHints}
         />

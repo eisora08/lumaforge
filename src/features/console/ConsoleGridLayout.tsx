@@ -26,6 +26,7 @@ type Props = {
   focusedIndex: number;
   onSelectGame: (game: LibraryGame) => void;
   onOptionsGame?: (game: LibraryGame) => void;
+  onPlayGame?: (game: LibraryGame) => void;
   layoutMode: "spotlight" | "grid";
   onToggleLayout: () => void;
   cardVariant?: "landscape" | "poster";
@@ -56,7 +57,7 @@ function HintTag({ children }: { children: string }) {
 
 export default function ConsoleGridLayout({
   focusedGame, rails, focusedRail, focusedIndex,
-  onSelectGame, onOptionsGame: _onOptionsGame, layoutMode, onToggleLayout,
+  onSelectGame, onOptionsGame: _onOptionsGame, onPlayGame: _onPlayGame, layoutMode, onToggleLayout,
   cardVariant = "poster", onNavigate,
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
