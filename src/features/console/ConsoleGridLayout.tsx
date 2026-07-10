@@ -321,10 +321,10 @@ export default function ConsoleGridLayout({
 
                 {/* Input hints — driven by settings */}
                 <div className="flex flex-wrap gap-x-5 gap-y-2">
-                  {hints.selectPlay && <HintTag>{hints.selectPlay}</HintTag>}
-                  <HintTag>{hints.details}</HintTag>
-                  <HintTag>{hints.search}</HintTag>
+                  {hints.select && <HintTag>{hints.select}</HintTag>}
                   <HintTag>{hints.options}</HintTag>
+                  <HintTag>{hints.search}</HintTag>
+                  <HintTag>{hints.back}</HintTag>
                 </div>
               </div>
             </div>

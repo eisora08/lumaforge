@@ -36,9 +36,10 @@ export default function ConsoleMediaGallery({ items, selectedIndex, onSelect, fo
   }, [items.length, updateRailScrollState]);
 
   useEffect(() => {
-    const btn = thumbRefs.current.get(selectedIndex);
+    const idx = focusedIndex !== undefined ? focusedIndex : selectedIndex;
+    const btn = thumbRefs.current.get(idx);
     if (btn) btn.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-  }, [selectedIndex]);
+  }, [selectedIndex, focusedIndex]);
 
   const handleRailScroll = useCallback((dir: "left" | "right") => {
     const el = railRef.current;

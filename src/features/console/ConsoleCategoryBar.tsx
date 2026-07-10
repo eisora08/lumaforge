@@ -68,9 +68,9 @@ export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, show
         <div className="flex items-center gap-4">
           <div className="hidden items-center gap-4 md:flex">
             <HintTag>{hints.back}</HintTag>
-            <HintTag>{hints.details}</HintTag>
+            <HintTag>{hints.select}</HintTag>
             <HintTag>{hints.search}</HintTag>
-            <HintTag>{hints.filter}</HintTag>
+            <HintTag>{hints.media}</HintTag>
           </div>
         </div>
       )}

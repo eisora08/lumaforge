@@ -1,38 +1,38 @@
 export type ConsoleInputHintStyle = "xbox" | "playstation" | "keyboard" | "auto";
 
 export type ConsoleInputHints = {
-  selectPlay: string;
-  details: string;
-  search: string;
-  options: string;
+  select: string;
   back: string;
-  filter: string;
+  navigate: string;
+  media: string;
+  options: string;
+  search: string;
 };
 
 const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints> = {
   xbox: {
-    selectPlay: "[A] Play",
-    details: "[X / Enter] Details",
-    search: "[Y] Search",
-    options: "[Menu] Options",
+    select: "[A] Select",
     back: "[B] Back",
-    filter: "[LB/RB] Filter",
+    navigate: "[D-Pad] Navigate",
+    media: "[LB/RB] Media",
+    options: "[Menu] Options",
+    search: "[Y] Search",
   },
   playstation: {
-    selectPlay: "[✕] Play",
-    details: "[▢ / Enter] Details",
-    search: "[△] Search",
-    options: "[Options] Options",
+    select: "[✕] Select",
     back: "[○] Back",
-    filter: "[L1/R1] Filter",
+    navigate: "[D-Pad] Navigate",
+    media: "[L1/R1] Media",
+    options: "[Options] Options",
+    search: "[△] Search",
   },
   keyboard: {
-    selectPlay: "",
-    details: "[Enter] Details",
-    search: "[/] Search",
-    options: "[O] Options",
+    select: "[Enter] Select",
     back: "[Esc] Back",
-    filter: "[F] Filter",
+    navigate: "[Arrows] Navigate",
+    media: "[Q/E] Media",
+    options: "[O] Options",
+    search: "[/] Search",
   },
 };
 

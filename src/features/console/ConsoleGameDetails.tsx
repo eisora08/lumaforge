@@ -42,7 +42,19 @@ const _prefersReducedMotion = typeof window !== "undefined"
   ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
   : false;
 
-type FocusZone = "back-button" | "left-info" | "media-player" | "media-carousel" | "info-cards" | "action-hints";
+/* ══════════════════════════════════════════
+   FOCUS ZONE MODEL
+   ══════════════════════════════════════════ */
+type FocusZone =
+  | "back-button"
+  | "left-actions"
+  | "left-info"
+  | "media-preview"
+  | "media-carousel"
+  | "info-cards"
+  | "footer-actions";
+
+type InfoCardSide = "achievements" | "reviews";
 
 type Props = {
   game: LibraryGame;
@@ -110,11 +122,12 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
   const reducedMotion = _prefersReducedMotion;
 
   /* ══════════════════════════════════════════
-     FOCUS ZONE MODEL
+     FOCUS ZONE STATE
      ══════════════════════════════════════════ */
-  const [focusZone, setFocusZone] = useState<FocusZone>("media-player");
+  const [focusZone, setFocusZone] = useState<FocusZone>("media-preview");
   const [carouselFocusIndex, setCarouselFocusIndex] = useState<number>(0);
   const [carouselSelectedIndex, setCarouselSelectedIndex] = useState<number>(0);
+  const [infoCardSide, setInfoCardSide] = useState<InfoCardSide>("achievements");
 
   /* ── Multi-source artwork enrichment ── */
   const [artwork, setArtwork] = useState<ConsoleArtwork | null>(null);
@@ -178,6 +191,9 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
     return trailerData.playableType !== "none" ? "details" : "thumbnail";
   }, [isCurrentTrailer, trailerData]);
 
+  /* ── Is the current trailer playable (not just a thumbnail with no video)? ── */
+  const hasPlayableVideo = playerMode === "details" && trailerData?.playableType !== "none";
+
   /* ── Enter animation ── */
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -212,31 +228,93 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
     if (inInput) return;
 
     switch (focusZone) {
+      /* ── back-button ── */
       case "back-button": {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           handleClose();
-        } else if (e.key === "ArrowDown" || e.key === "Tab") {
+        } else if (e.key === "ArrowDown") {
           e.preventDefault();
-          setFocusZone("media-carousel");
+          setFocusZone("left-actions");
         }
         break;
       }
-      case "media-player": {
-        if (e.key === "ArrowDown" || e.key === "Tab") {
+
+      /* ── left-actions ── */
+      case "left-actions": {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setFocusZone("left-info");
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setFocusZone("back-button");
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setFocusZone("media-preview");
+        } else if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          // Play is visual-only; Favorite is safe
+        }
+        break;
+      }
+
+      /* ── left-info: scrollable info panel ── */
+      case "left-info": {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          if (leftPanelRef.current) {
+            leftPanelRef.current.scrollBy({ top: 120, behavior: "smooth" });
+          } else {
+            setFocusZone("media-preview");
+          }
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          if (leftPanelRef.current && leftPanelRef.current.scrollTop > 10) {
+            leftPanelRef.current.scrollBy({ top: -120, behavior: "smooth" });
+          } else {
+            setFocusZone("left-actions");
+          }
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setFocusZone("media-preview");
+        }
+        break;
+      }
+
+      /* ── media-preview: Enter toggles play/pause ── */
+      case "media-preview": {
+        if (e.key === "ArrowDown") {
           e.preventDefault();
           setFocusZone("media-carousel");
           setCarouselFocusIndex(carouselSelectedIndex);
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
           setFocusZone("left-info");
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setFocusZone("left-info");
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
           setFocusZone("media-carousel");
           setCarouselFocusIndex(carouselSelectedIndex);
+        } else if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          // Enter on preview toggles trailer play/pause
+          const video = document.querySelector<HTMLVideoElement>(
+            `[data-console-preview-video="${game?.appId}"]`
+          );
+          if (video && hasPlayableVideo) {
+            if (video.paused) {
+              video.play().catch(() => {});
+            } else {
+              video.pause();
+            }
+          }
         }
         break;
       }
+
+      /* ── media-carousel ── */
       case "media-carousel": {
         if (e.key === "ArrowLeft") {
           e.preventDefault();
@@ -251,51 +329,56 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
           setCarouselSelectedIndex(carouselFocusIndex);
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
-          setFocusZone("media-player");
-        } else if (e.key === "ArrowDown" || e.key === "Tab") {
+          setFocusZone("media-preview");
+        } else if (e.key === "ArrowDown") {
           e.preventDefault();
           setFocusZone("info-cards");
+        } else if (e.key === "PageUp" || e.key === "q" || e.key === "Q") {
+          e.preventDefault();
+          const next = Math.max(0, carouselFocusIndex - 5);
+          setCarouselFocusIndex(next);
+        } else if (e.key === "PageDown" || e.key === "e" || e.key === "E") {
+          e.preventDefault();
+          const next = Math.min(mediaItems.length - 1, carouselFocusIndex + 5);
+          setCarouselFocusIndex(next);
         }
         break;
       }
+
+      /* ── info-cards: ArrowLeft/Right switches achievements/reviews ── */
       case "info-cards": {
-        if (e.key === "ArrowUp") {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setInfoCardSide("achievements");
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setInfoCardSide("reviews");
+        } else if (e.key === "ArrowUp") {
           e.preventDefault();
           setFocusZone("media-carousel");
-        } else if (e.key === "ArrowDown" || e.key === "Tab") {
+        } else if (e.key === "ArrowDown") {
           e.preventDefault();
-          setFocusZone("action-hints");
+          setFocusZone("footer-actions");
         }
         break;
       }
-      case "action-hints": {
+
+      /* ── footer-actions ── */
+      case "footer-actions": {
         if (e.key === "ArrowUp") {
           e.preventDefault();
           setFocusZone("info-cards");
+        } else if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setFocusZone("back-button");
         } else if (e.key === "ArrowLeft") {
           e.preventDefault();
           setFocusZone("left-info");
-        } else if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
-          e.preventDefault();
-          setFocusZone("back-button");
-        }
-        break;
-      }
-      case "left-info": {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setFocusZone("media-player");
-        } else if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setFocusZone("action-hints");
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setFocusZone("media-player");
         }
         break;
       }
     }
-  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose]);
+  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleZoneKeyDown);
@@ -307,7 +390,7 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
     setCarouselFocusIndex(carouselSelectedIndex);
   }, [carouselSelectedIndex]);
 
-  /* ── Auto-scroll left panel when focused ── */
+  /* ── Auto-focus left panel when entering left-info zone ── */
   useEffect(() => {
     if (focusZone === "left-info" && leftPanelRef.current) {
       leftPanelRef.current.focus({ preventScroll: false });
@@ -448,6 +531,17 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
     if (game?.appId) toggleFavorite(game.appId);
   }, [game, toggleFavorite]);
 
+  /* ── Play button no-op toast ── */
+  const handlePlayNoop = useCallback(() => {
+    if (typeof window !== "undefined") {
+      const toast = document.createElement("div");
+      toast.className = "pointer-events-none fixed left-1/2 top-1/4 z-[200] -translate-x-1/2 rounded-lg bg-amber-600/80 px-4 py-2 text-sm font-medium text-white shadow-lg backdrop-blur-sm";
+      toast.textContent = "Play action comes later";
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2000);
+    }
+  }, []);
+
   /* ── Achievement mini rows (up to 2, compact) ── */
   const achievementMiniRows = useMemo(() => {
     const list = achievementsSummary?.achievements;
@@ -519,9 +613,30 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
       ? "bg-(--color-surface)/40 backdrop-blur-2xl"
       : "bg-(--color-surface)/85 backdrop-blur-sm";
 
-  /* ── Zone focus class ── */
-  const zoneFocus = (zone: FocusZone) =>
-    focusZone === zone ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/10 transition-all duration-150" : "";
+  /* ══════════════════════════════════════════
+     FOCUS VISUALS — per-zone focus styling
+     ══════════════════════════════════════════ */
+  const zoneFocusClass = (zone: FocusZone): string => {
+    if (focusZone !== zone) return "";
+    switch (zone) {
+      case "back-button":
+        return "ring-2 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/20 scale-[1.02] transition-all duration-150";
+      case "left-actions":
+        return "ring-2 ring-(--color-accent)/40 ring-inset shadow-lg shadow-(--color-accent)/10 transition-all duration-150";
+      case "left-info":
+        return "ring-2 ring-(--color-accent)/30 ring-inset shadow-lg shadow-(--color-accent)/8 transition-all duration-150";
+      case "media-preview":
+        return "ring-2 ring-(--color-accent)/50 shadow-xl shadow-(--color-accent)/15 transition-all duration-150 scale-[1.005]";
+      case "media-carousel":
+        return "ring-2 ring-(--color-accent)/40 ring-inset shadow-lg shadow-(--color-accent)/10 rounded-xl transition-all duration-150";
+      case "info-cards":
+        return "ring-2 ring-(--color-accent)/30 ring-inset shadow-lg shadow-(--color-accent)/8 rounded-2xl transition-all duration-150";
+      case "footer-actions":
+        return "ring-2 ring-(--color-accent)/40 shadow-lg shadow-(--color-accent)/10 transition-all duration-150";
+      default:
+        return "ring-2 ring-(--color-accent)/40 transition-all duration-150";
+    }
+  };
 
   if (!game) {
     return (
@@ -576,13 +691,13 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
 
       <div className="pointer-events-none absolute inset-0 z-[5] bg-black/30" />
 
-      {/* ── Back button ── */}
+      {/* ── Back button (zone: back-button) ── */}
       <div className="pointer-events-none absolute left-4 top-3 z-30">
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); handleClose(); }}
           onFocus={() => setFocusZone("back-button")}
-          className={`pointer-events-auto inline-flex items-center gap-1.5 rounded-lg bg-black/30 px-3 py-1.5 text-xs font-medium text-white/70 backdrop-blur-sm transition hover:bg-(--color-accent)/80 hover:text-white ${zoneFocus("back-button")}`}
+          className={`pointer-events-auto inline-flex items-center gap-1.5 rounded-lg bg-black/30 px-3 py-1.5 text-xs font-medium text-white/70 backdrop-blur-sm transition hover:bg-(--color-accent)/80 hover:text-white outline-none ${zoneFocusClass("back-button")}`}
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back
@@ -612,21 +727,15 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
         {/* ── Content ── */}
         <div className="relative z-10 flex h-full w-full gap-5 p-6">
           {/* ════════════════════════════════════════
-             LEFT COLUMN — Scrollable game info panel
+             LEFT COLUMN — Actions + Scrollable info panel
              ════════════════════════════════════════ */}
-          <div
-            ref={leftPanelRef}
-            tabIndex={-1}
-            onFocus={() => setFocusZone("left-info")}
-            data-focused={focusZone === "left-info" ? "true" : undefined}
-            className={`relative w-[35%] shrink-0 overflow-y-auto rounded-2xl bg-(--color-surface)/10 scrollbar-thin scrollbar-thumb-(--color-border)/20 ${zoneFocus("left-info")}`}
-          >
-            {/* Fade edge at top/bottom to signal scrollability */}
-            <div className="pointer-events-none sticky top-0 z-10 h-6 bg-gradient-to-b from-(--color-surface)/40 to-transparent" />
-
-            {/* Fixed identity section at top */}
-            <div className="shrink-0 px-3">
-              {/* IdentityRow: Cover + GameInfo (logo, dev, badges) */}
+          <div className="relative w-[35%] shrink-0 flex flex-col">
+            {/* ── Identity + Actions (zone: left-actions) ── */}
+            <div
+              tabIndex={-1}
+              onFocus={() => setFocusZone("left-actions")}
+              className={`shrink-0 rounded-2xl px-3 pt-3 pb-2 outline-none ${zoneFocusClass("left-actions")}`}
+            >
               <div className="flex gap-3.5">
                 <div className="w-[140px] shrink-0 overflow-hidden rounded-2xl bg-(--color-surface)/60 shadow-xl shadow-black/40 ring-1 ring-white/[0.06]">
                   {coverSrc ? (
@@ -692,183 +801,196 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
                       </span>
                     )}
                   </div>
+
+                  {/* Action buttons — Play (visual-only) + Favorite (safe) */}
+                  <div className="mt-2 flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={handlePlayNoop}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/50 px-4 py-2 text-sm font-semibold text-white opacity-70 transition hover:opacity-100"
+                    >
+                      <Play className="h-4 w-4" />
+                      Play
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleFavoriteToggle}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-(--color-surface)/40"
+                      title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+                    >
+                      <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
+                    </button>
+                  </div>
+
+                  {/* Stats grid — 2x2 compact */}
+                  <div className="mt-2.5 grid grid-cols-2 gap-2">
+                    {[
+                      { icon: Clock, label: "Played", value: playtimeDisplay },
+                      { icon: Clock, label: "Last", value: lastPlayedStr },
+                      { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
+                      {
+                        icon: CheckCircle2,
+                        label: "Status",
+                        value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
+                      },
+                    ].map(({ icon: Icon, label, value }) => (
+                      <div
+                        key={label}
+                        className="rounded-xl bg-(--color-surface)/40 px-3 py-2 ring-1 ring-white/[0.04]"
+                      >
+                        <div className="flex items-center gap-1.5 text-(--color-muted)">
+                          <Icon className="h-3 w-3" />
+                          <span className="text-[10px] font-medium uppercase tracking-wider">{label}</span>
+                        </div>
+                        <p className="mt-0.5 text-sm font-semibold text-(--color-text)">{value}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
+            </div>
 
-              {/* Action buttons */}
-              <div className="mt-3 flex items-center gap-2.5">
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/50 px-4 py-2 text-sm font-semibold text-white opacity-70"
-                >
-                  <Play className="h-4 w-4" />
-                  Play
-                </button>
-                <button
-                  type="button"
-                  onClick={handleFavoriteToggle}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-(--color-surface)/40"
-                  title={isFav ? "Remove from Favorites" : "Add to Favorites"}
-                >
-                  <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
-                </button>
-              </div>
+            {/* ── Scrollable info section (zone: left-info) ── */}
+            <div
+              ref={leftPanelRef}
+              tabIndex={-1}
+              onFocus={() => setFocusZone("left-info")}
+              data-focused={focusZone === "left-info" ? "true" : undefined}
+              className={`relative mt-2 flex-1 overflow-y-auto rounded-2xl bg-(--color-surface)/10 scrollbar-thin scrollbar-thumb-(--color-border)/20 outline-none ${zoneFocusClass("left-info")}`}
+            >
+              {/* Top fade edge */}
+              <div className="pointer-events-none sticky top-0 z-10 h-6 bg-gradient-to-b from-(--color-surface)/40 to-transparent" />
 
-              {/* Stats grid — 2x2 compact */}
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {[
-                  { icon: Clock, label: "Played", value: playtimeDisplay },
-                  { icon: Clock, label: "Last", value: lastPlayedStr },
-                  { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
-                  {
-                    icon: CheckCircle2,
-                    label: "Status",
-                    value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
-                  },
-                ].map(({ icon: Icon, label, value }) => (
-                  <div
-                    key={label}
-                    className="rounded-xl bg-(--color-surface)/40 px-3 py-2 ring-1 ring-white/[0.04]"
-                  >
-                    <div className="flex items-center gap-1.5 text-(--color-muted)">
-                      <Icon className="h-3 w-3" />
-                      <span className="text-[10px] font-medium uppercase tracking-wider">{label}</span>
+              <div className="space-y-3.5 px-3 pb-6">
+                {/* About the Game */}
+                {aboutTheGame && (
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted) mb-1.5">
+                      About the Game
+                    </h3>
+                    <p className="text-xs leading-relaxed text-(--color-muted)/90">
+                      {aboutTheGame}
+                    </p>
+                  </div>
+                )}
+
+                {/* Short Description (if distinct from About) */}
+                {description && (!aboutTheGame || !aboutTheGame.startsWith(stripHtml(description).slice(0, 60))) && (
+                  <p className="text-xs leading-relaxed text-(--color-muted)/70 italic">
+                    {description}
+                  </p>
+                )}
+
+                {/* Developer / Publisher / Release Date */}
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {developer && (
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Developer</span>
+                      <p className="text-xs text-(--color-text)">{developer}</p>
                     </div>
-                    <p className="mt-0.5 text-sm font-semibold text-(--color-text)">{value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Scrollable info sections */}
-            <div className="mt-4 space-y-3.5 px-3 pb-6">
-              {/* About the Game */}
-              {aboutTheGame && (
-                <div>
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted) mb-1.5">
-                    About the Game
-                  </h3>
-                  <p className="text-xs leading-relaxed text-(--color-muted)/90">
-                    {aboutTheGame}
-                  </p>
+                  )}
+                  {publisher && publisher !== developer && (
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Publisher</span>
+                      <p className="text-xs text-(--color-text)">{publisher}</p>
+                    </div>
+                  )}
+                  {game?.metadata?.release_date && (
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Released</span>
+                      <p className="text-xs text-(--color-text)">{game.metadata.release_date}</p>
+                    </div>
+                  )}
                 </div>
-              )}
 
-              {/* Short Description (if distinct from About) */}
-              {description && (!aboutTheGame || !aboutTheGame.startsWith(stripHtml(description).slice(0, 60))) && (
-                <p className="text-xs leading-relaxed text-(--color-muted)/70 italic">
-                  {description}
-                </p>
-              )}
-
-              {/* Developer / Publisher / Release Date */}
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                {developer && (
+                {/* Genres */}
+                {genres && genres.length > 0 && (
                   <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Developer</span>
-                    <p className="text-xs text-(--color-text)">{developer}</p>
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Genres</span>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {genres.map((g) => (
+                        <span key={g} className="rounded-lg bg-(--color-surface)/60 px-2 py-0.5 text-[11px] font-medium text-(--color-muted) ring-1 ring-(--color-border)/30">
+                          {g}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
-                {publisher && publisher !== developer && (
-                  <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Publisher</span>
-                    <p className="text-xs text-(--color-text)">{publisher}</p>
-                  </div>
-                )}
-                {game?.metadata?.release_date && (
-                  <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Released</span>
-                    <p className="text-xs text-(--color-text)">{game.metadata.release_date}</p>
-                  </div>
-                )}
-              </div>
 
-              {/* Genres */}
-              {genres && genres.length > 0 && (
-                <div>
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Genres</span>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {genres.map((g) => (
-                      <span key={g} className="rounded-lg bg-(--color-surface)/60 px-2 py-0.5 text-[11px] font-medium text-(--color-muted) ring-1 ring-(--color-border)/30">
-                        {g}
+                {/* Features / Categories */}
+                {categories && categories.length > 0 && (
+                  <div>
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Features</span>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {categories.map((cat) => (
+                        <span key={cat} className="rounded-lg bg-(--color-surface)/40 px-2 py-0.5 text-[10px] text-(--color-muted)/80 ring-1 ring-(--color-border)/20">
+                          {cat}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Languages */}
+                {languagesLabel && (
+                  <div className="flex items-start gap-2">
+                    <Languages className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Languages</span>
+                      <p className="text-xs text-(--color-muted)/80">{languagesLabel}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* DLC */}
+                {dlcLabel && (
+                  <div className="flex items-start gap-2">
+                    <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">DLC</span>
+                      <p className="text-xs text-(--color-muted)/80">{dlcLabel}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Requirements */}
+                {hasRequirements && (
+                  <div>
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Requirements</span>
+                    <p className="mt-0.5 text-xs text-(--color-muted)/70">
+                      {game.metadata?.pc_requirements?.minimum ? "Minimum specs available" : "Recommended specs available"}
+                    </p>
+                  </div>
+                )}
+
+                {/* Platforms */}
+                {game.metadata?.platforms && game.metadata.platforms.length > 0 && (
+                  <div className="flex gap-1.5">
+                    {game.metadata.platforms.map((p) => (
+                      <span key={p} className="rounded-md bg-(--color-surface)/40 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)/60 ring-1 ring-(--color-border)/20">
+                        {p}
                       </span>
                     ))}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
-              {/* Features / Categories */}
-              {categories && categories.length > 0 && (
-                <div>
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Features</span>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {categories.map((cat) => (
-                      <span key={cat} className="rounded-lg bg-(--color-surface)/40 px-2 py-0.5 text-[10px] text-(--color-muted)/80 ring-1 ring-(--color-border)/20">
-                        {cat}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Languages */}
-              {languagesLabel && (
-                <div className="flex items-start gap-2">
-                  <Languages className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
-                  <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Languages</span>
-                    <p className="text-xs text-(--color-muted)/80">{languagesLabel}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* DLC */}
-              {dlcLabel && (
-                <div className="flex items-start gap-2">
-                  <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
-                  <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">DLC</span>
-                    <p className="text-xs text-(--color-muted)/80">{dlcLabel}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Requirements */}
-              {hasRequirements && (
-                <div>
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Requirements</span>
-                  <p className="mt-0.5 text-xs text-(--color-muted)/70">
-                    {game.metadata?.pc_requirements?.minimum ? "Minimum specs available" : "Recommended specs available"}
-                  </p>
-                </div>
-              )}
-
-              {/* Platforms */}
-              {game.metadata?.platforms && game.metadata.platforms.length > 0 && (
-                <div className="flex gap-1.5">
-                  {game.metadata.platforms.map((p) => (
-                    <span key={p} className="rounded-md bg-(--color-surface)/40 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)/60 ring-1 ring-(--color-border)/20">
-                      {p}
-                    </span>
-                  ))}
-                </div>
-              )}
+              {/* Bottom fade */}
+              <div className="pointer-events-none sticky bottom-0 z-10 h-6 bg-gradient-to-t from-(--color-surface)/40 to-transparent" />
             </div>
-
-            {/* Bottom fade */}
-            <div className="pointer-events-none sticky bottom-0 z-10 h-6 bg-gradient-to-t from-(--color-surface)/40 to-transparent" />
           </div>
 
           {/* ════════════════════════════════════════
              RIGHT COLUMN — Media Frame → Carousel → Info Cards → Hints
              ════════════════════════════════════════ */}
           <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {/* ── Media Player Frame ── */}
+            {/* ── Media Player Frame (zone: media-preview) ── */}
             <div
-              className={`relative w-full overflow-hidden rounded-2xl bg-black/50 shadow-xl shadow-black/30 ring-1 ring-white/[0.06] ${zoneFocus("media-player")}`}
+              className={`relative w-full overflow-hidden rounded-2xl bg-black/50 shadow-xl shadow-black/30 ring-1 ring-white/[0.06] outline-none ${zoneFocusClass("media-preview")}`}
               style={{ aspectRatio: "16/9", maxHeight: "clamp(200px, 32vh, 400px)" }}
-              onClick={() => setFocusZone("media-player")}
+              onClick={() => setFocusZone("media-preview")}
+              tabIndex={-1}
+              onFocus={() => setFocusZone("media-preview")}
             >
               <ConsoleSelectedPreview
                 game={game}
@@ -880,11 +1002,13 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
               />
             </div>
 
-            {/* ── Media Carousel (below player, 16px gap) ── */}
+            {/* ── Media Carousel (zone: media-carousel) ── */}
             {mediaItems.length > 0 && (
               <div
-                className={zoneFocus("media-carousel")}
+                className={`rounded-xl outline-none ${zoneFocusClass("media-carousel")}`}
                 onClick={() => { setFocusZone("media-carousel"); setCarouselFocusIndex(carouselSelectedIndex); }}
+                tabIndex={-1}
+                onFocus={() => setFocusZone("media-carousel")}
               >
                 <ConsoleMediaGallery
                   items={mediaItems}
@@ -895,13 +1019,19 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
               </div>
             )}
 
-            {/* ── Two-column row: Achievements | Reviews ── */}
+            {/* ── Two-column row: Achievements | Reviews (zone: info-cards) ── */}
             <div
-              className={`grid grid-cols-2 gap-3 ${zoneFocus("info-cards")}`}
+              className={`grid grid-cols-2 gap-3 rounded-2xl p-0.5 outline-none ${zoneFocusClass("info-cards")}`}
               onClick={() => setFocusZone("info-cards")}
+              tabIndex={-1}
+              onFocus={() => setFocusZone("info-cards")}
             >
-              {/* ═══ Achievements Card (compact) ═══ */}
-              <div className="rounded-2xl bg-(--color-surface)/40 ring-1 ring-white/[0.04]">
+              {/* ═══ Achievements Card ═══ */}
+              <div className={`rounded-2xl bg-(--color-surface)/40 ring-1 ring-white/[0.04] transition-all duration-150 ${
+                focusZone === "info-cards" && infoCardSide === "achievements"
+                  ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
+                  : ""
+              }`}>
                 {achievementsSummary && effectiveTotal > 0 ? (
                   <div className="px-3.5 py-3">
                     <div className="flex items-center justify-between">
@@ -989,7 +1119,11 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
               </div>
 
               {/* ═══ Reviews Card ═══ */}
-              <div className={`rounded-2xl ${reviewColors.bg} ${reviewColors.border} ring-1 ring-inset`}>
+              <div className={`rounded-2xl ${reviewColors.bg} ${reviewColors.border} ring-1 ring-inset transition-all duration-150 ${
+                focusZone === "info-cards" && infoCardSide === "reviews"
+                  ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
+                  : ""
+              }`}>
                 {reviewSummary && reviewSummary.resolved && reviewSummary.total_reviews > 0 ? (
                   <div className="px-3.5 py-3">
                     <div className="flex items-center gap-1.5">
@@ -1025,15 +1159,19 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
               </div>
             </div>
 
-            {/* ── Action hints — bottom-right ── */}
+            {/* ── Action hints (zone: footer-actions) ── */}
             <div
-              className={`mt-auto flex justify-end gap-x-4 gap-y-1 pt-2 rounded-xl px-3 py-2 ${zoneFocus("action-hints")}`}
-              onClick={() => setFocusZone("action-hints")}
+              className={`mt-auto flex justify-end gap-x-4 gap-y-1 rounded-xl px-3 py-2 outline-none ${zoneFocusClass("footer-actions")}`}
+              onClick={() => setFocusZone("footer-actions")}
+              tabIndex={-1}
+              onFocus={() => setFocusZone("footer-actions")}
             >
-              <HintLabel focus={focusZone === "action-hints"}>{hints.selectPlay}</HintLabel>
-              <HintLabel focus={focusZone === "action-hints"}>{hints.details}</HintLabel>
-              <HintLabel focus={focusZone === "action-hints"}>{hints.options}</HintLabel>
-              <HintLabel focus={focusZone === "action-hints"}>{hints.back}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.select}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.back}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.navigate}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.media}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.options}</HintLabel>
+              <HintLabel focus={focusZone === "footer-actions"}>{hints.search}</HintLabel>
             </div>
           </div>
         </div>
