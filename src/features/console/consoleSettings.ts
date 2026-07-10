@@ -36,6 +36,16 @@ export type ConsoleSettings = {
   spotlightCardWidth: number;
   spotlightCardGap: number;
   showTrailerPreview: boolean;
+
+  /* ── Media provider toggles ── */
+  useSteamGridDb: boolean;
+  useSteamAppDetails: boolean;
+  useIgdb: boolean;
+  useRawg: boolean;
+
+  /* ── Trailer settings ── */
+  autoplayTrailerPreviews: boolean;
+  preferDirectVideo: boolean;
 };
 
 const STORAGE_KEY = "lumaforge-console-settings-v1";
@@ -65,6 +75,12 @@ export const DEFAULT_CONSOLE_SETTINGS: ConsoleSettings = {
   spotlightCardWidth: 320,
   spotlightCardGap: 20,
   showTrailerPreview: true,
+  useSteamGridDb: true,
+  useSteamAppDetails: true,
+  useIgdb: true,
+  useRawg: true,
+  autoplayTrailerPreviews: false,
+  preferDirectVideo: true,
 };
 
 export const LAYOUT_DEFAULTS: Pick<ConsoleSettings,
@@ -187,6 +203,25 @@ export const VISUAL_DEFAULTS: Pick<ConsoleSettings,
 export function resetConsoleVisualSettings(): ConsoleSettings {
   const current = loadConsoleSettings();
   const patched = { ...current, ...VISUAL_DEFAULTS };
+  persistConsoleSettings(patched);
+  return patched;
+}
+
+export const MEDIA_DEFAULTS: Pick<ConsoleSettings,
+  "useSteamGridDb" | "useSteamAppDetails" | "useIgdb" | "useRawg"
+  | "autoplayTrailerPreviews" | "preferDirectVideo"
+> = {
+  useSteamGridDb: true,
+  useSteamAppDetails: true,
+  useIgdb: true,
+  useRawg: true,
+  autoplayTrailerPreviews: false,
+  preferDirectVideo: true,
+};
+
+export function resetConsoleMediaSettings(): ConsoleSettings {
+  const current = loadConsoleSettings();
+  const patched = { ...current, ...MEDIA_DEFAULTS };
   persistConsoleSettings(patched);
   return patched;
 }

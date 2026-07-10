@@ -18,7 +18,10 @@ import { readMediaManifest, type GameMediaCacheEntry, type GameMediaPaths, type 
 import type { GameAppInfo } from "../services/gameCacheService";
 import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
-import { enqueueMediaDownload, cancelMediaJobsForApp } from "../services/mediaDownloadQueue";
+import { resolveGameDetailsArtwork, refreshGameDetailsArtwork, materializeResolvedGameMedia } from "../services/gameCacheService";
+
+import type { ResolvedGameMediaBundle } from "../types/gameMedia";
+import { enqueueMediaDownload, cancelMediaJobsForApp, subscribeToMediaQueue } from "../services/mediaDownloadQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
 import { useSettings } from "../context/SettingsContext";
@@ -56,6 +59,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [canonicalAppInfo, setCanonicalAppInfo] = useState<GameAppInfo | null>(null);
   const [canonicalDiskFallback, setCanonicalDiskFallback] = useState<string | null>(null);
   const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
+  const [fallbackBundle, setFallbackBundle] = useState<ResolvedGameMediaBundle | null>(null);
   const currentRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
   const _prevAppIdRef = useRef<string | null>(null);
@@ -135,6 +139,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setCanonicalAppInfo(null);
     setCanonicalDiskFallback(null);
     setLocalDetailsData(null);
+    setFallbackBundle(null);
 
     if (!selectedGame?.appId) return;
 
@@ -151,6 +156,12 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       readMediaManifest(appId).catch(() => null as MediaManifest | null),
     ]).then(async ([info, manifest]) => {
       if (cancelled) return;
+
+      // Verify actual files on disk — media_manifest.json may be stale
+      // (written at download time, but files may have been deleted manually).
+      // getGameMediaPaths checks disk via Rust std::fs::metadata.
+      const { getGameMediaPaths } = await import("../services/tauri");
+      const diskState = await getGameMediaPaths(appId);
 
       let mergedInfo = info;
       if (info?.media && manifest) {
@@ -169,7 +180,12 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
           const mergeField = (key: keyof GameMediaPaths) => {
             const manifestVal = resolvedManifestPaths[key];
-            if (manifestVal && merged[key] !== manifestVal) {
+            // Only merge manifest path if the file actually exists on disk
+            // (diskState.*Exists is authoritative — the manifest may be stale
+            // after manual deletion).
+            const existsKey = `${key.replace("Path", "Exists")}` as keyof typeof diskState;
+            const fileActuallyExists = diskState?.[existsKey] as boolean | undefined;
+            if (manifestVal && fileActuallyExists !== false && merged[key] !== manifestVal) {
               merged[key] = manifestVal;
               changed = true;
             }
@@ -195,6 +211,27 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         }
       }
 
+      // Use actual disk state to override stale appinfo/manifest paths.
+      // If a file was manually deleted, diskState.*Path will be null even
+      // if appinfo and manifest still reference it.
+      if (diskState && mergedInfo?.media) {
+        const merged = { ...mergedInfo.media };
+        let changed = false;
+        const roles: (keyof GameMediaPaths)[] = ["coverPath", "landscapePath", "backgroundPath", "logoPath", "iconPath"];
+        for (const roleKey of roles) {
+          const existsKey = `${roleKey.replace("Path", "Exists")}` as keyof typeof diskState;
+          const fileActuallyExists = diskState?.[existsKey] as boolean | undefined;
+          if (fileActuallyExists === false && merged[roleKey]) {
+            console.log(`[MEDIA_STALE][DETECTED] appid=${appId} role=${roleKey} path=${merged[roleKey]} reason=file-missing`);
+            (merged as any)[roleKey] = null;
+            changed = true;
+          }
+        }
+        if (changed) {
+          mergedInfo = { ...mergedInfo, media: merged };
+        }
+      }
+
       if (import.meta.env.DEV && mergedInfo?.media) {
         const logDisplay = (role: string) => {
           const key = `${role}Path` as keyof GameMediaPaths;
@@ -208,6 +245,54 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       if (!mergedInfo?.media?.landscapePath && !mergedInfo?.media?.coverPath) {
         resolveGameMediaImageSrc(appId).then((src) => {
           if (!cancelled && src) setCanonicalDiskFallback(src);
+        }).catch(() => {});
+      }
+
+      // ── Multi-provider fallback for missing background/logo ──
+      const missingBg = !mergedInfo?.media?.backgroundPath;
+      const missingLogo = !mergedInfo?.media?.logoPath;
+      if (missingBg || missingLogo) {
+        const localPaths = mergedInfo?.media ?? null;
+        const meta = selectedGame?.metadata ?? null;
+        const isDbg = appId === "4717430";
+        if (isDbg) console.log(`[LIB_MEDIA_DEBUG][START] appid=4717430 missingBg=${missingBg} missingLogo=${missingLogo} metaKeys=${meta ? Object.keys(meta).join(",") : "(null)"} imageUrl=${selectedGame?.imageUrl ?? "(null)"}`);
+        if (isDbg) console.log(`[LIB_MEDIA_DEBUG][CONTEXT] sgdbKey="${settings.steamGridDbApiKey?.substring(0, 4) ?? ""}..." sgdbEnabled=${settings.steamGridDbArtworkEnabled} rawgKey="${settings.rawgApiKey ? "set" : "empty"}" igdbId="${settings.igdbClientId ? "set" : "empty"}" igdbSecret="${settings.igdbClientSecret ? "set" : "empty"}"`);
+        Promise.resolve(null).then((cachedSources) => {
+          if (cancelled) return;
+          const bundle = resolveGameDetailsArtwork(appId, localPaths, meta, selectedGame?.imageUrl ?? null, cachedSources);
+          if (cancelled) return;
+          if (bundle.background || bundle.logo || bundle.cover || bundle.landscape) {
+            setFallbackBundle(bundle);
+          }
+          // If still missing after sync, trigger async network refresh
+          const stillMissingBg = missingBg && !bundle.background;
+          const stillMissingLogo = missingLogo && !bundle.logo;
+          if (stillMissingBg || stillMissingLogo) {
+            if (isDbg) console.log(`[LIB_MEDIA_DEBUG][ASYNC_TRIGGER] stillMissingBg=${stillMissingBg} stillMissingLogo=${stillMissingLogo}`);
+            refreshGameDetailsArtwork(
+              appId,
+              localPaths,
+              meta,
+              selectedGame?.imageUrl ?? null,
+              cachedSources,
+              {
+                sgdbApiKey: settings.steamGridDbApiKey,
+                sgdbEnabled: settings.steamGridDbArtworkEnabled,
+                rawgApiKey: settings.rawgApiKey,
+                igdbClientId: settings.igdbClientId,
+                igdbClientSecret: settings.igdbClientSecret,
+              },
+            ).then(({ bundle: refreshed, changed }) => {
+              if (!cancelled) {
+                if (isDbg) console.log(`[LIB_MEDIA_DEBUG][ASYNC_RESULT] changed=${changed} hasBg=${!!refreshed.background} hasLogo=${!!refreshed.logo} bgSource=${refreshed.background?.source ?? "(null)"} logoSrc=${refreshed.logo?.source ?? "(null)"}`);
+                if (changed) {
+                  setFallbackBundle(refreshed);
+                }
+              }
+            }).catch((e) => {
+              if (isDbg) console.log(`[LIB_MEDIA_DEBUG][ASYNC_ERROR] error=${e}`);
+            });
+          }
         }).catch(() => {});
       }
     }).catch(() => { if (!cancelled) setCanonicalAppInfo(null); });
@@ -268,6 +353,87 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       });
   }, [selectedGame]);
 
+  // ── Re-run fallback resolver when enriched metadata becomes available ──
+  // The main effect runs with selectedGame?.metadata (may not be enriched yet).
+  // When resolvedGame updates with enriched metadata (background_image, etc.),
+  // this effect re-runs the fallback resolver with the richer data.
+  const _lastEnrichedFallbackKey = useRef<string>("");
+  useEffect(() => {
+    if (!selectedGame?.appId) return;
+    if (!canonicalAppInfo) return;
+    const appId = selectedGame.appId;
+
+    const meta = resolvedGame?.metadata ?? null;
+    if (!meta) return;
+
+    const alreadySetBg = !!canonicalAppInfo?.media?.backgroundPath;
+    const alreadySetLogo = !!canonicalAppInfo?.media?.logoPath;
+    if (alreadySetBg && alreadySetLogo) return;
+
+    // Build a stable key so we only fire once per metadata snapshot
+    const metaKey = `${appId}:bg=${!!meta.background_image}:hdr=${!!meta.header_image}:scr=${meta.screenshots?.length ?? 0}:logo=${!!meta.logo_image}:llogo=${!!meta.library_logo_image}`;
+    if (_lastEnrichedFallbackKey.current === metaKey) return;
+
+    const missingBg = !alreadySetBg;
+    const missingLogo = !alreadySetLogo;
+    const localPaths = canonicalAppInfo?.media ?? null;
+    const isDbg = appId === "4717430";
+
+    let cancelled = false;
+    Promise.resolve(null).then((cachedSources) => {
+      if (cancelled) return;
+      _lastEnrichedFallbackKey.current = metaKey;
+
+      const bundle = resolveGameDetailsArtwork(appId, localPaths, meta, selectedGame?.imageUrl ?? null, cachedSources);
+      if (cancelled) return;
+
+      if (bundle.background || bundle.logo || bundle.cover || bundle.landscape) {
+        setFallbackBundle(bundle);
+      }
+
+      // Async refresh still needed?
+      const stillMissingBg = missingBg && !bundle.background;
+      const stillMissingLogo = missingLogo && !bundle.logo;
+      if (stillMissingBg || stillMissingLogo) {
+        if (isDbg) console.log(`[LIB_MEDIA_DEBUG][ENRICHED_ASYNC] stillMissingBg=${stillMissingBg} stillMissingLogo=${stillMissingLogo}\n`);
+        refreshGameDetailsArtwork(
+          appId,
+          localPaths,
+          meta,
+          selectedGame?.imageUrl ?? null,
+          cachedSources,
+          {
+            sgdbApiKey: settings.steamGridDbApiKey,
+            sgdbEnabled: settings.steamGridDbArtworkEnabled,
+            rawgApiKey: settings.rawgApiKey,
+            igdbClientId: settings.igdbClientId,
+            igdbClientSecret: settings.igdbClientSecret,
+          },
+        ).then(({ bundle: refreshed, changed }) => {
+          if (!cancelled) {
+            if (isDbg) console.log(`[LIB_MEDIA_DEBUG][ENRICHED_ASYNC_RESULT] changed=${changed} hasBg=${!!refreshed.background}\n`);
+            if (changed) {
+              setFallbackBundle(refreshed);
+            }
+          }
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [
+    selectedGame?.appId,
+    // Stable deps: trigger when enriched metadata fields become populated
+    resolvedGame?.metadata?.background_image,
+    resolvedGame?.metadata?.header_image,
+    resolvedGame?.metadata?.screenshots,
+    resolvedGame?.metadata?.logo_image,
+    resolvedGame?.metadata?.library_logo_image,
+    canonicalAppInfo?.media?.backgroundPath,
+    canonicalAppInfo?.media?.logoPath,
+    canonicalAppInfo,
+  ]);
+
   // Check if media files actually exist on disk — if not, queue targeted repair
   // Resets when appId changes so a new game gets its own repair check.
   const mediaCheckDoneRef = useRef(false);
@@ -291,6 +457,48 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     };
     checkMedia();
   }, [resolvedGame, canonicalAppInfo?.media?.landscapePath, canonicalAppInfo?.media?.coverPath, canonicalAppInfo?.media?.backgroundPath, canonicalAppInfo?.media?.logoPath, canonicalAppInfo?.media?.iconPath]);
+
+  // ── Materialize resolved artwork URLs to local disk ──
+  // When fallbackBundle changes (sync or async resolution), enqueue downloads
+  // for roles that don't yet exist on disk.
+  const _lastMaterializedBundleKey = useRef<string>("");
+  const _fallbackBundleRef = useRef(fallbackBundle);
+  _fallbackBundleRef.current = fallbackBundle;
+  useEffect(() => {
+    const appId = selectedGame?.appId;
+    if (!appId) return;
+    if (!fallbackBundle) return;
+    const key = `${appId}:bg=${!!fallbackBundle.background}:l=${!!fallbackBundle.landscape}:c=${!!fallbackBundle.cover}:logo=${!!fallbackBundle.logo}`;
+    if (_lastMaterializedBundleKey.current === key) return;
+    _lastMaterializedBundleKey.current = key;
+
+    materializeResolvedGameMedia(appId, fallbackBundle, "steam").catch(() => {});
+  }, [selectedGame?.appId, fallbackBundle]);
+
+  // ── Subscribe to media queue — re-materialize on download success ──
+  // When a download completes for the current app, re-check disk so the
+  // next render picks up the local file (localPath gets set on the bundle).
+  useEffect(() => {
+    const appId = selectedGame?.appId;
+    if (!appId) return;
+
+    const unsub = subscribeToMediaQueue((event) => {
+      if (event.type !== "success" && event.type !== "partial") return;
+      const eventAppId = event.job?.appId ?? event.batchResult?.appId;
+      if (eventAppId !== appId) return;
+      // Re-materialize to pick up newly-downloaded files on disk (use ref for latest bundle)
+      const bundle = _fallbackBundleRef.current;
+      if (bundle) {
+        materializeResolvedGameMedia(appId, bundle, "steam").then((result) => {
+          if (result.diskHits.length > 0) {
+            setFallbackBundle(result.bundle);
+          }
+        }).catch(() => {});
+      }
+    });
+
+    return unsub;
+  }, [selectedGame?.appId]);
 
   // Lazy per-game stats refresh
   useEffect(() => {
@@ -336,67 +544,335 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       return;
     }
 
+    const appIdStr = selectedGame.appId;
+
     // Cancel any existing jobs for this app
-    cancelMediaJobsForApp(selectedGame.appId);
+    cancelMediaJobsForApp(appIdStr);
 
     // Clear in-memory dedup state so downloads proceed
-    const { clearMediaQueueState } = await import("../services/mediaDownloadQueue");
+    const { clearMediaQueueState, markFreshRefreshAppId } = await import("../services/mediaDownloadQueue");
     clearMediaQueueState();
+
+    // Mark this appId as a fresh artwork refresh so flush does not carry
+    // forward stale existing-media paths for roles that fail to download.
+    markFreshRefreshAppId(appIdStr);
 
     // Clear session cache so next load picks up fresh files from disk
     const { clearResolvedMediaSessionCache, resetRepairedAppInfoIds } = await import("../services/gameCacheService");
     clearResolvedMediaSessionCache();
     resetRepairedAppInfoIds();
+    const appIdNum = Number(appIdStr);
+    if (!appIdNum || isNaN(appIdNum)) {
+      showWarning("Invalid App ID.", { title: "Artwork" });
+      return;
+    }
 
-    const appIdStr = selectedGame.appId;
-    const sgdbEnabled = settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey;
+    // ── Ensure Steam metadata is resolved for best artwork sources ──
+    // Start only from resolvedGame metadata (Steam data), NOT from Lua
+    // metadata which lacks Steam artwork fields.  If resolvedGame is null
+    // (Lua-only / non-installed game), fetch fresh metadata by appId.
+    let meta = resolvedGame?.metadata ?? null;
+    if (!meta || !meta.resolved || (meta as any).name === `Steam App ${appIdNum}`) {
+      const result = await resolveGameMetadata([appIdNum]).catch(() => null);
+      meta = result?.[appIdNum] ?? null; // null means resolver skips gracefully
+    }
 
-    if (sgdbEnabled) {
-      const appIdNum = Number(appIdStr);
-      if (!appIdNum || isNaN(appIdNum)) {
-        showWarning("Invalid App ID.", { title: "Artwork" });
-        return;
+    const localPaths = canonicalAppInfo?.media ?? null;
+
+    // ── Resolve artwork using the full priority chain ──
+    // Steam CDN → Steam metadata → screenshots → SGDB → RAWG → IGDB
+    const { bundle } = await refreshGameDetailsArtwork(
+      appIdStr,
+      localPaths,
+      meta,
+      selectedGame?.imageUrl ?? null,
+      null,
+      {
+        sgdbApiKey: settings.steamGridDbApiKey ?? "",
+        sgdbEnabled: settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey,
+        rawgApiKey: settings.rawgApiKey ?? "",
+        igdbClientId: settings.igdbClientId ?? "",
+        igdbClientSecret: settings.igdbClientSecret ?? "",
+      },
+    );
+
+    // ── Set bundle so materialize effect can apply localPath on download ──
+    setFallbackBundle(bundle);
+
+    // ── Build fallback candidate URLs per role ──
+    // For each role, collect all possible HTTP URLs in priority order (CDN,
+    // metadata, screenshots).  If the first candidate fails to download, the
+    // next is tried automatically until one succeeds or all are exhausted.
+    // This avoids ending up with a null local file when the first CDN URL
+    // does not exist for a given appId (e.g. library_hero.jpg missing).
+    const { resolveGameMediaPaths: checkDiskPaths } = await import("../services/tauri");
+    const metaFallback = meta as Record<string, any> | null;
+    const steamCdnBase = `https://steamcdn-a.akamaihd.net/steam/apps/${appIdNum}`;
+    const screenshots: string[] = metaFallback?.screenshots ?? [];
+
+    const isStorePageBackground = (url: string): boolean =>
+      /storepagebackground/i.test(url) ||
+      /\/images\/storepagebackground\/app\//i.test(url);
+
+    function getRoleCandidates(role: string): string[] {
+      switch (role) {
+        case "landscape":
+          return [
+            `${steamCdnBase}/header.jpg`,
+            metaFallback?.header_image,
+            ...(screenshots.length > 0 ? [screenshots[0]] : []),
+          ].filter(Boolean) as string[];
+        case "background":
+          // storepagebackground is NOT included here — it is only used as an
+          // absolute last resort (see storePageBg handling below).  Correct
+          // visual artwork candidates are: CDN hero, metadata hero/header fields,
+          // and screenshots.
+          return [
+            `${steamCdnBase}/library_hero.jpg`,
+            metaFallback?.library_hero_image,
+            metaFallback?.hero_image,
+            metaFallback?.header_image,
+            ...(screenshots.length > 0 ? [screenshots[0]] : []),
+            ...(screenshots.length > 1 ? [screenshots[1]] : []),
+          ].filter(Boolean) as string[];
+        case "logo":
+          // Logo must come from CDN or metadata logo fields.  No fallback to
+          // header/screenshot/capsule — those are not logos.
+          return [
+            `${steamCdnBase}/logo.png`,
+            metaFallback?.logo_image,
+            metaFallback?.library_logo_image,
+          ].filter(Boolean) as string[];
+        case "cover":
+          // Cover must be poster/vertical — capsule/header are horizontal.
+          // Only SGDB/IGDB/imageUrl provide poster cover; those are already
+          // handled by refreshGameDetailsArtwork.  No generic CDN fallback.
+          return [];
+        case "icon":
+          return [];
+        default:
+          return [];
+      }
+    }
+
+    // ── Force-download all resolved artwork roles with fallback ──
+    const roles = ["cover", "landscape", "background", "logo", "icon"] as const;
+    let hasQueued = 0;
+    let hasAnyUrl = false;
+    for (const role of roles) {
+      const asset = (bundle as any)[role] as { url?: string; source?: string } | undefined;
+      if (asset?.url) {
+        hasAnyUrl = true;
+        const logLabel = asset.source ? `source=${asset.source}` : "";
+        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} role=${role} url=${asset.url} ${logLabel}`);
+      }
+    }
+
+    // Check disk for stale local paths before enqueuing
+    const diskPaths = await checkDiskPaths(appIdStr).catch(() => null);
+
+    for (const role of roles) {
+      const asset = (bundle as any)[role] as { url?: string; source?: string } | undefined;
+
+      // ── No URL at all from resolver → skip ──
+      if (!asset?.url) {
+        const candidates = getRoleCandidates(role);
+        if (candidates.length > 0) {
+          console.log(`[ARTWORK_REFRESH][FALLBACK_DIRECT] appid=${appIdStr} role=${role} reason=resolver-no-url candidates=${candidates.length} firstUrl=${candidates[0]}`);
+          // Skip the resolver's "no-url" — fallback candidates will be tried below
+        } else {
+          console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=no-url`);
+          continue;
+        }
       }
 
+      // ── Local source handling with disk verification ──
+      // Verify the local file actually exists on disk AND its filename
+      // matches the expected role pattern (e.g. landscape.* for landscape).
+      // If stale/missing/wrong-role, treat as stale and proceed to enqueue
+      // the best remote candidate.
+      if (asset?.source === "local" && !/^https?:\/\//i.test(asset.url ?? "")) {
+        const rolePattern = new RegExp(`^${role}\\.`);
+        const filename = (asset.url ?? "").replace(/\\/g, "/").split("/").pop() ?? "";
+        const fileExists = diskPaths?.[`${role}Path` as keyof typeof diskPaths];
+        const roleMatches = rolePattern.test(filename);
+
+        if (!fileExists || !roleMatches) {
+          console.log(`[ARTWORK_REFRESH][LOCAL_STALE] appid=${appIdStr} role=${role} path=${asset.url} reason=${!fileExists ? "file-missing" : "wrong-role"} fileExists=${!!fileExists} roleMatches=${roleMatches}`);
+          // Fall through to try remote candidates below
+        } else {
+          console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=local-source-valid path=${asset.url}`);
+          continue;
+        }
+      }
+
+      // ── Build candidate URL list for this role ──
+      // Start with the resolver's chosen URL (the highest-priority match),
+      // then append fallback URLs from getRoleCandidates, deduplicating.
+      // storepagebackground URLs are deferred to the very end and only used
+      // if no visually-better background candidate (hero/header/screenshot)
+      // is available.
+      const candidates: string[] = [];
+      const seen = new Set<string>();
+      let deferredStorePageBg: string | null = null;
+
+      // If resolver produced a valid HTTP URL
+      if (asset?.url && /^https?:\/\//i.test(asset.url) && !seen.has(asset.url)) {
+        if (isStorePageBackground(asset.url)) {
+          deferredStorePageBg = asset.url;
+        } else {
+          candidates.push(asset.url);
+          seen.add(asset.url);
+        }
+      }
+
+      // Append fallback candidates, deferring storepagebackground
+      for (const url of getRoleCandidates(role)) {
+        if (!seen.has(url)) {
+          if (isStorePageBackground(url)) {
+            if (!deferredStorePageBg) deferredStorePageBg = url;
+          } else {
+            candidates.push(url);
+            seen.add(url);
+          }
+        }
+      }
+
+      // Only append storepagebackground if no better visual candidate exists
+      if (deferredStorePageBg && role === "background") {
+        const hasBetterCandidate = candidates.some((c) =>
+          /library_hero|hero_image|header_image|header\.jpg|screenshot/i.test(c),
+        );
+        if (!hasBetterCandidate || candidates.length === 0) {
+          if (!seen.has(deferredStorePageBg)) {
+            candidates.push(deferredStorePageBg);
+            seen.add(deferredStorePageBg);
+          }
+          console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} role=background storepagebackground=last-resort`);
+        } else {
+          console.log(`[ARTWORK_BACKGROUND_SKIP] appid=${appIdStr} source=storepagebackground reason=better-header-or-screenshot-exists`);
+        }
+      }
+      // For non-background roles, append any remaining storepagebackground
+      // deferral (unlikely but keeps the logic generic).
+      if (deferredStorePageBg && role !== "background" && !seen.has(deferredStorePageBg)) {
+        candidates.push(deferredStorePageBg);
+        seen.add(deferredStorePageBg);
+      }
+
+      if (candidates.length === 0) {
+        if (role === "background") {
+          console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} reason=no-candidates`);
+        }
+        continue;
+      }
+
+      if (role === "background") {
+        console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} candidates=${candidates.length}`);
+        candidates.forEach((c, ci) => {
+          const label = isStorePageBackground(c) ? " ambient=true" : "";
+          console.log(`  candidate=${ci} url=${c}${label}`);
+        });
+      }
+
+      if (!hasAnyUrl) hasAnyUrl = true;
+      hasQueued++;
+      let downloadSucceeded = false;
+      for (let ci = 0; ci < candidates.length; ci++) {
+        const url = candidates[ci];
+        const isFirst = ci === 0;
+        const enqueueStart = Date.now();
+        const attemptLabel = isFirst ? "" : ` fallback=${ci}`;
+
+        if (!isFirst) {
+          console.log(`[ARTWORK_REFRESH][FALLBACK_NEXT] appid=${appIdStr} role=${role} candidate=${ci} url=${url}`);
+        }
+
+        console.log(`[ARTWORK_REFRESH][ENQUEUE_START] appid=${appIdStr} role=${role} url=${url} target=media/${role}.jpg${attemptLabel}`);
+        const enqResult = await enqueueMediaDownload({
+          id: `refresh-${appIdStr}-${role}-${isFirst ? "0" : String(ci)}-${Date.now()}`,
+          appId: appIdStr,
+          provider: "steam" as const,
+          mediaType: role as "landscape" | "cover" | "background" | "logo" | "icon",
+          url,
+          target: "canonical",
+          priority: "high" as const,
+          forceRefresh: true,
+        }).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=false reason=error elapsedMs=${Date.now() - enqueueStart} error=${msg}`);
+          return null;
+        });
+        if (enqResult) {
+          console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=${enqResult.success} elapsedMs=${Date.now() - enqueueStart} localPath=${enqResult.localPath ?? "(none)"}`);
+          if (enqResult.success) {
+            downloadSucceeded = true;
+            if (role === "background") {
+              console.log(`[ARTWORK_BACKGROUND_SELECTED] appid=${appIdStr} source=${asset?.source ?? "fallback"} url=${url}`);
+            }
+            break;
+          }
+          console.log(`[ARTWORK_REFRESH][DOWNLOAD_FAIL] appid=${appIdStr} role=${role} candidate=${ci} url=${url} reason=failed`);
+        }
+      }
+
+      if (!downloadSucceeded) {
+        console.log(`[ARTWORK_REFRESH][ALL_CANDIDATES_FAILED] appid=${appIdStr} role=${role} candidates=${candidates.length}`);
+      }
+    }
+
+    if (hasQueued > 0) {
+      showWarning(`Artwork refresh queued (${hasQueued} roles).`, { title: "Artwork" });
+    } else {
+      if (!hasAnyUrl) {
+        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=no-urls meta=${meta ? "resolved" : "null"} metaResolved=${meta?.resolved ?? "n/a"}`);
+      } else {
+        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=all-urls-skipped after-queued-check`);
+      }
+      showWarning("No artwork available for this game.", { title: "Artwork" });
+    }
+
+    // ── Optional: SGDB enhancement for artwork gallery ──
+    if (settings.steamGridDbArtworkEnabled && settings.steamGridDbApiKey) {
       const { clearArtworkCache } = await import("../services/storeArtworkResolver");
       clearArtworkCache();
-
-      // Clear local media so force-refresh works
       const { clearGameMediaCacheForGame } = await import("../services/libraryLocalCacheService");
       await clearGameMediaCacheForGame({ appId: appIdStr }).catch(() => {});
-
       const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
-      const entry = result[appIdStr];
-      if (entry) {
-        setArtwork(entry);
-        const jobs: Array<{ mediaType: string; url?: string }> = [
-          { mediaType: "landscape", url: entry.sgdbGridUrl || entry.sgdbGridThumbUrl || entry.sgdbHeroUrl },
-          { mediaType: "cover", url: entry.sgdbCoverUrl },
-          { mediaType: "background", url: entry.sgdbHeroUrl },
-          { mediaType: "logo", url: entry.sgdbLogoUrl },
-          { mediaType: "icon", url: entry.sgdbIconUrl },
+      if (result[appIdStr]) {
+        setArtwork(result[appIdStr]);
+        const sgdbJobs: Array<{ mediaType: string; url?: string }> = [
+          { mediaType: "landscape", url: result[appIdStr].sgdbGridUrl || result[appIdStr].sgdbGridThumbUrl || result[appIdStr].sgdbHeroUrl },
+          { mediaType: "cover", url: result[appIdStr].sgdbCoverUrl },
+          { mediaType: "background", url: result[appIdStr].sgdbHeroUrl },
+          { mediaType: "logo", url: result[appIdStr].sgdbLogoUrl },
+          { mediaType: "icon", url: result[appIdStr].sgdbIconUrl },
         ];
-        for (const { mediaType, url } of jobs) {
+        for (const { mediaType, url } of sgdbJobs) {
           if (!url) continue;
           enqueueMediaDownload({
-            id: `refresh-${appIdStr}-${mediaType}-${Date.now()}`,
+            id: `refresh-sgdb-${appIdStr}-${mediaType}-${Date.now()}`,
             appId: appIdStr,
-            provider: "steam",
+            provider: "steam" as const,
             mediaType: mediaType as any,
             url,
             target: "canonical",
-            priority: "high",
+            priority: "high" as const,
             forceRefresh: true,
           }).catch(() => {});
         }
-        showWarning("Artwork refresh queued.", { title: "Artwork" });
-      } else {
-        showWarning("No artwork found for this game.", { title: "Artwork" });
       }
-    } else {
-      showWarning("Enable SteamGridDB Artwork in Settings first.", { title: "Artwork" });
     }
-  }, [selectedGame, settings.steamGridDbArtworkEnabled, settings.steamGridDbApiKey]);
+  }, [
+    selectedGame,
+    resolvedGame,
+    canonicalAppInfo,
+    settings.steamGridDbArtworkEnabled,
+    settings.steamGridDbApiKey,
+    settings.rawgApiKey,
+    settings.igdbClientId,
+    settings.igdbClientSecret,
+  ]);
 
   async function handleInstall(game: LibraryGame) {
     if (game.appId) {
@@ -464,6 +940,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         canonicalAppInfo={canonicalAppInfo}
         canonicalDiskFallback={canonicalDiskFallback}
         localDetailsData={localDetailsData}
+        fallbackBundle={fallbackBundle}
         loading={metadataLoading}
         onPlay={handlePlay}
         onInstall={handleInstall}

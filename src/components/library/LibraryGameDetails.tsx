@@ -59,6 +59,7 @@ import {
   localPathToUrl,
   isLocalPath,
 } from "../../services/libraryLocalCacheService";
+import type { ResolvedGameMediaBundle } from "../../types/gameMedia";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
 import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel, subscribePlaytimeStore } from "../../services/playtimeService";
@@ -89,6 +90,7 @@ type LibraryGameDetailsProps = {
   canonicalAppInfo?: GameAppInfo | null;
   canonicalDiskFallback?: string | null;
   localDetailsData?: unknown;
+  fallbackBundle?: ResolvedGameMediaBundle | null;
   loading?: boolean;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
@@ -114,41 +116,41 @@ function logDetailsCanonical(appId: string, msg: string): void {
   }
 }
 
-function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
-  // Hero priority: backgroundPath > landscapePath > coverPath > remote metadata > placeholder
-  if (canonicalAppInfo?.media?.backgroundPath) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`);
-    return canonicalAppInfo.media.backgroundPath;
-  }
-  if (canonicalAppInfo?.media?.landscapePath) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`);
-    return canonicalAppInfo.media.landscapePath;
-  }
-  if (canonicalAppInfo?.media?.coverPath) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=cover path=${canonicalAppInfo.media.coverPath}`);
-    return canonicalAppInfo.media.coverPath;
-  }
-  if (mediaEntry?.hero_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.hero_path path=${mediaEntry.hero_path}`); return mediaEntry.hero_path; }
-  if (mediaEntry?.grid_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.grid_path path=${mediaEntry.grid_path}`); return mediaEntry.grid_path; }
-  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image path=${appInfoEntry.header_image}`); return appInfoEntry.header_image; }
+function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null, fallbackBundle?: ResolvedGameMediaBundle | null): string | undefined {
+  // Priority: local disk → metadata primary → fallbackBundle background → metadata secondary → fallbackBundle L/C → imageUrl → placeholder
+  if (canonicalAppInfo?.media?.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`); return canonicalAppInfo.media.backgroundPath; }
+  if (canonicalAppInfo?.media?.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`); return canonicalAppInfo.media.landscapePath; }
+  if (canonicalAppInfo?.media?.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=cover path=${canonicalAppInfo.media.coverPath}`); return canonicalAppInfo.media.coverPath; }
+  if (mediaEntry?.hero_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.hero_path`); return mediaEntry.hero_path; }
+  if (mediaEntry?.grid_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.grid_path`); return mediaEntry.grid_path; }
+  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image`); return appInfoEntry.header_image; }
   if (artwork?.sgdbHeroUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
   if (artwork?.sgdbGridUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
-  const remoteSrc = game.metadata?.library_hero_image
-    || game.metadata?.background_image
-    || game.metadata?.hero_image
-    || game.metadata?.library_header_image
-    || game.metadata?.header_image
+  // Metadata primary background fields
+  const metaPrimary = game.metadata?.background_image
+    || (game.metadata as any)?.background
+    || (game.metadata as any)?.background_raw
+    || game.metadata?.library_hero_image
+    || game.metadata?.hero_image;
+  if (metaPrimary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataPrimary`); return metaPrimary; }
+  // FallbackBundle: resolved by multi-provider chain (steam-appdetails metadata → cached → SGDB → IGDB → RAWG)
+  // Prefer localPath (materialized on disk) before remote URL
+  if (fallbackBundle?.background?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background.localPath path=${fallbackBundle.background.localPath}`); return fallbackBundle.background.localPath; }
+  if (fallbackBundle?.landscape?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape.localPath path=${fallbackBundle.landscape.localPath}`); return fallbackBundle.landscape.localPath; }
+  if (fallbackBundle?.cover?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover.localPath path=${fallbackBundle.cover.localPath}`); return fallbackBundle.cover.localPath; }
+  if (fallbackBundle?.background?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background source=${fallbackBundle.background.source}`); return fallbackBundle.background.url; }
+  if (fallbackBundle?.landscape?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape source=${fallbackBundle.landscape.source}`); return fallbackBundle.landscape.url; }
+  if (fallbackBundle?.cover?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover source=${fallbackBundle.cover.source}`); return fallbackBundle.cover.url; }
+  // Metadata secondary fields (less reliable as hero images)
+  const metaSecondary = game.metadata?.header_image
+    || (game.metadata?.screenshots?.[0])
     || game.metadata?.capsule_image
-    || game.metadata?.wide_cover_image
-    || game.metadata?.capsule_image_v5
-    || game.imageUrl;
-  if (remoteSrc) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=remoteMetadata`);
-    return remoteSrc;
-  }
-  if (mediaEntry?.cover_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.cover_path path=${mediaEntry.cover_path}`); return mediaEntry.cover_path; }
-  if (canonicalDiskFallback) { logDetailsCanonical(game.appId ?? "", `heroSelected=canonicalDiskFallback path=${canonicalDiskFallback}`); return canonicalDiskFallback; }
-  logDetailsCanonical(game.appId ?? "", `heroSelected=placeholder path=null exists=false`);
+    || game.metadata?.capsule_image_v5;
+  if (metaSecondary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataSecondary`); return metaSecondary; }
+  if (game.imageUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=imageUrl`); return game.imageUrl; }
+  if (mediaEntry?.cover_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.cover_path`); return mediaEntry.cover_path; }
+  if (canonicalDiskFallback) { logDetailsCanonical(game.appId ?? "", `heroSelected=canonicalDiskFallback`); return canonicalDiskFallback; }
+  logDetailsCanonical(game.appId ?? "", `heroSelected=placeholder`);
   return undefined;
 }
 
@@ -228,10 +230,15 @@ export default function LibraryGameDetails({
   launchInfo,
   onCancelLaunch,
   onOpenStopModal,
+  fallbackBundle,
 }: LibraryGameDetailsProps) {
   countRender("LibraryGameDetails");
+  if (game.appId === "4717430") {
+    console.log(`[LIB_MEDIA_DEBUG][FALLBACK_BUNDLE_PROP] appid=4717430 hasBundle=${!!fallbackBundle} hasBg=${!!fallbackBundle?.background?.url} bgUrl=${fallbackBundle?.background?.url ?? "(null)"} source=${fallbackBundle?.background?.source ?? "(null)"}`);
+  }
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const [heroImgError, setHeroImgError] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const favorite = game.appId ? isFavorite(game.appId) : false;
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -306,8 +313,13 @@ export default function LibraryGameDetails({
     });
   }, [appIdStr, game.achievementsSupported, settings.steamRoot]);
 
-  const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
+  const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback, fallbackBundle);
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
+
+  // Reset hero image error when a new URL is resolved
+  useEffect(() => {
+    setHeroImgError(false);
+  }, [rawImageUrl]);
 
   useEffect(() => {
     if (!rawImageUrl) {
@@ -332,20 +344,28 @@ export default function LibraryGameDetails({
       const isLocal = isLocalPath(resolved);
       const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
       setImageUrl(url);
+      if (game.appId === "4717430") {
+        console.log(`[LIB_MEDIA_DEBUG][HERO_FINAL] appid=4717430 url=${url ?? "(null)"} rawUrl=${rawImageUrl} fallbackBundle=${!!fallbackBundle} fbBg=${fallbackBundle?.background?.url ?? "(null)"} canonicalBg=${canonicalAppInfo?.media?.backgroundPath ?? "(null)"} metaBg=${game.metadata?.background_image ?? "(null)"}`);
+      }
     };
     resolve();
-  }, [rawImageUrl, game.appId]);
+  }, [rawImageUrl, game.appId, fallbackBundle, canonicalAppInfo, game.metadata?.background_image]);
 
   const rawLogoUrl = (() => {
+    const fallbackLogoSrc = fallbackBundle?.logo?.url;
+    const fallbackLogoLocal = fallbackBundle?.logo?.localPath;
     const src = canonicalAppInfo?.media?.logoPath
       || artwork?.sgdbLogoUrl
       || game.metadata?.logo_image
-      || game.metadata?.library_logo_image;
+      || game.metadata?.library_logo_image
+      || fallbackLogoLocal
+      || fallbackLogoSrc;
     if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
       if (canonicalAppInfo?.media?.logoPath) console.log("[LibraryDetails] selected logo source: logoPath");
       else if (artwork?.sgdbLogoUrl) console.log("[LibraryDetails] selected logo source: sgdbLogoUrl");
       else if (game.metadata?.logo_image) console.log("[LibraryDetails] selected logo source: logo_image");
       else if (game.metadata?.library_logo_image) console.log("[LibraryDetails] selected logo source: library_logo_image");
+      else if (fallbackLogoSrc) console.log("[LibraryDetails] selected logo source: fallbackBundle");
       else console.log("[LibraryDetails] selected logo source: none");
     }
     return src;
@@ -1024,10 +1044,11 @@ export default function LibraryGameDetails({
         {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
             object-position: center ensures the same crop region as the sharp image. */}
         <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
-          {imageUrl ? (
+          {imageUrl && !heroImgError ? (
             <img
               src={imageUrl}
               alt=""
+              onError={() => setHeroImgError(true)}
               className="h-full w-full scale-105 object-cover blur-2xl"
             />
           ) : (
@@ -1041,10 +1062,11 @@ export default function LibraryGameDetails({
         {/* 0-4% transparent buffer → 4-12% linear fade-in → 12-88% full opacity → 88-96% fade-out → 96-100% transparent.
             Wider 8% transition zone creates a smooth, invisible seam with the blurred backdrop. */}
         <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
-          {imageUrl ? (
+          {imageUrl && !heroImgError ? (
             <img
               src={imageUrl}
               alt={detailTitle}
+              onError={() => setHeroImgError(true)}
               className="block h-full w-auto max-w-none shrink-0 [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]"
             />
           ) : (

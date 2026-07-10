@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  Gamepad2, Trophy,
+  Trophy,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
@@ -14,6 +14,8 @@ import ConsoleGameCard from "./ConsoleGameCard";
 import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleCategoryBar from "./ConsoleCategoryBar";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
+import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
+import { extractTrailerData } from "./consoleTrailerData";
 
 const DEBUG_CONSOLE_MODE = false;
 
@@ -65,6 +67,7 @@ export default function ConsoleGridLayout({
   const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
   const heroSrc = getConsoleHeroBackground(focusedGame);
+  const trailerData = useMemo(() => focusedGame ? extractTrailerData(focusedGame) : null, [focusedGame]);
 
   const hints = useMemo(() => getConsoleInputHints(settings.inputHints), [settings.inputHints]);
 
@@ -150,22 +153,15 @@ export default function ConsoleGridLayout({
              style={{ width: `${settings.sidePanelWidth}px`, minWidth: `${settings.sidePanelWidth}px`, maxWidth: `${settings.sidePanelWidth}px` }}>
           {focusedGame ? (
             <div className="flex min-h-full flex-col">
-              {/* Hero/preview image */}
+              {/* Hero/preview image — supports trailer thumbnails */}
               <div className="relative aspect-[16/9] overflow-hidden">
-                {heroSrc ? (
-                  <img
-                    key={focusedGame.appId}
-                    src={heroSrc}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-(--color-surface)/40">
-                    <Gamepad2 className="h-10 w-10 text-(--color-muted)/30" />
-                  </div>
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-(--color-bg)/80 to-transparent" />
+                <ConsoleSelectedPreview
+                  game={focusedGame}
+                  showTrailerPreview={settings.showTrailerPreview}
+                  trailerData={trailerData}
+                  mode="thumbnail"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-(--color-bg)/80 to-transparent pointer-events-none" />
               </div>
 
               {/* Panel content */}
@@ -253,6 +249,20 @@ export default function ConsoleGridLayout({
                     )}
                   </div>
                 )}
+
+                {/* Media source indicators */}
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
+                  {heroSrc && (
+                    <span className="text-(--color-muted)/50">
+                      Artwork: <span className="font-medium text-(--color-muted)/70">steam-metadata</span>
+                    </span>
+                  )}
+                  {focusedGame.steamInstalled && (
+                    <span className="text-(--color-muted)/50">
+                      Source: <span className="font-medium text-(--color-muted)/70">local</span>
+                    </span>
+                  )}
+                </div>
 
                 {/* Separator */}
                 <div className="border-t border-(--color-border)" />

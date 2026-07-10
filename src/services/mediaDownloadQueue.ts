@@ -74,6 +74,10 @@ const inFlightAppIds = new Set<string>();
 const recentlyCompleted = new Set<string>();
 const recentlyFailed = new Set<string>();
 const cancelledKeys = new Set<string>();
+// Tracks appIds undergoing a full artwork refresh.  During flush, fields not
+// explicitly updated are set to null instead of falling back to existing
+// (stale) appinfo paths.  Cleared after flush processes the appId.
+const _freshRefreshAppIds = new Set<string>();
 const listeners = new Set<QueueListener>();
 
 const dedupKey = (job: MediaDownloadJob) =>
@@ -176,13 +180,54 @@ async function flushAppInfoUpdates() {
   const existingMedia = existingAppInfo?.media ?? ({} as GameMediaPaths);
 
   // Rebuild merged fields from pending + existing
+  // During a fresh artwork refresh, fields NOT explicitly updated are set to
+  // null instead of falling back to existing (potentially stale) appinfo
+  // paths.  This prevents stale file references from persisting after files
+  // were deleted and only some roles re-downloaded successfully.
+  const isFreshRefresh = _freshRefreshAppIds.has(appId);
   const merged = {
-    coverPath: fields.coverPath ?? existingMedia.coverPath ?? null,
-    backgroundPath: fields.backgroundPath ?? existingMedia.backgroundPath ?? null,
-    logoPath: fields.logoPath ?? existingMedia.logoPath ?? null,
-    iconPath: fields.iconPath ?? existingMedia.iconPath ?? null,
-    landscapePath: fields.landscapePath ?? existingMedia.landscapePath ?? null,
+    coverPath: fields.coverPath ?? (isFreshRefresh ? null : existingMedia.coverPath ?? null),
+    backgroundPath: fields.backgroundPath ?? (isFreshRefresh ? null : existingMedia.backgroundPath ?? null),
+    logoPath: fields.logoPath ?? (isFreshRefresh ? null : existingMedia.logoPath ?? null),
+    iconPath: fields.iconPath ?? (isFreshRefresh ? null : existingMedia.iconPath ?? null),
+    landscapePath: fields.landscapePath ?? (isFreshRefresh ? null : existingMedia.landscapePath ?? null),
   };
+
+  // Stale path repair: detect and clear role-path mismatches
+  // (e.g. coverPath=media/landscape.jpg caused by the old Rust reclassifier).
+  // Only clears paths that point to a WRONG role's filename prefix (e.g. a
+  // cover field pointing to a file starting with "landscape.").  Filenames
+  // that don't match any role prefix (e.g. "library_hero.jpg" from Steam CDN)
+  // are left as-is — they are legitimate CDN-original names.
+  // If a stale path is cleared, force hasEffectiveChange so the repaired
+  // state gets persisted to disk (avoids the read-path mutation bug where
+  // existingMedia was already nulled in-memory, making comparison skip).
+  const ROLE_FIELD_MAP: Record<string, string> = {
+    coverPath: "cover.",
+    landscapePath: "landscape.",
+    backgroundPath: "background.",
+    logoPath: "logo.",
+    iconPath: "icon.",
+  };
+  const ALL_PREFIXES = new Set(Object.values(ROLE_FIELD_MAP));
+  let staleRepairChanged = false;
+  for (const [field, expectedPrefix] of Object.entries(ROLE_FIELD_MAP)) {
+    const path = (merged as any)[field] as string | null | undefined;
+    if (path && typeof path === "string") {
+      const filename = path.replace(/\\/g, "/").split("/").pop() ?? "";
+      const matchesWrongRole = [...ALL_PREFIXES].some(
+        p => p !== expectedPrefix && filename.startsWith(p),
+      );
+      if (matchesWrongRole) {
+        console.log(`[MEDIA_ROLE_REPAIR] appid=${appId} cleared ${field}=${path} reason=role-path-mismatch expected=${expectedPrefix}*`);
+        (merged as any)[field] = null;
+        staleRepairChanged = true;
+      }
+    }
+  }
+  if (!staleRepairChanged && ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) {
+    console.log(`[MEDIA_ROLE_REPAIR_VERBOSE] appid=${appId} reason=all-role-paths-match caller=flushAppInfoUpdates`);
+  }
 
   // Phase 4: Normalize paths before comparison — handles absolute-vs-relative
   const proposedNormalized: Record<string, string | null> = {};
@@ -196,10 +241,17 @@ async function flushAppInfoUpdates() {
     existingNormalized[k] = eNorm;
     if (pNorm !== eNorm) hasEffectiveChange = true;
   }
+  // Force change if stale repair cleared any field — otherwise the cleared
+  // path (now null) would match the in-memory-mutated existingMedia (also null)
+  // and the write would skip, leaving the stale path on disk forever.
+  if (staleRepairChanged && !hasEffectiveChange) {
+    hasEffectiveChange = true;
+  }
 
   if (!hasEffectiveChange) {
     if (ENABLE_VERBOSE_MEDIA_QUEUE_LOGS) console.log(`[MEDIA][APPINFO_SKIP] appid=${appId} reason=already-synced-before-rust caller=flushAppInfoUpdates`);
     pendingAppInfoUpdates.delete(appId);
+    _freshRefreshAppIds.delete(appId);
     completePendingAppInfoUpdate();
     // Schedule next if more pending
     if (pendingAppInfoUpdates.size > 0) {
@@ -259,6 +311,7 @@ async function flushAppInfoUpdates() {
   generateMediaManifest(appId, merged).catch(() => {});
 
   pendingAppInfoUpdates.delete(appId);
+  _freshRefreshAppIds.delete(appId);
   completePendingAppInfoUpdate();
   flushRunning = false;
 
@@ -348,8 +401,27 @@ function tryProcessNext() {
   performDownload(entry, key);
 }
 
+/**
+ * Infer the actual media role from a returned filesystem path.
+ * Used as defense-in-depth to detect any Rust-side role mismatch.
+ * Returns the inferred role, or the intendedRole as fallback.
+ */
+function inferActualMediaType(path: string | null, intendedRole: string): string {
+  if (!path) return intendedRole;
+  const filename = path.split("/").pop()?.split("\\").pop() ?? "";
+  if (filename.startsWith("cover.")) return "cover";
+  if (filename.startsWith("landscape.")) return "landscape";
+  if (filename.startsWith("background.")) return "background";
+  if (filename.startsWith("logo.")) return "logo";
+  if (filename.startsWith("icon.")) return "icon";
+  return intendedRole;
+}
+
 async function performDownload(entry: InternalJob, key: string) {
   const { job } = entry;
+  const DOWNLOAD_LOG = (tag: string, msg: string) => console.log(`[MEDIA_QUEUE][${tag}] appid=${job.appId} role=${job.mediaType} ${msg}`);
+
+  DOWNLOAD_LOG("DOWNLOAD_START", `url=${job.url} forceRefresh=${job.forceRefresh ?? false}`);
 
   try {
     // Wrap in try-catch to handle stale callback IDs after app reload/unmount
@@ -363,7 +435,7 @@ async function performDownload(entry: InternalJob, key: string) {
       // Tauri callback ID warnings are non-fatal after app reload
       const msg = String(err ?? "");
       if (msg.includes("Couldn't find callback id") || msg.includes("callback")) {
-        log("stale callback ignored for", key);
+        DOWNLOAD_LOG("DOWNLOAD_SKIP", `reason=stale-callback key=${key}`);
         return null;
       }
       throw err;
@@ -373,45 +445,61 @@ async function performDownload(entry: InternalJob, key: string) {
     // The caller already received success:false from cancelMediaJobsForApp.
     if (cancelledKeys.has(key)) {
       cancelledKeys.delete(key);
-      console.log(`[MEDIA_QUEUE][CANCELLED_COMPLETION_IGNORED] appid=${job.appId} job=${key}`);
+      DOWNLOAD_LOG("DOWNLOAD_CANCELLED", `reason=in-flight-cancelled key=${key}`);
       return;
     }
 
-    if (result !== null) {
-      recentlyCompleted.add(key);
-      recentlyFailed.delete(key);
-      log("success", key, result);
-      // Update appinfo with the downloaded file path (batched debounced)
-      queueAppInfoUpdate(job.appId, mediaTypeToField(job.mediaType), result, "media-download");
-      notify({ type: "success", job, result: { success: true, appId: job.appId, mediaType: job.mediaType, localPath: result }, queueSize: pendingQueue.length });
-      entry.resolve({ success: true, appId: job.appId, mediaType: job.mediaType, localPath: result });
-    } else {
-      recentlyCompleted.add(key);
-      recentlyFailed.delete(key);
-      log("success (no-op, likely cached)", key);
-      notify({ type: "success", job, result: { success: true, appId: job.appId, mediaType: job.mediaType }, queueSize: pendingQueue.length });
-      entry.resolve({ success: true, appId: job.appId, mediaType: job.mediaType });
+    // Defense-in-depth: infer actual role from returned path.
+    // Rust classify_image_role no longer reclassifies, but this catch
+    // ensures no cross-role path contamination even if a bug occurs.
+    const actualRole = result ? inferActualMediaType(result, job.mediaType) : job.mediaType;
+    if (actualRole !== job.mediaType) {
+      console.log(`[MEDIA_ROLE_WRITE] appid=${job.appId} intended=${job.mediaType} actual=${actualRole} path=${result}`);
     }
 
-    // Update media_manifest.json to reflect current files on disk after this download.
-    // This ensures the manifest is created/updated even when queueAppInfoUpdate dedup skips
-    // the flush (e.g., when MediaIndex already tracks the same path) or when flushAppInfoUpdates
-    // early-returns on unchanged paths.
-    const miEntry = getMediaEntry(job.appId);
-    const manifestPaths: GameMediaPaths = {
-      coverPath: job.mediaType === "cover" ? (result ?? miEntry?.coverPath ?? null) : (miEntry?.coverPath ?? null),
-      landscapePath: job.mediaType === "landscape" ? (result ?? miEntry?.landscapePath ?? null) : (miEntry?.landscapePath ?? null),
-      backgroundPath: job.mediaType === "background" ? (result ?? miEntry?.backgroundPath ?? null) : (miEntry?.backgroundPath ?? null),
-      logoPath: job.mediaType === "logo" ? (result ?? miEntry?.logoPath ?? null) : (miEntry?.logoPath ?? null),
-      iconPath: job.mediaType === "icon" ? (result ?? miEntry?.iconPath ?? null) : (miEntry?.iconPath ?? null),
-    };
-    generateMediaManifest(job.appId, manifestPaths, job.provider).catch(() => {});
+    if (result !== null) {
+      // ── Download succeeded — file saved to disk ──
+      DOWNLOAD_LOG("DOWNLOAD_SUCCESS", `path=${result} role=${actualRole}`);
+      recentlyCompleted.add(key);
+      recentlyFailed.delete(key);
+      // Update appinfo using the inferred actual role (prevents e.g. coverPath=media/landscape.jpg)
+      queueAppInfoUpdate(job.appId, mediaTypeToField(actualRole), result, "media-download");
+      notify({ type: "success", job, result: { success: true, appId: job.appId, mediaType: actualRole, localPath: result }, queueSize: pendingQueue.length });
+      entry.resolve({ success: true, appId: job.appId, mediaType: actualRole, localPath: result });
+
+      // Update media_manifest.json to reflect current files on disk.
+      // Only runs on actual file-save (not on null-result no-ops).
+      // During a fresh artwork refresh, non-current roles MUST NOT carry
+      // forward stale paths from MediaIndex — they are explicitly nulled
+      // so the manifest only contains files that actually succeeded.
+      const miEntry = getMediaEntry(job.appId);
+      const isFresh = _freshRefreshAppIds.has(job.appId);
+      const manifestPaths: GameMediaPaths = {
+        coverPath: actualRole === "cover" ? result : (isFresh ? null : (miEntry?.coverPath ?? null)),
+        landscapePath: actualRole === "landscape" ? result : (isFresh ? null : (miEntry?.landscapePath ?? null)),
+        backgroundPath: actualRole === "background" ? result : (isFresh ? null : (miEntry?.backgroundPath ?? null)),
+        logoPath: actualRole === "logo" ? result : (isFresh ? null : (miEntry?.logoPath ?? null)),
+        iconPath: actualRole === "icon" ? result : (isFresh ? null : (miEntry?.iconPath ?? null)),
+      };
+      generateMediaManifest(job.appId, manifestPaths, job.provider).catch(() => {});
+      DOWNLOAD_LOG("MANIFEST_FINAL", `coverPath=${manifestPaths.coverPath ?? "(null)"} landscapePath=${manifestPaths.landscapePath ?? "(null)"} backgroundPath=${manifestPaths.backgroundPath ?? "(null)"} logoPath=${manifestPaths.logoPath ?? "(null)"} iconPath=${manifestPaths.iconPath ?? "(null)"}`);
+    } else {
+      // ── Download did NOT save a file ──
+      // Rust returned null (classifier rejected, HTTP error, or force_refresh
+      // skip).  Do NOT treat this as success — report failure so the caller
+      // (e.g. manual Refresh Artwork) can react appropriately.
+      DOWNLOAD_LOG("DOWNLOAD_FAIL", `reason=rust-returned-null forceRefresh=${job.forceRefresh ?? false}`);
+      recentlyFailed.add(key);
+      recentlyCompleted.delete(key);
+      notify({ type: "failed", job, result: { success: false, appId: job.appId, mediaType: job.mediaType, error: "Rust returned null (rejected by classifier or download error)" }, queueSize: pendingQueue.length });
+      entry.resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: "Rust returned null (rejected by classifier or download error)" });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
     if (entry.retries < MAX_RETRIES) {
       entry.retries++;
-      log("retry", key, `attempt ${entry.retries}`);
+      DOWNLOAD_LOG("DOWNLOAD_RETRY", `attempt=${entry.retries} error=${message}`);
       setTimeout(() => {
         pendingQueue.unshift(entry);
         tryProcessNext();
@@ -419,9 +507,9 @@ async function performDownload(entry: InternalJob, key: string) {
       return;
     }
 
+    DOWNLOAD_LOG("DOWNLOAD_FAIL", `error=${message}`);
     recentlyFailed.add(key);
     recentlyCompleted.delete(key);
-    log("failed", key, message);
     notify({ type: "failed", job, result: { success: false, appId: job.appId, mediaType: job.mediaType, error: message }, queueSize: pendingQueue.length });
     entry.resolve({ success: false, appId: job.appId, mediaType: job.mediaType, error: message });
   } finally {
@@ -587,6 +675,19 @@ export function subscribeToMediaQueue(listener: QueueListener): () => void {
 
 export function isAppIdInFlight(appId: string): boolean {
   return inFlightAppIds.has(appId);
+}
+
+/**
+ * Mark an appId as undergoing a full artwork refresh so flush does not carry
+ * forward stale existing-media paths for roles that were not re-downloaded.
+ */
+export function markFreshRefreshAppId(appId: string): void {
+  _freshRefreshAppIds.add(appId);
+}
+
+/** Remove the fresh-refresh marker (auto-cleared after flush processes it). */
+export function unmarkFreshRefreshAppId(appId: string): void {
+  _freshRefreshAppIds.delete(appId);
 }
 
 export function clearMediaQueueState() {

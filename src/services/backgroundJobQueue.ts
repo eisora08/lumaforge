@@ -468,8 +468,9 @@ async function executeJob(job: BackgroundJob): Promise<void> {
 
 async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
   if (!job.appId) throw new Error("appId required for repair-game-media");
-  const { loadGameAppInfoWithMediaFallback, CANONICAL_GAME_MEDIA_ROLES, isSystemToolApp, resolveGameMedia } = await import("./gameCacheService");
+  const { loadGameAppInfoWithMediaFallback, CANONICAL_GAME_MEDIA_ROLES, isSystemToolApp, resolveGameDetailsArtwork } = await import("./gameCacheService");
   const { resolveGameMediaPaths } = await import("./tauri");
+  const { resolveGameMetadata } = await import("./gameMetadataResolver");
 
   // Skip system/tool apps (Steamworks Redistributables, Proton, etc.)
   if (isSystemToolApp(job.appId)) {
@@ -494,16 +495,35 @@ async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
   });
 
   if (!appInfo) throw new Error(`No appinfo for appId=${job.appId}`);
-  const media = await resolveGameMedia(job.appId, undefined, appInfo);
-  if (!media) throw new Error(`No media sources for appId=${job.appId}`);
+
+  // Resolve Steam metadata for correct role candidate selection
+  let resolvedMeta: Record<string, any> | null = null;
+  const appIdNum = Number(job.appId);
+  if (appIdNum && !isNaN(appIdNum)) {
+    try {
+      const metaMap = await resolveGameMetadata([appIdNum]);
+      const m = metaMap[appIdNum];
+      if (m?.resolved) resolvedMeta = m as unknown as Record<string, any>;
+    } catch { /* non-critical */ }
+  }
+
+  // Use resolveGameDetailsArtwork (→ resolveMediaByPriority) instead of the
+  // old resolveGameMedia which had incorrect role mapping.
+  const bundle = resolveGameDetailsArtwork(
+    job.appId,
+    appInfo?.media ?? null,
+    (resolvedMeta ?? null) as any,
+    resolvedMeta?.capsule_image as string | null | undefined,
+    null,
+  );
 
   const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
   const downloadPromises: Promise<void>[] = [];
   let skipped = 0;
 
   for (const role of missingRoles) {
-    const srcKey = `${role.key}Src` as keyof typeof media;
-    const url = media[srcKey];
+    const asset = (bundle as any)[role.key] as { url?: string; source?: string } | undefined;
+    const url = asset?.url;
     const httpUrl = (url && typeof url === "string" && url.startsWith("http")) ? url : null;
 
     if (httpUrl) {

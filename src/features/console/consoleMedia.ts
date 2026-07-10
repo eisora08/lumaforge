@@ -1,3 +1,13 @@
+/* ── Synchronous card/hero media extractors ──
+ *
+ * Cache-behavior guarantee: ZERO network calls. These helpers only read
+ * pre-resolved _consoleMedia fields or game.metadata directly. They are safe
+ * to call from any render path or focus handler.
+ *
+ * Network resolution (SGDB, provider APIs) must happen in effects via
+ * resolveConsoleDetailsArtwork (consoleArtworkResolver.ts).
+ */
+
 import type { LibraryGame } from "../../types/libraryGame";
 
 type ConsoleMediaShape = {

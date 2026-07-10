@@ -27,6 +27,13 @@ export {
 
 const SCAN_INTERVAL_HOURS = 24;
 const ENABLE_VERBOSE = false;
+const ENABLE_HUBCAP_CHECK_LOGS = false;
+
+function hubcapLog(...args: unknown[]) {
+  if (ENABLE_HUBCAP_CHECK_LOGS) {
+    console.log("[HUBCAP_CHECK]", ...args);
+  }
+}
 
 // --- Lua file discovery ---
 
@@ -166,10 +173,13 @@ export async function fetchRemoteMetadata(
   appId: string,
   hubcapConfig: { baseUrl: string; apiKey: string },
 ): Promise<ProviderStatusRemote | null> {
+  const endpoint = `${hubcapConfig.baseUrl.replace(/\/+$/, "")}/api/v1/status/${appId}`;
+  hubcapLog(`[REMOTE_QUERY] appid=${appId} provider=hubcapdb endpoint=${endpoint}`);
   try {
     const raw = await hubcapAppStatus(hubcapConfig.baseUrl, hubcapConfig.apiKey, appId);
     if (!raw.ok) {
       console.log(`[PACKAGE_SCAN][REMOTE] appid=${appId} status=${raw.status}`);
+      hubcapLog(`[REMOTE_RESULT] appid=${appId} found=false status=${raw.status} reason=api-not-ok`);
       return null;
     }
 
@@ -188,9 +198,11 @@ export async function fetchRemoteMetadata(
     };
 
     console.log(`[PACKAGE_SCAN][REMOTE] appid=${appId} status=${remote.status} modified=${remote.fileModified ?? "null"} size=${remote.fileSize ?? "null"}`);
+    hubcapLog(`[REMOTE_RESULT] appid=${appId} found=true status=${remote.status} modified=${remote.fileModified ?? "null"}`);
     return remote;
   } catch (err) {
     console.log(`[PACKAGE_SCAN][REMOTE] appid=${appId} error="${String(err)}"`);
+    hubcapLog(`[REMOTE_RESULT] appid=${appId} found=false reason=error error="${String(err)}"`);
     return null;
   }
 }
@@ -307,6 +319,7 @@ async function saveProviderStatusForLua(
   try {
     await writeProviderStatus(appId, normalizedId, JSON.stringify(status));
     console.log(`[PACKAGE_SCAN][SAVE] appid=${appId} provider=${normalizedId} result=${result.status} reason=${result.reason}`);
+    hubcapLog(`[WRITE] appid=${appId} path=store/provider-status/${appId}/${normalizedId}.json remotePresent=${remote !== null} result=${result.status}`);
   } catch (err) {
     console.log(`[PACKAGE_SCAN][SAVE_ERR] appid=${appId} provider=${normalizedId} err=${String(err)}`);
   }
@@ -360,12 +373,17 @@ export async function runInstalledLuaScan(options: ScanOptions): Promise<ScanSum
         console.log(`[PACKAGE_SCAN][SKIP] reason=recent-check lastScanAt=${state.lastScanAt} intervalHours=${state.intervalHours || SCAN_INTERVAL_HOURS}`);
         // Still update in-memory status from existing provider-status files
         await refreshInMemoryStatus(luaDir, hubcapConfig);
+        // Re-check games with stale "unknown/no-remote-data" status — provider may now have data
+        if (hubcapConfig?.apiKey && hubcapConfig?.baseUrl) {
+          await recheckStaleUnknownGames(luaDir, hubcapConfig);
+        }
         return emptySummary();
       }
     }
   }
 
   console.log(`[PACKAGE_SCAN][START] reason=${force ? "manual" : "startup"} luaDir=${luaDir}`);
+  hubcapLog(`[START] reason=${force ? "manual" : "boot"} luaDir=${luaDir}`);
 
   // Discover installed Lua files
   const entries = await scanLuaDirectory(luaDir);
@@ -388,6 +406,7 @@ export async function runInstalledLuaScan(options: ScanOptions): Promise<ScanSum
       results.push({ appId, status: "unknown", reason: "lua-file-not-found" });
       continue;
     }
+    hubcapLog(`[LOCAL] appid=${appId} luaPath=${luaMeta.luaPath} modified=${luaMeta.fileModifiedAtInstall}`);
 
     // Resolve provider
     const provider = await resolveProviderForApp(appId, hubcapConfig);
@@ -408,6 +427,7 @@ export async function runInstalledLuaScan(options: ScanOptions): Promise<ScanSum
       fileSizeAtInstall: luaMeta.fileSizeAtInstall,
       metadataSource: "local-lua-file",
     });
+    hubcapLog(`[COMPARE] appid=${appId} status=${result.status} reason=${result.reason}`);
 
     // Save provider-status JSON (also updates the reactive store)
     await saveProviderStatusForLua(appId, provider.providerId, provider.providerName, luaMeta, remote, result);
@@ -465,6 +485,64 @@ async function saveScanStateToDisk(summary: ScanSummary): Promise<void> {
 
 function emptySummary(): ScanSummary {
   return { total: 0, updates: 0, upToDate: 0, unknown: 0, authRequired: 0, providerUnavailable: 0, results: [] };
+}
+
+/** Re-check games with stale "unknown/no-remote-data" hubcapdb.json status.
+ *  Runs after interval-skip refresh to detect games newly added to the HubcapDB catalog.
+ *  Uses the same fetchRemoteMetadata + saveProviderStatusForLua path as the full scan.
+ */
+async function recheckStaleUnknownGames(
+  luaDir: string,
+  hubcapConfig: { baseUrl: string; apiKey: string },
+): Promise<void> {
+  const entries = await scanLuaDirectory(luaDir);
+  let rechecked = 0;
+
+  for (const entry of entries) {
+    try {
+      const statusFile = await readProviderStatus(entry.appId, "hubcapdb");
+      // Only re-check games with stale unknown status (no remote data)
+      if (statusFile?.result?.status === "unknown" && statusFile.result.reason === "no-remote-data") {
+        hubcapLog(`[RECHECK_STALE] appid=${entry.appId} reason=unknown-no-remote-data`);
+        const luaMeta = await readLuaFileMetadata(entry.filePath);
+        if (!luaMeta) continue;
+
+        const remote = await fetchRemoteMetadata(entry.appId, hubcapConfig);
+        const result = computeResult(remote, {
+          fileModifiedAtInstall: luaMeta.fileModifiedAtInstall,
+          fileSizeAtInstall: luaMeta.fileSizeAtInstall,
+          metadataSource: "local-lua-file",
+        });
+
+        if (remote && result.status !== "unknown") {
+          await saveProviderStatusForLua(entry.appId, "hubcapdb", "hubcapdb", luaMeta, remote, result);
+          console.log(`[PACKAGE_SCAN][RECHECK_OK] appid=${entry.appId} status=${result.status} reason=${result.reason}`);
+        } else {
+          hubcapLog(`[RECHECK_STALE_SKIP] appid=${entry.appId} reason=still-no-remote-data`);
+        }
+        rechecked++;
+      } else if (!statusFile) {
+        // No hubcapdb.json at all — first-time check
+        hubcapLog(`[RECHECK_STALE] appid=${entry.appId} reason=no-status-file`);
+        const luaMeta = await readLuaFileMetadata(entry.filePath);
+        if (!luaMeta) continue;
+
+        const remote = await fetchRemoteMetadata(entry.appId, hubcapConfig);
+        const result = computeResult(remote, {
+          fileModifiedAtInstall: luaMeta.fileModifiedAtInstall,
+          fileSizeAtInstall: luaMeta.fileSizeAtInstall,
+          metadataSource: "local-lua-file",
+        });
+
+        await saveProviderStatusForLua(entry.appId, "hubcapdb", "hubcapdb", luaMeta, remote, result);
+        rechecked++;
+      }
+    } catch { /* ignore per-app errors */ }
+  }
+
+  if (rechecked > 0) {
+    console.log(`[PACKAGE_SCAN][RECHECK_DONE] rechecked=${rechecked}`);
+  }
 }
 
 /** Refresh in-memory status from existing provider-status files on disk (no scan). */

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   X, Shuffle, RefreshCw, Settings,
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
-  Wrench, Gamepad2,
+  Wrench, Gamepad2, Film,
   Maximize, Grid3X3, ChevronRight, ArrowLeft,
 } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
@@ -19,6 +19,7 @@ import type {
 import {
   resetConsoleLayoutSettings,
   resetConsoleVisualSettings,
+  resetConsoleMediaSettings,
   resetConsoleInputSettings,
 } from "./consoleSettings";
 
@@ -27,6 +28,7 @@ type PanelPage =
   | "settings"
   | "layout"
   | "visuals"
+  | "media"
   | "input"
   | "tools"
   | "help";
@@ -314,6 +316,54 @@ function ConsoleVisualsSubPanel({
 }
 
 // ============================================================
+// Media sub-panel
+// ============================================================
+function ConsoleMediaSubPanel({
+  settings, onPatch, onBack, focusedIndex, onFocusChange, itemCount,
+}: {
+  settings: ConsoleSettings;
+  onPatch: (p: Partial<ConsoleSettings>) => void;
+  onBack: () => void;
+  focusedIndex: number;
+  onFocusChange: (i: number) => void;
+  itemCount: React.MutableRefObject<number>;
+}) {
+  const totalItems = 7;
+  itemCount.current = totalItems + 1;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems, focusedIndex + 1)); }
+    if (e.key === "Enter") { e.preventDefault(); if (focusedIndex === totalItems) { const p = resetConsoleMediaSettings(); onPatch(p); } }
+    if (e.key === "Escape") { e.preventDefault(); onBack(); }
+  };
+
+  return (
+    <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
+      <SubPanelHeader title="Media & Trailers" onBack={onBack} />
+
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-(--color-muted)/60 pl-1">Media Providers</div>
+      <ToggleRow label="Use SteamGridDB" description="Artwork from SteamGridDB (requires API key)" enabled={settings.useSteamGridDb} onChange={() => onPatch({ useSteamGridDb: !settings.useSteamGridDb })} isFocused={focusedIndex === 1} />
+      <ToggleRow label="Use Steam AppDetails" description="Images from Steam Store metadata" enabled={settings.useSteamAppDetails} onChange={() => onPatch({ useSteamAppDetails: !settings.useSteamAppDetails })} isFocused={focusedIndex === 2} />
+      <ToggleRow label="Use IGDB" description="Cover art from IGDB (requires Client ID + Secret)" enabled={settings.useIgdb} onChange={() => onPatch({ useIgdb: !settings.useIgdb })} isFocused={focusedIndex === 3} />
+      <ToggleRow label="Use RAWG" description="Backgrounds from RAWG (requires API key)" enabled={settings.useRawg} onChange={() => onPatch({ useRawg: !settings.useRawg })} isFocused={focusedIndex === 4} />
+
+      <div className="mt-2 mb-1 text-xs font-semibold uppercase tracking-wider text-(--color-muted)/60 pl-1">Trailer Playback</div>
+      <ToggleRow label="Show Trailer Preview" description="Show trailer/artwork preview in details panel" enabled={settings.showTrailerPreview} onChange={() => onPatch({ showTrailerPreview: !settings.showTrailerPreview })} isFocused={focusedIndex === 5} />
+      <ToggleRow label="Autoplay Trailers" description="Start trailer automatically when entering details" enabled={settings.autoplayTrailerPreviews} onChange={() => onPatch({ autoplayTrailerPreviews: !settings.autoplayTrailerPreviews })} isFocused={focusedIndex === 6} />
+      <ToggleRow label="Prefer Direct Video" description="Use MP4/WebM when available (fallback to HLS/DASH)" enabled={settings.preferDirectVideo} onChange={() => onPatch({ preferDirectVideo: !settings.preferDirectVideo })} isFocused={focusedIndex === 7} />
+
+      <button
+        onClick={() => { const p = resetConsoleMediaSettings(); onPatch(p); }}
+        className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${focusedIndex === 8 ? "ring-2 ring-amber-500/60" : ""}`}
+      >
+        Reset Media to Defaults
+      </button>
+    </div>
+  );
+}
+
+// ============================================================
 // Input sub-panel
 // ============================================================
 function ConsoleInputSubPanel({
@@ -442,6 +492,7 @@ function SettingsCategoryGrid({
   const cats: { key: PanelPage; icon: React.ComponentType<{ className?: string }>; label: string; description: string }[] = [
     { key: "layout", icon: Grid3X3, label: "Layout", description: "Card size, columns, gaps" },
     { key: "visuals", icon: Maximize, label: "Visuals", description: "Theme, texture, effects" },
+    { key: "media", icon: Film, label: "Media", description: "Providers, trailers, playback" },
     { key: "input", icon: Gamepad2, label: "Input", description: "Hints style, visibility" },
   ];
 
@@ -598,6 +649,7 @@ export default function ConsoleSettingsPanelV2({
     switch (subPage) {
       case "layout": return <ConsoleLayoutSubPanel {...sharedSub} />;
       case "visuals": return <ConsoleVisualsSubPanel {...sharedSub} />;
+      case "media": return <ConsoleMediaSubPanel {...sharedSub} />;
       case "input": return <ConsoleInputSubPanel {...sharedSub} />;
       case "tools": return <ConsoleToolsSubPanel onBack={() => setSubPage(null)} />;
       case "help": return <ConsoleHelpSubPanel onBack={() => setSubPage(null)} />;
@@ -644,7 +696,7 @@ export default function ConsoleSettingsPanelV2({
   );
 
   const breadcrumbTitle = page === "settings" && !subPage ? "Console Settings" : subPage ? (
-    subPage === "layout" ? "Layout" : subPage === "visuals" ? "Visuals" : subPage === "input" ? "Input" : subPage === "tools" ? "Tools" : subPage === "help" ? "Help" : null
+    subPage === "layout" ? "Layout" : subPage === "visuals" ? "Visuals" : subPage === "media" ? "Media" : subPage === "input" ? "Input" : subPage === "tools" ? "Tools" : subPage === "help" ? "Help" : null
   ) : null;
 
   if (!open && !visible) return null;

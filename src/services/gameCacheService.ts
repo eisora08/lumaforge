@@ -42,6 +42,17 @@ import type {
   GameMediaSources,
 } from "./tauri";
 import type { LibraryGame } from "../types/libraryGame";
+import type { SteamAppMetadata } from "../types/gameMetadata";
+import type { SgdbArtworkData } from "./storeArtworkResolver";
+import type { RawgArtworkData, IgdbArtworkData } from "./storeArtworkResolver";
+import type {
+  GameMediaKind,
+  GameMediaSource,
+  ResolvedGameMediaAsset,
+  ResolvedGameMediaBundle,
+  ResolvedGameTrailer,
+} from "../types/gameMedia";
+import { resolveGameTrailers } from "./gameMetadataResolver";
 
 export type {
   GameAppInfo,
@@ -921,6 +932,66 @@ export async function loadGameAppInfoWithMediaFallback(appId: string, options?: 
   // Read appinfo.json from disk (session-cached)
   let appInfo = await getCachedGameAppInfo(appId);
 
+  // Stale path repair: detect and clear role-path mismatches on read
+  // (e.g. coverPath=media/landscape.jpg caused by the old Rust reclassifier).
+  // Only clears paths that point to a WRONG role's filename prefix (e.g. a
+  // cover field pointing to a file starting with "landscape.").  Filenames
+  // that don't match any role prefix (e.g. "library_hero.jpg" from Steam CDN)
+  // are left as-is — they are legitimate CDN-original names.
+  // When repair is allowed, persist the corrected state to disk so subsequent
+  // reads don't re-detect the same mismatch.
+  if (appInfo?.media) {
+    const ROLE_FIELD_MAP: Record<string, string> = {
+      coverPath: "cover.",
+      landscapePath: "landscape.",
+      backgroundPath: "background.",
+      logoPath: "logo.",
+      iconPath: "icon.",
+    };
+    const ALL_PREFIXES = new Set(Object.values(ROLE_FIELD_MAP));
+    const clearedFields: string[] = [];
+    for (const [field, expectedPrefix] of Object.entries(ROLE_FIELD_MAP)) {
+      const path = (appInfo.media as any)[field] as string | null | undefined;
+      if (path && typeof path === "string") {
+        const filename = path.replace(/\\/g, "/").split("/").pop() ?? "";
+        // Only flag as mismatch if the filename matches a DIFFERENT role's
+        // prefix.  If it doesn't match ANY role prefix it's a legitimate
+        // CDN-original name (e.g. library_hero.jpg, header.jpg) and should
+        // NOT be cleared.
+        const matchesWrongRole = [...ALL_PREFIXES].some(
+          p => p !== expectedPrefix && filename.startsWith(p),
+        );
+        if (matchesWrongRole) {
+          console.log(`[MEDIA_ROLE_REPAIR] appid=${appId} cleared ${field}=${path} reason=role-path-mismatch-on-read expected=${expectedPrefix}*`);
+          (appInfo.media as any)[field] = null;
+          clearedFields.push(field);
+        }
+      }
+    }
+    if (clearedFields.length === 0 && ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
+      console.log(`[MEDIA_ROLE_REPAIR_VERBOSE] appid=${appId} reason=no-role-mismatch-detected`);
+    }
+    // Persist the repair to disk ALWAYS (regardless of allowRepair) so that
+    // the stale role-path does not contaminate future appinfo reads, manifest
+    // comparisons, or download queues.  Without this persist, the corrected
+    // in-memory state is lost on cache invalidation / page navigation, and
+    // the stale path re-appears.
+    if (clearedFields.length > 0) {
+      await updateGameAppinfoMediaIfChanged(
+        appId,
+        appInfo.name ?? null,
+        appInfo.media,
+        appInfo.remote ?? null,
+        appInfo.mediaSources ?? null,
+        "role-repair",
+      ).catch(() => {});
+      generateMediaManifest(appId, appInfo.media).catch(() => {});
+      console.log(`[MEDIA_ROLE_REPAIR_WRITE] appid=${appId} cleared=${clearedFields.join(",")}`);
+      // Invalidate session cache so the next consumer reads corrected state from disk
+      _sessionAppinfoCache.delete(appId);
+    }
+  }
+
   // Validate all paths against disk (once per session) — only when repair is allowed
   if (allowRepair && !isAppInfoRepaired(appId)) {
     try {
@@ -1712,23 +1783,26 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
     }
   } catch { }
 
-  // Build game-like object from metadata for resolveGameMedia fallback
-  const gameObj = gameMeta ? {
-    metadata: gameMeta,
-    headerImage: gameMeta.header_image as string | undefined,
-    imageUrl: gameMeta.capsule_image as string | undefined,
-  } : undefined;
-
   const appInfo = await getCachedGameAppInfo(appId);
-  const resolvedMedia = await resolveGameMedia(appId, gameObj, appInfo).catch(() => null);
+
+  // Use resolveGameDetailsArtwork (→ resolveMediaByPriority) instead of the
+  // old resolveGameMedia which had incorrect role mapping (e.g. using capsule
+  // images for landscape).  This ensures the same corrected candidate selection
+  // as manual Refresh Artwork.
+  const bundle = resolveGameDetailsArtwork(
+    appId,
+    appInfo?.media ?? null,
+    gameMeta as SteamAppMetadata | null | undefined,
+    gameMeta?.capsule_image as string | null | undefined,
+    null,
+  );
 
   const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
   const queuedRoles: string[] = [];
 
   for (const role of missing) {
-    // Priority chain: SGDB → resolveGameMedia → mediaSources
+    // Priority chain: SGDB → bundle (Steam CDN → metadata → screenshots) → mediaSources
     // SGDB provides curated, role-specific artwork (hero, grid, cover, logo, icon).
-    // Steam metadata's background_image is often a screenshot/promo, so SGDB wins.
     let sourceUrl: string | null = null;
     let sourceReason = "";
 
@@ -1738,19 +1812,16 @@ export async function detectAndQueueMissingMedia(appId: string, source: MediaRep
       sourceReason = "sgdb";
     }
 
-    // Priority 2: resolveGameMedia (appinfo paths + store metadata fallback)
+    // Priority 2: resolveGameDetailsArtwork bundle (Steam CDN + metadata + screenshots)
     if (!sourceUrl) {
-      const srcKey = `${role}Src` as keyof typeof resolvedMedia;
-      if (resolvedMedia && resolvedMedia[srcKey] && typeof resolvedMedia[srcKey] === "string") {
-        const url = resolvedMedia[srcKey] as string;
-        if (url.startsWith("http")) {
-          sourceUrl = url;
-          sourceReason = "resolveGameMedia-remote";
-        }
+      const asset = (bundle as any)[role] as { url?: string; source?: string } | undefined;
+      if (asset?.url && /^https?:\/\//i.test(asset.url)) {
+        sourceUrl = asset.url;
+        sourceReason = asset.source ?? "resolveGameDetailsArtwork";
       }
     }
 
-    // Priority 2b: game metadata directly for roles resolveGameMedia doesn't cover
+    // Priority 2b: game metadata directly for roles the bundle may not cover
     if (!sourceUrl && gameMeta) {
       if (role === "logo" && (gameMeta.library_logo_image || gameMeta.logo_image)) {
         sourceUrl = (gameMeta.library_logo_image || gameMeta.logo_image) as string;
@@ -2401,4 +2472,678 @@ export async function hydrateMediaOnStartup(
     console.log(`[BOOT][MEDIA_HYDRATE] withLogo=${withLogo}`);
   }
   return { updatedAppInfos, withBackground, withLandscape, withIcon, withLogo };
+}
+
+/* ── Media priority resolver (moved from features/media/resolveGameMediaByPriority) ──
+ *
+ * Resolve the best available media for each role using a priority chain.
+ * All data should be pre-fetched by the caller — this is synchronous, no API calls.
+ */
+
+type MediaSourcesCacheEntry = { url: string; source: GameMediaSource; localPath?: string };
+type MediaSourcesCache = Partial<Record<string, MediaSourcesCacheEntry>>;
+
+export type MediaResolutionOptions = {
+  useSteamGridDb?: boolean;
+  useSteamAppDetails?: boolean;
+  useIgdb?: boolean;
+  useRawg?: boolean;
+  preferDirectVideo?: boolean;
+};
+
+export type MediaResolutionInputs = {
+  appId: string;
+  provider?: string;
+  localPaths?: {
+    coverPath?: string | null;
+    landscapePath?: string | null;
+    backgroundPath?: string | null;
+    logoPath?: string | null;
+    iconPath?: string | null;
+  };
+  metadata?: SteamAppMetadata | null;
+  sgdbArtwork?: SgdbArtworkData | null;
+  rawgData?: RawgArtworkData | null;
+  igdbData?: IgdbArtworkData | null;
+  imageUrl?: string | null;
+  cachedSources?: MediaSourcesCache | null;
+  options?: MediaResolutionOptions;
+};
+
+type AssetCandidate = {
+  url: string;
+  source: GameMediaSource;
+  kind: GameMediaKind;
+  localPath?: string;
+  width?: number;
+  height?: number;
+};
+
+function asset(
+  kind: GameMediaKind,
+  source: GameMediaSource,
+  url: string | null | undefined,
+  localPath?: string | null,
+): AssetCandidate | undefined {
+  if (!url) return undefined;
+  return { kind, source, url, localPath: localPath ?? undefined };
+}
+
+function pickFirst(chain: (AssetCandidate | undefined | null | false | string)[]): ResolvedGameMediaAsset | undefined {
+  for (const c of chain) {
+    if (c && typeof c === "object" && "url" in c && c.url) {
+      return { appId: "", kind: c.kind, source: c.source, url: c.url, localPath: c.localPath, cachedAt: Date.now() };
+    }
+  }
+  return undefined;
+}
+
+function pickUrl(...urls: (string | null | undefined)[]): string | undefined {
+  for (const u of urls) { if (u) return u; }
+  return undefined;
+}
+
+function isStorePageBackground(url: string): boolean {
+  return /store_page_background/i.test(url) || /storepagebackground/i.test(url);
+}
+
+function pickBackgroundUrl(...urls: (string | null | undefined)[]): string | undefined {
+  for (const u of urls) { if (u && !isStorePageBackground(u)) return u; }
+  return pickUrl(...urls);
+}
+
+function fromMetadata(m: SteamAppMetadata, kind: GameMediaKind): AssetCandidate | undefined {
+  switch (kind) {
+    case "cover":
+      return asset("cover", "steam-appdetails", pickUrl(m.capsule_image_v5, m.capsule_image, m.header_image));
+    case "landscape":
+      return asset("landscape", "steam-appdetails", pickUrl(m.header_image, m.library_hero_image, m.wide_cover_image));
+    case "background":
+      return asset("background", "steam-appdetails", pickBackgroundUrl(
+        m.library_hero_image, m.hero_image, m.header_image,
+        m.wide_cover_image, m.capsule_image, m.capsule_image_v5, m.background_image,
+      ));
+    case "logo":
+      return asset("logo", "steam-appdetails", pickUrl(m.logo_image, m.library_logo_image));
+    default:
+      return undefined;
+  }
+}
+
+function fromSgdb(a: SgdbArtworkData, kind: GameMediaKind): AssetCandidate | undefined {
+  switch (kind) {
+    case "cover": return a.sgdbCoverUrl ? asset("cover", "steamgriddb", a.sgdbCoverUrl) : undefined;
+    case "landscape": return a.sgdbGridUrl ? asset("landscape", "steamgriddb", a.sgdbGridUrl) : undefined;
+    case "background": return a.sgdbHeroUrl ? asset("background", "steamgriddb", a.sgdbHeroUrl) : undefined;
+    case "logo": return a.sgdbLogoUrl ? asset("logo", "steamgriddb", a.sgdbLogoUrl) : undefined;
+    case "icon": return a.sgdbIconUrl ? asset("icon", "steamgriddb", a.sgdbIconUrl) : undefined;
+    default: return undefined;
+  }
+}
+
+function fromScreenshots(screenshots: string[] | undefined, kind: GameMediaKind): AssetCandidate | undefined {
+  if (!screenshots || screenshots.length === 0) return undefined;
+  if (kind === "landscape" || kind === "background") return asset(kind, "steam-appdetails", screenshots[0]);
+  return undefined;
+}
+
+function fromRawg(a: RawgArtworkData | undefined | null, kind: GameMediaKind): AssetCandidate | undefined {
+  if (!a?.rawgBackgroundUrl) return undefined;
+  if (kind === "background") return asset("background", "rawg", a.rawgBackgroundUrl);
+  return undefined;
+}
+
+function fromIgdb(a: IgdbArtworkData | undefined | null, kind: GameMediaKind): AssetCandidate | undefined {
+  if (!a) return undefined;
+  switch (kind) {
+    case "cover": return a.igdbCoverUrl ? asset("cover", "igdb", a.igdbCoverUrl) : undefined;
+    case "background": return a.igdbArtworkUrl ? asset("background", "igdb", a.igdbArtworkUrl) : undefined;
+    default: return undefined;
+  }
+}
+
+function fromCachedSource(cached: MediaSourcesCache | undefined | null, kind: GameMediaKind): AssetCandidate | undefined {
+  if (!cached) return undefined;
+  const entry = cached[kind];
+  if (!entry) return undefined;
+  return { kind, source: entry.source, url: entry.url, localPath: entry.localPath };
+}
+
+const DEBUG_MEDIA_ROLE_MAP = false;
+
+function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "capsule"): string | null {
+  const id = parseInt(appId, 10);
+  if (!id || isNaN(id) || id <= 0) return null;
+  const base = `https://steamcdn-a.akamaihd.net/steam/apps/${id}`;
+  switch (kind) {
+    case "header": return `${base}/header.jpg`;
+    case "hero": return `${base}/library_hero.jpg`;
+    case "logo": return `${base}/logo.png`;
+    case "capsule": return `${base}/capsule_616x353.jpg`;
+    default: return null;
+  }
+}
+
+function logSteamRoleMap(appId: string, meta: SteamAppMetadata | null | undefined): void {
+  if (!DEBUG_MEDIA_ROLE_MAP || !meta) return;
+  console.log(`[MEDIA_ROLE_MAP] appid=${appId} header=${meta.header_image ?? "(null)"} capsule=${meta.capsule_image ?? "(null)"} capsule_v5=${meta.capsule_image_v5 ?? "(null)"} hero=${meta.hero_image ?? "(null)"} library_hero=${meta.library_hero_image ?? "(null)"} logo=${meta.logo_image ?? "(null)"} library_logo=${meta.library_logo_image ?? "(null)"}`);
+}
+
+function logMediaSelect(appId: string, role: string, source: string, url: string): void {
+  if (!DEBUG_MEDIA_ROLE_MAP) return;
+  const label = url.includes("library_hero") ? "steam-cdn-hero"
+    : url.includes("capsule_616x353") ? "steam-cdn-capsule"
+    : url.includes("header.jpg") && !url.includes("capsule") ? "steam-cdn-header"
+    : url.includes("logo.png") ? "steam-cdn-logo"
+    : source;
+  console.log(`[MEDIA_SELECT] appid=${appId} role=${role} source=${label} url=${url}`);
+}
+
+function fromSteamCdn(appId: string, meta: SteamAppMetadata | null | undefined, kind: GameMediaKind): AssetCandidate | undefined {
+  // Skip the generic CDN URL only when a game-specific asset field exists
+  // that provides the SAME type of image.  header_image is a capsule-like
+  // image, NOT a wide header — do not skip CDN header.jpg for it.
+  if (meta) {
+    switch (kind) {
+      case "background": if (meta.library_hero_image || meta.hero_image) return undefined; break;
+      case "logo":       if (meta.logo_image || meta.library_logo_image) return undefined; break;
+      case "cover":      if (meta.capsule_image_v5 || meta.capsule_image) return undefined; break;
+      case "landscape":  if (meta.library_header_image) return undefined; break;
+    }
+  }
+  // Return the generic Steam CDN URL even when meta is null (e.g. Lua-only
+  // game with no resolved Steam metadata).  The CDN will 404 for invalid
+  // appIds, but that is handled gracefully by the download queue.
+  switch (kind) {
+    case "background": return asset("background", "steam-appdetails", buildSteamCdnUrl(appId, "hero"));
+    case "logo":       return asset("logo", "steam-appdetails", buildSteamCdnUrl(appId, "logo"));
+    case "cover":      return asset("cover", "steam-appdetails", buildSteamCdnUrl(appId, "capsule"));
+    case "landscape":  return asset("landscape", "steam-appdetails", buildSteamCdnUrl(appId, "header"));
+    case "icon":       return undefined;
+    default:           return undefined;
+  }
+}
+
+function resolveCover(
+  appId: string,
+  localPaths: MediaResolutionInputs["localPaths"],
+  cached: MediaSourcesCache | undefined | null,
+  sgdb: SgdbArtworkData | undefined | null,
+  _rawg: RawgArtworkData | undefined | null,
+  igdb: IgdbArtworkData | undefined | null,
+  _meta: SteamAppMetadata | undefined | null,
+  imageUrl: string | undefined | null,
+  opts?: MediaResolutionOptions,
+): ResolvedGameMediaAsset | undefined {
+  // Cover MUST be a poster/vertical image. Steam capsule/header assets are
+  // horizontal capsule bars — never use them as cover.  Only SGDB, IGDB,
+  // or catalog imageUrl can provide true vertical cover art.
+  const result = pickFirst([
+    localPaths?.coverPath && asset("cover", "local", localPaths.coverPath),
+    cached && fromCachedSource(cached, "cover"),
+    sgdb && opts?.useSteamGridDb !== false && fromSgdb(sgdb, "cover"),
+    igdb && opts?.useIgdb !== false && fromIgdb(igdb, "cover"),
+    imageUrl && asset("cover", "steam-appdetails", imageUrl),
+  ]);
+  if (result) logMediaSelect(appId, "cover", result.source, result.url!);
+  return result;
+}
+
+function resolveLandscape(
+  appId: string,
+  localPaths: MediaResolutionInputs["localPaths"],
+  cached: MediaSourcesCache | undefined | null,
+  sgdb: SgdbArtworkData | undefined | null,
+  _rawg: RawgArtworkData | undefined | null,
+  igdb: IgdbArtworkData | undefined | null,
+  meta: SteamAppMetadata | undefined | null,
+  opts?: MediaResolutionOptions,
+): ResolvedGameMediaAsset | undefined {
+  const result = pickFirst([
+    localPaths?.landscapePath && asset("landscape", "local", localPaths.landscapePath),
+    cached && fromCachedSource(cached, "landscape"),
+    fromSteamCdn(appId, meta, "landscape"),
+    meta && opts?.useSteamAppDetails !== false && fromMetadata(meta, "landscape"),
+    meta && opts?.useSteamAppDetails !== false && fromScreenshots(meta.screenshots, "landscape"),
+    sgdb && opts?.useSteamGridDb !== false && fromSgdb(sgdb, "landscape"),
+    igdb && opts?.useIgdb !== false && fromIgdb(igdb, "landscape"),
+  ]);
+  if (result) logMediaSelect(appId, "landscape", result.source, result.url!);
+  return result;
+}
+
+function resolveBackground(
+  appId: string,
+  localPaths: MediaResolutionInputs["localPaths"],
+  cached: MediaSourcesCache | undefined | null,
+  sgdb: SgdbArtworkData | undefined | null,
+  rawg: RawgArtworkData | undefined | null,
+  igdb: IgdbArtworkData | undefined | null,
+  meta: SteamAppMetadata | undefined | null,
+  landscapeFallback: ResolvedGameMediaAsset | undefined,
+  opts?: MediaResolutionOptions,
+): ResolvedGameMediaAsset | undefined {
+  const result = pickFirst([
+    localPaths?.backgroundPath && asset("background", "local", localPaths.backgroundPath),
+    cached && fromCachedSource(cached, "background"),
+    fromSteamCdn(appId, meta, "background"),
+    meta && opts?.useSteamAppDetails !== false && fromMetadata(meta, "background"),
+    meta && opts?.useSteamAppDetails !== false && fromScreenshots(meta.screenshots, "background"),
+    sgdb && opts?.useSteamGridDb !== false && fromSgdb(sgdb, "background"),
+    rawg && opts?.useRawg !== false && fromRawg(rawg, "background"),
+    igdb && opts?.useIgdb !== false && fromIgdb(igdb, "background"),
+    landscapeFallback && asset("background", landscapeFallback.source, landscapeFallback.url!),
+  ]);
+  if (result) logMediaSelect(appId, "background", result.source, result.url!);
+  return result;
+}
+
+function resolveLogo(
+  appId: string,
+  localPaths: MediaResolutionInputs["localPaths"],
+  cached: MediaSourcesCache | undefined | null,
+  sgdb: SgdbArtworkData | undefined | null,
+  meta: SteamAppMetadata | undefined | null,
+  opts?: MediaResolutionOptions,
+): ResolvedGameMediaAsset | undefined {
+  const result = pickFirst([
+    localPaths?.logoPath && asset("logo", "local", localPaths.logoPath),
+    cached && fromCachedSource(cached, "logo"),
+    fromSteamCdn(appId, meta, "logo"),
+    meta && opts?.useSteamAppDetails !== false && fromMetadata(meta, "logo"),
+    sgdb && opts?.useSteamGridDb !== false && fromSgdb(sgdb, "logo"),
+  ]);
+  if (result) logMediaSelect(appId, "logo", result.source, result.url!);
+  return result;
+}
+
+function resolveIcon(
+  appId: string,
+  localPaths: MediaResolutionInputs["localPaths"],
+  cached: MediaSourcesCache | undefined | null,
+  sgdb: SgdbArtworkData | undefined | null,
+  meta: SteamAppMetadata | undefined | null,
+  opts?: MediaResolutionOptions,
+): ResolvedGameMediaAsset | undefined {
+  const result = pickFirst([
+    localPaths?.iconPath && asset("icon", "local", localPaths.iconPath),
+    cached && fromCachedSource(cached, "icon"),
+    fromSteamCdn(appId, meta, "icon"),
+    sgdb && opts?.useSteamGridDb !== false && fromSgdb(sgdb, "icon"),
+  ]);
+  if (result) logMediaSelect(appId, "icon", result.source, result.url!);
+  return result;
+}
+
+function resolveTrailers(
+  meta: SteamAppMetadata | undefined | null,
+  opts?: MediaResolutionOptions,
+): ResolvedGameTrailer[] {
+  return resolveGameTrailers(meta?.movies, opts?.preferDirectVideo !== false);
+}
+
+export function resolveMediaByPriority(inputs: MediaResolutionInputs): ResolvedGameMediaBundle {
+  const { appId, localPaths, metadata: meta, sgdbArtwork: sgdb, rawgData: rawg, igdbData: igdb, imageUrl, cachedSources: cached, options: opts } = inputs;
+
+  logSteamRoleMap(appId, meta);
+
+  const cover = resolveCover(appId, localPaths, cached, sgdb, rawg, igdb, meta, imageUrl, opts);
+  const landscape = resolveLandscape(appId, localPaths, cached, sgdb, rawg, igdb, meta, opts);
+  const background = resolveBackground(appId, localPaths, cached, sgdb, rawg, igdb, meta, landscape, opts);
+  const logo = resolveLogo(appId, localPaths, cached, sgdb, meta, opts);
+  const icon = resolveIcon(appId, localPaths, cached, sgdb, meta, opts);
+  const trailers = resolveTrailers(meta, opts);
+
+  const bundle: ResolvedGameMediaBundle = { appId };
+  if (cover) bundle.cover = { ...cover, appId };
+  if (landscape) bundle.landscape = { ...landscape, appId };
+  if (background) bundle.background = { ...background, appId };
+  if (logo) bundle.logo = { ...logo, appId };
+  if (icon) bundle.icon = { ...icon, appId };
+  if (trailers.length > 0) bundle.trailers = trailers;
+  return bundle;
+}
+
+/* ── Sync-first, async-refresh artwork resolver (moved from features/media/resolveGameDetailsArtwork) ── */
+
+const _NETWORK_IN_FLIGHT = new Set<string>();
+const _DEBUG_LIBRARY_MEDIA_FALLBACK = false;
+const _DEBUG_MEDIA_APPID = "4717430";
+const _DEBUG_MEDIA_APPID_ENABLED = true;
+
+function _isDebugAppId(appId: string): boolean {
+  return _DEBUG_MEDIA_APPID_ENABLED && appId === _DEBUG_MEDIA_APPID;
+}
+
+function _logArtwork(appId: string, msg: string) {
+  if (_DEBUG_LIBRARY_MEDIA_FALLBACK) console.log(`[LIBRARY_MEDIA_FALLBACK] appid=${appId} ${msg}`);
+}
+
+function _logSkip(appId: string, provider: string, reason: string) {
+  if (_DEBUG_LIBRARY_MEDIA_FALLBACK) console.log(`[LIBRARY_MEDIA_FALLBACK][SKIP_PROVIDER] appid=${appId} provider=${provider} reason=${reason}`);
+}
+
+function _debugLog(appId: string, tag: string, msg: string) {
+  if (_isDebugAppId(appId)) console.log(`[LIB_MEDIA_DEBUG][${tag}] appid=${appId} ${msg}`);
+}
+
+export type GameDetailsMediaOptions = {
+  sgdbApiKey?: string;
+  sgdbEnabled?: boolean;
+  rawgApiKey?: string;
+  igdbClientId?: string;
+  igdbClientSecret?: string;
+  useSteamGridDb?: boolean;
+  useRawg?: boolean;
+  useIgdb?: boolean;
+};
+
+/* ── Sync: local + cache + metadata only ── */
+
+export function resolveGameDetailsArtwork(
+  appId: string,
+  localPaths: MediaResolutionInputs["localPaths"] | undefined | null,
+  metadata: SteamAppMetadata | undefined | null,
+  imageUrl: string | undefined | null,
+  cachedSources?: Record<string, any> | null,
+): ResolvedGameMediaBundle {
+  _debugLog(appId, "START", `localPaths= ${JSON.stringify(localPaths)}`);
+  _debugLog(appId, "LOCAL", `background=${localPaths?.backgroundPath ?? "(null)"} logo=${localPaths?.logoPath ?? "(null)"}`);
+
+  const hasCached = cachedSources !== undefined && cachedSources !== null;
+  const cachedBg = cachedSources?.background?.url ?? "(null)";
+  const cachedLogo = cachedSources?.logo?.url ?? "(null)";
+  _debugLog(appId, "SIDECAR_READ", `exists=${hasCached} background=${cachedBg} logo=${cachedLogo}`);
+
+  const metaKeys = metadata ? Object.keys(metadata).join(",") : "(null)";
+  _debugLog(appId, "STEAM_METADATA", `hasMetadata=${!!metadata} keys=${metaKeys}`);
+  _debugLog(appId, "STEAM_METADATA_VALUES", `background_image=${metadata?.background_image ?? "(null)"} header_image=${metadata?.header_image ?? "(null)"} logo_image=${metadata?.logo_image ?? "(null)"} library_logo_image=${metadata?.library_logo_image ?? "(null)"} library_hero_image=${metadata?.library_hero_image ?? "(null)"}`);
+
+  const inputs: MediaResolutionInputs = {
+    appId,
+    localPaths: localPaths ?? undefined,
+    metadata: metadata ?? undefined,
+    imageUrl: imageUrl ?? undefined,
+    cachedSources: cachedSources ?? undefined,
+    options: { useSteamGridDb: false, useRawg: false, useIgdb: false, useSteamAppDetails: true },
+  };
+
+  const bundle = resolveMediaByPriority(inputs);
+
+  const roles: GameMediaKind[] = ["cover", "landscape", "background", "logo", "icon"];
+  for (const role of roles) {
+    const asset = (bundle as any)[role] as { source?: GameMediaSource; url?: string } | undefined;
+    _logArtwork(appId, `role=${role} source=${asset?.source ?? "none"}`);
+  }
+
+  _debugLog(appId, "FINAL", `background=${(bundle as any)?.background?.url ?? "(null)"} logo=${(bundle as any)?.logo?.url ?? "(null)"} sourceBackground=${(bundle as any)?.background?.source ?? "(null)"} sourceLogo=${(bundle as any)?.logo?.source ?? "(null)"}`);
+
+  return bundle;
+}
+
+/* ── Async: network providers (SGDB → RAWG → IGDB) ── */
+
+export async function refreshGameDetailsArtwork(
+  appId: string,
+  localPaths: MediaResolutionInputs["localPaths"] | undefined | null,
+  metadata: SteamAppMetadata | undefined | null,
+  imageUrl: string | undefined | null,
+  cachedSources: Record<string, any> | null,
+  options: GameDetailsMediaOptions,
+): Promise<{ bundle: ResolvedGameMediaBundle; changed: boolean }> {
+  const key = `network:${appId}`;
+  if (_NETWORK_IN_FLIGHT.has(key)) {
+    const bundle = resolveGameDetailsArtwork(appId, localPaths, metadata, imageUrl, cachedSources);
+    return { bundle, changed: false };
+  }
+  _NETWORK_IN_FLIGHT.add(key);
+
+  try {
+    const appIdNum = Number(appId);
+    if (isNaN(appIdNum)) {
+      const bundle = resolveGameDetailsArtwork(appId, localPaths, metadata, imageUrl, cachedSources);
+      return { bundle, changed: false };
+    }
+
+    // Verify local paths against actual disk — filter out stale appinfo paths
+    let verifiedLocalPaths = localPaths;
+    if (localPaths) {
+      try {
+        const diskPaths = await resolveGameMediaPaths(appId);
+        if (diskPaths) {
+          let hasChange = false;
+          const verified = { ...localPaths };
+          const roles = ["coverPath", "landscapePath", "backgroundPath", "logoPath", "iconPath"] as const;
+          for (const key of roles) {
+            if (localPaths[key] && !diskPaths[key]) {
+              const role = key.replace("Path", "");
+              verified[key] = null;
+              hasChange = true;
+              if (DEBUG_MEDIA_ROLE_MAP) console.log(`[MEDIA_STALE] appid=${appId} role=${role} path=${localPaths[key]} reason=file-missing`);
+            }
+          }
+          if (hasChange) {
+            const nonEmpty = Object.values(verified).some(v => !!v);
+            verifiedLocalPaths = nonEmpty ? verified : null;
+            _debugLog(appId, "STALE", `filtered relative paths (disk check)`);
+          }
+        }
+      } catch {
+        _debugLog(appId, "STALE", "disk-check-failed - trusting appinfo paths");
+      }
+    }
+
+    const sgdbSettingEnabled = options?.sgdbEnabled === true;
+    const sgdbHasKey = !!options?.sgdbApiKey;
+    const shouldCallSgdb = options?.useSteamGridDb !== false && sgdbSettingEnabled && sgdbHasKey;
+    let sgdbData = undefined as { sgdbCoverUrl?: string; sgdbGridUrl?: string; sgdbHeroUrl?: string; sgdbLogoUrl?: string; sgdbIconUrl?: string } | null | undefined;
+    _debugLog(appId, "SGDB", `enabled=${sgdbSettingEnabled} hasApiKey=${sgdbHasKey} called=${!!shouldCallSgdb}${!shouldCallSgdb ? ` reason=${!sgdbSettingEnabled ? "disabled" : !sgdbHasKey ? "missing-api-key" : ""}` : ""}`);
+    if (shouldCallSgdb) {
+      try {
+        const { resolveArtworkForAppIds } = await import("./storeArtworkResolver");
+        const results = await resolveArtworkForAppIds([appIdNum], options.sgdbApiKey!);
+        sgdbData = results[appId] ?? null;
+        _debugLog(appId, "SGDB", `resultBackground=${sgdbData?.sgdbHeroUrl ?? "(null)"} resultLogo=${sgdbData?.sgdbLogoUrl ?? "(null)"}`);
+        if (sgdbData) _logArtwork(appId, `role=* source=steamgriddb`);
+      } catch (e) { _debugLog(appId, "SGDB", `error=${e}`); }
+    } else {
+      _logSkip(appId, "steamgriddb", !options?.sgdbEnabled ? "disabled" : !options?.sgdbApiKey ? "missing-api-key" : "");
+    }
+
+    const rawgHasKey = !!options?.rawgApiKey;
+    const shouldCallRawg = options?.useRawg !== false && rawgHasKey;
+    _debugLog(appId, "RAWG", `hasApiKey=${rawgHasKey} called=${!!shouldCallRawg}${!shouldCallRawg ? ` reason=${!rawgHasKey ? "missing-api-key" : ""}` : ""}`);
+    let rawgData = undefined;
+    if (shouldCallRawg) {
+      try {
+        const { fetchRawgArtworkDeduped } = await import("./storeArtworkResolver");
+        rawgData = await fetchRawgArtworkDeduped({ apiKey: options.rawgApiKey!, appId });
+        _debugLog(appId, "RAWG", `resultBackground=${(rawgData as any)?.rawgBackgroundUrl ?? "(null)"}`);
+      } catch (e) { _debugLog(appId, "RAWG", `error=${e}`); }
+    } else {
+      _logSkip(appId, "rawg", !options?.rawgApiKey ? "missing-api-key" : "disabled");
+    }
+
+    const igdbHasCredentials = !!options?.igdbClientId && !!options?.igdbClientSecret;
+    const shouldCallIgdb = options?.useIgdb !== false && igdbHasCredentials;
+    _debugLog(appId, "IGDB", `hasCredentials=${igdbHasCredentials} called=${!!shouldCallIgdb}${!shouldCallIgdb ? ` reason=${!igdbHasCredentials ? "missing-credentials" : ""}` : ""}`);
+    let igdbData = undefined;
+    if (shouldCallIgdb) {
+      try {
+        const { fetchIgdbArtworkDeduped } = await import("./storeArtworkResolver");
+        igdbData = await fetchIgdbArtworkDeduped({ clientId: options.igdbClientId!, accessToken: options.igdbClientSecret!, appId });
+        _debugLog(appId, "IGDB", `resultBackground=${(igdbData as any)?.igdbArtworkUrl ?? "(null)"} resultCover=${(igdbData as any)?.igdbCoverUrl ?? "(null)"}`);
+      } catch (e) { _debugLog(appId, "IGDB", `error=${e}`); }
+    } else {
+      _logSkip(appId, "igdb", !options?.igdbClientId || !options?.igdbClientSecret ? "missing-credentials" : "disabled");
+    }
+
+    const inputs: MediaResolutionInputs = {
+      appId,
+      localPaths: verifiedLocalPaths ?? undefined,
+      metadata: metadata ?? undefined,
+      imageUrl: imageUrl ?? undefined,
+      cachedSources: cachedSources ?? undefined,
+      sgdbArtwork: sgdbData ?? undefined,
+      rawgData,
+      igdbData,
+      options: { useSteamGridDb: true, useRawg: true, useIgdb: true, useSteamAppDetails: true },
+    };
+
+    const bundle = resolveMediaByPriority(inputs);
+    const prev = resolveGameDetailsArtwork(appId, verifiedLocalPaths, metadata, imageUrl, cachedSources);
+
+    let changed = false;
+    const roles: GameMediaKind[] = ["cover", "landscape", "background", "logo", "icon"];
+    for (const role of roles) {
+      const prevUrl = (prev as any)[role]?.url;
+      const newUrl = (bundle as any)[role]?.url;
+      if (prevUrl !== newUrl) { changed = true; break; }
+    }
+
+    for (const role of roles) {
+      const asset = (bundle as any)[role] as { source?: GameMediaSource; url?: string } | undefined;
+      _logArtwork(appId, `role=${role} source=${asset?.source ?? "none"}`);
+    }
+
+    _debugLog(appId, "FINAL", `background=${(bundle as any)?.background?.url ?? "(null)"} logo=${(bundle as any)?.logo?.url ?? "(null)"} sourceBackground=${(bundle as any)?.background?.source ?? "(null)"} sourceLogo=${(bundle as any)?.logo?.source ?? "(null)"}`);
+
+    return { bundle, changed };
+  } finally {
+    _NETWORK_IN_FLIGHT.delete(key);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// materializeResolvedGameMedia — bridge resolved bundle → disk check → enqueue
+// ---------------------------------------------------------------------------
+
+const DEBUG_MATERIALIZE = false;
+
+const MATERIALIZE_ROLES: GameMediaKind[] = ["cover", "landscape", "background", "logo", "icon"];
+
+const ROLE_TO_FILENAME: Record<GameMediaKind, string> = {
+  cover: "media/cover.jpg",
+  landscape: "media/landscape.jpg",
+  background: "media/background.jpg",
+  logo: "media/logo.png",
+  icon: "media/icon.png",
+  screenshot: "media/screenshot.jpg",
+  trailer: "",
+};
+
+const _inFlightMaterialize = new Set<string>();
+
+function mLog(appId: string, msg: string) {
+  if (DEBUG_MATERIALIZE) console.log(`[MEDIA_MATERIALIZE] appid=${appId} ${msg}`);
+}
+
+export type MaterializeResult = {
+  diskHits: GameMediaKind[];
+  enqueued: GameMediaKind[];
+  skipped: GameMediaKind[];
+  bundle: ResolvedGameMediaBundle;
+};
+
+export async function materializeResolvedGameMedia(
+  appId: string,
+  bundle: ResolvedGameMediaBundle,
+  provider: string = "steam",
+  options?: {
+    onDiskCheck?: GameMediaPaths | null;
+    skipDownload?: boolean;
+  },
+): Promise<MaterializeResult> {
+  const diskHits: GameMediaKind[] = [];
+  const enqueued: GameMediaKind[] = [];
+  const skipped: GameMediaKind[] = [];
+  const updated: ResolvedGameMediaBundle = { ...bundle };
+
+  if (!appId) {
+    mLog(appId, "skip no-appId");
+    return { diskHits, enqueued, skipped, bundle };
+  }
+
+  let diskState: GameMediaPaths | null = options?.onDiskCheck ?? null;
+  if (!diskState) {
+    try {
+      diskState = await resolveGameMediaPaths(appId);
+    } catch {
+      mLog(appId, "disk-check-failed");
+      diskState = null;
+    }
+  }
+
+  mLog(appId, `start roles=${MATERIALIZE_ROLES.filter((r) => (bundle as any)[r]?.url).join(",")} disk=${diskState ? "ok" : "unavailable"}`);
+
+  for (const kind of MATERIALIZE_ROLES) {
+    const asset: ResolvedGameMediaAsset | undefined = (updated as any)[kind];
+    if (!asset?.url) continue;
+
+    const filename = ROLE_TO_FILENAME[kind];
+    if (!filename) continue;
+
+    const existsOnDisk = diskState?.[`${kind}Path` as keyof GameMediaPaths];
+    if (existsOnDisk) {
+      asset.localPath = filename;
+      diskHits.push(kind);
+      mLog(appId, `disk-hit role=${kind} localPath=${filename}`);
+      continue;
+    }
+
+    if (asset.source === "local" && asset.url && !/^https?:\/\//i.test(asset.url)) {
+      mLog(appId, `stale-relative-skip role=${kind} url=${asset.url} reason=file-missing-and-not-http`);
+      console.log(`[MEDIA_STALE][DETECTED] appid=${appId} role=${kind} path=${asset.url} reason=file-missing-local-path`);
+      continue;
+    }
+
+    const inflightKey = `${appId}:${kind}`;
+    if (_inFlightMaterialize.has(inflightKey)) {
+      skipped.push(kind);
+      mLog(appId, `skip-inflight role=${kind}`);
+      continue;
+    }
+
+    if (options?.skipDownload) {
+      mLog(appId, `skip-download role=${kind} (skipDownload=true)`);
+      continue;
+    }
+
+    _inFlightMaterialize.add(inflightKey);
+
+    try {
+      mLog(appId, `enqueue role=${kind} url=${asset.url.slice(0, 80)}`);
+      const { enqueueMediaDownload } = await import("./mediaDownloadQueue");
+      await enqueueMediaDownload({
+        id: `materialize-${appId}-${kind}-${Date.now()}`,
+        appId,
+        provider: provider as "steam" | "steamgriddb" | "manual",
+        mediaType: kind as "landscape" | "cover" | "background" | "logo" | "icon",
+        url: asset.url,
+        target: "canonical",
+        priority: "normal",
+        forceRefresh: false,
+      });
+      enqueued.push(kind);
+      mLog(appId, `enqueued role=${kind}`);
+    } catch (err) {
+      mLog(appId, `enqueue-failed role=${kind} error=${err}`);
+    } finally {
+      _inFlightMaterialize.delete(inflightKey);
+    }
+  }
+
+  mLog(appId, `done diskHits=${diskHits.length} enqueued=${enqueued.length} skipped=${skipped.length}`);
+
+  return { diskHits, enqueued, skipped, bundle: updated };
+}
+
+export function clearMaterializeInFlight(appId?: string): void {
+  if (appId) {
+    for (const key of _inFlightMaterialize) {
+      if (key.startsWith(`${appId}:`)) _inFlightMaterialize.delete(key);
+    }
+  } else {
+    _inFlightMaterialize.clear();
+  }
 }

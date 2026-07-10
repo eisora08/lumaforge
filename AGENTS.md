@@ -2469,3 +2469,216 @@ The Library GameDetails hero used a rounded card (`rounded-2xl` + shadow + paddi
 - `tsc --noEmit` ✅ passes (0 errors)
 - `vite build` ✅ passes (0 errors, only pre-existing chunk warnings)
 - `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — RAWG/IGDB Optional Providers + Priority Resolver Integration
+
+### Goal
+Add RAWG and IGDB as graceful optional media providers in the Console Mode priority-based resolver, with settings fields, extractor functions, and proper priority chain placement.
+
+### Part 1: Settings fields
+- `rawgApiKey`, `igdbClientId`, `igdbClientSecret` added to `AppSettings` type in `src/types/settings.ts`
+- Default empty-string values in `SettingsContext.tsx`
+- No Settings UI yet — fields are read-only until a provider configuration page is built
+
+### Part 2: Extractor functions (`resolveGameMediaByPriority.ts`)
+- `fromRawg(input, kind)` — returns background role only (RAWG background artwork is the most useful asset for this provider; no clean covers/logos/icons)
+- `fromIgdb(input, kind)` — returns cover and background roles (IGDB has clean cover art and artwork backgrounds)
+
+### Part 3: Priority chain placement
+- **Cover**: local → cached → SGDB → **IGDB** → metadata → imageUrl (RAWG skipped — no cover data)
+- **Landscape**: local → cached → SGDB → metadata → screenshots → **IGDB** (RAWG skipped — no landscape data)
+- **Background**: local → cached → SGDB → **RAWG** → **IGDB** → metadata → screenshots → landscape fallback
+- **Logo/Icon**: unchanged (RAWG/IGDB don't provide these)
+
+### Part 4: `MediaResolutionInputs` extended
+- Added `rawgData?: RawgArtworkData | null` field
+- Added `igdbData?: IgdbArtworkData | null` field
+- Both are optional — null values skip the extractor gracefully
+
+### Part 5: Build verification
+- `tsc --noEmit` ✅ passes (0 errors)
+- `vite build` ✅ passes (0 errors, only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+### Key Files Changed
+- `src/features/media/resolveGameMediaByPriority.ts` — `fromRawg()`, `fromIgdb()`, updated `MediaResolutionInputs`, wired into resolveCover/resolveLandscape/resolveBackground, called from `resolveMediaByPriority`
+- `src/types/settings.ts` — `rawgApiKey`, `igdbClientId`, `igdbClientSecret` fields
+- `src/context/SettingsContext.tsx` — default empty-string values
+
+### Relevant Files (created in prior sessions)
+- `src/features/media/mediaProviderClient.ts` — `fetchRawgArtworkDeduped()`, `fetchIgdbArtworkDeduped()` with per-appId dedup, 8s timeout, graceful empty return on missing credentials
+
+## Session — Delete src/features/media/ directory (consolidate into existing services)
+
+### Goal
+Remove duplicated media pipeline files under `src/features/media/` by merging their logic into existing services. All 5 files were moved, exports re-exported, and the empty directory deleted.
+
+### Results
+- `src/features/media/` **deleted** — no longer exists
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (1992 modules, only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+### File disposition
+
+| File | Merged into | Notes |
+|------|-------------|-------|
+| `resolveGameTrailerByPriority.ts` | `gameMetadataResolver.ts` | `resolveGameHeroTrailers` coalesced into existing `resolveGameHeroTrailers`; `resolveGameTrailerByPriority` kept as thin wrapper |
+| `resolveGameMediaByPriority.ts` | `gameCacheService.ts` | `resolveMediaByPriority` (sync), `from*` extractors, `resolve*` per-role, priority chain, `pickUrl`, `pickBackgroundUrl`, `isStorePageBackground`, types (`GameDetailsMediaOptions`, `MediaResolutionInputs`) all merged |
+| `resolveGameDetailsArtwork.ts` | `gameCacheService.ts` | `resolveGameDetailsArtwork` (sync-first) and `resolveGameDetailsArtworkAsync` (network-backed) merged |
+| `mediaProviderClient.ts` | `storeArtworkResolver.ts` | `fetchRawgArtworkDeduped` and `fetchIgdbArtworkDeduped` moved to existing artwork resolver service |
+| `materializeGameMedia.ts` | `gameCacheService.ts` | `materializeResolvedGameMedia`, `clearMaterializeInFlight`, `MaterializeResult` export added |
+
+### Key re-exports
+All merged functions are re-exported from their new homes, so consumers (`LibraryGameDetailPage.tsx`, `libraryGameResolver.ts`, `GameLauncherTile.tsx`, etc.) continue to work with updated import paths.
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (1992 modules, only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+## Session — Media provider priority: Steam original assets before SteamGridDB for Steam games
+
+### Problem
+For Steam games, media materialization depended too heavily on SteamGridDB, which was checked BEFORE Steam CDN/metadata in all role resolvers. This caused wrong assets to be downloaded (screenshots, storepagebackground) instead of correct role-mapped Steam assets (Hero→background, Header→landscape, Capsule→cover, Logo→logo).
+
+### Root cause
+- **`fromSteamCdn` only handled background and logo** — no cover/landscape/icon CDN fallbacks existed
+- **SGDB before Steam in all chains** — layout was: local → cached → SGDB → IGDB/RAWG → Steam CDN → metadata → screenshots
+- **No `logSteamRoleMap` diagnostic** — no visibility into which Steam metadata fields were available
+
+### Parts implemented
+
+#### Part 1: Steam metadata fields identified
+- `SteamAppMetadata` has: `header_image`, `capsule_image`, `capsule_image_v5`, `library_hero_image`, `hero_image`, `logo_image`, `library_logo_image`, `background_image`, `wide_cover_image`, `library_header_image`
+- "Original Steam Assets" panel is not a LumaForge component — it's the Steam Store metadata display. All fields come from `appdetails` API via `gameMetadataResolver.ts`
+- `buildSteamImageUrl` in `storeImageCache.ts` already supported capsule/header/hero patterns
+- No icon field exists in Steam metadata — icon requires Steam Community API hash
+
+#### Part 2: `fromSteamCdn` expanded to cover all 5 roles
+- **Cover**: `buildSteamCdnUrl(appId, "capsule")` → `capsule_616x353.jpg` (skipped when metadata has `capsule_image_v5` or `capsule_image`)
+- **Landscape**: `buildSteamCdnUrl(appId, "header")` → `header.jpg` (skipped when metadata has `header_image` or `library_header_image`)
+- **Background**: unchanged — `library_hero.jpg` (skipped when metadata has `library_hero_image` or `hero_image`)
+- **Logo**: unchanged — `logo.png` (skipped when metadata has `logo_image` or `library_logo_image`)
+- **Icon**: returns `undefined` (no CDN icon available)
+- Added `"capsule"` to `buildSteamCdnUrl` kind union
+- Added `logSteamRoleMap(appId, meta)` helper for `[MEDIA_ROLE_MAP]` diagnostics
+- Added `logMediaSelect(appId, role, source, url)` helper for `[MEDIA_SELECT]` per-role diagnostics
+
+#### Part 3: Priority chain reordered (Steam before SGDB)
+
+**Cover:** local → cached → **Steam CDN capsule** → **Steam metadata** → SGDB → IGDB → imageUrl
+**Landscape:** local → cached → **Steam CDN header** → **Steam metadata** → screenshots → SGDB → IGDB
+**Background:** local → cached → **Steam CDN hero** → **Steam metadata** → screenshots → SGDB → RAWG → IGDB → landscapeFallback
+**Logo:** local → cached → **Steam CDN logo** → **Steam metadata** → SGDB
+**Icon:** local → cached → Steam CDN (none) → SGDB
+
+#### Part 4: No new setting
+- Default behavior is Steam-first for all Steam games
+- SGDB, RAWG, IGDB remain as fallbacks with their existing `use*` setting controls
+
+#### Part 5: Stale local media (from prior session, verified)
+- `refreshGameDetailsArtwork` verifies local paths via `resolveGameMediaPaths` (Rust disk check) before resolution
+- Stale paths (file missing on disk but present in appinfo) are filtered out, `[MEDIA_STALE]` diagnostic logged
+- Downstream re-resolution picks correct Steam CDN/metadata fallback
+
+#### Part 6: Storepagebackground — only last fallback
+- `isStorePageBackground()` + `pickBackgroundUrl()` already filter storepagebackground from `fromMetadata` background chain
+- With Steam CDN hero at position 3 (before metadata), `library_hero.jpg` wins even when metadata only has storepagebackground
+- Matches user spec: "use storepagebackground only as last ambient fallback"
+
+#### Part 7: Screenshots — fallback only
+- Screenshots at position 5 for background (after CDN + metadata)
+- Screenshots at position 5 for landscape (after CDN + metadata)
+- Screenshots never used for cover, logo, or icon
+- Matches user spec: "Do not use screenshots for cover/logo/icon"
+
+#### Part 8: Validation (manual, pending)
+- User must delete incorrect files for appId=4717430 and re-open GameDetails to verify
+
+#### Part 9: Debug logs behind `DEBUG_MEDIA_ROLE_MAP = false`
+- `[MEDIA_ROLE_MAP]` — per-appId log of Steam metadata fields (header/capsule/hero/logo)
+- `[MEDIA_SELECT]` — per-role resolution log with label (steam-cdn-hero/capsule/header/logo or source name)
+- `[MEDIA_STALE]` — appinfo path filtered because file missing on disk
+
+#### Part 10: Build validation
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (no Rust changes)
+
+### Key Files Changed
+- `src/services/gameCacheService.ts` — `buildSteamCdnUrl` expanded with "capsule" kind, `fromSteamCdn` expanded with cover/landscape (returns CDN capsule/header), `fromSteamCdn` icon returns undefined, `logSteamRoleMap()` and `logMediaSelect()` helpers, `DEBUG_MEDIA_ROLE_MAP` constant, `resolveCover`/`resolveLandscape`/`resolveBackground`/`resolveLogo`/`resolveIcon` all reordered (Steam CDN + metadata before SGDB), `appId` param added to `resolveCover`/`resolveLandscape`/`resolveIcon`, `meta` param added to `resolveIcon`, call sites in `resolveMediaByPriority` updated, `[MEDIA_STALE]` per-role log in stale detection block
+
+## Session — Refresh Artwork Execution Path + Provider Status Reconciliation
+
+### Objective 1: Fix Refresh Artwork execution path
+Parts 1–8 of the media/artwork fix for the `refreshGameDetailsArtwork`/`detectAndQueueMissingMedia`/`executeRepairGameMedia` pipeline.
+
+### Problem
+- `loadGameAppInfoWithMediaFallback` check fixed local-source disk verification correctly, but `refreshGameDetailsArtwork` and `detectAndQueueMissingMedia` did NOT
+- `refreshGameDetailsArtwork` checked `resolveMediaPaths` (TS-side, returns appinfo paths, not actual files on disk) instead of `resolveGameMediaPaths` (Rust, checks actual disk)
+- `resolveMediaByPriority` candidate loop had `continue` at line ~2772 that skipped fallback candidates after the first pick — `findFirstUrl` never reached lower-priority sources
+- `executeRepairGameMedia` did NOT go through Steam metadata resolution at all — only checked `mediaSources` (user-configured URLs)
+- `performDownload` in `mediaDownloadQueue.ts` wrote stale relative paths to appinfo manifest even for fresh refresh-artwork downloads
+
+### Parts implemented
+
+#### Part 1: Local-source disk verification
+- `refreshGameDetailsArtwork` checks `resolveGameMediaPaths` (Rust disk check) before resolution. Stale paths filtered out, `[MEDIA_STALE]` per-role diagnostic logged.
+- Downstream re-resolution picks correct Steam CDN/metadata fallback.
+
+#### Parts 4-5: Candidate fallback loop fix
+- `resolveMediaByPriority` candidate loop restructured — `findFirstUrl` removed, replaced with `pickFirstUrl` that continues to next candidate when `!url || url === "undefined"`. Fallback candidates now reached.
+- `[CANDIDATE_CONTINUE]` / `[FALLBACK_PICK]` diagnostic logs.
+
+#### Part 6: Manifest write guard
+- `performDownload` in `mediaDownloadQueue.ts` — when `_freshRefreshAppIds.has(appId)`, nulls non-current-role paths in the appinfo update to prevent stale path overwrites.
+- `[MEDIA][MANIFEST_GUARD]` diagnostic log.
+
+#### Part 7: `detectAndQueueMissingMedia` refactored
+- Uses `resolveGameDetailsArtwork` (Steam metadata + full priority chain) instead of old `resolveGameMedia`.
+
+#### Part 8: `executeRepairGameMedia` refactored
+- Resolves Steam metadata via `resolveGameMetadata` before calling `resolveGameDetailsArtwork` for each role. `mediaSources` used only as last fallback.
+
+#### Background candidate order fix
+- storepagebackground deferred to last background candidate (after Steam CDN hero → metadata → screenshots → SGDB → RAWG → IGDB → landscape fallback).
+- `[ARTWORK_BACKGROUND_SKIP]` / `[ARTWORK_BACKGROUND_CANDIDATES]` / `[ARTWORK_BACKGROUND_SELECTED]` diag logs.
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
+### Objective 2: Fix provider status / Check Update flow
+
+### Problem
+`LibraryGame` fields (`steamInstalled`, `isPlayable`, `isInstallable`, `source`) are set once during snapshot hydration (`snapshotGameToLibraryGame` in `LibraryGamesContext.tsx` line ~428) and never refreshed. `getLauncherGamePrimaryAction` reads these stale fields directly — no async provider status verification. Games loaded as `source=lua`/`steamInstalled=false`/`isPlayable=false`/`isInstallable=false` show `primaryAction=install` even when the game is actually installed via Steam. No post-hydration Steam install status reconciliation ran.
+
+### Root Cause
+- `snapshotGameToLibraryGame` maps `sg.installed` → `steamInstalled`, `sg.playable` → `isPlayable`, `sg.source` → `source`. These are set once and never rechecked.
+- No post-snapshot provider status reconciliation step exists in `LibraryGamesContext.load()`.
+- `scanSteamInstalledGames` Rust command (single invoke, <50ms for 80+ games) exists but is only used by uninstall detection (30s poll with 5s initial delay) and full library resolver — never as a lightweight post-hydration check.
+- `providerStatusStore`/`providerStatusService` track update-check status (update-available/up-to-date) but NOT the fundamental installed/playable/installable `LibraryGame` fields.
+
+### Fixes
+
+#### Part 2: Post-snapshot Steam install reconciliation
+- Created `src/services/providerStatusReconciliation.ts`:
+  - `schedulePostSnapshotSteamReconciliation(games, updateGame, options)` — runs 2s after games are hydrated. Calls `scanSteamInstalledGames({ steamPath })`, diffs against current games, calls `updateGame()` for games with mismatched `steamInstalled`/`isPlayable`/`isInstallable`/`source`.
+  - `refreshSingleGameSteamStatus(appId, options)` — per-game check with 5min TTL dedup. Returns `{ steamInstalled } | null`. Used by `checkGameProviderStatus` in context.
+  - `resetProviderStatusReconciliation()` — clears state for testing.
+  - `[PROVIDER][RECONCILE]` / `[PROVIDER][RECONCILE_SKIP]` / `[PROVIDER][RECONCILE_DONE]` / `[PROVIDER][RECONCILE_FAILED]` / `[PROVIDER][REFRESH]` / `[PROVIDER][REFRESH_SKIP]` / `[PROVIDER][REFRESH_FAILED]` diagnostic logs.
+
+#### Part 4: `checkGameProviderStatus` on context
+- `LibraryGamesContextValue` exposes `checkGameProviderStatus(appId, force?)` — calls `refreshSingleGameSteamStatus`, then `updateGame()` with corrected fields when status changed.
+- Called from `LibraryGamesContext.load()` right after `applyGamesSafely` (before background scan), using `settings.steamRoot`.
+- Module-level guard prevents duplicate scheduling.
+
+### Key Files Changed
+- `src/services/providerStatusReconciliation.ts` — **new** — post-snapshot Steam reconciliation + per-game refresh
+- `src/context/LibraryGamesContext.tsx` — import + call reconciliation after games load; `checkGameProviderStatus` function + context value
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)

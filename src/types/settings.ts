@@ -22,6 +22,10 @@ export type AppSettings = {
   steamGridDbApiKey: string;
   steamGridDbArtworkEnabled: boolean;
 
+  rawgApiKey: string;
+  igdbClientId: string;
+  igdbClientSecret: string;
+
   steamWebApiKey: string;
   steamId64: string;
   steamAccountId: string;

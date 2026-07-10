@@ -332,7 +332,7 @@ pub fn cache_landscape_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path) {
+            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path, false) {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -374,7 +374,7 @@ pub fn cache_cover_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path) {
+            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path, false) {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -416,7 +416,7 @@ pub fn cache_background_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path) {
+            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path, false) {
                 Ok(Some(path)) => {
                     media_log(&format!("saved background for {}", app_id));
                     return Ok(Some(path));
@@ -460,7 +460,7 @@ pub fn cache_logo_image(
     }
 
     if let Some(url) = urls.sgdb_logo_url {
-        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path) {
+        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path, false) {
             Ok(Some(path)) => {
                 media_log(&format!("saved logo for {}", app_id));
                 return Ok(Some(path));
@@ -495,7 +495,7 @@ pub fn cache_icon_image(
     }
 
     if let Some(url) = urls.sgdb_icon_url {
-        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path) {
+        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path, false) {
             Ok(Some(path)) => {
                 media_log(&format!("saved icon for {}", app_id));
                 return Ok(Some(path));
@@ -964,6 +964,7 @@ fn safe_single_download(
     url: &str,
     media_type: &str,
     dest_path: &Path,
+    skip_classification: bool,
 ) -> Result<Option<String>, String> {
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
@@ -1012,37 +1013,33 @@ fn safe_single_download(
         }
     };
 
-    // Classify image by aspect ratio to ensure role matches actual dimensions.
-    // This prevents vertical/poster images from being saved as landscape.jpg.
-    let actual_role = match image_utils::classify_image_role(&bytes, media_type) {
-        Ok(Some(role)) => role,
-        Ok(None) => {
-            media_log(&format!("[MediaClassify] rejected {} for {} — skipping", media_type, _app_id));
-            return Ok(None);
-        }
-        Err(e) => {
-            media_log(&format!("[MediaClassify] classification error for {}: {}", media_type, e));
-            // Fall through to original media_type
-            media_type.to_string()
-        }
-    };
-
-    // If reclassified to a different role, adjust dest_path
-    let (actual_dest_path, actual_media_type) = if actual_role != media_type {
-        let new_filename = match actual_role.as_str() {
-            "cover" => "cover.jpg",
-            "landscape" => "landscape.jpg",
-            "background" => "background.jpg",
-            "logo" => "logo.png",
-            "icon" => "icon.png",
-            _ => media_type,
+    // When skip_classification is true (manual Refresh Artwork, force_refresh),
+    // bypass the aspect-ratio classifier and save the image directly as the
+    // intended role.  This allows Steam CDN assets (e.g. capsule_616x353.jpg
+    // for cover) to be saved even when their aspect ratio differs from the
+    // poster-style classifier threshold.
+    if !skip_classification {
+        // Classify image by aspect ratio to ensure role matches actual dimensions.
+        // This prevents vertical/poster images from being saved as landscape.jpg.
+        let _actual_role = match image_utils::classify_image_role(&bytes, media_type) {
+            Ok(Some(role)) => role,
+            Ok(None) => {
+                media_log(&format!("[MediaClassify] rejected {} for {} — skipping", media_type, _app_id));
+                return Ok(None);
+            }
+            Err(e) => {
+                media_log(&format!("[MediaClassify] classification error for {}: {}", media_type, e));
+                // Fall through to original media_type
+                media_type.to_string()
+            }
         };
-        let new_path = dest_path.parent().unwrap().join(new_filename);
-        media_log(&format!("[MediaClassify] reclassified {} -> {}, path: {}", media_type, actual_role, new_path.display()));
-        (new_path, actual_role)
     } else {
-        (dest_path.to_path_buf(), media_type.to_string())
-    };
+        media_log(&format!("[MediaClassify] bypassed classification for {} (force_refresh)", media_type));
+    }
+
+    // No reclassification: the actual role must match the intended role,
+    // or the image is rejected above. Use original dest_path and media_type.
+    let (actual_dest_path, actual_media_type) = (dest_path.to_path_buf(), media_type.to_string());
 
     // Write to temp file first, then rename for atomicity.
     // The hash index is updated by process_and_save_with_dedup with the
@@ -1156,7 +1153,7 @@ pub fn safe_download_image(
         return Ok(Some(dest_path.to_string_lossy().to_string()));
     }
 
-    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path)
+    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh)
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
 import { achievementStore } from "../../services/achievementStore";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
 import { getCachedSnapshot } from "../../services/startupSnapshotService";
+import { useSettings } from "../../context/SettingsContext";
 import {
   formatRelativeTime,
   formatPlaytime,
@@ -17,6 +18,11 @@ import {
 } from "./consoleGameStats";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { getConsoleInputHints } from "./consoleInputHints";
+import { resolveConsoleDetailsArtwork, clearConsoleArtworkCache, consoleArtworkToBundle } from "./consoleArtworkResolver";
+import type { ConsoleArtwork, ConsoleArtworkOptions } from "./consoleArtworkResolver";
+import { extractTrailerData, extractResolvedTrailers } from "./consoleTrailerData";
+import type { TrailerData } from "./consoleTrailerData";
+import type { ResolvedGameMediaBundle } from "../../types/gameMedia";
 
 const DEBUG = false;
 const DEBUG_CONSOLE_ACHIEVEMENTS = false;
@@ -38,11 +44,52 @@ type Props = {
 export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
+  const { settings: appSettings } = useSettings();
   const hints = useMemo(() => getConsoleInputHints(settings.inputHints), [settings.inputHints]);
   const sheetRef = useRef<HTMLDivElement>(null);
 
   const [phase, setPhase] = useState<"enter" | "visible" | "exit">("enter");
   const reducedMotion = _prefersReducedMotion;
+
+  /* ── Multi-source artwork enrichment (cache-first, fetched once per details open) ── */
+  const [artwork, setArtwork] = useState<ConsoleArtwork | null>(null);
+  const [trailerData, setTrailerData] = useState<TrailerData | null>(null);
+
+  useEffect(() => {
+    const appId = game?.appId;
+    if (!appId) return;
+    setArtwork(null);
+    setTrailerData(null);
+
+    const opts: ConsoleArtworkOptions = {
+      sgdbApiKey: appSettings.steamGridDbApiKey,
+      rawgApiKey: appSettings.rawgApiKey,
+      igdbClientId: appSettings.igdbClientId,
+      igdbClientSecret: appSettings.igdbClientSecret,
+      useSteamGridDb: settings.useSteamGridDb,
+      useRawg: settings.useRawg,
+      useIgdb: settings.useIgdb,
+    };
+
+    resolveConsoleDetailsArtwork(game, opts).then((a) => {
+      setArtwork(a);
+    });
+
+    setTrailerData(extractTrailerData(game));
+
+    return () => {
+      clearConsoleArtworkCache(appId!);
+    };
+  }, [game?.appId]);
+
+  /* ── Normalized media bundle (combines artwork + trailers) ── */
+  const mediaBundle = useMemo<ResolvedGameMediaBundle | null>(() => {
+    if (!game?.appId) return null;
+    if (!artwork) return null;
+    const bundle = consoleArtworkToBundle(game.appId, artwork);
+    const trailers = extractResolvedTrailers(game);
+    return { ...bundle, trailers };
+  }, [game, artwork]);
 
   /* ── Kick off enter animation ── */
   useEffect(() => {
@@ -78,10 +125,10 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
     if (e.target === e.currentTarget) handleClose();
   }, [handleClose]);
 
-  /* ── Derived data ── */
-  const heroSrc = getConsoleHeroBackground(game);
-  const coverSrc = getConsoleCardSrc(game, "poster");
-  const logoSrc = getConsoleLogoSrc(game);
+  /* ── Derived data (enriched artwork with fallback to existing resolvers) ── */
+  const heroSrc = mediaBundle?.background?.url ?? getConsoleHeroBackground(game);
+  const coverSrc = mediaBundle?.cover?.url ?? getConsoleCardSrc(game, "poster");
+  const logoSrc = mediaBundle?.logo?.url ?? getConsoleLogoSrc(game);
   const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
 
   const playtimeSeconds = useMemo(
@@ -453,7 +500,7 @@ export default function ConsoleGameDetails({ game, onClose, settings }: Props) {
               className="relative w-full overflow-hidden rounded-2xl bg-(--color-surface)/30 shadow-xl shadow-black/20 ring-1 ring-white/[0.06]"
               style={{ height: "clamp(300px, 42vh, 520px)", minHeight: "clamp(300px, 42vh, 520px)" }}
             >
-              <ConsoleSelectedPreview game={game} showTrailerPreview />
+              <ConsoleSelectedPreview game={game} showTrailerPreview trailerData={trailerData} mode="details" />
             </div>
 
             {/* Genre chips */}

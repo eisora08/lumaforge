@@ -1,5 +1,6 @@
 import { resolveSteamAppMetadata, readStoreGameDetails, writeStoreGameDetails } from "./tauri";
-import type { SteamAppMetadata } from "../types/gameMetadata";
+import type { SteamAppMetadata, SteamMovie } from "../types/gameMetadata";
+import type { ResolvedGameTrailer } from "../types/gameMedia";
 
 const ENABLE_VERBOSE_APPDETAILS_FETCH = false;
 const inMemoryCache = new Map<number, SteamAppMetadata>();
@@ -37,6 +38,17 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
       }
       if (meta.resolved === true && !("store_drm_notice" in meta)) {
         console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-store-drm-notice-schema forcing-refetch`);
+        return null;
+      }
+      // Media field schema check: if resolved metadata is missing background_image,
+      // the cache was written by an older Rust parser that didn't map the API "background" field,
+      // or the field was added after caching. Force refetch to populate it.
+      if (meta.resolved === true && !("background_image" in meta)) {
+        console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-background-image-schema forcing-refetch`);
+        return null;
+      }
+      if (meta.resolved === true && !("header_image" in meta)) {
+        console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-header-image-schema forcing-refetch`);
         return null;
       }
       return meta;
@@ -245,6 +257,120 @@ export async function resolveGameMetadataForMedia(
 export function clearGameMetadataCache() {
   inMemoryCache.clear();
   englishMediaCache.clear();
+}
+
+/* ── Trailer priority resolver ── */
+
+type DirectVideoSource = "localVideoPath" | "mp4_max" | "mp4_480" | "webm_max" | "webm_480";
+type StreamFallbackSource = "hls_h264" | "hls" | "dash_h264" | "dash_av1" | "dash";
+
+const DIRECT_VIDEO_PRIORITY: DirectVideoSource[] = [
+  "localVideoPath", "mp4_max", "mp4_480", "webm_max", "webm_480",
+];
+const STREAM_FALLBACK_PRIORITY: StreamFallbackSource[] = [
+  "hls_h264", "hls", "dash_h264", "dash_av1", "dash",
+];
+
+function pickFirst<T extends string>(src: Record<string, string | null | undefined>, fields: readonly T[]): { key: T; value: string } | undefined {
+  for (const key of fields) {
+    const v = src[key];
+    if (v) return { key, value: v };
+  }
+  return undefined;
+}
+
+export type TrailerResolutionInput = {
+  id: string | number;
+  name: string;
+  localVideoPath?: string | null;
+  thumbnailUrl?: string | null;
+  thumbnailPath?: string | null;
+  mp4_480?: string | null;
+  mp4_max?: string | null;
+  webm_480?: string | null;
+  webm_max?: string | null;
+  hls?: string | null;
+  hls_h264?: string | null;
+  dash?: string | null;
+  dash_h264?: string | null;
+  dash_av1?: string | null;
+  highlight?: boolean;
+};
+
+export function resolveTrailerByPriority(input: TrailerResolutionInput, preferDirectVideo?: boolean): ResolvedGameTrailer {
+  const src: Record<string, string | null | undefined> = {
+    localVideoPath: input.localVideoPath,
+    mp4_max: input.mp4_max,
+    mp4_480: input.mp4_480,
+    webm_max: input.webm_max,
+    webm_480: input.webm_480,
+  };
+
+  const direct = pickFirst(src, DIRECT_VIDEO_PRIORITY);
+  const hasDirectVideo = !!direct;
+  let stream: { key: string; value: string } | undefined;
+  let hasStreamFallback = false;
+
+  if (!direct || preferDirectVideo === false) {
+    const streamSrc: Record<string, string | null | undefined> = {
+      hls_h264: input.hls_h264,
+      hls: input.hls,
+      dash_h264: input.dash_h264,
+      dash_av1: input.dash_av1,
+      dash: input.dash,
+    };
+    stream = pickFirst(streamSrc, STREAM_FALLBACK_PRIORITY);
+    hasStreamFallback = !!stream;
+  }
+
+  const effectiveDirect = direct ?? (preferDirectVideo === false ? stream : undefined);
+  const playableUrl = effectiveDirect?.value ?? stream?.value ?? null;
+
+  return {
+    id: input.id,
+    name: input.name,
+    source: input.localVideoPath ? "local" : "steam-appdetails",
+    thumbnailUrl: input.thumbnailUrl ?? null,
+    thumbnailPath: input.thumbnailPath ?? null,
+    localVideoPath: input.localVideoPath ?? null,
+    mp4Url: input.mp4_max ?? input.mp4_480 ?? null,
+    mp4_480: input.mp4_480 ?? null,
+    mp4_max: input.mp4_max ?? null,
+    webmUrl: input.webm_max ?? input.webm_480 ?? null,
+    webm_480: input.webm_480 ?? null,
+    webm_max: input.webm_max ?? null,
+    hlsUrl: input.hls_h264 ?? input.hls ?? null,
+    hls_h264: input.hls_h264 ?? null,
+    dashUrl: input.dash ?? input.dash_h264 ?? input.dash_av1 ?? null,
+    dash_h264: input.dash_h264 ?? null,
+    dash_av1: input.dash_av1 ?? null,
+    playableUrl,
+    hasDirectVideo,
+    hasStreamFallback,
+    highlight: input.highlight ?? false,
+    cachedAt: Date.now(),
+  };
+}
+
+export function resolveGameTrailers(movies: SteamMovie[] | undefined | null, preferDirectVideo?: boolean): ResolvedGameTrailer[] {
+  if (!movies || movies.length === 0) return [];
+  return movies.map((m, i) =>
+    resolveTrailerByPriority({
+      id: m.id ?? i,
+      name: m.name ?? `Trailer ${i + 1}`,
+      thumbnailUrl: m.thumbnail,
+      mp4_480: m.mp4_480,
+      mp4_max: m.mp4_max,
+      webm_480: m.webm_480,
+      webm_max: m.webm_max,
+      hls: m.hls,
+      hls_h264: m.hls_h264,
+      dash: m.dash,
+      dash_h264: m.dash_h264,
+      dash_av1: m.dash_av1,
+      highlight: m.highlight,
+    }, preferDirectVideo),
+  );
 }
 
 function createFallbackMetadata(appId: number): SteamAppMetadata {

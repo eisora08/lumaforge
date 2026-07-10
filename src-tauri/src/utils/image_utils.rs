@@ -12,10 +12,6 @@ pub const COVER_MAX_ASPECT: f64 = 0.85;
 /// Horizontal images like 920x430 (2.14), 1280x720 (1.78), 1920x1080 (1.78).
 pub const LANDSCAPE_MIN_ASPECT: f64 = 1.30;
 
-/// Preferred minimum aspect ratio for a background/hero image.
-/// Wide images like 1920x620 (3.10).
-pub const BACKGROUND_PREFERRED_ASPECT: f64 = 2.0;
-
 /// Acceptable minimum aspect ratio for background when no better source exists.
 pub const BACKGROUND_ACCEPTABLE_ASPECT: f64 = 1.60;
 
@@ -31,8 +27,9 @@ pub fn get_image_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
 }
 
 /// Classify an image for the intended media role based on aspect ratio.
-/// Returns the actual role the image should be saved as.
-/// If the image is invalid for the intended role, it may be reclassified or rejected.
+/// Returns the intended role if the image's aspect ratio is acceptable,
+/// None if rejected (does not fit the role), or an error on decode failure.
+/// Never reclassifies — each role must map to its own canonical filename.
 pub fn classify_image_role(
     bytes: &[u8],
     intended_role: &str,
@@ -51,9 +48,6 @@ pub fn classify_image_role(
             if aspect <= COVER_MAX_ASPECT {
                 if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: cover"); }
                 Ok(Some("cover".to_string()))
-            } else if aspect >= LANDSCAPE_MIN_ASPECT {
-                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified cover -> landscape"); }
-                Ok(Some("landscape".to_string()))
             } else {
                 if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] rejected invalid cover role"); }
                 Ok(None)
@@ -63,27 +57,15 @@ pub fn classify_image_role(
             if aspect >= LANDSCAPE_MIN_ASPECT {
                 if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: landscape"); }
                 Ok(Some("landscape".to_string()))
-            } else if aspect <= COVER_MAX_ASPECT {
-                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified landscape -> cover"); }
-                Ok(Some("cover".to_string()))
             } else {
                 if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] rejected invalid landscape role"); }
                 Ok(None)
             }
         }
         "background" => {
-            if aspect >= BACKGROUND_PREFERRED_ASPECT {
-                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: background (wide)"); }
+            if aspect >= BACKGROUND_ACCEPTABLE_ASPECT {
+                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: background"); }
                 Ok(Some("background".to_string()))
-            } else if aspect >= BACKGROUND_ACCEPTABLE_ASPECT {
-                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] accepted role: background (acceptable)"); }
-                Ok(Some("background".to_string()))
-            } else if aspect >= LANDSCAPE_MIN_ASPECT {
-                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified background -> landscape"); }
-                Ok(Some("landscape".to_string()))
-            } else if aspect <= COVER_MAX_ASPECT {
-                if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] reclassified background -> cover"); }
-                Ok(Some("cover".to_string()))
             } else {
                 if DEBUG_MEDIA_CLASSIFY { println!("[MediaClassify] rejected invalid background role"); }
                 Ok(None)
