@@ -1,5 +1,8 @@
-import { useMemo, useCallback, useRef, useState } from "react";
-import { Play, Clapperboard, Image, CircleSlash } from "lucide-react";
+import { useMemo, useCallback, useRef, useState, useEffect } from "react";
+import {
+  Play, Pause, Clapperboard, Image, CircleSlash, Loader2,
+  SkipBack, SkipForward, Volume2, VolumeX
+} from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { TrailerData } from "./consoleTrailerData";
 import { getConsoleHeroBackground, getConsoleCardSrc } from "./consoleMedia";
@@ -8,215 +11,588 @@ type Props = {
   game: LibraryGame | null;
   showTrailerPreview?: boolean;
   trailerData?: TrailerData | null;
-  /** `"thumbnail"` — image-only preview (no video element, current behavior)
-   *  `"details"` — renders <video> for direct mpeg/webm, play overlay starts playback */
+  /** When set, overrides the preview image (used for screenshot browsing).
+   *  Disables video/play overlay — purely image display. */
+  screenshotOverrideUrl?: string | null;
+  /** `"thumbnail"` — image-only preview (no video element)
+   *  `"details"` — renders <video> for playable sources + control bar */
   mode?: "thumbnail" | "details";
-  /** Autoplay trailer when entering details mode (default false) */
+  /** Autoplay trailer when entering details mode (default false).
+   *  Only applies to direct mp4/webm — HLS/DASH always require user click. */
   autoplay?: boolean;
 };
 
 const DEBUG_PREVIEW = false;
+const DEBUG_HLS = false;
+const LOG_PREFIX = "[CONSOLE_PREVIEW]";
+const CONTROLS_HIDE_MS = 3000;
+
+/** Lightweight video controls bar for Console Mode. */
+function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 /**
  * Preview component for the selected game in ConsoleMode details.
  *
- * Data priority (read-only, no fetches):
- * 1. Prepared trailerData from consoleTrailerData helper
- * 2. metadata.movies[0].thumbnail — trailer thumbnail from cached Steam metadata
- * 3. metadata.screenshots[0] — cached screenshot
- * 4. landscape/background image fallback
+ * Image priority (remote-only, no local file lookups):
+ * 1. screenshotOverrideUrl — screenshot browsing override
+ * 2. trailerData.thumbnail — prepared trailer thumbnail
+ * 3. metadata.movies[0].thumbnail — trailer thumbnail from cached Steam metadata
+ * 4. metadata.screenshots[0] — cached screenshot
+ * 5. landscape/background image fallback
  *
- * In "thumbnail" mode (default): always shows a static image with a play overlay
- * if a trailer exists.
+ * Video priority (remote-only, no local file lookups):
+ * 1. trailerData.mp4Url — direct remote mp4
+ * 2. trailerData.webmUrl — direct remote webm
+ * 3. trailerData.hls_h264 — HLS H.264 stream (via hls.js or native Safari)
+ * 4. trailerData.dash_h264 — DASH H.264 stream
+ * 5. trailerData.dash_av1 — DASH AV1 stream
+ * 6. trailerData.hlsUrl — generic HLS stream
  *
- * In "details" mode: renders a <video> element for direct-playable trailers,
- * starts playback on play-click. HLS/DASH‑only trailers show thumbnail with
- * a disabled play overlay.
+ * HLS playback follows StoreGameMediaGallery pattern:
+ * - Native HLS via `video.canPlayType("application/vnd.apple.mpegurl")` (Safari)
+ * - hls.js dynamic import for all other browsers (WebView2, Chrome, Firefox)
+ * - Cleanup on unmount / source change
  */
-export default function ConsoleSelectedPreview({ game, showTrailerPreview = true, trailerData, mode = "thumbnail", autoplay = false }: Props) {
+export default function ConsoleSelectedPreview({
+  game, showTrailerPreview = true, trailerData, screenshotOverrideUrl,
+  mode = "thumbnail", autoplay = false,
+}: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<any>(null);
+  const controlsTimerRef = useRef<number>(0);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [thumbnailOnlyClicked, setThumbnailOnlyClicked] = useState(false);
+  const [imgError, setImgError] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  /* ── Video control state ── */
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [muted, setMuted] = useState(true);
+  const [showControls, setShowControls] = useState(false);
 
   const detailsMode = mode === "details";
 
+  /* ── Effective display source (considers screenshot override) ── */
   const previewData = useMemo(() => {
-    if (!game || !showTrailerPreview) return null;
-
-    if (trailerData?.thumbnail) {
-      return {
-        src: trailerData.thumbnail,
-        label: "Trailer" as const,
-      };
+    if (!game || !showTrailerPreview) {
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[SOURCE_SKIP] game=${!!game} showTrailerPreview=${showTrailerPreview}`);
+      return null;
     }
 
+    // 1. prepared trailer thumbnail
+    if (trailerData?.thumbnail) {
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[SOURCE] step=1-trailerData appid=${game.appId} src=${trailerData.thumbnail}`);
+      return { src: trailerData.thumbnail, label: "Trailer" as const };
+    }
+
+    // 2. metadata movie thumbnail
     const movies = game.metadata?.movies;
     if (movies && movies.length > 0) {
       const first = movies[0];
-      return {
-        src: first.thumbnail ?? null,
-        label: "Trailer" as const,
-      };
+      const thumb = first.thumbnail ?? null;
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[SOURCE] step=2-movies appid=${game.appId} count=${movies.length} thumb=${thumb}`);
+      return { src: thumb, label: "Trailer" as const };
     }
 
+    // 3. screenshot
     const screenshots = game.metadata?.screenshots;
     if (screenshots && screenshots.length > 0) {
-      return {
-        src: screenshots[0] ?? null,
-        label: "Screenshot" as const,
-      };
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[SOURCE] step=3-screenshots appid=${game.appId} src=${screenshots[0]}`);
+      return { src: screenshots[0] ?? null, label: "Screenshot" as const };
     }
 
+    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[SOURCE] step=4-none appid=${game?.appId ?? "?"} no trailer/screenshot/fallback`);
     return null;
   }, [game, showTrailerPreview, trailerData]);
 
   const fallbackSrc = useMemo(() => {
-    return getConsoleHeroBackground(game) ?? getConsoleCardSrc(game, "landscape");
+    const hero = getConsoleHeroBackground(game);
+    const card = getConsoleCardSrc(game, "landscape");
+    const src = hero ?? card;
+    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[FALLBACK] appid=${game?.appId ?? "?"} hero=${hero} card=${card} final=${src}`);
+    return src;
   }, [game]);
 
-  const displaySrc = previewData?.src ?? fallbackSrc;
-  const isTrailer = previewData?.label === "Trailer";
-  const label = previewData?.label ?? "Artwork";
-  const isScreenshot = previewData?.label === "Screenshot";
+  const screenshotActive = !!screenshotOverrideUrl;
+  const displaySrc = screenshotOverrideUrl ?? previewData?.src ?? fallbackSrc;
+  const isTrailer = !screenshotActive && previewData?.label === "Trailer";
+  const label = screenshotActive ? "Screenshot" : (previewData?.label ?? "Artwork");
 
-  /* ── Video source resolution for details mode ── */
+  /* ── Video source (remote-only, no local video cache) ──
+   *  Priority matches StoreGameMediaGallery.getPreferredSrc:
+   *  mp4 > webm > hls_h264 > dash_h264 > dash_av1 > hls */
+  const { videoSrc, playType } = useMemo(() => {
+    if (!detailsMode || !trailerData) return { videoSrc: null as string | null, playType: "none" as const };
 
-  const videoSrc = useMemo(() => {
-    if (!detailsMode || !trailerData?.hasDirectVideo || !trailerData.mp4Url) return null;
-    return trailerData.mp4Url;
-  }, [detailsMode, trailerData]);
-
-  const hasHlsOnly = detailsMode && isTrailer && trailerData?.hasStreamFallback && !trailerData.hasDirectVideo;
-
-  /* ── Play handler ── */
-
-  const handlePlayClick = useCallback(() => {
-    if (videoRef.current && videoSrc && !videoError) {
-      videoRef.current.play()
-        .then(() => setIsPlaying(true))
-        .catch(() => { /* autoplay blocked, keep overlay visible */ });
-      if (DEBUG_PREVIEW) console.log(`[CONSOLE][PREVIEW] play — src=${videoSrc}`);
-    } else if (DEBUG_PREVIEW) {
-      const msg = trailerData?.hasTrailer
-        ? `trailer — mp4=${trailerData.mp4Url ? "yes" : "no"} webm=${trailerData.webmUrl ? "yes" : "no"} hls=${trailerData.hlsUrl ? "yes" : "no"}`
-        : "no playable URL available";
-      console.log(`[CONSOLE][PREVIEW] play blocked — ${msg}`);
+    const vSrc = trailerData.playableUrl ?? null;
+    const vType = trailerData.playableType;
+    if (DEBUG_PREVIEW) {
+      console.log(`${LOG_PREFIX}[VIDEO_SRC] appid=${game?.appId ?? "?"} videoSrc=${vSrc?.substring(0, 80) ?? "null"} playType=${vType}`);
     }
-  }, [videoSrc, videoError, trailerData]);
+    return { videoSrc: vSrc, playType: vType };
+  }, [detailsMode, trailerData, game?.appId]);
 
-  /* ── Video ended → show overlay again ── */
+  const hasVideo = playType !== "none";
+  const showDisabledFallback = detailsMode && isTrailer && playType === "none" && !videoError;
+
+  /* ── Trailer label ── */
+  const trailerName = useMemo(() => {
+    if (!detailsMode || !isTrailer || !game?.metadata?.movies) return null;
+    const primary = game.metadata.movies.find((m) => m.highlight) ?? game.metadata.movies[0];
+    return primary?.name ?? null;
+  }, [detailsMode, isTrailer, game]);
+
+  /* ── Controls visibility timer ── */
+  const resetControlsTimer = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    if (isPlaying) {
+      controlsTimerRef.current = window.setTimeout(() => setShowControls(false), CONTROLS_HIDE_MS);
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
+    resetControlsTimer();
+    return () => {
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    };
+  }, [isPlaying, resetControlsTimer]);
+
+  /* ── HLS lifecycle (matches StoreGameMediaGallery pattern) ── */
+  function destroyHls() {
+    if (hlsRef.current) {
+      if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_DESTROY] appid=${game?.appId}`);
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+  }
+
+  async function initHls(video: HTMLVideoElement, url: string) {
+    destroyHls();
+
+    // Native HLS support (Safari, some WebViews)
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_NATIVE] appid=${game?.appId}`);
+      video.src = url;
+      setIsLoading(false);
+      return;
+    }
+
+    // hls.js for all other browsers (WebView2, Chrome, Firefox)
+    if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_INIT] appid=${game?.appId} url=${url}`);
+    try {
+      const { default: Hls } = await import("hls.js");
+      if (Hls.isSupported()) {
+        hlsRef.current = new Hls();
+        hlsRef.current.loadSource(url);
+        hlsRef.current.attachMedia(video);
+        hlsRef.current.on(Hls.Events.ERROR, (_event: any, data: any) => {
+          if (data.fatal) {
+            if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_ERROR] appid=${game?.appId} error=${data.type}:${data.details}`);
+            setVideoError(true);
+            setIsLoading(false);
+          }
+        });
+        hlsRef.current.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_READY] appid=${game?.appId}`);
+          setIsLoading(false);
+        });
+        if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_ATTACHED] appid=${game?.appId}`);
+      } else {
+        if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_UNSUPPORTED] appid=${game?.appId}`);
+        setVideoError(true);
+        setIsLoading(false);
+      }
+    } catch (e) {
+      if (DEBUG_HLS) console.log(`${LOG_PREFIX}[HLS_FAILED] appid=${game?.appId} error=${String(e)}`);
+      setVideoError(true);
+      setIsLoading(false);
+    }
+  }
+
+  // Setup video source on trailer/playableUrl change
+  useEffect(() => {
+    if (!detailsMode || !videoSrc || playType === "none") return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    setVideoError(false);
+
+    if (playType === "hls") {
+      setIsLoading(true);
+      initHls(video, videoSrc);
+    } else {
+      // Direct mp4/webm or DASH: set src directly, browser handles loading
+      video.src = videoSrc;
+    }
+
+    return () => {
+      destroyHls();
+      if (video) video.removeAttribute("src");
+    };
+  }, [detailsMode, videoSrc, playType, game?.appId]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      destroyHls();
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    };
+  }, []);
+
+  /* ── Play/Pause handler ── */
+  const handlePlayClick = useCallback(() => {
+    if (videoRef.current && hasVideo && !videoError) {
+      if (playType === "hls" && isLoading) return;
+      videoRef.current.play().catch(() => {});
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[PLAY] appid=${game?.appId} src=${videoSrc?.substring(0, 80) ?? "null"}`);
+      return;
+    }
+
+    // Thumbnail-only click feedback (no playable source)
+    if (isTrailer && playType === "none" && !hasVideo) {
+      setThumbnailOnlyClicked(true);
+      setTimeout(() => setThumbnailOnlyClicked(false), 2000);
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMBNAIL_ONLY] appid=${game?.appId} — no playable source`);
+    }
+  }, [videoSrc, videoError, isTrailer, hasVideo, playType, isLoading, game?.appId]);
+
+  /* ── Native video event handlers ── */
+  const handleNativePlay = useCallback(() => {
+    setIsPlaying(true);
+  }, []);
+
+  const handleNativePause = useCallback(() => {
+    setIsPlaying(false);
+    setShowControls(true);
+  }, []);
+
+  const handleTimeUpdate = useCallback(() => {
+    const video = videoRef.current;
+    if (video) setCurrentTime(video.currentTime);
+  }, []);
+
+  const handleLoadedMetadata = useCallback(() => {
+    const video = videoRef.current;
+    if (video) setDuration(video.duration);
+  }, []);
 
   const handleVideoEnded = useCallback(() => {
     setIsPlaying(false);
+    setShowControls(true);
   }, []);
 
   const handleVideoError = useCallback(() => {
     setVideoError(true);
     setIsPlaying(false);
+    setIsLoading(false);
   }, []);
 
-  /* ── Image error guard ── */
+  /* ── Control actions ── */
+  const handlePlayPauseToggle = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch(() => {});
+    } else {
+      video.pause();
+    }
+  }, []);
 
-  /* ── Autoplay on video src change ── */
-  const prevAutoplayKey = useRef<string | null>(null);
-  const autoplayKey = detailsMode && autoplay ? (videoSrc ?? "no-src") : null;
-  if (autoplayKey && autoplayKey !== prevAutoplayKey.current && autoplayKey !== "no-src" && videoRef.current && !videoError) {
-    prevAutoplayKey.current = autoplayKey;
-    videoRef.current.play()
-      .then(() => setIsPlaying(true))
-      .catch(() => {});
-  }
+  const handleSeekBack = useCallback(() => {
+    const video = videoRef.current;
+    if (video) video.currentTime = Math.max(0, video.currentTime - 10);
+    resetControlsTimer();
+  }, [resetControlsTimer]);
 
-  const [imgError, setImgError] = useState(false);
-  const handleImgError = useCallback(() => setImgError(true), []);
+  const handleSeekForward = useCallback(() => {
+    const video = videoRef.current;
+    if (video) video.currentTime = Math.min(video.duration, video.currentTime + 10);
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  const handleMuteToggle = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    setMuted(video.muted);
+  }, []);
+
+  const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const video = videoRef.current;
+    if (!video || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    video.currentTime = pct * duration;
+    resetControlsTimer();
+  }, [duration, resetControlsTimer]);
+
+  const handleContainerMouseEnter = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+  }, []);
+
+  const handleContainerMouseMove = useCallback(() => {
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  /* ── Autoplay on video src / media type change (direct mp4/webm only) ── */
+  const prevMediaKey = useRef<string | null>(null);
+  const mediaKey = screenshotActive ? `ss-${screenshotOverrideUrl}` : (detailsMode && videoSrc ? `trailer-${videoSrc}` : "none");
+
+  useEffect(() => {
+    if (mediaKey === prevMediaKey.current) return;
+    prevMediaKey.current = mediaKey;
+
+    if (detailsMode && autoplay && !screenshotActive && playType === "direct" && videoSrc && videoRef.current && !videoError) {
+      const v = videoRef.current;
+      v.currentTime = 0;
+      v.play().catch(() => {});
+    }
+  }, [mediaKey, detailsMode, autoplay, screenshotActive, playType, videoSrc, videoError]);
+
+  const handleImgError = useCallback(() => {
+    if (DEBUG_PREVIEW) {
+      const errorSrc = displaySrc ?? "(null)";
+      console.log(`${LOG_PREFIX}[IMAGE_ERROR] appid=${game?.appId ?? "?"} src=${errorSrc.substring(0, 120)}`);
+    }
+    setImgError(true);
+  }, [game?.appId, displaySrc]);
 
   if (!game) return null;
 
+  if (DEBUG_PREVIEW) {
+    console.log(`${LOG_PREFIX}[RENDER] appid=${game.appId} mode=${mode} screenshotActive=${screenshotActive} videoSrc=${videoSrc?.substring(0, 80) ?? "null"} playType=${playType} displaySrc=${displaySrc?.substring(0, 80) ?? "null"} imgError=${imgError} isTrailer=${isTrailer} hasVideo=${hasVideo} isLoading=${isLoading} isPlaying=${isPlaying} videoError=${videoError}`);
+  }
+
+  const playBtnSize = "h-14 w-14";
+  const playIconSize = "h-6 w-6";
+  const showControlsBar = detailsMode && hasVideo && !videoError && !screenshotActive && (showControls || isPlaying);
+  const showCenterPlay = isTrailer && displaySrc && !imgError && !screenshotActive;
+
   return (
-    <div className="relative h-full w-full overflow-hidden bg-(--color-surface)/20 shadow-xl shadow-black/30 ring-1 ring-white/[0.06] backdrop-blur-sm">
-      {/* ── Details mode: <video> element for direct-playable trailer ── */}
-      {detailsMode && videoSrc && !videoError ? (
-        <video
-          ref={videoRef}
-          key={game.appId}
-          src={videoSrc}
-          muted
-          playsInline
-          autoPlay={autoplay}
-          preload="metadata"
-          className="h-full w-full object-cover"
-          onEnded={handleVideoEnded}
-          onError={handleVideoError}
-        />
-      ) : displaySrc && !imgError ? (
+    <div
+      ref={containerRef}
+      className="relative h-full w-full overflow-hidden bg-(--color-surface)/20 shadow-xl shadow-black/30 ring-1 ring-white/[0.06] backdrop-blur-sm"
+      onMouseEnter={handleContainerMouseEnter}
+      onMouseMove={handleContainerMouseMove}
+    >
+      {/* ── Image layer ── */}
+      {displaySrc && !imgError ? (
         <img
-          key={game.appId}
+          key={`${game.appId}-${displaySrc}`}
           src={displaySrc}
           alt=""
-          className="h-full w-full object-cover"
+          className={`h-full w-full object-cover ${isPlaying && hasVideo && !screenshotActive ? "opacity-0" : ""}`}
           onError={handleImgError}
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-(--color-surface)/30">
-          {isTrailer ? (
-            <Clapperboard className="h-8 w-8 text-(--color-muted)/30" />
-          ) : isScreenshot ? (
+          {label === "Screenshot" ? (
             <Image className="h-8 w-8 text-(--color-muted)/30" />
           ) : (
-            <Image className="h-8 w-8 text-(--color-muted)/30" />
+            <Clapperboard className="h-8 w-8 text-(--color-muted)/30" />
           )}
         </div>
       )}
 
-      {/* ── Play overlay ──
-       *   - Details mode + direct video: click starts playback; hidden while playing
-       *   - Details mode + HLS/DASH only: disabled with "Stream unavailable" tooltip
-       *   - Thumbnail mode + trailer: always shows play overlay (image-only, no video)
-       */}
-      {isTrailer && displaySrc && !imgError && (
+      {/* ── Video layer ── */}
+      {detailsMode && hasVideo && !videoError && !screenshotActive && (
+        <video
+          ref={videoRef}
+          key={`${game.appId}-${trailerData?.playableUrl ?? "none"}`}
+          muted
+          playsInline
+          preload="metadata"
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${
+            isPlaying ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+          onPlay={handleNativePlay}
+          onPause={handleNativePause}
+          onEnded={handleVideoEnded}
+          onError={handleVideoError}
+          onTimeUpdate={handleTimeUpdate}
+          onLoadedMetadata={handleLoadedMetadata}
+        />
+      )}
+
+      {/* ── Center play overlay (trailer / screenshot browser) ── */}
+      {showCenterPlay && (
         <div className="absolute inset-0 flex items-center justify-center">
-          {detailsMode && isPlaying ? null : detailsMode && hasHlsOnly ? (
-            <div className="group relative">
+          {isPlaying ? null : (
+            <>
+              {/* HLS loading spinner */}
+              {detailsMode && playType === "hls" && isLoading ? (
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm">
+                  <Loader2 className="h-7 w-7 animate-spin text-white/60" />
+                </div>
+              ) : hasVideo && !videoError && !screenshotActive ? (
+                /* Play button */
+                <button
+                  type="button"
+                  onClick={handlePlayClick}
+                  className={`flex ${playBtnSize} items-center justify-center rounded-full bg-black/50 text-white shadow-lg shadow-black/30 backdrop-blur-xl transition-all hover:scale-110 hover:bg-(--color-accent) hover:text-white hover:shadow-xl hover:shadow-(--color-accent)/30 focus:outline-none focus:ring-2 focus:ring-(--color-accent)/60 active:scale-105`}
+                  aria-label="Play trailer"
+                >
+                  <Play className={`ml-0.5 ${playIconSize} fill-current`} />
+                </button>
+              ) : showDisabledFallback ? (
+                /* No playable source — disabled overlay */
+                <div className="group relative">
+                  <button
+                    type="button"
+                    disabled
+                    className="flex h-16 w-16 cursor-not-allowed items-center justify-center rounded-full bg-black/30 text-white/40 backdrop-blur-sm"
+                    aria-label="Stream preview unavailable"
+                  >
+                    <CircleSlash className="h-7 w-7" />
+                  </button>
+                  <span className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/70 px-2 py-0.5 text-[10px] text-white/60 opacity-0 transition group-hover:opacity-100">
+                    Stream preview unavailable
+                  </span>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Video controls bar ── */}
+      {showControlsBar && (
+        <div
+          className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-10 pb-2.5 px-3 transition-opacity duration-200"
+          onMouseEnter={() => { if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current); }}
+          onMouseLeave={() => {
+            if (isPlaying) {
+              controlsTimerRef.current = window.setTimeout(() => setShowControls(false), CONTROLS_HIDE_MS);
+            }
+          }}
+        >
+          {/* Progress bar */}
+          <div
+            className="group/progress mb-2 h-1.5 w-full cursor-pointer overflow-hidden rounded-full bg-white/15 transition-all hover:h-2"
+            onClick={handleProgressClick}
+          >
+            <div
+              className="h-full rounded-full bg-(--color-accent) transition-all duration-150"
+              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+            />
+          </div>
+
+          {/* Controls row */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {/* Seek back */}
               <button
                 type="button"
-                disabled
-                className="flex h-16 w-16 cursor-not-allowed items-center justify-center rounded-full bg-black/30 text-white/40 backdrop-blur-sm"
-                aria-label="Stream preview unavailable"
+                onClick={handleSeekBack}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-white/70 transition hover:bg-white/10 hover:text-white"
+                aria-label="Back 10 seconds"
               >
-                <CircleSlash className="h-7 w-7" />
+                <SkipBack className="h-3.5 w-3.5" />
               </button>
-              <span className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/70 px-2 py-0.5 text-[10px] text-white/60 opacity-0 transition group-hover:opacity-100">
-                Stream preview unavailable
+
+              {/* Play/Pause */}
+              <button
+                type="button"
+                onClick={handlePlayPauseToggle}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                aria-label={isPlaying ? "Pause" : "Play"}
+              >
+                {isPlaying ? (
+                  <Pause className="h-4 w-4 fill-current" />
+                ) : (
+                  <Play className="ml-0.5 h-4 w-4 fill-current" />
+                )}
+              </button>
+
+              {/* Seek forward */}
+              <button
+                type="button"
+                onClick={handleSeekForward}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-white/70 transition hover:bg-white/10 hover:text-white"
+                aria-label="Forward 10 seconds"
+              >
+                <SkipForward className="h-3.5 w-3.5" />
+              </button>
+
+              {/* Time display */}
+              <span className="ml-1 font-mono text-[11px] tabular-nums text-white/60">
+                {formatTime(currentTime)} / {formatTime(duration)}
               </span>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={handlePlayClick}
-              className="flex h-16 w-16 items-center justify-center rounded-full bg-black/45 text-white/90 backdrop-blur-sm transition hover:scale-105 hover:bg-(--color-accent)/70 hover:text-white focus:outline-none focus:ring-2 focus:ring-(--color-accent)/60"
-              aria-label="Play trailer"
-            >
-              <Play className="ml-0.5 h-7 w-7 fill-current" />
-            </button>
-          )}
+
+            <div className="flex items-center gap-1.5">
+              {/* Mute/Unmute */}
+              <button
+                type="button"
+                onClick={handleMuteToggle}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-white/70 transition hover:bg-white/10 hover:text-white"
+                aria-label={muted ? "Unmute" : "Mute"}
+              >
+                {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* ── Type label badge ── */}
-      <div className="pointer-events-none absolute bottom-2 left-2 flex items-center gap-1 rounded-md bg-black/50 px-2 py-0.5 backdrop-blur-sm">
-        {isTrailer ? (
-          <Play className="h-3 w-3 fill-white/70 text-white/70" />
-        ) : isScreenshot ? (
-          <Image className="h-3 w-3 text-white/70" />
-        ) : (
-          <Image className="h-3 w-3 text-white/70" />
-        )}
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-          {label}
-        </span>
-      </div>
+      {/* ── Thumbnail-only click feedback toast ── */}
+      {thumbnailOnlyClicked && !hasVideo && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+          <div className="rounded-lg bg-amber-600/80 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-sm">
+            Trailer preview only — no video available
+          </div>
+        </div>
+      )}
 
-      {/* ── Video error badge (details mode) ── */}
+      {/* ── Gradient bottom label — shows trailer name ── */}
+      {detailsMode && trailerName && !screenshotActive && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/70 via-black/20 to-transparent pb-3 pt-8">
+          <div className="flex items-center gap-2 px-3">
+            <Play className="h-3 w-3 fill-white/80 text-white/80 shrink-0" />
+            <span className="truncate text-xs font-medium text-white/90">
+              {trailerName}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Type label badge (bottom-left) ── */}
+      {!detailsMode && (
+        <div className="pointer-events-none absolute bottom-2 left-2 flex items-center gap-1 rounded-md bg-black/50 px-2 py-0.5 backdrop-blur-sm">
+          {label === "Trailer" ? (
+            <Play className="h-3 w-3 fill-white/70 text-white/70" />
+          ) : (
+            <Image className="h-3 w-3 text-white/70" />
+          )}
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+            {label}
+          </span>
+        </div>
+      )}
+
+      {/* ── Screenshot badge / back-to-trailer hint ── */}
+      {screenshotActive && (
+        <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded-md bg-black/50 px-2 py-0.5 backdrop-blur-sm">
+          <Image className="h-3 w-3 text-white/70" />
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+            Screenshot
+          </span>
+        </div>
+      )}
+
+      {/* ── Video error badge ── */}
       {detailsMode && videoError && (
         <div className="pointer-events-none absolute bottom-8 left-2 flex items-center gap-1 rounded-md bg-red-900/60 px-2 py-0.5 text-[10px] text-red-200">
           Video unavailable

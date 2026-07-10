@@ -2678,6 +2678,138 @@ Parts 1–8 of the media/artwork fix for the `refreshGameDetailsArtwork`/`detect
 - `src/services/providerStatusReconciliation.ts` — **new** — post-snapshot Steam reconciliation + per-game refresh
 - `src/context/LibraryGamesContext.tsx` — import + call reconciliation after games load; `checkGameProviderStatus` function + context value
 
+## Session — Console Trailers: Remote-only from metadata.movies[], remove all local file/cache lookups
+
+### Problem
+Console trailer preview tried to load local files from `media/trailers/` directory via `file:///` URLs, which the WebView blocked. The prior approach of converting local paths through `localPathToUrl` → `http://asset.localhost/...` added complexity with local cache download, stale file handling, and fallback logic that wasn't needed. The correct design is remote-only: use Steam movie links from `metadata.movies[]` directly, never touch local trailer files.
+
+### Decision
+- Console trailer videos use remote Steam movie links from `metadata.movies[]` only
+- No download/cache of full trailer videos
+- No search for local MP4/WebM trailer files
+- No embedded `about_the_game`/`detailed_description` videos
+- No `file://` local trailer paths
+
+### Part 1 — `consoleTrailerData.ts`: Remove all cache code
+- Removed `cacheTrailerFile` import from `tauri.ts`
+- Removed `CachedTrailerResult`, `TRAILER_VIDEO_CACHE_ENABLED`, `_cachedTrailerKeys`, `DEBUG_CACHE`
+- Removed `extractExt()`, `cacheTrailerForMovie()`, `cacheBestTrailer()`, `clearCachedTrailerKeys()`
+- `extractTrailerData` now purely derives from `metadata.movies[]` — no API calls, no side effects
+
+### Part 2 — `ConsoleGameDetails.tsx`: Remove cache wiring
+- Removed `cacheBestTrailer` import and call
+- Removed `CachedTrailerResult` type import
+- Removed `cachedTrailer` state and `setCachedTrailer`
+- Removed cache effect block in `useEffect`
+- Removed `localVideoPath`/`localThumbnailPath` from `ConsoleSelectedPreview` JSX props
+
+### Part 3 — `ConsoleSelectedPreview.tsx`: Remote-only, no local paths
+- Removed `localPathToUrl` import
+- Removed `localVideoPath`/`localThumbnailPath` props
+- Removed `localMediaFailed` state, `safeLocalThumbnailUrl`/`safeLocalVideoUrl` useMemos
+- Removed `useEffect` for resetting error states on local paths
+- Image priority (simplified): `trailerData.thumbnail` → `movies[0].thumbnail` → `screenshots[0]` → landscape/background fallback
+- Video priority (simplified): `trailerData.mp4Url` → `trailerData.webmUrl` → null (HLS/DASH → disabled overlay)
+- `handleImgError` simplified: no local vs remote detection, always sets `imgError`
+- `<img>` key retains `${appId}-${displaySrc}` pattern for fresh mount on src change
+
+### Cuphead (appId=268910) expected behavior
+- Trailer thumbnail: remote `movie.thumbnail` URL (e.g. `https://shared.akamai.steamstatic.com/...`)
+- `hasDirectVideo=false`, `hasStreamFallback=true` (HLS/DASH only)
+- Play overlay: disabled `CircleSlash` with "Stream preview unavailable" tooltip
+- No `file:///` loading attempts
+- No `media/trailers/*` lookup
+
+### Key Files Changed
+- `src/features/console/consoleTrailerData.ts` — stripped all cache/download code (6 functions, 3 constants removed)
+- `src/features/console/ConsoleGameDetails.tsx` — removed `cacheBestTrailer`, `CachedTrailerResult`, `cachedTrailer` state, cache effect, local path props
+- `src/features/console/ConsoleSelectedPreview.tsx` — remote-only image/video priority, removed all local path handling, simplified error handling
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Console Details: video controls, screenshots strip, reviews card, layout rebalance
+
+### Goal
+Replace the disabled HLS/DASH preview overlay with full video playback, add video controls (play/pause, seek ±10s, progress bar, time display, mute/unmute, fullscreen-ready), a screenshot strip for browsing, a reviews card with Steam review score color mapping, and rebalance the right-column layout into a two-card achievements/reviews row with more compact achievement display.
+
+### Work completed
+
+#### Part 2: ConsoleSelectedPreview video controls
+- Added `screenshotOverrideUrl` prop for screenshot browsing override
+- Added full controls bar: play/pause, seek back/forward 10s, progress bar, time display (`formatTime`), mute/unmute toggle, fullscreen-ready button
+- Controls auto-hide after 3s when playing, show on hover/mouse-move, always visible when paused
+- Native video event handlers (`onPlay`, `onPause`, `onTimeUpdate`, `onLoadedMetadata`, `onEnded`, `onError`) keep state synced
+- `formatTime()` helper for `mm:ss` display
+- All added state/props are backward-compatible — thumbnail mode unchanged
+
+#### Part 4: Screenshots strip
+- Horizontal scrollable strip of small thumbnail buttons below the trailer preview
+- Thumbnails derived from `SteamAppMetadata.screenshots[]` full URLs via `_thumb.jpg` suffix (same pattern as `storeMediaService.ts`)
+- Click selects screenshot → sets `screenshotOverrideUrl` on `ConsoleSelectedPreview`
+- Click again deselects (back to trailer)
+- Selected thumbnail shows accent ring with `X` overlay
+- Clears selection on game change via effect
+
+#### Part 5: Reviews card
+- Fetches review summary via `resolveGameReviewSummaries([Number(game.appId)])` — uses existing in-memory/disk cache, no extra API call if already cached
+- Color-coded card background/text/border based on `review_score_desc` (9 colors: Overwhelmingly Positive → emerald, Very Positive → green, Mixed → amber, Negative → red, etc.)
+- Shows: review_score_desc, positive_percent, total_reviews count
+- Loading state while fetching ("Loading review data…")
+- One-shot fetch guard via `reviewFetchRef` prevents duplicate calls
+
+#### Part 6: Layout rebalance
+- Right column restructured: Preview → Screenshots Strip → Genres → **Row(Achievements | Reviews)** → Hints
+- Achievements and Reviews are now side-by-side in a `grid-cols-2` row, each taking ~50% width
+- Left column (35%) unchanged: Identity → Actions → Stats → Description
+
+#### Part 7: Achievements polish
+- Achievements card made more compact: smaller icons (h-3.5/h-3), tighter padding (px-3.5 py-3), thinner progress bar (h-1.5), mini rows show at most 2 achievements (was 3), smaller text (text-[10px]/[11px])
+- Perfected row compacted with smaller icons and reduced padding
+
+### Key Files Changed
+- `src/features/console/ConsoleSelectedPreview.tsx` — Part 2: added `screenshotOverrideUrl` prop, full video controls bar, `formatTime()` helper, controls auto-hide timer, native video event handlers
+- `src/features/console/ConsoleGameDetails.tsx` — Parts 4-7: screenshots strip state/derivation, review fetch via `resolveGameReviewSummaries`, `SteamReviewSummary` type import, review color map, `grid-cols-2` achievements/reviews layout row, compact achievements card
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Console Mode Focus Zones + Media Carousel Redesign
+
+### Goal
+Replace the flat two-column ConsoleGameDetails layout with a focus-zone model (left panel / media carousel / info cards / action hints) with keyboard navigation and console-style focus visuals. Rewrite ConsoleMediaGallery as a pure carousel, removing all video player code.
+
+### Part 1: ConsoleMediaGallery — pure carousel
+- `src/features/console/ConsoleMediaGallery.tsx` fully rewritten
+- Horizontal scroll with `scroll-snap-x`, thumbnail grid, focus ring on selected item
+- Trailers get play icon overlay (`Play` circle) with `bg-black/60` badge; screenshots get index badges
+- Click handler delegates to parent via `onSelectMediaIndex(index)`
+- No video player, no preview, no autoplay logic
+
+### Part 2: ConsoleGameDetails — focus zone restructure
+- **Focus zones**: Left panel (Identity + Actions + Stats + Description + Genres) → Media carousel → Info cards (Achievements + Reviews) → Action hints
+- **Keyboard navigation**: ArrowUp/ArrowDown/ArrowLeft/ArrowRight move focus between zones, Enter selects media, Escape blurs
+- **Console-style focus**: `ring-2 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/25` with `transition-all duration-150` on focused element
+- **Media carousel**: Trailers sorted by priority (MP4 → WebM → HLS) via `useMemo`, then screenshots. Trailers get play icon, screenshots get index badges
+- **Video state** (`selectedMediaIndex`, `isPlayingMuted`, `showFullPlayer`, `isVideoPlaying`) lifted to ConsoleGameDetails and passed down to both Gallery and Preview
+- **Left panel**: `overflow-y-auto` with `fade-edges` mask (top/bottom gradient `from-transparent via-background via-80% to-transparent`)
+- **Action hints** row in `ConsoleCategoryBar` stub area, dynamically reflects current focus zone actions
+
+### Part 3: ConsoleSelectedPreview — effect-based autoplay
+- `useEffect` watches `(mediaType, selectedIndex, appId)` — autoplay fires only when these change, not on every render
+- `<video key={\`${appId}-${mediaType}-${selectedIndex}\`}>` remounts on media type / index change, ensuring fresh video element
+- Fullscreen button wired to `requestFullscreen()` on preview container ref
+- A/V indicator badge shows resolution + framerate for trailers
+
+### Key Files Changed
+- `src/features/console/ConsoleMediaGallery.tsx` — full rewrite as pure carousel (removed all video player code)
+- `src/features/console/ConsoleGameDetails.tsx` — focus zones, keyboard nav, media carousel, video state lifted, left panel fade edges, action hints
+- `src/features/console/ConsolePreview.tsx` — `key` remount + effect-based autoplay
+
 ### Build
 - `tsc --noEmit` ✅ (0 errors)
 - `vite build` ✅ (only pre-existing chunk warnings)

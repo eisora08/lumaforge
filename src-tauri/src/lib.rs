@@ -158,6 +158,7 @@ pub fn run() {
             commands::game_cache::update_game_artwork,
             commands::game_cache::migrate_to_canonical_cache,
             commands::game_cache::safe_download_image,
+            commands::game_cache::cache_trailer_file,
             commands::game_cache::resolve_game_media_paths,
             commands::game_cache::resolve_game_media_paths_batch,
             commands::game_cache::get_game_media_paths,

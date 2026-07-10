@@ -1396,6 +1396,20 @@ export async function repairAppinfoMediaPaths(appId: string): Promise<boolean> {
   }
 }
 
+// cacheTrailerFile — download a trailer video/thumbnail to
+// <gameDir>/media/trailers/<filename>. Returns local path or null.
+export async function cacheTrailerFile(
+  appId: string,
+  filename: string,
+  url: string,
+): Promise<string | null> {
+  try {
+    return await invoke<string | null>("cache_trailer_file", { appId, filename, url });
+  } catch {
+    return null;
+  }
+}
+
 // repair_media_roles — inspect cached images and fix misclassified files
 // (e.g. vertical image saved as landscape.jpg)
 export async function repairMediaRoles(appId: string): Promise<boolean> {
