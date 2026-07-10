@@ -83,6 +83,8 @@ type Props = {
   onSearchOpen?: () => void;
   onPlayGame?: (game: LibraryGame) => void;
   onProfileOpen?: () => void;
+  /** When true, gamepad input is yielded to a higher-priority overlay (e.g. Search) */
+  gamepadDisabled?: boolean;
 };
 
 /* ── Media helpers ── */
@@ -133,7 +135,7 @@ const REVIEW_COLORS: Record<string, { bg: string; text: string; border: string }
 };
 const DEFAULT_REVIEW_COLOR = { bg: "bg-white/5", text: "text-(--color-muted)", border: "border-white/[0.04]" };
 
-export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen }: Props) {
+export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen, gamepadDisabled = false }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
   const { settings: appSettings } = useSettings();
@@ -498,7 +500,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [carouselSelectedIndex]);
 
   /* ── Gamepad input: enabled while visible and no inner overlay active ── */
-  useConsoleGamepadInput(!optionsOpen);
+  useConsoleGamepadInput(!optionsOpen && !gamepadDisabled);
 
   /* ── Auto-focus left panel when entering left-info zone ── */
   useEffect(() => {

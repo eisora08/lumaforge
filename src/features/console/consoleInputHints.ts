@@ -11,6 +11,7 @@ export type ConsoleInputHints = {
   details: string;
   profile: string;
   page: string;
+  delete: string;
 };
 
 const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints> = {
@@ -25,6 +26,7 @@ const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints
     details: "[D] Details",
     profile: "[View] Profile",
     page: "[LT/RT] Page",
+    delete: "[X] Delete",
   },
   playstation: {
     select: "[✕] Select",
@@ -37,6 +39,7 @@ const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints
     details: "[D] Details",
     profile: "[TouchPad] Profile",
     page: "[L2/R2] Page",
+    delete: "[▢] Delete",
   },
   keyboard: {
     select: "[Enter] Select",
@@ -49,6 +52,7 @@ const HINT_MAP: Record<Exclude<ConsoleInputHintStyle, "auto">, ConsoleInputHints
     details: "[D] Details",
     profile: "[V] Profile",
     page: "[PgUp/PgDn] Page",
+    delete: "[Backspace] Delete",
   },
 };
 

@@ -460,6 +460,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onSearchOpen={() => { setSearchOpen(true); }}
           onPlayGame={handleConsolePlay}
           onProfileOpen={() => { setProfileOpen(true); }}
+          gamepadDisabled={searchOpen}
         />
       )}
 
