@@ -362,17 +362,25 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game, toggleFavorite]);
 
   /* ── Sub-focus activation for left-actions zone ── */
-  /* Index 0 = primary action (Play/Install/etc.), 1 = favorite toggle */
+  /* Index 0 = primary action (Play/Install/Stop), 1 = Return (running) or Favorite, 2 = Favorite (running with pid) */
+  const hasReturn = isRunning && gameSession?.pid != null;
+  const maxSubIndex = hasReturn ? 2 : 1;
   const activateFocusedLeftAction = useCallback(() => {
     if (DEBUG_CONSOLE_DETAILS_ACTION) {
       console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex}`);
     }
     if (leftActionSubIndex === 0) {
-      handlePrimaryAction();
-    } else if (leftActionSubIndex === 1) {
+      if (isRunning) {
+        handleStop();
+      } else {
+        handlePrimaryAction();
+      }
+    } else if (leftActionSubIndex === 1 && hasReturn) {
+      handleReturn();
+    } else {
       handleFavoriteToggle();
     }
-  }, [leftActionSubIndex, handlePrimaryAction, handleFavoriteToggle, game?.appId]);
+  }, [leftActionSubIndex, handlePrimaryAction, handleFavoriteToggle, handleStop, handleReturn, game?.appId, isRunning, hasReturn]);
 
   /* ── Install modal confirm ── */
   const handleInstallConfirm = useCallback(() => {
@@ -486,16 +494,17 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           setFocusZone("back-button");
         } else if (e.key === "ArrowLeft") {
           e.preventDefault();
-          setLeftActionSubIndex((i) => (i > 0 ? i - 1 : 1));
+          setLeftActionSubIndex((i) => (i > 0 ? i - 1 : maxSubIndex));
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
-          setLeftActionSubIndex((i) => (i < 1 ? i + 1 : 0));
+          setLeftActionSubIndex((i) => (i < maxSubIndex ? i + 1 : 0));
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
           if (DEBUG_CONSOLE_DETAILS_ACTION) {
-            const actionLabel = leftActionSubIndex === 0 ? actionModel?.action ?? "none" : "favorite";
+            const labels = ["primary", hasReturn ? "return" : "favorite", "favorite"];
+            const actionLabel = labels[leftActionSubIndex] ?? "favorite";
             console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex} action=${actionLabel}`);
           }
           activateFocusedLeftAction();
@@ -626,7 +635,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         break;
       }
     }
-  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen, installModalOpen, onSearchOpen, handlePlay, leftActionSubIndex, activateFocusedLeftAction, actionModel]);
+  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen, installModalOpen, onSearchOpen, handlePlay, leftActionSubIndex, activateFocusedLeftAction, actionModel, maxSubIndex]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleZoneKeyDown);
@@ -1002,7 +1011,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       onClick={() => { handleStop(); }}
                       tabIndex={0}
                       onFocus={() => setLeftActionSubIndex(0)}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110"
+                      className={`inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 ${
+                        focusZone === "left-actions" && leftActionSubIndex === 0
+                          ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
+                          : ""
+                      }`}
                     >
                       <Square className="h-4 w-4 fill-current" />
                       Stop
@@ -1013,7 +1026,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                         onClick={() => { handleReturn(); }}
                         tabIndex={0}
                         onFocus={() => setLeftActionSubIndex(1)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40"
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40 ${
+                          focusZone === "left-actions" && leftActionSubIndex === 1
+                            ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
+                            : "border-(--color-border)/60"
+                        }`}
                         title="Return to game"
                       >
                         <Play className="h-4 w-4" />
@@ -1064,6 +1081,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       actionModel?.enabled === false
                         ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed"
                         : "bg-(--color-accent) shadow-lg shadow-(--color-accent)/25 hover:brightness-110"
+                    } ${
+                      focusZone === "left-actions" && leftActionSubIndex === 0
+                        ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
+                        : ""
                     }`}
                   >
                     <ActionIcon action={actionModel?.action ?? "unavailable"} />
@@ -1074,15 +1095,17 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   type="button"
                   onClick={handleFavoriteToggle}
                   tabIndex={0}
-                  onFocus={() => setLeftActionSubIndex(1)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2.5 text-sm font-medium text-(--color-muted) transition hover:bg-(--color-surface)/40 ${
-                    focusZone === "left-actions" && leftActionSubIndex === 1
-                      ? "ring-2 ring-(--color-accent)/40"
-                      : ""
+                  onFocus={() => setLeftActionSubIndex(hasReturn ? 2 : 1)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition hover:bg-(--color-surface)/40 ${
+                    isFav ? "text-rose-400" : "text-(--color-muted)"
+                  } ${
+                    focusZone === "left-actions" && ((hasReturn && leftActionSubIndex === 2) || (!hasReturn && leftActionSubIndex === 1))
+                      ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
+                      : "border-(--color-border)/60"
                   }`}
                   title={isFav ? "Remove from Favorites" : "Add to Favorites"}
                 >
-                  <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""} ${focusZone === "left-actions" && leftActionSubIndex === 1 ? "text-rose-400" : ""}`} />
+                  <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
                 </button>
               </div>
 

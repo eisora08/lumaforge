@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   X, Shuffle, RefreshCw, Settings, LayoutGrid,
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
-  Wrench, Gamepad2, Film,
+  Wrench, Gamepad2, Film, PlayCircle,
   Maximize, Grid3X3, ChevronRight, ArrowLeft,
   Image, Tag, Rows3,
 } from "lucide-react";
@@ -798,47 +798,128 @@ function ConsoleToolsSubPanel({
 // ============================================================
 // Help sub-panel
 // ============================================================
+const HELP_ITEMS: {
+  key: string;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  description: string;
+  sections: { label: string; hint: string }[];
+}[] = [
+  {
+    key: "navigation",
+    icon: Gamepad2,
+    title: "Navigation",
+    description: "Move between sections, cards, and panels",
+    sections: [
+      { label: "Move focus", hint: "[D-Pad / Arrows] Navigate" },
+      { label: "Select", hint: "[A / Enter] Confirm / Open" },
+      { label: "Back", hint: "[B / Esc] Cancel / Go back" },
+      { label: "Quick search", hint: "[Y] Search games" },
+      { label: "Profile", hint: "[View] Account & settings" },
+    ],
+  },
+  {
+    key: "media",
+    icon: Image,
+    title: "Media & Details",
+    description: "Browse screenshots, trailers, and game info",
+    sections: [
+      { label: "Browse media", hint: "[LB/RB] Prev / Next media" },
+      { label: "Play / pause", hint: "[A] Toggle video" },
+      { label: "Screenshots", hint: "[X] Open screenshot strip" },
+      { label: "Game details", hint: "[Menu] Open options menu" },
+    ],
+  },
+  {
+    key: "actions",
+    icon: PlayCircle,
+    title: "Game Actions",
+    description: "Play, install, and manage your games",
+    sections: [
+      { label: "Play / Stop", hint: "[A] Primary action" },
+      { label: "Return to game", hint: "D-Pad Right while running" },
+      { label: "Favorite toggle", hint: "D-Pad Right from primary" },
+      { label: "Options", hint: "[Menu] Open context menu" },
+    ],
+  },
+  {
+    key: "settings",
+    icon: Settings,
+    title: "Settings",
+    description: "Customize your console experience",
+    sections: [
+      { label: "Console Settings", hint: "Press [X] on settings page" },
+      { label: "Layout", hint: "Grid columns, card size, gaps" },
+      { label: "Input", hint: "Xbox / PlayStation / Keyboard glyphs" },
+      { label: "Profile", hint: "Avatar, banner, display name" },
+    ],
+  },
+];
+
 function ConsoleHelpSubPanel({
-  onBack, focusedIndex: _fi, onFocusChange: _ofc, itemCount,
+  onBack, focusedIndex, onFocusChange, itemCount,
 }: {
   onBack: () => void;
   focusedIndex: number;
   onFocusChange: (i: number) => void;
   itemCount: React.MutableRefObject<number>;
 }) {
-  const totalItems = 1;
+  const totalItems = HELP_ITEMS.length + 1;
   itemCount.current = totalItems;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); onBack(); }
+    else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      const maxI = totalItems - 1;
+      onFocusChange(Math.max(0, Math.min(maxI, focusedIndex + delta)));
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   };
 
   return (
-    <div className="flex flex-col gap-4" onKeyDown={handleKeyDown}>
-      <SubPanelHeader title="Help" onBack={onBack} />
-      <div className="flex flex-col gap-4 px-2">
-        <div className="rounded-xl bg-(--color-surface)/30 p-5">
-          <h3 className="mb-2 flex items-center gap-2 text-base font-semibold text-(--color-text)">
-            <Gamepad2 className="h-5 w-5" />
-            Console Mode
-          </h3>
-          <p className="text-sm leading-relaxed text-(--color-muted)">
-            Navigate with keyboard arrow keys or a controller. Press Enter to select, Escape to go back. Use Tab to cycle through categories.
-          </p>
-        </div>
-        <div className="rounded-xl bg-(--color-surface)/30 p-5">
-          <h3 className="mb-2 text-base font-semibold text-(--color-text)">Keyboard Shortcuts</h3>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <span className="text-(--color-muted)">Arrow Keys</span><span className="text-(--color-text)">Navigate</span>
-            <span className="text-(--color-muted)">Enter</span><span className="text-(--color-text)">Select / Open</span>
-            <span className="text-(--color-muted)">Escape</span><span className="text-(--color-text)">Back / Close</span>
-            <span className="text-(--color-muted)">Tab</span><span className="text-(--color-text)">Next Category</span>
-            <span className="text-(--color-muted)">Shift+Tab</span><span className="text-(--color-text)">Prev Category</span>
-          </div>
-        </div>
-        <div className="rounded-xl bg-(--color-surface)/30 p-5">
-          <p className="text-xs text-(--color-muted)/60">
-            LumaForge Console Mode v2 &middot; Built with React + Tauri
+    <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
+      <SubPanelHeader title="Help & Shortcuts" onBack={onBack} />
+      <div className="flex flex-col gap-3 px-2 pb-4">
+        {HELP_ITEMS.map((item, i) => {
+          const Icon = item.icon;
+          const isFocused = focusedIndex === i;
+          return (
+            <div
+              key={item.key}
+              tabIndex={-1}
+              className={`rounded-xl border p-4 transition-all duration-150 ${
+                isFocused
+                  ? "border-(--color-accent)/50 bg-(--color-accent)/10 ring-2 ring-(--color-accent)/30 shadow-lg shadow-(--color-accent)/15"
+                  : "border-(--color-border)/30 bg-(--color-surface)/20"
+              }`}
+            >
+              <div className="mb-2 flex items-center gap-2">
+                <Icon className={`h-5 w-5 ${isFocused ? "text-(--color-accent)" : "text-(--color-muted)"}`} />
+                <span className="text-sm font-semibold text-(--color-text)">{item.title}</span>
+              </div>
+              <p className="mb-2 text-xs text-(--color-muted)/70">{item.description}</p>
+              <div className="flex flex-col gap-1">
+                {item.sections.map((sec, si) => (
+                  <div key={si} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-(--color-muted)">{sec.label}</span>
+                    <span className="rounded bg-(--color-surface)/40 px-1.5 py-0.5 text-[10px] text-(--color-muted)/70">
+                      {sec.hint}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        <div className={`rounded-xl border border-(--color-border)/20 px-4 py-3 transition-all duration-150 ${
+          focusedIndex === totalItems - 1 ? "ring-1 ring-(--color-muted)/30 bg-(--color-surface)/30" : ""
+        }`}>
+          <p className="text-xs text-(--color-muted)/40">
+            LumaForge Console Mode &middot; Press [B] or Esc to go back
           </p>
         </div>
       </div>
@@ -1339,54 +1420,58 @@ export default function ConsoleSettingsPanelV2({
   const handleMainKeyDown = useCallback((e: React.KeyboardEvent) => {
     // Consume all gamepad-mapped keys
     if (GAMEPAD_KEYS.has(e.key)) { e.preventDefault(); e.stopPropagation(); }
-    if (e.key === "ArrowUp") { setFocusedIndex((i) => Math.max(0, i - 1)); }
-    if (e.key === "ArrowDown") { setFocusedIndex((i) => Math.min(MAIN_OPTIONS.length - 1, i + 1)); }
-    if (e.key === "Enter") {
-      const opt = MAIN_OPTIONS[focusedIndex];
-      if (!opt) return;
-      switch (opt.action) {
-        case "sub":
-          if (opt.subPage) {
-            menuStackRef.current.push({ page, subPage: null, focusedIndex });
-            if (opt.subPage === "settings") {
-              setPage(opt.subPage);
-            } else {
-              setSubPage(opt.subPage);
+    // Only handle navigation keys when on the main menu (no sub-page active)
+    // Sub-pages have their own key handler via window.addEventListener, which fires separately
+    if (subPage === null) {
+      if (e.key === "ArrowUp") { setFocusedIndex((i) => Math.max(0, i - 1)); }
+      if (e.key === "ArrowDown") { setFocusedIndex((i) => Math.min(MAIN_OPTIONS.length - 1, i + 1)); }
+      if (e.key === "Enter") {
+        const opt = MAIN_OPTIONS[focusedIndex];
+        if (!opt) return;
+        switch (opt.action) {
+          case "sub":
+            if (opt.subPage) {
+              menuStackRef.current.push({ page, subPage: null, focusedIndex });
+              if (opt.subPage === "settings") {
+                setPage(opt.subPage);
+              } else {
+                setSubPage(opt.subPage);
+              }
+              setFocusedIndex(0);
             }
-            setFocusedIndex(0);
-          }
-          break;
-        case "navigate":
-          handleClose();
-          onNavigate?.("home");
-          break;
-        case "random":
-          handleClose();
-          if (allGames && allGames.length > 0 && onSelectGame) {
-            const idx = Math.floor(Math.random() * allGames.length);
-            onSelectGame(allGames[idx]);
-          }
-          break;
-        case "refresh":
-          handleClose();
-          onRefreshLibrary?.();
-          break;
-        case "switch-view":
-          {
-            const from = settings.layoutMode;
-            const to = from === "spotlight" ? "grid" : "spotlight";
-            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][ACTIVATE] id=switch-view source=keyboard`);
-            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][SWITCH_REQUEST] from=${from} to=${to}`);
+            break;
+          case "navigate":
             handleClose();
-            onPatch({ layoutMode: to });
-            if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][APPLIED] layoutMode=${to}`);
-          }
-          break;
+            onNavigate?.("home");
+            break;
+          case "random":
+            handleClose();
+            if (allGames && allGames.length > 0 && onSelectGame) {
+              const idx = Math.floor(Math.random() * allGames.length);
+              onSelectGame(allGames[idx]);
+            }
+            break;
+          case "refresh":
+            handleClose();
+            onRefreshLibrary?.();
+            break;
+          case "switch-view":
+            {
+              const from = settings.layoutMode;
+              const to = from === "spotlight" ? "grid" : "spotlight";
+              if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][ACTIVATE] id=switch-view source=keyboard`);
+              if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][SWITCH_REQUEST] from=${from} to=${to}`);
+              handleClose();
+              onPatch({ layoutMode: to });
+              if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][APPLIED] layoutMode=${to}`);
+            }
+            break;
+        }
       }
     }
-    if (e.key === "Escape") { e.preventDefault(); handleClose(); }
-    if (e.key === "b" || e.key === "B") { e.preventDefault(); handleClose(); }
-  }, [focusedIndex, allGames, handleClose, onNavigate, onSelectGame, onRefreshLibrary, settings, onPatch]);
+    if (e.key === "Escape") { e.preventDefault(); subPage !== null ? doBackNav() : handleClose(); }
+    if (e.key === "b" || e.key === "B") { e.preventDefault(); subPage !== null ? doBackNav() : handleClose(); }
+  }, [focusedIndex, allGames, handleClose, onNavigate, onSelectGame, onRefreshLibrary, settings, onPatch, subPage, doBackNav]);
 
   const handleGlobalKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (GAMEPAD_KEYS.has(e.key)) { e.preventDefault(); e.stopPropagation(); }

@@ -70,8 +70,6 @@ export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, show
       <HintTag>{hints.back}</HintTag>
       <HintTag>{hints.select}</HintTag>
       <HintTag>{hints.play}</HintTag>
-      <HintTag>{hints.search}</HintTag>
-      <HintTag>{hints.profile}</HintTag>
     </div>
   ) : null;
 
