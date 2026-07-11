@@ -243,6 +243,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   /* ── Is the current trailer playable (not just a thumbnail with no video)? ── */
   const hasPlayableVideo = playerMode === "details" && trailerData?.playableType !== "none";
 
+  /* ── Media identity key — changes on every carousel selection to force clean video remount ── */
+  const mediaIdentityKey = useMemo(() => {
+    return `${game?.appId ?? "?"}-${carouselSelectedIndex}-${currentMedia?.type ?? "none"}`;
+  }, [game?.appId, carouselSelectedIndex, currentMedia?.type]);
+
   /* ── Enter animation ── */
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -990,17 +995,18 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         {/* ── Content ── */}
         <div className="relative z-10 flex h-full w-full gap-5 p-6">
           {/* ════════════════════════════════════════
-             LEFT COLUMN — Actions + Scrollable info panel
+             LEFT COLUMN — Mini card + actions + scrollable info
              ════════════════════════════════════════ */}
           <div className="relative w-[35%] shrink-0 flex flex-col">
-            {/* ── Identity + Actions (zone: left-actions) ── */}
+            {/* ── Compact identity + actions + stats (zone: left-actions) ── */}
             <div
               tabIndex={-1}
               onFocus={() => { setFocusZone("left-actions"); setLeftActionSubIndex(0); }}
-              className={`shrink-0 rounded-2xl px-3 pt-3 pb-2 outline-none ${zoneFocusClass("left-actions")}`}
+              className={`shrink-0 space-y-2.5 rounded-2xl px-3 pt-3 pb-2 outline-none ${zoneFocusClass("left-actions")}`}
             >
-              <div className="flex gap-3.5">
-                <div className="w-[140px] shrink-0 overflow-hidden rounded-2xl bg-(--color-surface)/60 shadow-xl shadow-black/40 ring-1 ring-white/[0.06]">
+              {/* Mini card row: 120px cover + inline title/dev/badges */}
+              <div className="flex gap-3">
+                <div className="w-[120px] shrink-0 overflow-hidden rounded-2xl bg-(--color-surface)/60 shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
                   {coverSrc ? (
                     <img
                       key={game.appId}
@@ -1015,174 +1021,174 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       className="flex w-full items-center justify-center bg-(--color-surface)/40"
                       style={{ aspectRatio: "2/3" }}
                     >
-                      <Gamepad2 className="h-10 w-10 text-(--color-muted)/30" />
+                      <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />
                     </div>
                   )}
                 </div>
 
-                <div className="flex min-w-0 flex-1 flex-col justify-center gap-2">
+                <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5">
                   {logoSrc ? (
                     <img
                       src={logoSrc}
                       alt={game.title}
-                      className="max-h-[32px] max-w-[220px] object-contain"
+                      className="max-h-[28px] max-w-[180px] object-contain"
                     />
                   ) : (
-                    <h2 className="text-base font-bold leading-tight text-(--color-text)">
+                    <h2 className="text-sm font-bold leading-tight text-(--color-text)">
                       {game.title}
                     </h2>
                   )}
                   {releaseYear && (
-                    <p className="text-xs text-(--color-muted)">{releaseYear}</p>
+                    <p className="text-[11px] text-(--color-muted)">{releaseYear}</p>
                   )}
                   {developer && (
-                    <p className="truncate text-xs text-(--color-muted)" title={developer}>
+                    <p className="truncate text-[11px] text-(--color-muted)" title={developer}>
                       {developer}
                     </p>
                   )}
                   {publisher && !developer && (
-                    <p className="truncate text-xs text-(--color-muted)" title={publisher}>
+                    <p className="truncate text-[11px] text-(--color-muted)" title={publisher}>
                       {publisher}
                     </p>
                   )}
 
-                  {/* Badges — compact under title */}
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  {/* Badges */}
+                  <div className="flex flex-wrap gap-1">
                     {game.steamInstalled && (
-                      <span className="rounded-md bg-emerald-500/80 px-2 py-0.5 text-[11px] font-medium text-black">
+                      <span className="rounded-md bg-emerald-500/80 px-1.5 py-0.5 text-[10px] font-medium text-black">
                         Installed
                       </span>
                     )}
                     {game.isLuaActive && (
-                      <span className="rounded-md bg-violet-500/80 px-2 py-0.5 text-[11px] font-medium text-white">
+                      <span className="rounded-md bg-violet-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white">
                         Lua
                       </span>
                     )}
                     {isFav && (
-                      <span className="rounded-md bg-rose-500/80 px-2 py-0.5 text-[11px] font-medium text-white">
+                      <span className="rounded-md bg-rose-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white">
                         Favorite
                       </span>
                     )}
                   </div>
+                </div>
+              </div>
 
-                  {/* Action buttons — Play/Stop + Return + Favorite */}
-                  <div className="mt-2 flex items-center gap-2.5">
-                    {isRunning ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => { handleStop(); }}
-                          tabIndex={0}
-                          onFocus={() => setLeftActionSubIndex(0)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110"
-                        >
-                          <Square className="h-4 w-4 fill-current" />
-                          Stop
-                        </button>
-                        {gameSession?.pid != null && (
-                          <button
-                            type="button"
-                            onClick={() => { handleReturn(); }}
-                            tabIndex={0}
-                            onFocus={() => setLeftActionSubIndex(1)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40"
-                            title="Return to game"
-                          >
-                            <Play className="h-4 w-4" />
-                            Return
-                          </button>
-                        )}
-                      </>
-                    ) : isLaunching ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
-                      >
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                        Launching…
-                      </button>
-                    ) : isStopping ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/60 px-4 py-2 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
-                      >
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                        Stopping…
-                      </button>
-                    ) : actionInFlight ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/70 px-4 py-2 text-sm font-semibold text-white shadow-lg opacity-60 cursor-not-allowed"
-                      >
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                        {actionModel?.label ?? "Play"}…
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (DEBUG_CONSOLE_DETAILS_ACTION) {
-                            console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
-                          }
-                          handlePrimaryAction();
-                        }}
-                        disabled={!actionModel?.enabled}
-                        tabIndex={0}
-                        onFocus={() => setLeftActionSubIndex(0)}
-                        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
-                          actionModel?.enabled === false
-                            ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed"
-                            : "bg-(--color-accent) shadow-lg shadow-(--color-accent)/25 hover:brightness-110"
-                        }`}
-                      >
-                        <ActionIcon action={actionModel?.action ?? "unavailable"} />
-                        {actionModel?.label ?? "Play"}
-                      </button>
-                    )}
+              {/* Action row — large buttons */}
+              <div className="flex items-center gap-2.5">
+                {isRunning ? (
+                  <>
                     <button
                       type="button"
-                      onClick={handleFavoriteToggle}
+                      onClick={() => { handleStop(); }}
                       tabIndex={0}
-                      onFocus={() => setLeftActionSubIndex(1)}
-                      className={`inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-(--color-surface)/40 ${
-                        focusZone === "left-actions" && leftActionSubIndex === 1
-                          ? "ring-2 ring-(--color-accent)/40"
-                          : ""
-                      }`}
-                      title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+                      onFocus={() => setLeftActionSubIndex(0)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110"
                     >
-                      <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""} ${focusZone === "left-actions" && leftActionSubIndex === 1 ? "text-rose-400" : ""}`} />
+                      <Square className="h-4 w-4 fill-current" />
+                      Stop
                     </button>
-                  </div>
-
-                  {/* Stats grid — 2x2 compact */}
-                  <div className="mt-2.5 grid grid-cols-2 gap-2">
-                    {[
-                      { icon: Clock, label: "Played", value: playtimeDisplay },
-                      { icon: Clock, label: "Last", value: lastPlayedStr },
-                      { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
-                      {
-                        icon: CheckCircle2,
-                        label: "Status",
-                        value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
-                      },
-                    ].map(({ icon: Icon, label, value }) => (
-                      <div
-                        key={label}
-                        className="rounded-xl bg-(--color-surface)/40 px-3 py-2 ring-1 ring-white/[0.04]"
+                    {gameSession?.pid != null && (
+                      <button
+                        type="button"
+                        onClick={() => { handleReturn(); }}
+                        tabIndex={0}
+                        onFocus={() => setLeftActionSubIndex(1)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40"
+                        title="Return to game"
                       >
-                        <div className="flex items-center gap-1.5 text-(--color-muted)">
-                          <Icon className="h-3 w-3" />
-                          <span className="text-[10px] font-medium uppercase tracking-wider">{label}</span>
-                        </div>
-                        <p className="mt-0.5 text-sm font-semibold text-(--color-text)">{value}</p>
-                      </div>
-                    ))}
+                        <Play className="h-4 w-4" />
+                        Return
+                      </button>
+                    )}
+                  </>
+                ) : isLaunching ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
+                  >
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    Launching…
+                  </button>
+                ) : isStopping ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/60 px-5 py-2.5 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
+                  >
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    Stopping…
+                  </button>
+                ) : actionInFlight ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/70 px-5 py-2.5 text-sm font-semibold text-white shadow-lg opacity-60 cursor-not-allowed"
+                  >
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    {actionModel?.label ?? "Play"}…
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (DEBUG_CONSOLE_DETAILS_ACTION) {
+                        console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
+                      }
+                      handlePrimaryAction();
+                    }}
+                    disabled={!actionModel?.enabled}
+                    tabIndex={0}
+                    onFocus={() => setLeftActionSubIndex(0)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition ${
+                      actionModel?.enabled === false
+                        ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed"
+                        : "bg-(--color-accent) shadow-lg shadow-(--color-accent)/25 hover:brightness-110"
+                    }`}
+                  >
+                    <ActionIcon action={actionModel?.action ?? "unavailable"} />
+                    {actionModel?.label ?? "Play"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleFavoriteToggle}
+                  tabIndex={0}
+                  onFocus={() => setLeftActionSubIndex(1)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2.5 text-sm font-medium text-(--color-muted) transition hover:bg-(--color-surface)/40 ${
+                    focusZone === "left-actions" && leftActionSubIndex === 1
+                      ? "ring-2 ring-(--color-accent)/40"
+                      : ""
+                  }`}
+                  title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+                >
+                  <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""} ${focusZone === "left-actions" && leftActionSubIndex === 1 ? "text-rose-400" : ""}`} />
+                </button>
+              </div>
+
+              {/* Compact horizontal stats row */}
+              <div className="flex gap-1.5">
+                {[
+                  { icon: Clock, label: "Played", value: playtimeDisplay },
+                  { icon: Clock, label: "Last", value: lastPlayedStr },
+                  { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
+                  {
+                    icon: CheckCircle2,
+                    label: "Status",
+                    value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
+                  },
+                ].map(({ icon: Icon, label, value }) => (
+                  <div
+                    key={label}
+                    className="flex flex-1 items-center gap-1.5 rounded-xl bg-(--color-surface)/40 px-2.5 py-1.5 ring-1 ring-white/[0.04]"
+                  >
+                    <Icon className="h-3 w-3 shrink-0 text-(--color-muted)" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[9px] font-medium uppercase tracking-wider text-(--color-muted)/60 block">{label}</span>
+                      <span className="text-[11px] font-semibold text-(--color-text) block truncate">{value}</span>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
             </div>
 
@@ -1199,7 +1205,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
               <div className="space-y-3.5 px-3 pb-6">
                 {/* About the Game */}
-                {aboutTheGame && (
+                {settings.spotlightContent.showAboutGame && aboutTheGame && (
                   <div>
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-(--color-muted) mb-1.5">
                       About the Game
@@ -1217,98 +1223,100 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   </p>
                 )}
 
-                {/* Developer / Publisher / Release Date */}
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                  {developer && (
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Developer</span>
-                      <p className="text-xs text-(--color-text)">{developer}</p>
-                    </div>
-                  )}
-                  {publisher && publisher !== developer && (
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Publisher</span>
-                      <p className="text-xs text-(--color-text)">{publisher}</p>
-                    </div>
-                  )}
-                  {game?.metadata?.release_date && (
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Released</span>
-                      <p className="text-xs text-(--color-text)">{game.metadata.release_date}</p>
-                    </div>
-                  )}
-                </div>
+                {settings.spotlightContent.showMetadata && (<>
+                  {/* Developer / Publisher / Release Date */}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                    {developer && (
+                      <div>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Developer</span>
+                        <p className="text-xs text-(--color-text)">{developer}</p>
+                      </div>
+                    )}
+                    {publisher && publisher !== developer && (
+                      <div>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Publisher</span>
+                        <p className="text-xs text-(--color-text)">{publisher}</p>
+                      </div>
+                    )}
+                    {game?.metadata?.release_date && (
+                      <div>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Released</span>
+                        <p className="text-xs text-(--color-text)">{game.metadata.release_date}</p>
+                      </div>
+                    )}
+                  </div>
 
-                {/* Genres */}
-                {genres && genres.length > 0 && (
-                  <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Genres</span>
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      {genres.map((g) => (
-                        <span key={g} className="rounded-lg bg-(--color-surface)/60 px-2 py-0.5 text-[11px] font-medium text-(--color-muted) ring-1 ring-(--color-border)/30">
-                          {g}
+                  {/* Genres */}
+                  {genres && genres.length > 0 && (
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Genres</span>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {genres.map((g) => (
+                          <span key={g} className="rounded-lg bg-(--color-surface)/60 px-2 py-0.5 text-[11px] font-medium text-(--color-muted) ring-1 ring-(--color-border)/30">
+                            {g}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Features / Categories */}
+                  {categories && categories.length > 0 && (
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Features</span>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {categories.map((cat) => (
+                          <span key={cat} className="rounded-lg bg-(--color-surface)/40 px-2 py-0.5 text-[10px] text-(--color-muted)/80 ring-1 ring-(--color-border)/20">
+                            {cat}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Languages */}
+                  {languagesLabel && (
+                    <div className="flex items-start gap-2">
+                      <Languages className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
+                      <div>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Languages</span>
+                        <p className="text-xs text-(--color-muted)/80">{languagesLabel}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* DLC */}
+                  {dlcLabel && (
+                    <div className="flex items-start gap-2">
+                      <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
+                      <div>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">DLC</span>
+                        <p className="text-xs text-(--color-muted)/80">{dlcLabel}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Requirements */}
+                  {hasRequirements && (
+                    <div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Requirements</span>
+                      <p className="mt-0.5 text-xs text-(--color-muted)/70">
+                        {game.metadata?.pc_requirements?.minimum ? "Minimum specs available" : "Recommended specs available"}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Platforms */}
+                  {game.metadata?.platforms && game.metadata.platforms.length > 0 && (
+                    <div className="flex gap-1.5">
+                      {game.metadata.platforms.map((p) => (
+                        <span key={p} className="rounded-md bg-(--color-surface)/40 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)/60 ring-1 ring-(--color-border)/20">
+                          {p}
                         </span>
                       ))}
                     </div>
-                  </div>
-                )}
-
-                {/* Features / Categories */}
-                {categories && categories.length > 0 && (
-                  <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Features</span>
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      {categories.map((cat) => (
-                        <span key={cat} className="rounded-lg bg-(--color-surface)/40 px-2 py-0.5 text-[10px] text-(--color-muted)/80 ring-1 ring-(--color-border)/20">
-                          {cat}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Languages */}
-                {languagesLabel && (
-                  <div className="flex items-start gap-2">
-                    <Languages className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Languages</span>
-                      <p className="text-xs text-(--color-muted)/80">{languagesLabel}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* DLC */}
-                {dlcLabel && (
-                  <div className="flex items-start gap-2">
-                    <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted)/50" />
-                    <div>
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">DLC</span>
-                      <p className="text-xs text-(--color-muted)/80">{dlcLabel}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Requirements */}
-                {hasRequirements && (
-                  <div>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Requirements</span>
-                    <p className="mt-0.5 text-xs text-(--color-muted)/70">
-                      {game.metadata?.pc_requirements?.minimum ? "Minimum specs available" : "Recommended specs available"}
-                    </p>
-                  </div>
-                )}
-
-                {/* Platforms */}
-                {game.metadata?.platforms && game.metadata.platforms.length > 0 && (
-                  <div className="flex gap-1.5">
-                    {game.metadata.platforms.map((p) => (
-                      <span key={p} className="rounded-md bg-(--color-surface)/40 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)/60 ring-1 ring-(--color-border)/20">
-                        {p}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                  )}
+                </>)}
               </div>
 
               {/* Bottom fade */}
@@ -1329,17 +1337,19 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
               onFocus={() => setFocusZone("media-preview")}
             >
               <ConsoleSelectedPreview
+                key={`preview-${mediaIdentityKey}`}
                 game={game}
-                showTrailerPreview
+                showTrailerPreview={settings.spotlightContent.showTrailerPreview}
                 trailerData={trailerData}
                 screenshotOverrideUrl={screenshotOverrideUrl}
                 mode={playerMode}
                 autoplay
+                mediaIdentityKey={mediaIdentityKey}
               />
             </div>
 
             {/* ── Media Carousel (zone: media-carousel) ── */}
-            {mediaItems.length > 0 && (
+            {settings.spotlightContent.showScreenshots && mediaItems.length > 0 && (
               <div
                 className={`rounded-xl outline-none ${zoneFocusClass("media-carousel")}`}
                 onClick={() => { setFocusZone("media-carousel"); setCarouselFocusIndex(carouselSelectedIndex); }}
@@ -1356,13 +1366,22 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             )}
 
             {/* ── Two-column row: Achievements | Reviews (zone: info-cards) ── */}
-            <div
-              className={`grid grid-cols-2 gap-3 rounded-2xl p-0.5 outline-none ${zoneFocusClass("info-cards")}`}
-              onClick={() => setFocusZone("info-cards")}
-              tabIndex={-1}
-              onFocus={() => setFocusZone("info-cards")}
-            >
+            {(
+              settings.spotlightContent.showAchievements ||
+              settings.spotlightContent.showReviews
+            ) && (
+              <div
+                className={`grid gap-3 rounded-2xl p-0.5 outline-none ${
+                  settings.spotlightContent.showAchievements && settings.spotlightContent.showReviews
+                    ? "grid-cols-2"
+                    : "grid-cols-1"
+                } ${zoneFocusClass("info-cards")}`}
+                onClick={() => setFocusZone("info-cards")}
+                tabIndex={-1}
+                onFocus={() => setFocusZone("info-cards")}
+              >
               {/* ═══ Achievements Card ═══ */}
+              {settings.spotlightContent.showAchievements && (
               <div className={`rounded-2xl bg-(--color-surface)/40 ring-1 ring-white/[0.04] transition-all duration-150 ${
                 focusZone === "info-cards" && infoCardSide === "achievements"
                   ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
@@ -1453,8 +1472,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   </div>
                 )}
               </div>
+              )}
 
               {/* ═══ Reviews Card ═══ */}
+              {settings.spotlightContent.showReviews && (
               <div className={`rounded-2xl ${reviewColors.bg} ${reviewColors.border} ring-1 ring-inset transition-all duration-150 ${
                 focusZone === "info-cards" && infoCardSide === "reviews"
                   ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
@@ -1493,7 +1514,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   </div>
                 )}
               </div>
+              )}
             </div>
+            )}
 
             {/* ── Action hints (zone: footer-actions) ── */}
             <div

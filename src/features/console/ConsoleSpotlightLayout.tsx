@@ -283,7 +283,7 @@ export default function ConsoleSpotlightLayout({
               onSelectGame={onSelectGame}
               cardCompact={cardVariant === "poster"}
               cardVariant={cardVariant}
-              cardWidth={settings.spotlightCardWidth}
+              cardWidth={settings.spotlightCardStyle?.widthPreset ?? 320}
               cardGap={settings.spotlightCardGap}
               noCardLabels
               hideHeader

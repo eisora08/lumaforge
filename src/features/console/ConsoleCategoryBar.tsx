@@ -3,6 +3,7 @@ import {
 } from "lucide-react";
 import { getConsoleInputHints } from "./consoleInputHints";
 import type { ConsoleInputHintStyle } from "./consoleInputHints";
+import type { ConsoleBottomBarPosition } from "./consoleSettings";
 
 const CATEGORIES = [
   { label: "Continue", key: "continue", icon: Play },
@@ -18,6 +19,7 @@ type Props = {
   onSelect: (index: number) => void;
   showHints?: boolean;
   inputHints?: ConsoleInputHintStyle;
+  bottomBarPosition?: ConsoleBottomBarPosition;
 };
 
 function HintTag({ children }: { children: string }) {
@@ -33,49 +35,63 @@ function HintTag({ children }: { children: string }) {
   );
 }
 
-export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, showHints, inputHints = "xbox" }: Props) {
+export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, showHints, inputHints = "xbox", bottomBarPosition = "center" }: Props) {
   const hints = getConsoleInputHints(inputHints);
-  return (
-    <nav className="flex shrink-0 items-center justify-between px-6 py-2.5" aria-label="Category navigation">
-      {/* Left spacer */}
-      <div className="w-20" />
+  const isRight = bottomBarPosition === "right";
+  const barJustify = isRight ? "justify-end" : bottomBarPosition === "left" ? "justify-start" : "justify-between";
 
-      {/* Centered category pills */}
-      <div className="flex items-center gap-1">
-        {CATEGORIES.map((cat, i) => {
-          const isActive = activeIndex === i;
-          const Icon = cat.icon;
-          return (
-            <button
-                key={cat.key}
-                tabIndex={-1}
-                onClick={() => onSelect(i)}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-medium transition-all duration-150 ${
-                isActive
-                  ? "bg-(--color-accent)/25 text-(--color-accent) shadow-sm shadow-(--color-accent)/10"
-                  : "text-white/50 hover:bg-white/10 hover:text-white/80"
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5 opacity-70" />
-              <span>{cat.label}</span>
-              <span className="text-[10px] opacity-60">{counts[i] ?? 0}</span>
-            </button>
-          );
-        })}
+  const pills = (
+    <div className="flex items-center gap-1">
+      {CATEGORIES.map((cat, i) => {
+        const isActive = activeIndex === i;
+        const Icon = cat.icon;
+        return (
+          <button
+              key={cat.key}
+              tabIndex={-1}
+              onClick={() => onSelect(i)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-medium transition-all duration-150 ${
+              isActive
+                ? "bg-(--color-accent)/25 text-(--color-accent) shadow-sm shadow-(--color-accent)/10"
+                : "text-white/50 hover:bg-white/10 hover:text-white/80"
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5 opacity-70" />
+            <span>{cat.label}</span>
+            <span className="text-[10px] opacity-60">{counts[i] ?? 0}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const hintsBlock = showHints ? (
+    <div className="flex items-center gap-4">
+      <div className="hidden items-center gap-4 md:flex">
+        <HintTag>{hints.back}</HintTag>
+        <HintTag>{hints.select}</HintTag>
+        <HintTag>{hints.play}</HintTag>
+        <HintTag>{hints.search}</HintTag>
+        <HintTag>{hints.profile}</HintTag>
+        <HintTag>{hints.media}</HintTag>
       </div>
+    </div>
+  ) : null;
 
-      {/* Glyph hints on right */}
-      {showHints && (
-        <div className="flex items-center gap-4">
-          <div className="hidden items-center gap-4 md:flex">
-            <HintTag>{hints.back}</HintTag>
-            <HintTag>{hints.select}</HintTag>
-            <HintTag>{hints.play}</HintTag>
-            <HintTag>{hints.search}</HintTag>
-            <HintTag>{hints.profile}</HintTag>
-            <HintTag>{hints.media}</HintTag>
-          </div>
-        </div>
+  return (
+    <nav className={`flex shrink-0 items-center px-6 py-2.5 ${barJustify}`} aria-label="Category navigation">
+      {bottomBarPosition === "center" && <div className="w-20" />}
+      {isRight ? (
+        <>
+          {/* Hints first, then pills, so pills sit at far-right */}
+          {hintsBlock}
+          {pills}
+        </>
+      ) : (
+        <>
+          {pills}
+          {hintsBlock}
+        </>
       )}
     </nav>
   );

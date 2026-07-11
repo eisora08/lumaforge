@@ -12,12 +12,14 @@ type Props = {
   noLabel?: boolean;
   cardWidth?: number;
   noTitle?: boolean;
+  cornerRadius?: number;
 };
 
-export default function ConsoleGameCard({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle }: Props) {
+export default function ConsoleGameCard({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius }: Props) {
   const { isFavorite } = useFavorites();
   const fav = game.appId ? isFavorite(game.appId) : false;
   const isSpotlight = !compact;
+  const radius = cornerRadius ?? 16;
 
   const src = getConsoleCardSrc(game, variant);
 
@@ -33,7 +35,7 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
       tabIndex={isFocused ? 0 : -1}
       aria-label={game.title}
       onClick={onClick}
-      className={`relative cursor-pointer rounded-2xl border transition-all duration-[260ms] ease-out shrink-0 ${
+      className={`relative cursor-pointer border transition-all duration-[260ms] ease-out shrink-0 ${
         compact ? "" : variant === "poster" ? "w-[200px]" : "w-[280px]"
       } ${cardWidth ? "" : "shrink-0"} ${
         isFocused
@@ -46,11 +48,13 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
                 : ""
             } border-(--surface-active-border) hover:border-(--color-accent)/40 hover:shadow-lg hover:shadow-(--color-accent)/10`
       }`}
-      style={{ ...widthStyle, ...spotlightFocusStyle, willChange: "transform" }}
+      style={{ borderRadius: radius, ...widthStyle, ...spotlightFocusStyle, willChange: "transform" }}
     >
-      <div className={`relative overflow-hidden rounded-2xl ${
+      <div className={`relative overflow-hidden ${
         variant === "poster" ? "aspect-[2/3]" : "aspect-[16/10]"
-      }`}>
+      }`}
+      style={{ borderRadius: radius }}
+      >
         {src ? (
           <img
             key={game.appId}
@@ -73,8 +77,8 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
         {/* Focus shine sweep — only on focused card */}
         {isFocused && (
           <div
-            className="console-card-shine pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
-            style={{ mixBlendMode: "screen" }}
+            className="console-card-shine pointer-events-none absolute inset-0 overflow-hidden"
+            style={{ borderRadius: radius, mixBlendMode: "screen" }}
           >
             <div
               className="absolute inset-0"

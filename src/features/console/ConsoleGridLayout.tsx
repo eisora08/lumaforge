@@ -62,17 +62,19 @@ function HintTag({ children }: { children: string }) {
 export default function ConsoleGridLayout({
   focusedGame, rails, focusedRail, focusedIndex,
   onSelectGame, onOptionsGame: _onOptionsGame, onPlayGame: _onPlayGame, layoutMode, onToggleLayout,
-  cardVariant = "poster", onNavigate,
+  cardVariant: _cv = "poster", onNavigate,
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
   gridColumnsRef,
+  dockFocusedIndex: _dockFocusedIndex,
 }: Props) {
   const { favoriteIds } = useFavorites();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const gridScrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
+  const gridCardVariant: "landscape" | "poster" = settings.gridCardStyle.useLandscapeCards ? "landscape" : "poster";
   const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
   const heroSrc = getConsoleHeroBackground(focusedGame);
@@ -140,7 +142,8 @@ export default function ConsoleGridLayout({
       const upperBound = containerRect.height * 0.45;
       if (relativeTop < lowerBound || relativeTop + cardRect.height > upperBound) {
         const offset = relativeTop - targetPosition;
-        container.scrollBy({ top: offset, behavior: prefersReduced ? "auto" : "smooth" });
+        const scrollBehav = prefersReduced ? "auto" : (settings.smoothScrolling ? "smooth" : "auto");
+        container.scrollBy({ top: offset, behavior: scrollBehav });
         if (DEBUG_CONSOLE_GRID_NAV) {
           console.log(`[CONSOLE_GRID_NAV][SCROLL_POSITION] index=${focusedIndex} appid=${currentRail[focusedIndex]?.appId} offset=${Math.round(offset)} relativeTop=${Math.round(relativeTop)} target=${Math.round(targetPosition)}`);
         }
@@ -168,7 +171,7 @@ export default function ConsoleGridLayout({
         {/* Scrollable game grid — settings-driven card size/gap/columns */}
         <div ref={gridScrollRef} className="flex-1 overflow-y-auto pb-5"
              style={{
-               paddingLeft: "clamp(64px, 5vw, 120px)",
+               paddingLeft: `${settings.leftPadding}px`,
                paddingRight: "32px",
                paddingTop: "clamp(24px, 3vh, 40px)",
              }}>
@@ -177,7 +180,7 @@ export default function ConsoleGridLayout({
               ref={gridRef}
               className="grid"
               style={{
-                gridTemplateColumns: `repeat(auto-fill, minmax(${settings.cardSize}px, 1fr))`,
+                gridTemplateColumns: `repeat(auto-fill, minmax(${settings.gridCardStyle.widthPreset}px, 1fr))`,
                 gap: `${settings.gridGap}px`,
               }}
             >
@@ -188,8 +191,9 @@ export default function ConsoleGridLayout({
                   isFocused={focusedIndex === i}
                   onClick={() => onSelectGame(game)}
                   compact
-                  variant={cardVariant}
-                  noLabel
+                  variant={gridCardVariant}
+                  noLabel={settings.gridCardStyle.hideLabels}
+                  cornerRadius={settings.gridCardStyle.cornerRadius}
                 />
               ))}
             </div>
@@ -399,6 +403,7 @@ export default function ConsoleGridLayout({
           onSelect={onSelectCategory}
           showHints
           inputHints={settings.inputHints}
+          bottomBarPosition={settings.bottomBarPosition}
         />
       </div>
 

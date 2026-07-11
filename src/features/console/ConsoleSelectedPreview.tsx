@@ -20,6 +20,9 @@ type Props = {
   /** Autoplay trailer when entering details mode (default false).
    *  Only applies to direct mp4/webm — HLS/DASH always require user click. */
   autoplay?: boolean;
+  /** Identity key that changes whenever the selected media changes.
+   *  Used to force video element remount across media type/selection switches. */
+  mediaIdentityKey?: string;
 };
 
 const DEBUG_PREVIEW = false;
@@ -60,7 +63,7 @@ function formatTime(seconds: number): string {
  */
 export default function ConsoleSelectedPreview({
   game, showTrailerPreview = true, trailerData, screenshotOverrideUrl,
-  mode = "thumbnail", autoplay = false,
+  mode = "thumbnail", autoplay = false, mediaIdentityKey,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -69,6 +72,7 @@ export default function ConsoleSelectedPreview({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [hasEnded, setHasEnded] = useState(false);
   const [thumbnailOnlyClicked, setThumbnailOnlyClicked] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -249,10 +253,24 @@ export default function ConsoleSelectedPreview({
     };
   }, []);
 
+  /* ── Detect ended state from currentTime vs duration ── */
+  useEffect(() => {
+    if (detailsMode && hasVideo && duration > 0 && currentTime >= duration && !isPlaying) {
+      setHasEnded(true);
+    }
+  }, [currentTime, duration, detailsMode, hasVideo, isPlaying]);
+
+  /* ── Reset ended state when media identity changes ── */
+  useEffect(() => {
+    setHasEnded(false);
+  }, [mediaIdentityKey]);
+
   /* ── Play/Pause handler ── */
   const handlePlayClick = useCallback(() => {
     if (videoRef.current && hasVideo && !videoError) {
       if (playType === "hls" && isLoading) return;
+      setHasEnded(false);
+      videoRef.current.currentTime = 0;
       videoRef.current.play().catch(() => {});
       if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[PLAY] appid=${game?.appId} src=${videoSrc?.substring(0, 80) ?? "null"}`);
       return;
@@ -269,6 +287,7 @@ export default function ConsoleSelectedPreview({
   /* ── Native video event handlers ── */
   const handleNativePlay = useCallback(() => {
     setIsPlaying(true);
+    setHasEnded(false);
   }, []);
 
   const handleNativePause = useCallback(() => {
@@ -288,6 +307,7 @@ export default function ConsoleSelectedPreview({
 
   const handleVideoEnded = useCallback(() => {
     setIsPlaying(false);
+    setHasEnded(true);
     setShowControls(true);
   }, []);
 
@@ -411,7 +431,7 @@ export default function ConsoleSelectedPreview({
         <video
           ref={videoRef}
           data-console-preview-video={game.appId}
-          key={`${game.appId}-${trailerData?.playableUrl ?? "none"}`}
+          key={`${game.appId}-${mediaIdentityKey ?? trailerData?.playableUrl ?? "none"}`}
           muted
           playsInline
           preload="metadata"
@@ -438,16 +458,16 @@ export default function ConsoleSelectedPreview({
                   <Loader2 className="h-7 w-7 animate-spin text-white/60" />
                 </div>
               ) : hasVideo && !videoError && !screenshotActive ? (
-                /* Play button */
+                /* Play / Replay button */
                 <button
                   type="button"
                   onClick={handlePlayClick}
                   className={`flex ${playBtnSize} items-center justify-center rounded-full bg-black/50 text-white shadow-lg shadow-black/30 backdrop-blur-xl transition-all hover:scale-110 hover:bg-(--color-accent) hover:text-white hover:shadow-xl hover:shadow-(--color-accent)/30 focus:outline-none focus:ring-2 focus:ring-(--color-accent)/60 active:scale-105`}
-                  aria-label="Play trailer"
+                  aria-label={hasEnded ? "Replay trailer" : "Play trailer"}
                 >
                   <Play className={`ml-0.5 ${playIconSize} fill-current`} />
                 </button>
-              ) : showDisabledFallback ? (
+              ) : showDisabledFallback && !hasEnded ? (
                 /* No playable source — disabled overlay */
                 <div className="group relative">
                   <button
@@ -463,6 +483,13 @@ export default function ConsoleSelectedPreview({
                   </span>
                 </div>
               ) : null}
+
+              {/* Replay label when ended */}
+              {hasEnded && (
+                <span className="pointer-events-none absolute bottom-20 left-1/2 -translate-x-1/2 rounded-md bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white/70 backdrop-blur-sm">
+                  Trailer ended — click to replay
+                </span>
+              )}
             </>
           )}
         </div>

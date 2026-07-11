@@ -90,7 +90,7 @@ type Props = {
 export default function ConsoleSwitchSpotlightLayout({
   focusedGame, rails, focusedRail, focusedIndex,
   onSelectGame, onOptionsGame: _onOptionsGame, onPlayGame: _onPlayGame, layoutMode, onToggleLayout,
-  cardVariant = "landscape", onNavigate,
+  cardVariant: _cv = "landscape", onNavigate,
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
@@ -103,6 +103,8 @@ export default function ConsoleSwitchSpotlightLayout({
   const heroSrc = getConsoleHeroBackground(focusedGame);
   const logoSrc = useMemo(() => getConsoleLogoSrc(focusedGame), [focusedGame]);
   const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
+
+  const scs = settings.spotlightCardStyle;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
   const dedupedRail = useMemo(() => deduplicateByAppId(currentRail), [currentRail]);
@@ -142,7 +144,7 @@ export default function ConsoleSwitchSpotlightLayout({
     return focusedGame?.metadata?.developer ?? null;
   }, [focusedGame]);
 
-  const spotlightVariant = cardVariant === "poster" ? "poster" : ("landscape" as const);
+  const spotlightVariant = scs.cardStyle === "poster" ? "poster" : ("landscape" as const);
 
   /* Carousel stage bottom edge = dock bottom + dock height + card-dock gap
    * This ensures the dock stays close to but never overlaps the cards. */
@@ -160,7 +162,7 @@ export default function ConsoleSwitchSpotlightLayout({
     const cards = scrollRef.current.children;
     const card = cards[focusedIndex] as HTMLElement | undefined;
     if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+      card.scrollIntoView({ behavior: settings.smoothScrolling ? "smooth" : "auto", block: "nearest", inline: "center" });
     }
   }, [focusedIndex]);
 
@@ -388,9 +390,13 @@ export default function ConsoleSwitchSpotlightLayout({
            * has room to move before clipping begins. */}
           <div
             ref={scrollRef}
-            className="flex snap-x items-center overflow-x-auto overflow-y-visible scroll-smooth scrollbar-none"
+            className={`flex items-center overflow-x-auto overflow-y-visible scrollbar-none ${
+              settings.horizontalScrolling ? "snap-x" : ""
+            } ${
+              settings.smoothScrolling ? "scroll-smooth" : ""
+            }`}
             style={{
-              gap: settings.spotlightCardGap ? `${settings.spotlightCardGap}px` : "32px",
+              gap: `${settings.spotlightCardGap}px`,
               paddingTop: LAYOUT.SCROLL_PADDING_TOP,
               paddingBottom: LAYOUT.SCROLL_PADDING_BOTTOM,
               paddingLeft: "clamp(48px, 10vw, 160px)",
@@ -410,16 +416,16 @@ export default function ConsoleSwitchSpotlightLayout({
                     tabIndex={isFocused ? 0 : -1}
                     aria-label={game.title}
                     onClick={() => onSelectGame(game)}
-                    className={`relative shrink-0 cursor-pointer rounded-xl transition-all duration-[260ms] ease-out ${
-                      spotlightVariant === "poster"
-                        ? "w-[clamp(180px,16vw,220px)]"
-                        : "w-[clamp(280px,26vw,360px)]"
-                    } ${
+                    className={`relative shrink-0 cursor-pointer transition-all duration-[260ms] ease-out ${
                       isFocused
                         ? `z-[80] scale-[1.14] -translate-y-[32px] opacity-100 saturate-[1.06] brightness-[1.04] border-(--color-accent) ring-3 ring-(--color-accent)/70`
                         : `z-[5] scale-[0.97] opacity-[0.85] brightness-[0.93] hover:!z-[30] hover:!scale-[1.04] hover:!-translate-y-2 hover:!opacity-100 hover:!brightness-100`
                     }`}
                     style={{
+                      borderRadius: scs.cornerRadius,
+                      width: spotlightVariant === "poster"
+                        ? `${Math.round(scs.widthPreset * 0.625)}px`
+                        : `${scs.widthPreset}px`,
                       boxShadow: isFocused
                         ? "0 40px 90px -24px rgba(0,0,0,0.75), 0 0 60px color-mix(in srgb, var(--color-accent) 25%, transparent)"
                         : undefined,
@@ -429,10 +435,12 @@ export default function ConsoleSwitchSpotlightLayout({
                       transitionProperty: "transform, opacity, box-shadow",
                     }}
                   >
+                    
                     <div
-                      className={`relative overflow-hidden rounded-xl ${
+                      className={`relative overflow-hidden ${
                         spotlightVariant === "poster" ? "aspect-[2/3]" : "aspect-[16/10]"
                       }`}
+                      style={{ borderRadius: scs.cornerRadius }}
                     >
                       {src ? (
                         <img
@@ -458,8 +466,8 @@ export default function ConsoleSwitchSpotlightLayout({
                       {/* Focus shine */}
                       {isFocused && settings.focusShine !== false && (
                         <div
-                          className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl"
-                          style={{ mixBlendMode: "screen" }}
+                          className="pointer-events-none absolute inset-0 overflow-hidden"
+                          style={{ borderRadius: scs.cornerRadius, mixBlendMode: "screen" }}
                         >
                           <div
                             className="absolute inset-0"

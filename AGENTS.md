@@ -2649,6 +2649,52 @@ Parts 1–8 of the media/artwork fix for the `refreshGameDetailsArtwork`/`detect
 - `tsc --noEmit` ✅ (0 errors)
 - `vite build` ✅ (only pre-existing chunk warnings)
 
+## Session — Console Mode settings-driven phantom widgets + sub-panel keyboard fix
+
+### Problem
+Console Grid/Spotlight layouts had hardcoded values for left padding, card width, scroll behavior, and scroll-snap that should have been driven by `ConsoleSettings` fields (`leftPadding`, `spotlightCardWidth`, `smoothScrolling`, `horizontalScrolling`, `bottomBarPosition`, `backgroundTexture`). Sub-panel keyboard navigation had a window handler conflict where ArrowLeft/ArrowRight fired after sub-panel handlers, overwriting selection.
+
+### Part 1: Analysis
+- `leftPadding`: hardcoded `clamp(64px, 5vw, 120px)` in GridLayout scroll container
+- `spotlightCardWidth`: hardcoded `w-[clamp(180px,16vw,220px)]`/`w-[clamp(280px,26vw,360px)]` for poster/landscape in SwitchSpotlightLayout
+- `backgroundTexture`: defined in type/defaults but never applied as CSS class
+- `smoothScrolling`/`horizontalScrolling`: never read by either layout
+- `bottomBarPosition`: never read by ConsoleCategoryBar
+- Tools/Help sub-panels accepted no shared props, had no keyboard navigation
+- Panel `handleKeyDown` processed ArrowLeft/ArrowRight for sub-panel navigation, but window `keydown` handler ALSO processed ArrowLeft/ArrowRight for page-level navigation — sub-panel's action ran first, then window handler overwrote the selection
+
+### Part 2: Panel keyboard fix — remove Left/Right from window handler
+- Removed ArrowLeft/ArrowRight case from window `keydown` listener's sub-page section in `ConsoleSettingsPanelV2.tsx`
+- Added ArrowLeft/ArrowRight to Layout, Visuals, Media, and Input sub-panel `handleKeyDown` functions for intra-panel navigation
+- Added ArrowLeft to `SettingsCategoryGrid` as back-navigation
+- All sub-panel handlers now process Left/Right without window handler overwrite
+
+### Part 3: Background texture CSS
+- `App.css` — added 4 texture classes: `[data-console-texture="none"]` (no background), `grain-soft` (repeating SVG noise pattern), `vignette` (radial gradient dark edges), `blur` (backdrop-filter blur with brightness)
+- `ConsoleModePage.tsx` — reads `consoleSettings.backgroundTexture` and applies `data-console-texture` attribute on root wrapper
+
+### Part 4: Widget settings integration
+- **GridLayout**: `paddingLeft` changed from `clamp(64px,5vw,120px)` to `${settings.leftPadding}px`; `scrollBy` behavior uses `settings.smoothScrolling`; passes `bottomBarPosition` to ConsoleCategoryBar
+- **SwitchSpotlightLayout**: card width uses `settings.spotlightCardWidth` (landscape), `settings.spotlightCardWidth * 0.625` (poster); `scroll-smooth` and `snap-x` classes conditionally applied from `settings.smoothScrolling`/`settings.horizontalScrolling`; `scrollIntoView` behavior uses `settings.smoothScrolling`
+- **ConsoleCategoryBar**: accepts `bottomBarPosition` prop; `justify-start` for left, `justify-end` with reversed DOM order for right, `justify-between` with spacer for center
+
+### Part 6+7: Help/Tools sub-pages improvements
+- `ConsoleSettingsPanelV2.tsx` — both Tools and Help sub-panels now accept `navigateTo`, `onOpenSettings`, `onBack` shared props
+- Tools: keyboard navigation to switch tabs (Keyboard/Media), Esc back to grid, real tab content
+- Help: keyboard navigation, Esc back to grid
+
+### Key Files Changed
+- `src/App.css` — grain-soft, vignette, blur texture classes
+- `src/features/console/ConsoleModePage.tsx` — `data-console-texture` attribute
+- `src/features/console/ConsoleSettingsPanelV2.tsx` — Left/Right sub-panel navigation, removed window handler Left/Right conflict, Tools/Help shared props
+- `src/features/console/ConsoleGridLayout.tsx` — settings-driven leftPadding, smoothScrolling, bottomBarPosition pass
+- `src/features/console/ConsoleSwitchSpotlightLayout.tsx` — settings-driven spotlightCardWidth, smoothScrolling, horizontalScrolling
+- `src/features/console/ConsoleCategoryBar.tsx` — bottomBarPosition alignment
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
 ### Objective 2: Fix provider status / Check Update flow
 
 ### Problem
@@ -2863,3 +2909,43 @@ Replace the flat two-column ConsoleGameDetails layout with a focus-zone model (l
 - `tsc --noEmit` ✅ (0 errors)
 - `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ✅ (0 errors)
+
+## Session — Console Home/Dock UX: Continue section, dock focus, rich empty states, label animation
+
+### Goal
+Enhance Console Mode home screen with real session-priority Continue section, dock focus navigation, rich per-section empty states, and animated dock label reveal.
+
+### Part 1: Continue section with active session priority
+- `ConsoleModePage.tsx` — `continuePlaying` now reads `GameSessionContext.sessions` + `getPlaytimeEntryByAppId` for active-session priority and accurate playtime.
+- Active sessions sorted first, then remaining by `lastPlayedAt` from playtime store, capped at 15.
+- `session` hook + `continuePlaying` moved before `rails` useMemo to fix temporal dead zone (TDZ).
+
+### Part 2: Dock focus navigation
+- `dockFocusedIndex` state (-1 unfocused, 0-4 when dock item focused).
+- `dockFocusedIndexRef` for stable ref inside keyboard handler (avoids re-registration).
+- ArrowDown from last rail (index 4) focuses dock. Left/Right wraps dock items. Up/Enter focuses last rail. Escape unfocuses.
+- `focusRail` added to keyboard handler dependency array.
+
+### Part 3: Rich empty states
+- `ConsoleSwitchSpotlightLayout.tsx` — `RichEmptyState` component with per-section icon (Play/HardDrive/Code/Heart/LayoutGrid), gradient color circle, muted description message.
+- Each of the 6 sections (Continue/Installed/Lua/Favorites/All) uses RichEmptyState instead of simple text.
+
+### Part 4: Dock label animation
+- `App.css` — `@keyframes dock-label-in` (opacity 0→1, max-width 0→100px, margin-left -4px→6px).
+- `ConsoleSpotlightDock.tsx` — focused dock item expands width to show full section label via CSS animation.
+- Focus ring (`ring-2 ring-white/50`) on focused dock item.
+
+### Part 5: Bottom hints polish
+- `ConsoleSwitchSpotlightLayout.tsx` — bottom hints change to "Arrows · Enter select · Esc unfocus" when dock focused, else "Keyboard · Arrows · Enter".
+- `ConsoleGridLayout.tsx` — `dockFocusedIndex?: number` added to Props type.
+
+### Key Files Changed
+- `src/features/console/ConsoleModePage.tsx` — session + continuePlaying reordering, dockFocusedIndex state/ref, dock keyboard nav, sharedProps spread.
+- `src/features/console/ConsoleSwitchSpotlightLayout.tsx` — RichEmptyState component, dockFocusedIndex prop, bottom hints context text.
+- `src/features/console/ConsoleSpotlightDock.tsx` — focusedIndex prop, focus ring, label animation, wider focus width.
+- `src/features/console/ConsoleGridLayout.tsx` — dockFocusedIndex added to Props.
+- `src/App.css` — @keyframes dock-label-in animation.
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)

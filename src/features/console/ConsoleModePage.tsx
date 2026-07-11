@@ -4,7 +4,6 @@ import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { useSettings } from "../../context/SettingsContext";
 import { useConsoleLibraryMedia } from "./consoleLibraryAdapter";
 import { isSidebarInstalledGame } from "../../services/gameCacheService";
 import { useConsoleSettings } from "./consoleSettings";
@@ -47,7 +46,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const { games, refresh: refreshLibraryGames } = useLibraryGames();
   const enrichedGames = useConsoleLibraryMedia(games);
   const { favoriteIds } = useFavorites();
-  const { settings: appSettings } = useSettings();
   const [consoleSettings, patchConsoleSettings] = useConsoleSettings();
   const [detailGame, setDetailGame] = useState<LibraryGame | null>(null);
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
@@ -65,8 +63,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     const luaCount = enrichedGames.filter((g) => g.hasLua || g.hasLuaSource || g.isLuaActive).length;
     console.log(`[CONSOLE][DATA_COUNTS] libraryGames=${enrichedGames.length} installed=${installedCount} lua=${luaCount} favorites=${favoriteIds.size} all=${enrichedGames.length}`);
   }
-
-  const cardVariant: "landscape" | "poster" = appSettings.libraryCardArtworkMode === "poster" ? "poster" : "landscape";
 
   const toggleLayout = useCallback(() => {
     patchConsoleSettings({ layoutMode: consoleSettings.layoutMode === "spotlight" ? "grid" : "spotlight" as ConsoleLayoutMode });
@@ -493,7 +489,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     onPlayGame: handleConsolePlay,
     layoutMode: consoleSettings.layoutMode,
     onToggleLayout: toggleLayout,
-    cardVariant,
     onNavigate,
     categoryCounts: railLengths,
     activeCategory: focusedRail >= 0 ? focusedRail : 0,
@@ -510,7 +505,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     : <ConsoleGridLayout {...sharedProps} />;
 
   return (
-    <div data-console-theme={consoleSettings.themeMode} className={`relative h-full w-full ${cursorHidden ? "cursor-none" : ""}`}>
+    <div data-console-theme={consoleSettings.themeMode} data-console-texture={consoleSettings.backgroundTexture} className={`relative h-full w-full ${cursorHidden ? "cursor-none" : ""}`}>
       {/* Always render the layout; dim when details overlay is open */}
       <div className={detailGame ? "opacity-[0.15] pointer-events-none select-none" : ""}>
         {layout}

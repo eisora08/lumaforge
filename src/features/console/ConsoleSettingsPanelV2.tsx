@@ -4,6 +4,7 @@ import {
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
   Wrench, Gamepad2, Film,
   Maximize, Grid3X3, ChevronRight, ArrowLeft,
+  Image, Tag, Rows3,
 } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -14,25 +15,37 @@ import type {
   ConsoleThemeMode,
   ConsoleInputHintStyle,
   ConsoleBackgroundTexture,
-  ConsoleBottomBarPosition,
+  GridCardStyle,
+  SpotlightCardStyle,
+  SpotlightCardVisual,
 } from "./consoleSettings";
 import {
-  resetConsoleLayoutSettings,
   resetConsoleVisualSettings,
   resetConsoleMediaSettings,
   resetConsoleInputSettings,
+  CONSOLE_THEME_INFOS,
+  WIDTH_PRESETS,
+  RADIUS_PRESETS,
+  GRID_CARD_DEFAULTS,
+  SPOTLIGHT_CARD_DEFAULTS,
+  SPOTLIGHT_CONTENT_DEFAULTS,
 } from "./consoleSettings";
 import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setScrollTarget, getScrollTarget } from "./useConsoleGamepadInput";
+
+const DEBUG_CONSOLE_SETTINGS = false;
 
 type PanelPage =
   | "main"
   | "settings"
-  | "layout"
+  | "grid-card-style"
+  | "spotlight-card-style"
+  | "spotlight-content"
   | "visuals"
   | "media"
   | "input"
   | "tools"
-  | "help";
+  | "help"
+  | "theme-picker";
 
 type Props = {
   open: boolean;
@@ -45,13 +58,11 @@ type Props = {
   onRefreshLibrary?: () => void;
 };
 
-const THEME_OPTIONS: { value: ConsoleThemeMode; label: string }[] = [
-  { value: "follow-app", label: "Follow App Theme" },
-  { value: "solaris-dark", label: "Solaris Dark" },
-  { value: "steam-deck", label: "Steam Deck" },
-  { value: "midnight", label: "Midnight" },
-  { value: "amoled", label: "AMOLED" },
-];
+const THEME_KEYS = Object.keys(CONSOLE_THEME_INFOS);
+const THEME_OPTIONS: { value: ConsoleThemeMode; label: string }[] = THEME_KEYS.map((k) => ({
+  value: k as ConsoleThemeMode,
+  label: CONSOLE_THEME_INFOS[k].label,
+}));
 
 const GLYPH_OPTIONS: { value: ConsoleInputHintStyle; label: string }[] = [
   { value: "xbox", label: "Xbox" },
@@ -67,12 +78,6 @@ const TEXTURE_OPTIONS: { value: ConsoleBackgroundTexture; label: string }[] = [
   { value: "blur", label: "Blur" },
 ];
 
-const POSITION_OPTIONS: { value: ConsoleBottomBarPosition; label: string }[] = [
-  { value: "center", label: "Center" },
-  { value: "left", label: "Left" },
-  { value: "right", label: "Right" },
-];
-
 const ANIM_DURATION_MS = 250;
 
 /* ── ALL gamepad-mapped keys that must be consumed when Quick Menu is open ── */
@@ -83,6 +88,233 @@ const GAMEPAD_KEYS = new Set([
   "q", "Q", "e", "E", "PageUp", "PageDown",
   " ", "p", "P", "Alt", "ContextMenu", "Apps",
 ]);
+
+// ============================================================
+// Row definition types for subpage keyboard/gamepad navigation
+// ============================================================
+type SettingRowType = "slider" | "toggle" | "segmented" | "button" | "preview";
+
+type SettingRowDef = {
+  id: string;
+  type: SettingRowType;
+  label: string;
+  description?: string;
+  sliderMin?: number;
+  sliderMax?: number;
+  sliderStep?: number;
+  sliderUnit?: string;
+  segOptions?: { value: string; label: string }[];
+  getValue: (s: ConsoleSettings) => string | number | boolean;
+  onAction: (s: ConsoleSettings, key: "left" | "right" | "enter") => Partial<ConsoleSettings>;
+};
+
+const WIDTH_SEG_OPTIONS = WIDTH_PRESETS.map(p => ({ value: p.value.toString(), label: p.label }));
+const RADIUS_SEG_OPTIONS = RADIUS_PRESETS.map(p => ({ value: p.value.toString(), label: p.label }));
+
+function findNearestPreset(value: number, presets: { value: number }[]): number {
+  return presets.reduce((prev, curr) =>
+    Math.abs(curr.value - value) < Math.abs(prev.value - value) ? curr : prev
+  ).value;
+}
+
+function patchGridCardStyle(s: ConsoleSettings, patch: Partial<GridCardStyle>): Partial<ConsoleSettings> {
+  return { gridCardStyle: { ...s.gridCardStyle, ...patch } };
+}
+
+function patchSpotlightCardStyle(s: ConsoleSettings, patch: Partial<SpotlightCardStyle>): Partial<ConsoleSettings> {
+  return { spotlightCardStyle: { ...s.spotlightCardStyle, ...patch } };
+}
+
+const CARD_STYLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "poster", label: "Poster" },
+  { value: "landscape", label: "Landscape" },
+  { value: "hero", label: "Hero" },
+];
+
+const SETTING_ROWS_GRID: SettingRowDef[] = [
+  {
+    id: "gridWidthPreset", type: "segmented", label: "Width Presets",
+    segOptions: WIDTH_SEG_OPTIONS,
+    getValue: (s) => findNearestPreset(s.gridCardStyle.widthPreset, WIDTH_PRESETS).toString(),
+    onAction: (s, k) => {
+      const cur = findNearestPreset(s.gridCardStyle.widthPreset, WIDTH_PRESETS);
+      const idx = WIDTH_SEG_OPTIONS.findIndex(o => Number(o.value) === cur);
+      const next = WIDTH_SEG_OPTIONS[Math.min(WIDTH_SEG_OPTIONS.length - 1, idx + 1)];
+      const prev = WIDTH_SEG_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? patchGridCardStyle(s, { widthPreset: Number(prev.value) }) : {};
+      return next ? patchGridCardStyle(s, { widthPreset: Number(next.value) }) : {};
+    },
+  },
+  {
+    id: "gridCornerRadius", type: "segmented", label: "Corner Radius",
+    segOptions: RADIUS_SEG_OPTIONS,
+    getValue: (s) => findNearestPreset(s.gridCardStyle.cornerRadius, RADIUS_PRESETS).toString(),
+    onAction: (s, k) => {
+      const cur = findNearestPreset(s.gridCardStyle.cornerRadius, RADIUS_PRESETS);
+      const idx = RADIUS_SEG_OPTIONS.findIndex(o => Number(o.value) === cur);
+      const next = RADIUS_SEG_OPTIONS[Math.min(RADIUS_SEG_OPTIONS.length - 1, idx + 1)];
+      const prev = RADIUS_SEG_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? patchGridCardStyle(s, { cornerRadius: Number(prev.value) }) : {};
+      return next ? patchGridCardStyle(s, { cornerRadius: Number(next.value) }) : {};
+    },
+  },
+  {
+    id: "gridLandscapePosters", type: "toggle", label: "Landscape Posters",
+    description: "Wide landscape cards instead of tall poster cards",
+    getValue: (s) => s.gridCardStyle.useLandscapeCards,
+    onAction: (s) => patchGridCardStyle(s, { useLandscapeCards: !s.gridCardStyle.useLandscapeCards }),
+  },
+  {
+    id: "gridHideLabels", type: "toggle", label: "Hide Labels",
+    description: "Remove title labels from cards",
+    getValue: (s) => s.gridCardStyle.hideLabels,
+    onAction: (s) => patchGridCardStyle(s, { hideLabels: !s.gridCardStyle.hideLabels }),
+  },
+  { id: "gridPreview", type: "preview", label: "Live Preview", getValue: () => "", onAction: () => ({}) },
+  { id: "resetGrid", type: "button", label: "Reset Grid Card Style", getValue: () => "", onAction: (s) => patchGridCardStyle(s, { ...GRID_CARD_DEFAULTS }) },
+];
+
+const SETTING_ROWS_SPOTLIGHT: SettingRowDef[] = [
+  {
+    id: "spCardStyle", type: "segmented", label: "Card Style",
+    segOptions: CARD_STYLE_OPTIONS,
+    getValue: (s) => s.spotlightCardStyle.cardStyle,
+    onAction: (s, k) => {
+      const idx = CARD_STYLE_OPTIONS.findIndex(o => o.value === s.spotlightCardStyle.cardStyle);
+      const next = CARD_STYLE_OPTIONS[Math.min(CARD_STYLE_OPTIONS.length - 1, idx + 1)];
+      const prev = CARD_STYLE_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? patchSpotlightCardStyle(s, { cardStyle: prev.value as SpotlightCardVisual }) : {};
+      return next ? patchSpotlightCardStyle(s, { cardStyle: next.value as SpotlightCardVisual }) : {};
+    },
+  },
+  {
+    id: "spWidthPreset", type: "segmented", label: "Width Presets",
+    segOptions: WIDTH_SEG_OPTIONS,
+    getValue: (s) => findNearestPreset(s.spotlightCardStyle.widthPreset, WIDTH_PRESETS).toString(),
+    onAction: (s, k) => {
+      const cur = findNearestPreset(s.spotlightCardStyle.widthPreset, WIDTH_PRESETS);
+      const idx = WIDTH_SEG_OPTIONS.findIndex(o => Number(o.value) === cur);
+      const next = WIDTH_SEG_OPTIONS[Math.min(WIDTH_SEG_OPTIONS.length - 1, idx + 1)];
+      const prev = WIDTH_SEG_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? patchSpotlightCardStyle(s, { widthPreset: Number(prev.value) }) : {};
+      return next ? patchSpotlightCardStyle(s, { widthPreset: Number(next.value) }) : {};
+    },
+  },
+  {
+    id: "spCornerRadius", type: "segmented", label: "Corner Radius",
+    segOptions: RADIUS_SEG_OPTIONS,
+    getValue: (s) => findNearestPreset(s.spotlightCardStyle.cornerRadius, RADIUS_PRESETS).toString(),
+    onAction: (s, k) => {
+      const cur = findNearestPreset(s.spotlightCardStyle.cornerRadius, RADIUS_PRESETS);
+      const idx = RADIUS_SEG_OPTIONS.findIndex(o => Number(o.value) === cur);
+      const next = RADIUS_SEG_OPTIONS[Math.min(RADIUS_SEG_OPTIONS.length - 1, idx + 1)];
+      const prev = RADIUS_SEG_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? patchSpotlightCardStyle(s, { cornerRadius: Number(prev.value) }) : {};
+      return next ? patchSpotlightCardStyle(s, { cornerRadius: Number(next.value) }) : {};
+    },
+  },
+  {
+    id: "spHideLabels", type: "toggle", label: "Hide Labels",
+    description: "Remove title labels from cards",
+    getValue: (s) => s.spotlightCardStyle.hideLabels,
+    onAction: (s) => patchSpotlightCardStyle(s, { hideLabels: !s.spotlightCardStyle.hideLabels }),
+  },
+  {
+    id: "spTrailerPreview", type: "toggle", label: "Trailer Preview",
+    description: "Show trailer/artwork preview in Spotlight",
+    getValue: (s) => s.spotlightCardStyle.showTrailerPreview,
+    onAction: (s) => patchSpotlightCardStyle(s, { showTrailerPreview: !s.spotlightCardStyle.showTrailerPreview }),
+  },
+  { id: "spPreview", type: "preview", label: "Live Preview", getValue: () => "", onAction: () => ({}) },
+  { id: "resetSpotlight", type: "button", label: "Reset Spotlight Card Style", getValue: () => "", onAction: (s) => patchSpotlightCardStyle(s, { ...SPOTLIGHT_CARD_DEFAULTS }) },
+];
+
+const SETTING_ROWS_SPOTLIGHT_CONTENT: SettingRowDef[] = [
+  { id: "scShowAboutGame", type: "toggle", label: "Show About Game", description: "Display About Game section in details panel", getValue: (s) => s.spotlightContent.showAboutGame, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showAboutGame: !s.spotlightContent.showAboutGame } }) },
+  { id: "scShowScreenshots", type: "toggle", label: "Show Screenshots", description: "Display screenshot carousel in details panel", getValue: (s) => s.spotlightContent.showScreenshots, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showScreenshots: !s.spotlightContent.showScreenshots } }) },
+  { id: "scShowTrailerPreview", type: "toggle", label: "Show Trailer Preview", description: "Display trailer/artwork video preview in details panel", getValue: (s) => s.spotlightContent.showTrailerPreview, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showTrailerPreview: !s.spotlightContent.showTrailerPreview } }) },
+  { id: "scShowReviews", type: "toggle", label: "Show Reviews", description: "Display review summary card in details panel", getValue: (s) => s.spotlightContent.showReviews, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showReviews: !s.spotlightContent.showReviews } }) },
+  { id: "scShowAchievements", type: "toggle", label: "Show Achievements", description: "Display achievement card in details panel", getValue: (s) => s.spotlightContent.showAchievements, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showAchievements: !s.spotlightContent.showAchievements } }) },
+  { id: "scShowMetadata", type: "toggle", label: "Show Metadata", description: "Display genres, developer, publisher, platforms, languages, requirements", getValue: (s) => s.spotlightContent.showMetadata, onAction: (s) => ({ spotlightContent: { ...s.spotlightContent, showMetadata: !s.spotlightContent.showMetadata } }) },
+  { id: "resetSpotlightContent", type: "button", label: "Reset Content to Defaults", getValue: () => "", onAction: () => ({ spotlightContent: { ...SPOTLIGHT_CONTENT_DEFAULTS } }) },
+];
+
+const SETTING_ROWS_VISUALS: SettingRowDef[] = [
+  {
+    id: "themeMode", type: "segmented", label: "Console Theme",
+    segOptions: THEME_OPTIONS, getValue: (s) => s.themeMode,
+    onAction: (s, k) => {
+      const idx = THEME_OPTIONS.findIndex(o => o.value === s.themeMode);
+      const next = THEME_OPTIONS[Math.min(THEME_OPTIONS.length - 1, idx + 1)];
+      const prev = THEME_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { themeMode: prev.value } : {};
+      return next ? { themeMode: next.value } : {};
+    },
+  },
+  {
+    id: "backgroundTexture", type: "segmented", label: "Background Texture",
+    segOptions: TEXTURE_OPTIONS, getValue: (s) => s.backgroundTexture,
+    onAction: (s, k) => {
+      const idx = TEXTURE_OPTIONS.findIndex(o => o.value === s.backgroundTexture);
+      const next = TEXTURE_OPTIONS[Math.min(TEXTURE_OPTIONS.length - 1, idx + 1)];
+      const prev = TEXTURE_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { backgroundTexture: prev.value } : {};
+      return next ? { backgroundTexture: next.value } : {};
+    },
+  },
+  { id: "focusShine", type: "toggle", label: "Focus Shine Animation", description: "Glow sweep on focused cards", getValue: (s) => s.focusShine, onAction: (s) => ({ focusShine: !s.focusShine }) },
+  { id: "heroMotion", type: "toggle", label: "Hero Motion", description: "Slow Ken Burns effect on hero background", getValue: (s) => s.heroMotion, onAction: (s) => ({ heroMotion: !s.heroMotion }) },
+  { id: "showTrailerPreview", type: "toggle", label: "Show Trailer Preview", description: "Show mini trailer/artwork preview in Spotlight", getValue: (s) => s.spotlightCardStyle.showTrailerPreview, onAction: (s) => patchSpotlightCardStyle(s, { showTrailerPreview: !s.spotlightCardStyle.showTrailerPreview }) },
+  { id: "spotlightCardWidth", type: "slider", label: "Spotlight Card Width", sliderMin: 200, sliderMax: 420, sliderStep: 10, sliderUnit: "px", getValue: (s) => s.spotlightCardStyle.widthPreset, onAction: (s, k) => patchSpotlightCardStyle(s, { widthPreset: k === "left" ? Math.max(200, s.spotlightCardStyle.widthPreset - 10) : Math.min(420, s.spotlightCardStyle.widthPreset + 10) }) },
+  { id: "spotlightCardGap", type: "slider", label: "Spotlight Card Gap", sliderMin: 8, sliderMax: 48, sliderStep: 2, sliderUnit: "px", getValue: (s) => s.spotlightCardGap, onAction: (s, k) => k === "left" ? { spotlightCardGap: Math.max(8, s.spotlightCardGap - 2) } : { spotlightCardGap: Math.min(48, s.spotlightCardGap + 2) } },
+  { id: "resetVisuals", type: "button", label: "Reset Visuals to Defaults", getValue: () => "", onAction: () => resetConsoleVisualSettings() },
+];
+
+const SETTING_ROWS_MEDIA: SettingRowDef[] = [
+  { id: "useSteamGridDb", type: "toggle", label: "Use SteamGridDB", description: "Artwork from SteamGridDB (requires API key)", getValue: (s) => s.useSteamGridDb, onAction: (s) => ({ useSteamGridDb: !s.useSteamGridDb }) },
+  { id: "useSteamAppDetails", type: "toggle", label: "Use Steam AppDetails", description: "Images from Steam Store metadata", getValue: (s) => s.useSteamAppDetails, onAction: (s) => ({ useSteamAppDetails: !s.useSteamAppDetails }) },
+  { id: "useIgdb", type: "toggle", label: "Use IGDB", description: "Cover art from IGDB (requires Client ID + Secret)", getValue: (s) => s.useIgdb, onAction: (s) => ({ useIgdb: !s.useIgdb }) },
+  { id: "useRawg", type: "toggle", label: "Use RAWG", description: "Backgrounds from RAWG (requires API key)", getValue: (s) => s.useRawg, onAction: (s) => ({ useRawg: !s.useRawg }) },
+  { id: "trailerShow", type: "toggle", label: "Show Trailer Preview", description: "Show trailer/artwork preview in details panel", getValue: (s) => s.showTrailerPreview, onAction: (s) => ({ showTrailerPreview: !s.showTrailerPreview }) },
+  { id: "autoplayTrailers", type: "toggle", label: "Autoplay Trailers", description: "Start trailer automatically when entering details", getValue: (s) => s.autoplayTrailerPreviews, onAction: (s) => ({ autoplayTrailerPreviews: !s.autoplayTrailerPreviews }) },
+  { id: "preferDirectVideo", type: "toggle", label: "Prefer Direct Video", description: "Use MP4/WebM when available (fallback to HLS/DASH)", getValue: (s) => s.preferDirectVideo, onAction: (s) => ({ preferDirectVideo: !s.preferDirectVideo }) },
+  { id: "resetMedia", type: "button", label: "Reset Media to Defaults", getValue: () => "", onAction: () => resetConsoleMediaSettings() },
+];
+
+const SETTING_ROWS_INPUT: SettingRowDef[] = [
+  {
+    id: "inputHints", type: "segmented", label: "Input Hints Style",
+    segOptions: GLYPH_OPTIONS, getValue: (s) => s.inputHints,
+    onAction: (s, k) => {
+      const idx = GLYPH_OPTIONS.findIndex(o => o.value === s.inputHints);
+      const next = GLYPH_OPTIONS[Math.min(GLYPH_OPTIONS.length - 1, idx + 1)];
+      const prev = GLYPH_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { inputHints: prev.value } : {};
+      return next ? { inputHints: next.value } : {};
+    },
+  },
+  { id: "showButtonHints", type: "toggle", label: "Show Button Hints", getValue: (s) => s.showButtonHints, onAction: (s) => ({ showButtonHints: !s.showButtonHints }) },
+  { id: "showBottomHints", type: "toggle", label: "Show Bottom Hints", getValue: (s) => s.showBottomHints, onAction: (s) => ({ showBottomHints: !s.showBottomHints }) },
+  { id: "resetInput", type: "button", label: "Reset Input to Defaults", getValue: () => "", onAction: () => resetConsoleInputSettings() },
+];
+
+const SUBPAGE_ROWS: Record<string, SettingRowDef[]> = {
+  "grid-card-style": SETTING_ROWS_GRID,
+  "spotlight-card-style": SETTING_ROWS_SPOTLIGHT,
+  "spotlight-content": SETTING_ROWS_SPOTLIGHT_CONTENT,
+  visuals: SETTING_ROWS_VISUALS,
+  media: SETTING_ROWS_MEDIA,
+  input: SETTING_ROWS_INPUT,
+};
+
+const SUBPAGE_TITLES: Record<string, string> = {
+  "grid-card-style": "Grid Card Style",
+  "spotlight-card-style": "Spotlight Card Style",
+  "spotlight-content": "Spotlight Content",
+  visuals: "Visuals",
+  media: "Media & Trailers",
+  input: "Input Settings",
+};
 
 // ============================================================
 // Option row
@@ -203,35 +435,70 @@ function SliderRow({
 }
 
 // ============================================================
-// Button group row
+// Segmented row — single container, no focusable children
+// Left/Right cycling handled by the window keydown handler
 // ============================================================
-function ButtonGroupRow<T extends string>({
-  label, options, value, onChange, isFocused,
+function SegmentedRow({
+  label, options, value, isFocused,
 }: {
   label: string;
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
+  options: { value: string; label: string }[];
+  value: string;
   isFocused?: boolean;
 }) {
+  const currentLabel = options.find((o) => o.value === value)?.label ?? value;
   return (
-    <div className={`rounded-xl px-4 py-3 transition ${
-      isFocused ? "bg-(--color-accent)/15 ring-2 ring-(--color-accent)/50" : ""
-    }`}>
-      <label className="mb-2 block text-sm text-(--color-muted)">{label}</label>
-      <div className="flex flex-wrap gap-2">
-        {options.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => onChange(opt.value)}
-            className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${
-              value === opt.value
-                ? "border-(--color-accent) bg-(--color-accent)/15 text-(--color-accent)"
-                : "border-(--color-border) bg-(--color-surface) text-(--color-muted) hover:border-(--color-accent)/40 hover:text-(--color-text)"
-            }`}
-          >
-            {opt.label}
-          </button>
+    <div
+      className={`flex items-center justify-between rounded-xl px-4 py-3 transition ${
+        isFocused ? "bg-(--color-accent)/15 ring-2 ring-(--color-accent)/50" : ""
+      }`}
+    >
+      <span className="text-sm font-medium text-(--color-muted)">{label}</span>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-(--color-muted)/40 opacity-40">◄</span>
+        <span className="font-medium text-(--color-text)">{currentLabel}</span>
+        <span className="text-(--color-muted)/40 opacity-40">►</span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Theme row — premium card with swatches + left/right indicators
+// ============================================================
+function ThemeRow({
+  value, isFocused,
+}: {
+  value: string;
+  isFocused?: boolean;
+}) {
+  const info = CONSOLE_THEME_INFOS[value];
+  const swatches = info?.swatches ?? [];
+  return (
+    <div
+      className={`rounded-xl px-5 py-4 transition ${
+        isFocused ? "bg-(--color-accent)/20 ring-2 ring-(--color-accent)/60 scale-[1.01]" : "bg-(--color-surface)/30"
+      }`}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <span className="text-sm font-medium text-(--color-muted)">Console Theme</span>
+          <p className="text-base font-bold text-(--color-text)">{info?.label ?? value}</p>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-(--color-muted)/60">
+          <span>◄</span>
+          <span className="text-(--color-muted)/30">|</span>
+          <span>►</span>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        {swatches.map((s, i) => (
+          <div
+            key={i}
+            className="h-5 w-5 rounded-full border border-(--color-border)"
+            style={{ background: s }}
+            title={info ? Object.keys(CONSOLE_THEME_INFOS[value]!)[i] : undefined}
+          />
         ))}
       </div>
     </div>
@@ -239,175 +506,261 @@ function ButtonGroupRow<T extends string>({
 }
 
 // ============================================================
-// Layout sub-panel
+// Live Card Preview — shows a real-time styled card mockup
 // ============================================================
-function ConsoleLayoutSubPanel({
-  settings, onPatch, onBack, focusedIndex, onFocusChange, itemCount,
+function LiveCardPreview({
+  cornerRadius, hideLabels, isLandscape, isFocused, label,
 }: {
+  cornerRadius: number;
+  hideLabels: boolean;
+  isLandscape: boolean;
+  isFocused?: boolean;
+  label?: string;
+}) {
+  const cardW = isLandscape ? "w-[180px]" : "w-[120px]";
+  const cardH = isLandscape ? "h-[100px]" : "h-[160px]";
+  return (
+    <div className={`rounded-xl px-4 py-4 transition ${isFocused ? "bg-(--color-accent)/10 ring-2 ring-(--color-accent)/40" : ""}`}>
+      <div className="flex items-center gap-3 mb-3 text-sm font-medium text-(--color-muted)">
+        <Image className="h-4 w-4" />
+        {label ?? "Live Preview"}
+      </div>
+      <div className="flex items-center justify-center gap-3 pt-1">
+        {/* Card mockup */}
+        <div
+          className={`${cardW} ${cardH} shrink-0 flex flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-(--color-accent)/40 to-(--color-accent)/10 border border-(--color-border) shadow-lg`}
+          style={{ borderRadius: cornerRadius > 0 ? cornerRadius : undefined }}
+        >
+          <div className="flex items-center justify-center h-full w-full bg-black/20">
+            <Image className="h-8 w-8 text-(--color-muted)/30" />
+          </div>
+          {!hideLabels && !isLandscape && (
+            <div className="w-full px-2 py-1.5 text-center">
+              <p className="text-[10px] font-medium text-(--color-text) leading-tight truncate">Game Title</p>
+            </div>
+          )}
+          {!hideLabels && isLandscape && (
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 pb-2 pt-8">
+              <p className="text-[10px] font-medium text-white leading-tight truncate">Game Title</p>
+            </div>
+          )}
+        </div>
+        {/* Info tags */}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1.5 text-[11px] text-(--color-muted)">
+            <Tag className="h-3 w-3" />
+            {isLandscape ? "Landscape" : "Poster"}
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] text-(--color-muted)">
+            <Rows3 className="h-3 w-3" />
+            R{cornerRadius}px
+          </div>
+          {hideLabels && (
+            <div className="flex items-center gap-1.5 text-[11px] text-(--color-muted)">
+              <span className="h-3 w-3 text-center text-[9px] leading-none">⊘</span>
+              No label
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Shared settings sub-page (reads row definitions, no onKeyDown — window handler does nav)
+// ============================================================
+function ConsoleSettingsSubPage({
+  title, rows, settings, onPatch, onBack, focusedIndex, settingEditingId, subPageName,
+}: {
+  title: string;
+  rows: SettingRowDef[];
   settings: ConsoleSettings;
   onPatch: (p: Partial<ConsoleSettings>) => void;
+  onBack: () => void;
+  focusedIndex: number;
+  settingEditingId: string | null;
+  subPageName?: string;
+}) {
+  const renderRow = (row: SettingRowDef, i: number) => {
+    const isFocused = focusedIndex === i;
+    const isEditing = settingEditingId === row.id && row.type !== "toggle" && row.type !== "button";
+    const viz = isFocused || isEditing;
+    switch (row.type) {
+      case "slider":
+        return (
+          <SliderRow
+            key={row.id}
+            label={row.label}
+            value={row.getValue(settings) as number}
+            min={row.sliderMin!}
+            max={row.sliderMax!}
+            step={row.sliderStep!}
+            unit={row.sliderUnit ?? ""}
+            onChange={(v) => onPatch(row.onAction(settings, v > (row.getValue(settings) as number) ? "right" : "left"))}
+            isFocused={viz}
+          />
+        );
+      case "toggle":
+        return (
+          <ToggleRow
+            key={row.id}
+            label={row.label}
+            description={row.description}
+            enabled={row.getValue(settings) as boolean}
+            onChange={() => onPatch(row.onAction(settings, "enter"))}
+            isFocused={isFocused}
+          />
+        );
+      case "segmented":
+        if (row.id === "themeMode") {
+          return (
+            <ThemeRow
+              key={row.id}
+              value={row.getValue(settings) as string}
+              isFocused={viz}
+            />
+          );
+        }
+        return (
+          <SegmentedRow
+            key={row.id}
+            label={row.label}
+            options={row.segOptions!}
+            value={row.getValue(settings) as string}
+            isFocused={viz}
+          />
+        );
+      case "button":
+        return (
+          <button
+            key={row.id}
+            onClick={() => onPatch(row.onAction(settings, "enter"))}
+            className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${isFocused ? "ring-2 ring-amber-500/60" : ""}`}
+          >
+            {row.label}
+          </button>
+        );
+      case "preview": {
+        // Determine card style based on subPageName
+        const isGrid = subPageName === "grid-card-style";
+        const gs = settings.gridCardStyle;
+        const ss = settings.spotlightCardStyle;
+        const previewRadius = isGrid ? gs.cornerRadius : ss.cornerRadius;
+        const previewHideLabels = isGrid ? gs.hideLabels : ss.hideLabels;
+        const previewLandscape = isGrid ? gs.useLandscapeCards : ss.cardStyle !== "poster";
+        return (
+          <LiveCardPreview
+            key={row.id}
+            cornerRadius={previewRadius}
+            hideLabels={previewHideLabels}
+            isLandscape={previewLandscape}
+            isFocused={viz}
+            label={isGrid ? "Grid Preview" : "Spotlight Preview"}
+          />
+        );
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 outline-none">
+      <SubPanelHeader title={title} onBack={onBack} />
+      {rows.map((row, i) => renderRow(row, i))}
+    </div>
+  );
+}
+
+// ============================================================
+// Theme Picker subpage — grid of theme cards with swatches
+// ============================================================
+function ThemePickerSubPanel({
+  currentTheme, onSelect, onBack, focusedIndex, onFocusChange, itemCount,
+}: {
+  currentTheme: string;
+  onSelect: (theme: string) => void;
   onBack: () => void;
   focusedIndex: number;
   onFocusChange: (i: number) => void;
   itemCount: React.MutableRefObject<number>;
 }) {
-  const totalItems = 11;
+  const themeKeys = THEME_KEYS;
+  const totalItems = themeKeys.length;
   itemCount.current = totalItems;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems - 1, focusedIndex + 1)); }
-    if (e.key === "Enter") { e.preventDefault(); if (focusedIndex === totalItems - 1) { const p = resetConsoleLayoutSettings(); onPatch(p); } }
-    if (e.key === "Escape") { e.preventDefault(); onBack(); }
+    e.stopPropagation();
+    const cols = 2;
+    switch (e.key) {
+      case "ArrowUp":
+        e.preventDefault();
+        onFocusChange(Math.max(0, focusedIndex - cols));
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        onFocusChange(Math.min(totalItems - 1, focusedIndex + cols));
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        onFocusChange(Math.max(0, focusedIndex - 1));
+        break;
+      case "ArrowRight":
+      case "Enter":
+      case "a":
+        e.preventDefault();
+        onFocusChange(Math.min(totalItems - 1, focusedIndex + 1));
+        break;
+      case "Escape":
+      case "b":
+      case "B":
+        e.preventDefault();
+        onBack();
+        break;
+    }
   };
 
   return (
     <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
-      <SubPanelHeader title="Layout Settings" onBack={onBack} />
-      <SliderRow label="Card Size" value={settings.cardSize} min={180} max={280} step={5} unit="px" onChange={(v) => onPatch({ cardSize: v })} isFocused={focusedIndex === 1} />
-      <SliderRow label="Grid Columns" value={settings.gridColumns} min={4} max={14} step={1} unit="" onChange={(v) => onPatch({ gridColumns: v })} isFocused={focusedIndex === 2} />
-      <SliderRow label="Grid Gap" value={settings.gridGap} min={16} max={64} step={4} unit="px" onChange={(v) => onPatch({ gridGap: v })} isFocused={focusedIndex === 3} />
-      <SliderRow label="Left Padding" value={settings.leftPadding} min={24} max={160} step={8} unit="px" onChange={(v) => onPatch({ leftPadding: v })} isFocused={focusedIndex === 4} />
-      <SliderRow label="Side Panel Width" value={settings.sidePanelWidth} min={560} max={860} step={10} unit="px" onChange={(v) => onPatch({ sidePanelWidth: v })} isFocused={focusedIndex === 5} />
-      <ButtonGroupRow label="Bottom Bar Position" options={POSITION_OPTIONS} value={settings.bottomBarPosition} onChange={(v) => onPatch({ bottomBarPosition: v })} isFocused={focusedIndex === 6} />
-      <ToggleRow label="Horizontal Scrolling" enabled={settings.horizontalScrolling} onChange={() => onPatch({ horizontalScrolling: !settings.horizontalScrolling })} isFocused={focusedIndex === 7} />
-      <ToggleRow label="Smooth Scrolling" enabled={settings.smoothScrolling} onChange={() => onPatch({ smoothScrolling: !settings.smoothScrolling })} isFocused={focusedIndex === 8} />
-      <button
-        onClick={() => { const p = resetConsoleLayoutSettings(); onPatch(p); }}
-        className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${focusedIndex === 9 ? "ring-2 ring-amber-500/60" : ""}`}
-      >
-        Reset Layout to Defaults
-      </button>
-    </div>
-  );
-}
-
-// ============================================================
-// Visuals sub-panel
-// ============================================================
-function ConsoleVisualsSubPanel({
-  settings, onPatch, onBack, focusedIndex, onFocusChange, itemCount,
-}: {
-  settings: ConsoleSettings;
-  onPatch: (p: Partial<ConsoleSettings>) => void;
-  onBack: () => void;
-  focusedIndex: number;
-  onFocusChange: (i: number) => void;
-  itemCount: React.MutableRefObject<number>;
-}) {
-  const totalItems = 8;
-  itemCount.current = totalItems;
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems, focusedIndex + 1)); }
-    if (e.key === "Enter") { e.preventDefault(); if (focusedIndex === totalItems) { const p = resetConsoleVisualSettings(); onPatch(p); } }
-    if (e.key === "Escape") { e.preventDefault(); onBack(); }
-  };
-
-  return (
-    <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
-      <SubPanelHeader title="Visuals" onBack={onBack} />
-      <ButtonGroupRow label="Console Theme" options={THEME_OPTIONS} value={settings.themeMode} onChange={(v) => onPatch({ themeMode: v })} isFocused={focusedIndex === 1} />
-      <ButtonGroupRow label="Background Texture" options={TEXTURE_OPTIONS} value={settings.backgroundTexture} onChange={(v) => onPatch({ backgroundTexture: v })} isFocused={focusedIndex === 2} />
-      <ToggleRow label="Focus Shine Animation" description="Glow sweep on focused cards" enabled={settings.focusShine} onChange={() => onPatch({ focusShine: !settings.focusShine })} isFocused={focusedIndex === 3} />
-      <ToggleRow label="Hero Motion" description="Slow Ken Burns effect on hero background" enabled={settings.heroMotion} onChange={() => onPatch({ heroMotion: !settings.heroMotion })} isFocused={focusedIndex === 4} />
-      <ToggleRow label="Show Trailer Preview" description="Show mini trailer/artwork preview in Spotlight" enabled={settings.showTrailerPreview} onChange={() => onPatch({ showTrailerPreview: !settings.showTrailerPreview })} isFocused={focusedIndex === 5} />
-      <SliderRow label="Spotlight Card Width" value={settings.spotlightCardWidth} min={200} max={420} step={10} unit="px" onChange={(v) => onPatch({ spotlightCardWidth: v })} isFocused={focusedIndex === 6} />
-      <SliderRow label="Spotlight Card Gap" value={settings.spotlightCardGap} min={8} max={48} step={2} unit="px" onChange={(v) => onPatch({ spotlightCardGap: v })} isFocused={focusedIndex === 7} />
-      <button
-        onClick={() => { const p = resetConsoleVisualSettings(); onPatch(p); }}
-        className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${focusedIndex === 8 ? "ring-2 ring-amber-500/60" : ""}`}
-      >
-        Reset Visuals to Defaults
-      </button>
-    </div>
-  );
-}
-
-// ============================================================
-// Media sub-panel
-// ============================================================
-function ConsoleMediaSubPanel({
-  settings, onPatch, onBack, focusedIndex, onFocusChange, itemCount,
-}: {
-  settings: ConsoleSettings;
-  onPatch: (p: Partial<ConsoleSettings>) => void;
-  onBack: () => void;
-  focusedIndex: number;
-  onFocusChange: (i: number) => void;
-  itemCount: React.MutableRefObject<number>;
-}) {
-  const totalItems = 7;
-  itemCount.current = totalItems + 1;
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems, focusedIndex + 1)); }
-    if (e.key === "Enter") { e.preventDefault(); if (focusedIndex === totalItems) { const p = resetConsoleMediaSettings(); onPatch(p); } }
-    if (e.key === "Escape") { e.preventDefault(); onBack(); }
-  };
-
-  return (
-    <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
-      <SubPanelHeader title="Media & Trailers" onBack={onBack} />
-
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-(--color-muted)/60 pl-1">Media Providers</div>
-      <ToggleRow label="Use SteamGridDB" description="Artwork from SteamGridDB (requires API key)" enabled={settings.useSteamGridDb} onChange={() => onPatch({ useSteamGridDb: !settings.useSteamGridDb })} isFocused={focusedIndex === 1} />
-      <ToggleRow label="Use Steam AppDetails" description="Images from Steam Store metadata" enabled={settings.useSteamAppDetails} onChange={() => onPatch({ useSteamAppDetails: !settings.useSteamAppDetails })} isFocused={focusedIndex === 2} />
-      <ToggleRow label="Use IGDB" description="Cover art from IGDB (requires Client ID + Secret)" enabled={settings.useIgdb} onChange={() => onPatch({ useIgdb: !settings.useIgdb })} isFocused={focusedIndex === 3} />
-      <ToggleRow label="Use RAWG" description="Backgrounds from RAWG (requires API key)" enabled={settings.useRawg} onChange={() => onPatch({ useRawg: !settings.useRawg })} isFocused={focusedIndex === 4} />
-
-      <div className="mt-2 mb-1 text-xs font-semibold uppercase tracking-wider text-(--color-muted)/60 pl-1">Trailer Playback</div>
-      <ToggleRow label="Show Trailer Preview" description="Show trailer/artwork preview in details panel" enabled={settings.showTrailerPreview} onChange={() => onPatch({ showTrailerPreview: !settings.showTrailerPreview })} isFocused={focusedIndex === 5} />
-      <ToggleRow label="Autoplay Trailers" description="Start trailer automatically when entering details" enabled={settings.autoplayTrailerPreviews} onChange={() => onPatch({ autoplayTrailerPreviews: !settings.autoplayTrailerPreviews })} isFocused={focusedIndex === 6} />
-      <ToggleRow label="Prefer Direct Video" description="Use MP4/WebM when available (fallback to HLS/DASH)" enabled={settings.preferDirectVideo} onChange={() => onPatch({ preferDirectVideo: !settings.preferDirectVideo })} isFocused={focusedIndex === 7} />
-
-      <button
-        onClick={() => { const p = resetConsoleMediaSettings(); onPatch(p); }}
-        className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${focusedIndex === 8 ? "ring-2 ring-amber-500/60" : ""}`}
-      >
-        Reset Media to Defaults
-      </button>
-    </div>
-  );
-}
-
-// ============================================================
-// Input sub-panel
-// ============================================================
-function ConsoleInputSubPanel({
-  settings, onPatch, onBack, focusedIndex, onFocusChange, itemCount,
-}: {
-  settings: ConsoleSettings;
-  onPatch: (p: Partial<ConsoleSettings>) => void;
-  onBack: () => void;
-  focusedIndex: number;
-  onFocusChange: (i: number) => void;
-  itemCount: React.MutableRefObject<number>;
-}) {
-  const totalItems = 3;
-  itemCount.current = totalItems + 1;
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems, focusedIndex + 1)); }
-    if (e.key === "Enter") { e.preventDefault(); if (focusedIndex === totalItems) { const p = resetConsoleInputSettings(); onPatch(p); } }
-    if (e.key === "Escape") { e.preventDefault(); onBack(); }
-  };
-
-  return (
-    <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
-      <SubPanelHeader title="Input Settings" onBack={onBack} />
-      <ButtonGroupRow label="Input Hints Style" options={GLYPH_OPTIONS} value={settings.inputHints} onChange={(v) => onPatch({ inputHints: v })} isFocused={focusedIndex === 1} />
-      <ToggleRow label="Show Button Hints" enabled={settings.showButtonHints} onChange={() => onPatch({ showButtonHints: !settings.showButtonHints })} isFocused={focusedIndex === 2} />
-      <ToggleRow label="Show Bottom Hints" enabled={settings.showBottomHints} onChange={() => onPatch({ showBottomHints: !settings.showBottomHints })} isFocused={focusedIndex === 3} />
-      <button
-        onClick={() => { const p = resetConsoleInputSettings(); onPatch(p); }}
-        className={`w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-3 text-sm font-medium text-amber-400 transition hover:bg-amber-500/15 ${focusedIndex === 4 ? "ring-2 ring-amber-500/60" : ""}`}
-      >
-        Reset Input to Defaults
-      </button>
+      <SubPanelHeader title="Theme Picker" onBack={onBack} />
+      <p className="text-sm text-(--color-muted) mb-2">Choose a console theme. Left/Right arrows to select, Enter to confirm, Escape to go back.</p>
+      <div className="grid grid-cols-2 gap-3">
+        {themeKeys.map((k, i) => {
+          const info = CONSOLE_THEME_INFOS[k];
+          const isSelected = k === currentTheme;
+          const isFocused = focusedIndex === i;
+          const swatches = info?.swatches ?? [];
+          return (
+            <button
+              key={k}
+              onClick={() => onSelect(k)}
+              className={`flex flex-col gap-3 rounded-2xl border px-4 py-4 text-left transition ${
+                isFocused
+                  ? "border-(--color-accent) bg-(--color-accent)/15 ring-2 ring-(--color-accent)/60 scale-[1.02]"
+                  : isSelected
+                    ? "border-(--color-accent)/50 bg-(--color-accent)/8"
+                    : "border-(--color-border) bg-(--color-surface)/30 hover:border-(--color-accent)/40"
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-sm font-bold text-(--color-text)">{info?.label ?? k}</span>
+                  {isSelected && <span className="ml-2 text-xs text-(--color-accent)">✓</span>}
+                </div>
+              </div>
+              <div className="flex gap-1.5">
+                {swatches.map((s, si) => (
+                  <div
+                    key={si}
+                    className="h-4 w-4 rounded-full border border-(--color-border)"
+                    style={{ background: s }}
+                  />
+                ))}
+              </div>
+              <p className="text-xs text-(--color-muted)/70 leading-relaxed">{info?.description ?? ""}</p>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -415,9 +768,23 @@ function ConsoleInputSubPanel({
 // ============================================================
 // Tools sub-panel (placeholder)
 // ============================================================
-function ConsoleToolsSubPanel({ onBack }: { onBack: () => void }) {
+function ConsoleToolsSubPanel({
+  onBack, focusedIndex: _fi, onFocusChange: _ofc, itemCount,
+}: {
+  onBack: () => void;
+  focusedIndex: number;
+  onFocusChange: (i: number) => void;
+  itemCount: React.MutableRefObject<number>;
+}) {
+  const totalItems = 1;
+  itemCount.current = totalItems;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); onBack(); }
+  };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4" onKeyDown={handleKeyDown}>
       <SubPanelHeader title="Tools" onBack={onBack} />
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <Wrench className="mb-4 h-12 w-12 text-(--color-muted)/30" />
@@ -431,9 +798,23 @@ function ConsoleToolsSubPanel({ onBack }: { onBack: () => void }) {
 // ============================================================
 // Help sub-panel
 // ============================================================
-function ConsoleHelpSubPanel({ onBack }: { onBack: () => void }) {
+function ConsoleHelpSubPanel({
+  onBack, focusedIndex: _fi, onFocusChange: _ofc, itemCount,
+}: {
+  onBack: () => void;
+  focusedIndex: number;
+  onFocusChange: (i: number) => void;
+  itemCount: React.MutableRefObject<number>;
+}) {
+  const totalItems = 1;
+  itemCount.current = totalItems;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); onBack(); }
+  };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4" onKeyDown={handleKeyDown}>
       <SubPanelHeader title="Help" onBack={onBack} />
       <div className="flex flex-col gap-4 px-2">
         <div className="rounded-xl bg-(--color-surface)/30 p-5">
@@ -502,25 +883,31 @@ function SettingsCategoryGrid({
   itemCount: React.MutableRefObject<number>;
 }) {
   const cats: { key: PanelPage; icon: React.ComponentType<{ className?: string }>; label: string; description: string }[] = [
-    { key: "layout", icon: Grid3X3, label: "Layout", description: "Card size, columns, gaps" },
+    { key: "grid-card-style", icon: Grid3X3, label: "Grid Card Style", description: "Card width, radius, labels for Grid mode" },
+    { key: "spotlight-card-style", icon: LayoutGrid, label: "Spotlight Card Style", description: "Card style, presets, trailer for Spotlight" },
+    { key: "spotlight-content", icon: Image, label: "Spotlight Content", description: "Visibility toggles for content sections" },
     { key: "visuals", icon: Maximize, label: "Visuals", description: "Theme, texture, effects" },
     { key: "media", icon: Film, label: "Media", description: "Providers, trailers, playback" },
     { key: "input", icon: Gamepad2, label: "Input", description: "Hints style, visibility" },
   ];
 
+  const gridRef = useRef<HTMLDivElement>(null);
   const totalItems = cats.length;
   itemCount.current = totalItems;
 
+  useEffect(() => { gridRef.current?.focus(); }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); }
-    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems - 1, focusedIndex + 1)); }
-    if (e.key === "ArrowRight") { e.preventDefault(); const cat = cats[focusedIndex]; if (cat) onSelect(cat.key); }
-    if (e.key === "Enter") { e.preventDefault(); const cat = cats[focusedIndex]; if (cat) onSelect(cat.key); }
-    if (e.key === "Escape") { e.preventDefault(); onBack(); }
+    e.stopPropagation();
+    if (e.key === "ArrowUp") { e.preventDefault(); onFocusChange(Math.max(0, focusedIndex - 1)); return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); onFocusChange(Math.min(totalItems - 1, focusedIndex + 1)); return; }
+    if (e.key === "ArrowLeft") { e.preventDefault(); onBack(); return; }
+    if (e.key === "ArrowRight" || e.key === "Enter" || e.key === "a") { e.preventDefault(); const cat = cats[focusedIndex]; if (cat) onSelect(cat.key); return; }
+    if (e.key === "Escape") { e.preventDefault(); onBack(); return; }
   };
 
   return (
-    <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
+    <div ref={gridRef} tabIndex={-1} className="flex flex-col gap-2 outline-none" onKeyDown={handleKeyDown}>
       <SubPanelHeader title="Console Settings" onBack={onBack} />
       {cats.map((cat, i) => {
         const Icon = cat.icon;
@@ -558,11 +945,16 @@ export default function ConsoleSettingsPanelV2({
   const [page, setPage] = useState<PanelPage>("main");
   const [subPage, setSubPage] = useState<PanelPage | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [settingEditingId, setSettingEditingId] = useState<string | null>(null);
+  const [themePickerIndex, setThemePickerIndex] = useState(0);
   const [visible, setVisible] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
   const subItemCount = useRef(0);
   const prevFocusRef = useRef<HTMLElement | null>(null);
+
+  /* ── Clear edit mode when navigating to a different sub-page ── */
+  useEffect(() => { setSettingEditingId(null); }, [subPage]);
 
   /* ── Menu stack for hierarchical navigation ── */
   type MenuStackEntry = { page: PanelPage; subPage: PanelPage | null; focusedIndex: number };
@@ -753,48 +1145,185 @@ export default function ConsoleSettingsPanelV2({
             handleClose();
             break;
         }
-      } else {
-        // ── Sub-page / settings category navigation ──
-        const max = Math.max(0, subItemCount.current - 1);
-        const isOnLastItem = focusedIndex === max;
+      } else if (page === "settings" && !subPage) {
+        // ── Settings category grid (gamepad events bypass React delegation) ──
+        // Gamepad dispatches keydown on document.body which never reaches
+        // React's #root-level delegation, so the grid's onKeyDown never
+        // fires. Handle navigation here directly.
+        const SETTINGS_KEYS: PanelPage[] = ["grid-card-style", "spotlight-card-style", "spotlight-content", "visuals", "media", "input"];
         switch (e.key) {
           case "ArrowUp":
+            e.preventDefault();
             setFocusedIndex((i) => Math.max(0, i - 1));
             break;
           case "ArrowDown":
-            setFocusedIndex((i) => Math.min(max, i + 1));
-            break;
-          case "ArrowRight":
-            if (page === "settings" && !subPage) {
-              const cats: PanelPage[] = ["layout", "visuals", "media", "input"];
-              if (cats[focusedIndex]) {
-                menuStackRef.current.push({ page, subPage: null, focusedIndex });
-                setSubPage(cats[focusedIndex]);
-                setFocusedIndex(0);
-              }
-            }
+            e.preventDefault();
+            setFocusedIndex((i) => Math.min(SETTINGS_KEYS.length - 1, i + 1));
             break;
           case "ArrowLeft":
-            doBackNav();
+            e.preventDefault();
+            setPage("main");
             break;
+          case "ArrowRight":
           case "Enter":
-            if (page === "settings" && !subPage) {
-              const cats: PanelPage[] = ["layout", "visuals", "media", "input"];
-              if (cats[focusedIndex]) {
+          case "a":
+          case "A":
+            e.preventDefault();
+            {
+              const target = SETTINGS_KEYS[focusedIndex];
+              if (target) {
                 menuStackRef.current.push({ page, subPage: null, focusedIndex });
-                setSubPage(cats[focusedIndex]);
+                setSubPage(target);
                 setFocusedIndex(0);
-              }
-            } else if (subPage && isOnLastItem) {
-              // Enter on last row triggers reset for the current sub-page
-              switch (subPage) {
-                case "layout": { const p = resetConsoleLayoutSettings(); onPatch(p); } break;
-                case "visuals": { const p = resetConsoleVisualSettings(); onPatch(p); } break;
-                case "media": { const p = resetConsoleMediaSettings(); onPatch(p); } break;
-                case "input": { const p = resetConsoleInputSettings(); onPatch(p); } break;
               }
             }
             break;
+          case "Escape":
+          case "b":
+          case "B":
+            setPage("main");
+            break;
+        }
+      } else if (subPage && SUBPAGE_ROWS[subPage]) {
+        // ── Setting sub-page (layout/visuals/media/input) — two-state model ──
+        const rows = SUBPAGE_ROWS[subPage];
+        if (settingEditingId !== null) {
+          // ── Editing mode: Left/Right/Enter adjust value, Escape exits edit mode ──
+          switch (e.key) {
+            case "ArrowLeft":
+              e.preventDefault();
+              onPatch(rows[focusedIndex]!.onAction(settings, "left"));
+              break;
+            case "ArrowRight":
+            case "Enter":
+              e.preventDefault();
+              onPatch(rows[focusedIndex]!.onAction(settings, "right"));
+              break;
+            case "Escape":
+            case "b":
+            case "B":
+              e.preventDefault();
+              setSettingEditingId(null);
+              break;
+          }
+        } else {
+          // ── Focus mode: arrows move focus, Enter enters edit or activates toggle/button ──
+          switch (e.key) {
+            case "ArrowUp":
+              e.preventDefault();
+              {
+                const prev = focusedIndex;
+                const next = Math.max(0, prev - 1);
+                setFocusedIndex(next);
+                if (DEBUG_CONSOLE_SETTINGS) {
+                  const fromId = rows[prev]?.id ?? "?";
+                  const toId = rows[next]?.id ?? "?";
+                  console.log(`[CONSOLE_SETTINGS][MOVE] from=${fromId} to=${toId} direction=up`);
+                }
+              }
+              break;
+            case "ArrowDown":
+              e.preventDefault();
+              {
+                const prev = focusedIndex;
+                const next = Math.min(rows.length - 1, prev + 1);
+                setFocusedIndex(next);
+                if (DEBUG_CONSOLE_SETTINGS) {
+                  const fromId = rows[prev]?.id ?? "?";
+                  const toId = rows[next]?.id ?? "?";
+                  console.log(`[CONSOLE_SETTINGS][MOVE] from=${fromId} to=${toId} direction=down`);
+                }
+              }
+              break;
+            case "ArrowLeft":
+            case "ArrowRight":
+              {
+                const row = rows[focusedIndex];
+                if (!row) break;
+                e.preventDefault();
+                if (row.type === "toggle") {
+                  onPatch(row.onAction(settings, "enter"));
+                } else if (row.type === "segmented") {
+                  const dir = e.key === "ArrowLeft" ? "left" : "right";
+                  const oldVal = row.getValue(settings);
+                  onPatch(row.onAction(settings, dir));
+                  if (DEBUG_CONSOLE_SETTINGS) {
+                    const label = dir === "left" ? "SEGMENT_LEFT" : "SEGMENT_RIGHT";
+                    console.log(`[CONSOLE_SETTINGS][${label}] id=${row.id} old=${oldVal}`);
+                  }
+                }
+              }
+              break;
+            case "Enter":
+              e.preventDefault();
+              {
+                const row = rows[focusedIndex];
+                if (!row) break;
+                if (row.type === "toggle" || row.type === "button") {
+                  onPatch(row.onAction(settings, "enter"));
+                } else if (row.id === "themeMode") {
+                  // Console Theme: open Theme Picker subpage
+                  if (DEBUG_CONSOLE_SETTINGS) console.log(`[CONSOLE_SETTINGS][FOCUS] page=visuals index=${focusedIndex} id=themeMode action=open-picker`);
+                  menuStackRef.current.push({ page, subPage, focusedIndex });
+                  setSubPage("theme-picker");
+                  setThemePickerIndex(THEME_KEYS.indexOf(settings.themeMode));
+                } else if (row.type === "slider") {
+                  setSettingEditingId(row.id);
+                }
+                // segmented rows (non-theme): Enter does nothing, Left/Right already works
+              }
+              break;
+            case "Escape":
+            case "b":
+            case "B":
+              doBackNav();
+              break;
+          }
+        }
+      } else if (subPage === "theme-picker") {
+        // ── Theme Picker subpage — grid navigation ──
+        const cols = 2;
+        const total = THEME_KEYS.length;
+        switch (e.key) {
+          case "ArrowUp":
+            e.preventDefault();
+            setThemePickerIndex((i) => Math.max(0, i - cols));
+            break;
+          case "ArrowDown":
+            e.preventDefault();
+            setThemePickerIndex((i) => Math.min(total - 1, i + cols));
+            break;
+          case "ArrowLeft":
+            e.preventDefault();
+            setThemePickerIndex((i) => Math.max(0, i - 1));
+            break;
+          case "ArrowRight":
+            e.preventDefault();
+            setThemePickerIndex((i) => Math.min(total - 1, i + 1));
+            break;
+          case "Enter":
+          case "a":
+          case "A":
+            e.preventDefault();
+            {
+              const selected = THEME_KEYS[themePickerIndex];
+              if (selected) {
+                if (DEBUG_CONSOLE_SETTINGS) console.log(`[CONSOLE_THEME][APPLY] theme=${selected}`);
+                onPatch({ themeMode: selected as ConsoleThemeMode });
+                doBackNav();
+              }
+            }
+            break;
+          case "Escape":
+          case "b":
+          case "B":
+            e.preventDefault();
+            doBackNav();
+            break;
+        }
+      } else {
+        // ── Other sub-pages (tools/help) ──
+        switch (e.key) {
           case "Escape":
           case "b":
           case "B":
@@ -805,7 +1334,7 @@ export default function ConsoleSettingsPanelV2({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, page, subPage, focusedIndex, handleClose, onNavigate, onSelectGame, onRefreshLibrary, allGames, settings, onPatch, doBackNav]);
+  }, [open, page, subPage, focusedIndex, settingEditingId, handleClose, onNavigate, onSelectGame, onRefreshLibrary, allGames, settings, onPatch, doBackNav]);
 
   const handleMainKeyDown = useCallback((e: React.KeyboardEvent) => {
     // Consume all gamepad-mapped keys
@@ -866,21 +1395,40 @@ export default function ConsoleSettingsPanelV2({
   }, [handleClose]);
 
   const renderSubPage = () => {
-    const sharedSub = {
-      settings,
-      onPatch,
-      onBack: doBackNav,
-      focusedIndex,
-      onFocusChange: setFocusedIndex,
-      itemCount: subItemCount,
-    };
+    const rows = subPage ? SUBPAGE_ROWS[subPage] : undefined;
+    const title = subPage ? SUBPAGE_TITLES[subPage] ?? "" : "";
+    if (rows && title) {
+      return (
+        <ConsoleSettingsSubPage
+          title={title}
+          rows={rows}
+          settings={settings}
+          onPatch={onPatch}
+          onBack={doBackNav}
+          focusedIndex={focusedIndex}
+          settingEditingId={settingEditingId}
+          subPageName={subPage ?? undefined}
+        />
+      );
+    }
     switch (subPage) {
-      case "layout": return <ConsoleLayoutSubPanel {...sharedSub} />;
-      case "visuals": return <ConsoleVisualsSubPanel {...sharedSub} />;
-      case "media": return <ConsoleMediaSubPanel {...sharedSub} />;
-      case "input": return <ConsoleInputSubPanel {...sharedSub} />;
-      case "tools": return <ConsoleToolsSubPanel onBack={doBackNav} />;
-      case "help": return <ConsoleHelpSubPanel onBack={doBackNav} />;
+      case "tools": return <ConsoleToolsSubPanel onBack={doBackNav} focusedIndex={focusedIndex} onFocusChange={setFocusedIndex} itemCount={subItemCount} />;
+      case "help": return <ConsoleHelpSubPanel onBack={doBackNav} focusedIndex={focusedIndex} onFocusChange={setFocusedIndex} itemCount={subItemCount} />;
+      case "theme-picker": return (
+        <ThemePickerSubPanel
+          currentTheme={settings.themeMode}
+          onSelect={(t) => {
+            if (DEBUG_CONSOLE_SETTINGS) console.log(`[CONSOLE_THEME][APPLY] theme=${t}`);
+            if (DEBUG_CONSOLE_SETTINGS) console.log(`[CONSOLE_THEME][PERSIST] theme=${t}`);
+            onPatch({ themeMode: t as ConsoleThemeMode });
+            doBackNav();
+          }}
+          onBack={doBackNav}
+          focusedIndex={themePickerIndex}
+          onFocusChange={setThemePickerIndex}
+          itemCount={subItemCount}
+        />
+      );
       default: return null;
     }
   };
@@ -944,12 +1492,14 @@ export default function ConsoleSettingsPanelV2({
 
   const subPageLabel = (sp: PanelPage): string => {
     switch (sp) {
-      case "layout": return "Layout";
+      case "grid-card-style": return "Grid Card Style";
+      case "spotlight-card-style": return "Spotlight Card Style";
       case "visuals": return "Visuals";
       case "media": return "Media";
       case "input": return "Input";
       case "tools": return "Tools";
       case "help": return "Help";
+      case "theme-picker": return "Theme Picker";
       default: return "";
     }
   };
