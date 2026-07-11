@@ -20,6 +20,7 @@ import {
   writeMediaManifest as writeMediaManifestTauri,
   readMediaManifest as readMediaManifestTauri,
   getMediaManifestsBatch,
+  saveGameMediaFile as saveGameMediaFileTauri,
 } from "./tauri";
 import { invalidateCanonicalMediaCache, notifyMediaUpdated } from "./startupSnapshotService";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -198,6 +199,18 @@ export async function updateGameAppinfoMediaIfChanged(
   // Invalidate session cache so subsequent reads get fresh data
   _sessionAppinfoCache.delete(appId);
   return true;
+}
+
+// ── saveGameMediaFile wrapper ──
+// Saves a base64-encoded image file to the game's media directory via Rust,
+// then updates appinfo with the new relative path. Returns the relative path.
+export async function saveGameMediaFile(
+  appId: string,
+  role: string,
+  contentBase64: string,
+  ext: string,
+): Promise<string> {
+  return await saveGameMediaFileTauri(appId, role, contentBase64, ext);
 }
 
 // ---------------------------------------------------------------------------
@@ -920,10 +933,10 @@ export async function loadGameAppInfoWithMediaFallback(appId: string, options?: 
           const resolved = await resolveMediaPaths(appId, cached);
           if (resolved) {
             setCachedResolvedMedia(appId, resolved);
-            return { appId, provider: "steam", name: null, updatedAt: null, media: resolved, mediaSources: null, remote: null };
+            return { appId, provider: "steam", name: null, updatedAt: null, media: resolved, mediaSources: null, remote: null, userData: null };
           }
         }
-        return { appId, provider: "steam", name: null, updatedAt: null, media: cached, mediaSources: null, remote: null };
+        return { appId, provider: "steam", name: null, updatedAt: null, media: cached, mediaSources: null, remote: null, userData: null };
       }
       return null;
     }
@@ -1085,7 +1098,7 @@ export async function loadGameAppInfoWithMediaFallback(appId: string, options?: 
         }
         const fallbackName = (appInfo as GameAppInfo | null)?.name ?? null;
         if (hasDiskFiles) {
-          return { appId, provider: "steam", name: fallbackName, updatedAt: null, media: resolvedForCache, mediaSources: null, remote: null };
+          return { appId, provider: "steam", name: fallbackName, updatedAt: null, media: resolvedForCache, mediaSources: null, remote: null, userData: null };
         }
       }
     } catch {
@@ -3061,6 +3074,11 @@ export async function materializeResolvedGameMedia(
 
   if (!appId) {
     mLog(appId, "skip no-appId");
+    return { diskHits, enqueued, skipped, bundle };
+  }
+  if (bundle.appId && bundle.appId !== appId) {
+    mLog(appId, `skip cross-app-bundle bundleAppId=${bundle.appId}`);
+    console.log(`[MEDIA_MATERIALIZE][GUARD] appId=${appId} bundleAppId=${bundle.appId} reason=cross-app-bundle`);
     return { diskHits, enqueued, skipped, bundle };
   }
 

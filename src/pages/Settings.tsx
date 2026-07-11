@@ -71,6 +71,10 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("paths");
   const [showSgdbKey, setShowSgdbKey] = useState(false);
   const [showSteamApiKey, setShowSteamApiKey] = useState(false);
+  const [showIgdbSecret, setShowIgdbSecret] = useState(false);
+  const [showRawgKey, setShowRawgKey] = useState(false);
+  const [showGoogleKey, setShowGoogleKey] = useState(false);
+  const [showBingKey, setShowBingKey] = useState(false);
   const [newScanFolder, setNewScanFolder] = useState("");
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
@@ -543,6 +547,209 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
+
+              {/* IGDB Provider */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Gamepad2 className="h-4 w-4" />
+                  IGDB Metadata
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  IGDB (Internet Game Database) provides cover art and metadata enrichment. Requires a Twitch/IGDB Client ID and OAuth access token.
+                </p>
+
+                {(!settings.igdbClientId || !settings.igdbClientSecret) && (
+                  <p className="text-xs text-amber-400">
+                    Fill in both Client ID and Client Secret to enable IGDB artwork and metadata sources.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Client ID
+                    </p>
+                  </div>
+                  <input
+                    type="text"
+                    value={settings.igdbClientId}
+                    onChange={(e) => updateSetting("igdbClientId", e.target.value)}
+                    className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                    placeholder="Enter your IGDB Client ID"
+                  />
+                </label>
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Client Secret / Access Token
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showIgdbSecret ? "text" : "password"}
+                      value={settings.igdbClientSecret}
+                      onChange={(e) => updateSetting("igdbClientSecret", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your IGDB Client Secret"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowIgdbSecret(!showIgdbSecret)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showIgdbSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
+              {/* RAWG Provider */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Globe className="h-4 w-4" />
+                  RAWG Metadata
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  RAWG provides background artwork and metadata enrichment. Requires a free API key from rawg.io.
+                </p>
+
+                {!settings.rawgApiKey && (
+                  <p className="text-xs text-amber-400">
+                    Add a RAWG API key to enable RAWG background artwork.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      API Key
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showRawgKey ? "text" : "password"}
+                      value={settings.rawgApiKey}
+                      onChange={(e) => updateSetting("rawgApiKey", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your RAWG API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRawgKey(!showRawgKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showRawgKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
+              {/* Google Custom Search */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Globe className="h-4 w-4" />
+                  Google Custom Search
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  Google Custom Search enables in-app image search for manual artwork selection. Requires a Custom Search API Key and Search Engine ID (cx) from the Google Cloud Console.
+                </p>
+
+                {(!settings.googleSearchApiKey || !settings.googleSearchCx) && (
+                  <p className="text-xs text-amber-400">
+                    Fill in both fields to enable Google image search in the Media editor.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      API Key
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showGoogleKey ? "text" : "password"}
+                      value={settings.googleSearchApiKey}
+                      onChange={(e) => updateSetting("googleSearchApiKey", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your Google API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowGoogleKey(!showGoogleKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showGoogleKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Search Engine ID (cx)
+                    </p>
+                  </div>
+                  <input
+                    type="text"
+                    value={settings.googleSearchCx}
+                    onChange={(e) => updateSetting("googleSearchCx", e.target.value)}
+                    className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                    placeholder="Enter your Search Engine ID"
+                  />
+                </label>
+              </div>
+
+              {/* Bing Image Search */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Globe className="h-4 w-4" />
+                  Bing Image Search
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  Bing Image Search provides an alternative in-app image search source. Requires a Bing Search API key from the Azure portal.
+                </p>
+
+                {!settings.bingSearchApiKey && (
+                  <p className="text-xs text-amber-400">
+                    Add a Bing Search API key to enable Bing image search in the Media editor.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      API Key
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showBingKey ? "text" : "password"}
+                      value={settings.bingSearchApiKey}
+                      onChange={(e) => updateSetting("bingSearchApiKey", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your Bing Search API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowBingKey(!showBingKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showBingKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
             </SettingsSection>
           </div>
         )}

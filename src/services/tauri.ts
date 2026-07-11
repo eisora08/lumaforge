@@ -1115,6 +1115,7 @@ export type GameAppInfo = {
   media: GameMediaPaths | null;
   mediaSources: GameMediaSources | null;
   remote: GameRemoteRefs | null;
+  userData: Record<string, unknown> | null;
 };
 
 export type GameMediaSources = {
@@ -1431,6 +1432,18 @@ export type GameRemoteRefsInput = {
 
 export async function updateGameAppinfoMedia(appId: string, name: string | null, media: GameMediaPaths, remote?: GameRemoteRefsInput | null, mediaSources?: GameMediaSources | null): Promise<void> {
   return await invoke("update_game_appinfo_media", { appId, name, media, remote: remote ?? null, mediaSources: mediaSources ?? null });
+}
+
+export async function saveGameMediaFile(appId: string, role: string, contentBase64: string, ext: string): Promise<string> {
+  return await invoke<string>("save_game_media_file", { appId, role, contentBase64, ext });
+}
+
+export async function openGameMetadataFolder(appId: string): Promise<void> {
+  return await invoke("open_game_metadata_folder", { appId });
+}
+
+export async function openGameMediaFolder(appId: string): Promise<void> {
+  return await invoke("open_game_media_folder", { appId });
 }
 
 export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | null, paths: GameMediaPaths): Promise<void> {

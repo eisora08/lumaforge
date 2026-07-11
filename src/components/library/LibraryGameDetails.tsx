@@ -77,6 +77,7 @@ import { achievementWatcherService } from "../../services/achievementWatcherServ
 import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import GameEditDialog from "../games/GameEditDialog";
 import { useGameSession } from "../../context/GameSessionContext";
 import { invoke } from "@tauri-apps/api/core";
 import AchievementsModal from "./AchievementsModal";
@@ -238,6 +239,7 @@ export default function LibraryGameDetails({
   }
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [heroImgError, setHeroImgError] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const favorite = game.appId ? isFavorite(game.appId) : false;
@@ -370,9 +372,19 @@ export default function LibraryGameDetails({
     }
     return src;
   })();
-  const logoUrl = rawLogoUrl && isLocalPath(rawLogoUrl)
-    ? (localPathToUrl(rawLogoUrl) ?? undefined)
-    : rawLogoUrl;
+  // Defense-in-depth: reject logo URL from a different appId's Steam CDN
+  const _validatedLogoSrc = (() => {
+    if (!rawLogoUrl || !game.appId) return rawLogoUrl;
+    const appIdMatch = rawLogoUrl.match(/steam\/apps\/(\d+)\//);
+    if (appIdMatch && appIdMatch[1] !== game.appId) {
+      console.log(`[LOGO_DISPLAY][REJECT] appid=${game.appId} reason=cross-app-steam-url urlAppid=${appIdMatch[1]}`);
+      return undefined;
+    }
+    return rawLogoUrl;
+  })();
+  const logoUrl = _validatedLogoSrc && isLocalPath(_validatedLogoSrc)
+    ? (localPathToUrl(_validatedLogoSrc) ?? undefined)
+    : _validatedLogoSrc;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
   const { installState, dismiss } = useInstallTracker(game.appId);
@@ -1436,6 +1448,13 @@ export default function LibraryGameDetails({
                       )}
                       <div className="border-t border-(--surface-active-border) my-1" />
                       <DropdownItem
+                        label="Edit Game Details"
+                        onClick={() => {
+                          setShowActions(false);
+                          setEditDialogOpen(true);
+                        }}
+                      />
+                      <DropdownItem
                         label="Refresh Artwork"
                         onClick={() => {
                           setShowActions(false);
@@ -2180,6 +2199,26 @@ export default function LibraryGameDetails({
               });
           }}
           refreshing={achievementsRefreshing}
+        />
+      )}
+
+      {game.appId && (
+        <GameEditDialog
+          appId={game.appId}
+          open={editDialogOpen}
+          onClose={() => setEditDialogOpen(false)}
+          initialTab="general"
+          game={game}
+          settings={{
+            rawgApiKey: settings.rawgApiKey,
+            igdbClientId: settings.igdbClientId,
+            igdbClientSecret: settings.igdbClientSecret,
+            steamGridDbApiKey: settings.steamGridDbApiKey,
+            steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
+            googleSearchApiKey: (settings as Record<string, unknown>).googleSearchApiKey as string,
+            googleSearchCx: (settings as Record<string, unknown>).googleSearchCx as string,
+            bingSearchApiKey: (settings as Record<string, unknown>).bingSearchApiKey as string,
+          }}
         />
       )}
     </div>

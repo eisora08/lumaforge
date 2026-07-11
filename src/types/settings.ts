@@ -26,6 +26,11 @@ export type AppSettings = {
   igdbClientId: string;
   igdbClientSecret: string;
 
+  googleSearchApiKey: string;
+  googleSearchCx: string;
+  bingSearchApiKey: string;
+  defaultImageSearchProvider: "google" | "bing";
+
   steamWebApiKey: string;
   steamId64: string;
   steamAccountId: string;

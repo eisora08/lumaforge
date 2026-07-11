@@ -63,6 +63,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const currentRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
   const _prevAppIdRef = useRef<string | null>(null);
+  const _refreshInitiatorRef = useRef<string | null>(null);
 
   const gameKey = selectedGame ? computeGameKey(selectedGame) : "";
   const { launchInfo, launchGame, cancelLaunch } = useGameLaunchState(gameKey);
@@ -140,6 +141,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setCanonicalDiskFallback(null);
     setLocalDetailsData(null);
     setFallbackBundle(null);
+    setArtwork(null);
+    _refreshInitiatorRef.current = null;
 
     if (!selectedGame?.appId) return;
 
@@ -468,6 +471,11 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const appId = selectedGame?.appId;
     if (!appId) return;
     if (!fallbackBundle) return;
+    if (fallbackBundle.appId && fallbackBundle.appId !== appId) {
+      console.log(`[MEDIA][MATERIALIZE_GUARD] skip appId=${appId} bundleAppId=${fallbackBundle.appId} reason=cross-app-contamination`);
+      setFallbackBundle(null);
+      return;
+    }
     const key = `${appId}:bg=${!!fallbackBundle.background}:l=${!!fallbackBundle.landscape}:c=${!!fallbackBundle.cover}:logo=${!!fallbackBundle.logo}`;
     if (_lastMaterializedBundleKey.current === key) return;
     _lastMaterializedBundleKey.current = key;
@@ -488,6 +496,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       if (eventAppId !== appId) return;
       // Re-materialize to pick up newly-downloaded files on disk (use ref for latest bundle)
       const bundle = _fallbackBundleRef.current;
+      if (bundle && bundle.appId && bundle.appId !== appId) {
+        console.log(`[MEDIA][MATERIALIZE_GUARD] skip-subscription appId=${appId} bundleAppId=${bundle.appId} reason=cross-app-contamination`);
+        return;
+      }
       if (bundle) {
         materializeResolvedGameMedia(appId, bundle, "steam").then((result) => {
           if (result.diskHits.length > 0) {
@@ -545,6 +557,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     }
 
     const appIdStr = selectedGame.appId;
+    _refreshInitiatorRef.current = appIdStr;
 
     // Cancel any existing jobs for this app
     cancelMediaJobsForApp(appIdStr);
@@ -597,6 +610,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     );
 
     // ── Set bundle so materialize effect can apply localPath on download ──
+    if (_refreshInitiatorRef.current !== appIdStr) {
+      console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-refresh`);
+      return;
+    }
     setFallbackBundle(bundle);
 
     // ── Build fallback candidate URLs per role ──
@@ -839,6 +856,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       const { clearGameMediaCacheForGame } = await import("../services/libraryLocalCacheService");
       await clearGameMediaCacheForGame({ appId: appIdStr }).catch(() => {});
       const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
+      if (_refreshInitiatorRef.current !== appIdStr) {
+        console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-sgdb`);
+        return;
+      }
       if (result[appIdStr]) {
         setArtwork(result[appIdStr]);
         const sgdbJobs: Array<{ mediaType: string; url?: string }> = [

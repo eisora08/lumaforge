@@ -568,6 +568,7 @@ pub fn update_game_appinfo_media(
             media: None,
             media_sources: None,
             remote: None,
+            user_data: None,
         })
     } else {
         GameAppInfo {
@@ -578,6 +579,7 @@ pub fn update_game_appinfo_media(
             media: None,
             media_sources: None,
             remote: None,
+            user_data: None,
         }
     };
 
@@ -862,6 +864,7 @@ pub fn migrate_to_canonical_cache(app_handle: AppHandle) -> Result<MigrationSumm
                             media: None,
                             media_sources: None,
                             remote: None,
+                            user_data: None,
                         };
                         if let Ok(content) = serde_json::to_string_pretty(&game_info) {
                             if fs::write(&p, &content).is_ok() {
@@ -1961,4 +1964,59 @@ pub fn resolve_game_media_paths_batch(
         });
     }
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// save_game_media_file — save a base64-encoded image to the game's media dir.
+// Used by the GameEditDialog for local file selection and URL paste.
+// Accepts: app_id, role (cover/landscape/background/logo/icon), base64 content,
+// file extension. Writes to media/<role>.<ext>, validates role, enforces 10MB
+// limit. Returns the relative path (e.g. "media/cover.jpg").
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn save_game_media_file(
+    app_handle: AppHandle,
+    app_id: String,
+    role: String,
+    content_base64: String,
+    ext: String,
+) -> Result<String, String> {
+    let valid_roles = ["cover", "landscape", "background", "logo", "icon"];
+    if !valid_roles.contains(&role.as_str()) {
+        return Err(format!("Invalid media role: {}. Must be one of: cover, landscape, background, logo, icon", role));
+    }
+
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&content_base64)
+        .map_err(|e| format!("Failed to decode base64 content: {}", e))?;
+
+    if bytes.len() > 10 * 1024 * 1024 {
+        return Err("File too large (>10MB)".to_string());
+    }
+
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+
+    let ext_clean = ext.trim_start_matches('.').to_lowercase();
+    let safe_ext = match ext_clean.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "ico" => ext_clean.clone(),
+        _ => {
+            match role.as_str() {
+                "logo" | "icon" => "png".to_string(),
+                _ => "jpg".to_string(),
+            }
+        }
+    };
+
+    let filename = format!("{}.{}", role, safe_ext);
+    let dest_path = media_dir.join(&filename);
+
+    fs::write(&dest_path, &bytes)
+        .map_err(|e| format!("Failed to write media file: {}", e))?;
+
+    let rel_path = format!("media/{}", filename);
+    println!("[MEDIA][FILE_SAVED] appid={} role={} path={}", app_id, role, rel_path);
+
+    Ok(rel_path)
 }

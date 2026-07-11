@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import {
-  Play, Square, Heart, Eye, Search, Image, RefreshCw, ExternalLink, Copy, ArrowLeft,
+  Play, Square, Heart, Eye, Search, Edit, RefreshCw, ExternalLink, Copy, ArrowLeft,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
@@ -11,6 +11,8 @@ import { useGameSession, computeGameKey } from "../../context/GameSessionContext
 import { focusGameWindow } from "../../services/tauri";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showError } from "../../components/toast/GameToast";
+import GameEditDialog from "../../components/games/GameEditDialog";
+import { useSettings } from "../../context/SettingsContext";
 
 const FADE_DURATION = 180;
 
@@ -30,6 +32,7 @@ export default function ConsoleGameOptionsOverlay({
 }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const sessionCtx = useGameSession();
+  const { settings } = useSettings();
   const gameKey = useMemo(() => computeGameKey(game), [game]);
   const sessionState = sessionCtx.getState(gameKey);
   const gameSession = sessionCtx.getSession(gameKey);
@@ -41,6 +44,7 @@ export default function ConsoleGameOptionsOverlay({
   const [focusIndex, setFocusIndex] = useState(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── Enter animation ── */
@@ -167,9 +171,9 @@ export default function ConsoleGameOptionsOverlay({
     list.push({
       id: "manage-artwork",
       label: "Manage Artwork",
-      icon: Image,
-      disabled: true,
-      action: () => showToast("Artwork management is available in Library for now"),
+      icon: Edit,
+      disabled: false,
+      action: () => { setEditDialogOpen(true); },
     });
 
     list.push({
@@ -225,6 +229,8 @@ export default function ConsoleGameOptionsOverlay({
         console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleGameOptionsOverlay target=${(e.target as any)?.tagName ?? typeof e.target}`);
       }
       if (!activeRef.current) return;
+      // Yield to the GameEditDialog when open (dialog has own Escape/Enter handlers)
+      if (editDialogOpen) return;
       if (e.key === "Alt" || e.key === "Meta") return;
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
@@ -359,6 +365,25 @@ export default function ConsoleGameOptionsOverlay({
           </div>
         </div>
       </div>
+
+      {game.appId && (
+        <GameEditDialog
+          appId={game.appId}
+          open={editDialogOpen}
+          onClose={() => setEditDialogOpen(false)}
+          initialTab="media"
+          settings={{
+            rawgApiKey: settings.rawgApiKey,
+            igdbClientId: settings.igdbClientId,
+            igdbClientSecret: settings.igdbClientSecret,
+            steamGridDbApiKey: settings.steamGridDbApiKey,
+            steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
+            googleSearchApiKey: (settings as Record<string, unknown>).googleSearchApiKey as string,
+            googleSearchCx: (settings as Record<string, unknown>).googleSearchCx as string,
+            bingSearchApiKey: (settings as Record<string, unknown>).bingSearchApiKey as string,
+          }}
+        />
+      )}
     </div>
   );
 }

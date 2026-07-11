@@ -1,9 +1,25 @@
  use std::path::{Path, PathBuf};
 
+use tauri::AppHandle;
+
+use crate::commands::game_cache::{get_game_dir, get_media_dir};
+
 
 #[tauri::command]
 pub fn open_folder(path: String) -> Result<(), String> {
     open::that(&path).map_err(|e| format!("Failed to open folder: {}", e))
+}
+
+#[tauri::command]
+pub fn open_game_metadata_folder(app_handle: AppHandle, app_id: String) -> Result<(), String> {
+    let dir = get_game_dir(&app_handle, &app_id)?;
+    open::that(&dir).map_err(|e| format!("Failed to open metadata folder: {}", e))
+}
+
+#[tauri::command]
+pub fn open_game_media_folder(app_handle: AppHandle, app_id: String) -> Result<(), String> {
+    let dir = get_media_dir(&app_handle, &app_id)?;
+    open::that(&dir).map_err(|e| format!("Failed to open media folder: {}", e))
 }
 
 #[tauri::command]
