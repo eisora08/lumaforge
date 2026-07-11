@@ -20,6 +20,13 @@ type Props = {
   /** Autoplay trailer when entering details mode (default false).
    *  Only applies to direct mp4/webm — HLS/DASH always require user click. */
   autoplay?: boolean;
+  /** Forces display to fallback artwork (hero/landscape) regardless of
+   *  trailer availability. Used by ConsoleGridLayout's delayed trailer
+   *  behavior: show artwork first, switch to trailer after 3s. */
+  showArtworkFirst?: boolean;
+  /** When set in thumbnail mode, renders a muted autoplay <video> element
+   *  overlaid on the trailer thumbnail. Autoplays on source change, loops on end. */
+  thumbnailAutoplaySrc?: string | null;
   /** Identity key that changes whenever the selected media changes.
    *  Used to force video element remount across media type/selection switches. */
   mediaIdentityKey?: string;
@@ -27,8 +34,13 @@ type Props = {
 
 const DEBUG_PREVIEW = false;
 const DEBUG_HLS = false;
+const DEBUG_AUTO_OVERLAY = false;
 const LOG_PREFIX = "[CONSOLE_PREVIEW]";
 const CONTROLS_HIDE_MS = 3000;
+/** For testing only: set to true and provide a known direct MP4 URL to
+ *  isolate player/autoplay logic from Steam source data. */
+const DEBUG_FORCE_TEST_MP4 = false;
+const DEBUG_FORCE_TEST_MP4_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
 /** Lightweight video controls bar for Console Mode. */
 function formatTime(seconds: number): string {
@@ -64,10 +76,13 @@ function formatTime(seconds: number): string {
 export default function ConsoleSelectedPreview({
   game, showTrailerPreview = true, trailerData, screenshotOverrideUrl,
   mode = "thumbnail", autoplay = false, mediaIdentityKey,
+  showArtworkFirst = false, thumbnailAutoplaySrc,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const thumbAutoplayVideoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<any>(null);
+  const thumbHlsRef = useRef<any>(null);
   const controlsTimerRef = useRef<number>(0);
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -76,6 +91,15 @@ export default function ConsoleSelectedPreview({
   const [thumbnailOnlyClicked, setThumbnailOnlyClicked] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [thumbAutoplayError, setThumbAutoplayError] = useState(false);
+  const [autoplayFailed, setAutoplayFailed] = useState(false);
+
+  /* ── Debug autoplay state (visible overlay) ── */
+  const [autoPlayCalled, setAutoPlayCalled] = useState(false);
+  const [autoPlaySuccess, setAutoPlaySuccess] = useState(false);
+  const [autoPlayError, setAutoPlayError] = useState<string | null>(null);
+  const [autoVideoReady, setAutoVideoReady] = useState(false);
+  const [autoHlsState, setAutoHlsState] = useState<string>("idle");
 
   /* ── Video control state ── */
   const [currentTime, setCurrentTime] = useState(0);
@@ -126,10 +150,10 @@ export default function ConsoleSelectedPreview({
     return src;
   }, [game]);
 
-  const screenshotActive = !!screenshotOverrideUrl;
-  const displaySrc = screenshotOverrideUrl ?? previewData?.src ?? fallbackSrc;
-  const isTrailer = !screenshotActive && previewData?.label === "Trailer";
-  const label = screenshotActive ? "Screenshot" : (previewData?.label ?? "Artwork");
+  const screenshotActive = !!screenshotOverrideUrl && !showArtworkFirst;
+  const displaySrc = showArtworkFirst ? fallbackSrc : (screenshotOverrideUrl ?? previewData?.src ?? fallbackSrc);
+  const isTrailer = !showArtworkFirst && !screenshotActive && previewData?.label === "Trailer";
+  const label = showArtworkFirst ? "Artwork" : (screenshotActive ? "Screenshot" : (previewData?.label ?? "Artwork"));
 
   /* ── Video source (remote-only, no local video cache) ──
    *  Priority matches StoreGameMediaGallery.getPreferredSrc:
@@ -179,6 +203,195 @@ export default function ConsoleSelectedPreview({
       hlsRef.current = null;
     }
   }
+
+  function destroyThumbHls() {
+    if (thumbHlsRef.current) {
+      if (DEBUG_HLS) console.log(`${LOG_PREFIX}[THUMB_HLS_DESTROY] appid=${game?.appId}`);
+      thumbHlsRef.current.destroy();
+      thumbHlsRef.current = null;
+    }
+  }
+
+  async function initThumbHls(video: HTMLVideoElement, url: string) {
+    destroyThumbHls();
+    setAutoHlsState("init");
+    console.log(`[PREVIEW_PIPE][HLS_INIT] appid=${game?.appId} url=${url.substring(0, 80)}`);
+
+    // Native HLS (Safari, some WebViews)
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      setAutoHlsState("native");
+      video.src = url;
+      setAutoPlayCalled(true);
+      console.log(`[PREVIEW_PIPE][HLS_NATIVE] appid=${game?.appId}`);
+      video.play().then(() => {
+        setAutoPlaySuccess(true);
+        setAutoplayFailed(false);
+        console.log(`[PREVIEW_PIPE][HLS_NATIVE_PLAY_SUCCESS] appid=${game?.appId}`);
+      }).catch((err) => {
+        setAutoPlayError(err.message ?? String(err));
+        setAutoplayFailed(true);
+        console.log(`[PREVIEW_PIPE][HLS_NATIVE_PLAY_FAIL] appid=${game?.appId} error=${err.message ?? String(err)}`);
+      });
+      return;
+    }
+
+    try {
+      const { default: Hls } = await import("hls.js");
+      const supported = Hls.isSupported();
+      console.log(`[PREVIEW_PIPE][HLS_SUPPORTED] appid=${game?.appId} supported=${supported}`);
+      if (supported) {
+        setAutoHlsState("loading");
+        thumbHlsRef.current = new Hls();
+        thumbHlsRef.current.loadSource(url);
+        thumbHlsRef.current.attachMedia(video);
+        thumbHlsRef.current.on(Hls.Events.MANIFEST_PARSED, () => {
+          setAutoHlsState("manifest_parsed");
+          setAutoPlayCalled(true);
+          console.log(`[PREVIEW_PIPE][HLS_MANIFEST_PARSED] appid=${game?.appId}`);
+          video.play().then(() => {
+            setAutoPlaySuccess(true);
+            setAutoplayFailed(false);
+            console.log(`[PREVIEW_PIPE][HLS_PLAY_SUCCESS] appid=${game?.appId}`);
+          }).catch((err) => {
+            setAutoPlayError(err.message ?? String(err));
+            setAutoplayFailed(true);
+            console.log(`[PREVIEW_PIPE][HLS_PLAY_FAIL] appid=${game?.appId} error=${err.message ?? String(err)}`);
+          });
+        });
+        thumbHlsRef.current.on(Hls.Events.ERROR, (_event: any, data: any) => {
+          console.log(`[PREVIEW_PIPE][HLS_ERROR] appid=${game?.appId} type=${data.type} details=${data.details} fatal=${data.fatal}`);
+          if (data.fatal) {
+            setAutoHlsState(`error:${data.type}:${data.details}`);
+            setThumbAutoplayError(true);
+          }
+        });
+      } else {
+        setAutoHlsState("unsupported");
+        setThumbAutoplayError(true);
+      }
+    } catch (e) {
+      setAutoHlsState(`exception:${String(e)}`);
+      setThumbAutoplayError(true);
+    }
+  }
+
+  /* ── Reset autoplay state on source/appId change ──
+   *  Runs BEFORE the play-attempt effect to ensure stale failure state
+   *  (autoplayFailed, thumbAutoplayError) from a previous source does not
+   *  persist into the new source's first render. */
+  useEffect(() => {
+    if (!thumbnailAutoplaySrc || !game?.appId) return;
+    setAutoPlayCalled(false);
+    setAutoPlaySuccess(false);
+    setAutoPlayError(null);
+    setAutoVideoReady(false);
+    setAutoplayFailed(false);
+    setThumbAutoplayError(false);
+    setAutoHlsState("idle");
+    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[AUTO_RESET] appid=${game.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
+  }, [thumbnailAutoplaySrc, game?.appId]);
+
+  /* ── Programmatic autoplay for thumbnail preview video ── */
+  const prevThumbAutoplayKey = useRef<string | null>(null);
+  useEffect(() => {
+    const key = thumbnailAutoplaySrc ? `${game?.appId}:${thumbnailAutoplaySrc}` : null;
+    if (!key || key === prevThumbAutoplayKey.current) return;
+    prevThumbAutoplayKey.current = key;
+
+    const appId = game?.appId;
+    if (!appId) return;
+
+    // Use force test MP4 URL when enabled (bypasses actual source)
+    const src = DEBUG_FORCE_TEST_MP4 ? DEBUG_FORCE_TEST_MP4_URL : thumbnailAutoplaySrc;
+
+    if (DEBUG_PREVIEW) {
+      console.log(`${LOG_PREFIX}[THUMB_AUTOPLAY] appid=${appId} src=${src?.substring(0, 80)}`);
+    }
+
+    // Reset all autoplay state
+    setAutoPlayCalled(false);
+    setAutoPlaySuccess(false);
+    setAutoPlayError(null);
+    setAutoVideoReady(false);
+    setAutoplayFailed(false);
+    setThumbAutoplayError(false);
+    setAutoHlsState("idle");
+
+    if (!src) return;
+
+    // ── PREVIEW_PIPE: received prop ──
+    console.log(`[PREVIEW_PIPE][RECEIVE_PROP] appid=${appId} src=${src.substring(0, 80)}`);
+
+    const video = thumbAutoplayVideoRef.current;
+    if (!video) {
+      console.log(`[PREVIEW_PIPE][REF_NULL] appid=${appId} — thumbAutoplayVideoRef is null`);
+      setAutoplayFailed(true);
+      return;
+    }
+    console.log(`[PREVIEW_PIPE][REF_OK] appid=${appId} — video ref is set`);
+
+    // Determine source type
+    const isHls = !DEBUG_FORCE_TEST_MP4 && trailerData?.playableType === "hls";
+
+    if (isHls) {
+      setAutoHlsState("init");
+      if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_AUTOPLAY_HLS] appid=${appId} url=${src.substring(0, 80)}`);
+      initThumbHls(video, src);
+    } else {
+      // Direct mp4/webm or force test — set src and call play()
+      video.muted = true;
+      (video as any).playsInline = true;
+      video.preload = "auto";
+      video.src = src;
+
+      setAutoPlayCalled(true);
+
+      // Log video events
+      const onLoaded = () => {
+        setAutoVideoReady(true);
+        if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_VIDEO_LOADED] appid=${appId}`);
+      };
+      const onPlaying = () => {
+        setAutoPlaySuccess(true);
+        setAutoplayFailed(false);
+        console.log(`[PREVIEW_PIPE][PLAY_SUCCESS] appid=${appId}`);
+      };
+      const onError_ = () => {
+        const errMsg = video.error?.message ?? video.error?.code?.toString() ?? "unknown";
+        setAutoPlayError(errMsg);
+        setAutoplayFailed(true);
+        console.log(`[PREVIEW_PIPE][PLAY_ERROR] appid=${appId} error=${errMsg}`);
+      };
+
+      video.addEventListener("loadedmetadata", onLoaded, { once: true });
+      video.addEventListener("playing", onPlaying, { once: true });
+      video.addEventListener("error", onError_, { once: true });
+
+      requestAnimationFrame(() => {
+        console.log(`[PREVIEW_PIPE][PLAY_ATTEMPT] appid=${appId} src=${src.substring(0, 80)}`);
+        video.play().then(() => {
+          // play() resolved — video might still be buffering, wait for 'playing' event
+          if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_AUTOPLAY_PROMISE_RESOLVED] appid=${appId}`);
+        }).catch((err) => {
+          console.log(`[PREVIEW_PIPE][PLAY_REJECTED] appid=${appId} error=${err.message ?? String(err)}`);
+          setAutoPlayError(err.message ?? String(err));
+          setAutoplayFailed(true);
+          setAutoPlayCalled(false);
+          video.removeEventListener("loadedmetadata", onLoaded);
+          video.removeEventListener("playing", onPlaying);
+          video.removeEventListener("error", onError_);
+        });
+      });
+    }
+
+    return () => {
+      destroyThumbHls();
+      if (video) {
+        video.removeAttribute("src");
+        video.load();
+      }
+    };
+  }, [thumbnailAutoplaySrc, game?.appId, trailerData?.playableType]);
 
   async function initHls(video: HTMLVideoElement, url: string) {
     destroyHls();
@@ -249,6 +462,7 @@ export default function ConsoleSelectedPreview({
   useEffect(() => {
     return () => {
       destroyHls();
+      destroyThumbHls();
       if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     };
   }, []);
@@ -381,6 +595,23 @@ export default function ConsoleSelectedPreview({
     }
   }, [mediaKey, detailsMode, autoplay, screenshotActive, playType, videoSrc, videoError]);
 
+  /* ── Track whether the autoplay video element rendered ── */
+  const autoVideoRenderedRef = useRef(false);
+  useEffect(() => {
+    const rendered = thumbAutoplayVideoRef.current !== null;
+    if (rendered !== autoVideoRenderedRef.current) {
+      autoVideoRenderedRef.current = rendered;
+      if (rendered && thumbnailAutoplaySrc) {
+        console.log(`[PREVIEW_PIPE][RENDER_VIDEO] appid=${game?.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
+      }
+    }
+  });
+
+  /* ── Reset thumbnail autoplay error on source change ── */
+  useEffect(() => {
+    setThumbAutoplayError(false);
+  }, [thumbnailAutoplaySrc]);
+
   const handleImgError = useCallback(() => {
     if (DEBUG_PREVIEW) {
       const errorSrc = displaySrc ?? "(null)";
@@ -413,7 +644,11 @@ export default function ConsoleSelectedPreview({
           key={`${game.appId}-${displaySrc}`}
           src={displaySrc}
           alt=""
-          className={`h-full w-full object-cover ${isPlaying && hasVideo && !screenshotActive ? "opacity-0" : ""}`}
+          className={`h-full w-full object-cover transition-opacity duration-500 ${
+            isPlaying && hasVideo && !screenshotActive ? "opacity-0" : ""
+          } ${
+            !detailsMode && thumbnailAutoplaySrc && !thumbAutoplayError && autoPlaySuccess && !showArtworkFirst ? "opacity-0" : ""
+          }`}
           onError={handleImgError}
         />
       ) : (
@@ -424,6 +659,28 @@ export default function ConsoleSelectedPreview({
             <Clapperboard className="h-8 w-8 text-(--color-muted)/30" />
           )}
         </div>
+      )}
+
+      {/* ── Thumbnail autoplay video (muted, loop, no controls, programmatic play()) ── */}
+      {/* The video renders whenever thumbnailAutoplaySrc is set, regardless of
+          previous playback failures. The image stays on top until autoPlaySuccess=true,
+          so a failed-play video behind it is never visible. The key changes on
+          source/appId change, forcing a fresh video element mount. */}
+      {!detailsMode && thumbnailAutoplaySrc && !screenshotActive && !showArtworkFirst && (
+        <video
+          ref={thumbAutoplayVideoRef}
+          key={`${game.appId}:${thumbnailAutoplaySrc}`}
+          poster={displaySrc && displaySrc !== thumbnailAutoplaySrc ? displaySrc : undefined}
+          muted
+          loop
+          playsInline
+          preload="auto"
+          className="absolute inset-0 h-full w-full object-cover"
+          onLoadedMetadata={() => { setAutoVideoReady(true); if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_VIDEO_LOADEDMETA] appid=${game?.appId}`); }}
+          onPlaying={() => { setAutoPlaySuccess(true); setAutoplayFailed(false); if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_VIDEO_PLAYING] appid=${game?.appId}`); }}
+          onError={() => { setThumbAutoplayError(true); console.log(`[PREVIEW_PIPE][VIDEO_ELEMENT_ERROR] appid=${game?.appId}`); }}
+          onEnded={(e) => { (e.target as HTMLVideoElement).play().catch(() => {}); }}
+        />
       )}
 
       {/* ── Video layer ── */}
@@ -624,6 +881,26 @@ export default function ConsoleSelectedPreview({
       {detailsMode && videoError && (
         <div className="pointer-events-none absolute bottom-8 left-2 flex items-center gap-1 rounded-md bg-red-900/60 px-2 py-0.5 text-[10px] text-red-200">
           Video unavailable
+        </div>
+      )}
+
+      {/* ── Debug autoplay overlay ── */}
+      {DEBUG_AUTO_OVERLAY && thumbnailAutoplaySrc && !detailsMode && (
+        <div className="pointer-events-none absolute top-1 right-1 z-50 max-w-[220px] rounded-md bg-black/80 p-2 text-[9px] leading-tight text-green-300 shadow-lg backdrop-blur-sm">
+          <div className="mb-0.5 font-bold text-[10px] text-white/80">AUTO PREVIEW</div>
+          <div>appid={game.appId}</div>
+          <div>mode={label}</div>
+          <div>source={trailerData?.playableType ?? "none"}</div>
+          <div>src={thumbnailAutoplaySrc ? thumbnailAutoplaySrc.length > 50 ? thumbnailAutoplaySrc.substring(0, 50) + "…" : thumbnailAutoplaySrc : "null"}</div>
+          <div>videoRendered={String(!!thumbAutoplayVideoRef.current)}</div>
+          <div>videoRef={String(!!thumbAutoplayVideoRef.current)}</div>
+          <div>playCalled={String(autoPlayCalled)}</div>
+          <div>playSuccess={String(autoPlaySuccess)}</div>
+          <div className={autoPlayError ? "text-red-300" : ""}>playError={autoPlayError ?? "null"}</div>
+          <div>hlsState={autoHlsState}</div>
+          <div>videoReady={String(autoVideoReady)}</div>
+          <div>thumbError={String(thumbAutoplayError)}</div>
+          <div>autoFail={String(autoplayFailed)}</div>
         </div>
       )}
     </div>

@@ -66,15 +66,12 @@ export default function ConsoleCategoryBar({ activeIndex, counts, onSelect, show
   );
 
   const hintsBlock = showHints ? (
-    <div className="flex items-center gap-4">
-      <div className="hidden items-center gap-4 md:flex">
-        <HintTag>{hints.back}</HintTag>
-        <HintTag>{hints.select}</HintTag>
-        <HintTag>{hints.play}</HintTag>
-        <HintTag>{hints.search}</HintTag>
-        <HintTag>{hints.profile}</HintTag>
-        <HintTag>{hints.media}</HintTag>
-      </div>
+    <div className="flex items-center gap-2 md:gap-3">
+      <HintTag>{hints.back}</HintTag>
+      <HintTag>{hints.select}</HintTag>
+      <HintTag>{hints.play}</HintTag>
+      <HintTag>{hints.search}</HintTag>
+      <HintTag>{hints.profile}</HintTag>
     </div>
   ) : null;
 

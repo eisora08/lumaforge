@@ -1,15 +1,15 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import {
-  Trophy,
+  Trophy, Star,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
 import { getConsoleHeroBackground } from "./consoleMedia";
-import { getConsoleInputHints } from "./consoleInputHints";
-import { formatBytes, formatRelativeTime, formatPlaytime, getGameAchievementSummary, getGameCompletionStatus } from "./consoleGameStats";
+import { formatBytes, formatRelativeTime, formatPlaytime, getGameCompletionStatus } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
+import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
 import ConsoleGameCard from "./ConsoleGameCard";
 import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleCategoryBar from "./ConsoleCategoryBar";
@@ -20,6 +20,8 @@ import { setScrollTarget } from "./useConsoleGamepadInput";
 
 const DEBUG_CONSOLE_MODE = false;
 const DEBUG_CONSOLE_GRID_NAV = false;
+const DEBUG_CONSOLE_PREVIEW_AUTO = true;
+const DEBUG_FORCE_TEST_MP4 = false;
 
 type Props = {
   focusedGame: LibraryGame | null;
@@ -46,19 +48,6 @@ type Props = {
 
 
 
-function HintTag({ children }: { children: string }) {
-  const m = children.match(/^\[(.+?)\]\s*(.+)$/);
-  if (!m) return <span className="text-[11px] text-(--color-muted)">{children}</span>;
-  return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-(--color-muted)">
-      <span className="rounded border border-(--color-border) bg-(--color-surface) px-1 py-px text-[9px] font-bold tracking-tight text-(--color-muted)">
-        {m[1]}
-      </span>
-      {m[2]}
-    </span>
-  );
-}
-
 export default function ConsoleGridLayout({
   focusedGame, rails, focusedRail, focusedIndex,
   onSelectGame, onOptionsGame: _onOptionsGame, onPlayGame: _onPlayGame, layoutMode, onToggleLayout,
@@ -80,11 +69,27 @@ export default function ConsoleGridLayout({
   const heroSrc = getConsoleHeroBackground(focusedGame);
   const trailerData = useMemo(() => focusedGame ? extractTrailerData(focusedGame) : null, [focusedGame]);
 
-  const hints = useMemo(() => getConsoleInputHints(settings.inputHints), [settings.inputHints]);
+  const [showArtworkFirst, setShowArtworkFirst] = useState(true);
+  const [thumbnailAutoplaySrc, setThumbnailAutoplaySrc] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<"artwork" | "trailer" | "unsupported">("artwork");
+  const artworkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusedAppIdRef = useRef<string | null>(null);
+  const trailerDataRef = useRef(trailerData);
+  trailerDataRef.current = trailerData;
 
-  const achievementSummary = useMemo(() => {
-    return focusedGame ? getGameAchievementSummary(focusedGame) : null;
-  }, [focusedGame]);
+  const appIdStr = focusedGame?.appId ?? null;
+
+  const {
+    effectiveUnlocked,
+    effectiveTotal,
+    effectivePercent,
+    hasData: gridHasAchievements,
+  } = useConsoleAchievements(appIdStr);
+
+  const {
+    reviewSummary,
+    hasData: gridHasReviews,
+  } = useConsoleReviews(appIdStr);
 
   const lastPlayedStr = useMemo(() => {
     if (!focusedGame) return null;
@@ -151,8 +156,105 @@ export default function ConsoleGridLayout({
     }
   }, [focusedIndex, currentRail]);
 
-  if (DEBUG_CONSOLE_MODE && focusedGame) {
-    console.log(`[CONSOLE][GRID_PREVIEW] appid=${focusedGame.appId} title=${focusedGame.title}`);
+  /* ── Delayed trailer preview: show artwork on focus, switch to trailer after 3s ──
+   *  After 3s, resolve trailer source:
+   *  - Direct mp4/webm → set thumbnailAutoplaySrc (muted autoplay via programmatic play())
+   *  - HLS → set thumbnailAutoplaySrc; ConsoleSelectedPreview handles HLS init via hls.js
+   *  - DASH / no trailer → stay on artwork or show unsupported badge */
+  useEffect(() => {
+    const appId = focusedGame?.appId ?? null;
+    focusedAppIdRef.current = appId;
+
+    setShowArtworkFirst(true);
+    setThumbnailAutoplaySrc(null);
+    setPreviewMode("artwork");
+
+    if (artworkTimerRef.current) {
+      clearTimeout(artworkTimerRef.current);
+      artworkTimerRef.current = null;
+    }
+
+    if (!appId) return;
+
+    if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+      console.log(`[CONSOLE_PREVIEW_AUTO][FOCUS] appid=${appId}`);
+      console.log(`[CONSOLE_PREVIEW_AUTO][TIMER_START] appid=${appId} delay=3000`);
+    }
+
+    artworkTimerRef.current = setTimeout(() => {
+      if (focusedAppIdRef.current !== appId || focusedGame?.appId !== appId) {
+        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+          console.log(`[CONSOLE_PREVIEW_AUTO][TIMER_CANCEL] appid=${appId} reason=focus-changed`);
+        }
+        return;
+      }
+
+      setShowArtworkFirst(false);
+
+      // Resolve trailer source for current appId (use ref to avoid stale closure)
+      const td = trailerDataRef.current;
+      if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+        console.log(`[CONSOLE_PREVIEW_AUTO][TRAILER_SOURCE] appid=${appId} type=${td?.playableType ?? "none"} url=${td?.playableUrl?.substring(0, 80) ?? "null"}`);
+        if (td) {
+          console.log(`[CONSOLE_PREVIEW_AUTO][TRAILER_DATA] appid=${appId} id=${td.movieCount > 0 ? "primary" : "none"} name=${td.movieCount > 0 ? td.movieCount + " movies" : "none"} mp4_max=${td.mp4Url ?? "null"} webm_max=${td.webmUrl ?? "null"} hls_h264=${td.hls_h264 ?? "null"} dash_h264=${td.dash_h264 ?? "null"} dash_av1=${td.dash_av1 ?? "null"}`);
+        }
+      }
+
+      if (td?.playableUrl && settings.showTrailerPreview) {
+        // Playable source exists — autoplay (direct mp4/webm or HLS via hls.js)
+        const src = DEBUG_FORCE_TEST_MP4 ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" : td.playableUrl;
+        console.log(`[PREVIEW_PIPE][SET_SRC] appid=${appId} src=${src.substring(0, 80)}`);
+        setThumbnailAutoplaySrc(src);
+        setPreviewMode("trailer");
+        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+          console.log(`[CONSOLE_PREVIEW_AUTO][AUTOPLAY_START] appid=${appId} type=${td.playableType} url=${src.substring(0, 80)}`);
+        }
+      } else if (td?.hasTrailer) {
+        // Has trailer metadata but no playable URL (DASH only or corrupt)
+        setPreviewMode("unsupported");
+        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+          console.log(`[CONSOLE_PREVIEW_AUTO][SHOW_UNSUPPORTED] appid=${appId} type=${td.playableType}`);
+        }
+      } else {
+        // No trailer — stay on artwork
+        setPreviewMode("trailer");
+        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+          console.log(`[CONSOLE_PREVIEW_AUTO][SHOW_ARTWORK] appid=${appId} reason=no-trailer`);
+        }
+      }
+    }, 3000);
+
+    return () => {
+      if (artworkTimerRef.current) {
+        clearTimeout(artworkTimerRef.current);
+        artworkTimerRef.current = null;
+      }
+    };
+  }, [focusedGame?.appId, settings.showTrailerPreview]);
+
+  /* ── Clean up timer on unmount ── */
+  useEffect(() => {
+    return () => {
+      if (artworkTimerRef.current) clearTimeout(artworkTimerRef.current);
+    };
+  }, []);
+
+  /* ── Debug log for preview mode changes ── */
+  useEffect(() => {
+    if (DEBUG_CONSOLE_PREVIEW_AUTO && focusedGame?.appId) {
+      console.log(`[CONSOLE_PREVIEW_AUTO] appid=${focusedGame.appId} showArtworkFirst=${showArtworkFirst} mode=${previewMode} autoplay=${!!thumbnailAutoplaySrc}`);
+    }
+    if (thumbnailAutoplaySrc && focusedGame?.appId) {
+      console.log(`[PREVIEW_PIPE][PASS_PROP] appid=${focusedGame.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
+    }
+  }, [showArtworkFirst, previewMode, thumbnailAutoplaySrc, focusedGame?.appId]);
+
+  if (DEBUG_CONSOLE_MODE) {
+    if (focusedGame) {
+      console.log(`[CONSOLE][GRID_PREVIEW] appid=${focusedGame.appId} title=${focusedGame.title}`);
+    } else {
+      console.log(`[CONSOLE][GRID_PREVIEW] cleared reason=no-focused-game`);
+    }
   }
 
   return (
@@ -216,7 +318,14 @@ export default function ConsoleGridLayout({
                   showTrailerPreview={settings.showTrailerPreview}
                   trailerData={trailerData}
                   mode="thumbnail"
+                  showArtworkFirst={showArtworkFirst}
+                  thumbnailAutoplaySrc={thumbnailAutoplaySrc}
                 />
+                {previewMode === "unsupported" && (
+                  <div className="pointer-events-none absolute top-2 right-2 rounded-md bg-amber-900/60 px-2 py-0.5 text-[10px] text-amber-200">
+                    Stream only
+                  </div>
+                )}
                 <div className="absolute inset-0 bg-gradient-to-t from-(--color-bg)/80 to-transparent pointer-events-none" />
               </div>
 
@@ -329,25 +438,48 @@ export default function ConsoleGridLayout({
                     <Trophy className="h-4 w-4 text-(--color-muted)" />
                     <span className="text-sm font-semibold text-(--color-text)">Achievements</span>
                   </div>
-                  {achievementSummary ? (
+                  {gridHasAchievements ? (
                     <div className="mt-2.5">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-(--color-muted)">
-                          {achievementSummary.unlocked} / {achievementSummary.total}
+                          {effectiveUnlocked} / {effectiveTotal}
                         </span>
                         <span className="font-semibold tabular-nums text-(--color-text)">
-                          {achievementSummary.percent}%
+                          {effectivePercent}%
                         </span>
                       </div>
                       <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-(--color-border)">
                         <div
                           className="h-full rounded-full bg-(--color-accent) transition-all duration-300"
-                          style={{ width: `${achievementSummary.percent}%` }}
+                          style={{ width: `${effectivePercent}%` }}
                         />
                       </div>
                     </div>
                   ) : (
                     <p className="mt-2 text-xs text-(--color-muted)">No achievement data</p>
+                  )}
+                </div>
+
+                {/* Reviews card */}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Star className="h-4 w-4 text-(--color-muted)" />
+                    <span className="text-sm font-semibold text-(--color-text)">Reviews</span>
+                  </div>
+                  {gridHasReviews ? (
+                    <div className="mt-2">
+                      <p className="text-sm font-bold text-green-400">{reviewSummary!.review_score_desc}</p>
+                      <p className="mt-0.5 text-xs text-(--color-muted)">
+                        {reviewSummary!.positive_percent != null
+                          ? `${Math.round(reviewSummary!.positive_percent)}% positive`
+                          : `${reviewSummary!.total_positive.toLocaleString()} positive`}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-(--color-muted)/60">
+                        {reviewSummary!.total_reviews.toLocaleString()} reviews
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-(--color-muted)">No review data</p>
                   )}
                 </div>
 
@@ -372,24 +504,16 @@ export default function ConsoleGridLayout({
                   </p>
                 )}
 
-                {/* Separator before hints */}
-                <div className="border-t border-(--color-border)" />
-
-                {/* Input hints — driven by settings */}
-                <div className="flex flex-wrap gap-x-5 gap-y-2">
-                  {hints.select && <HintTag>{hints.select}</HintTag>}
-                  {hints.play && <HintTag>{hints.play}</HintTag>}
-                  <HintTag>{hints.options}</HintTag>
-                  <HintTag>{hints.search}</HintTag>
-                  <HintTag>{hints.profile}</HintTag>
-                  <HintTag>{hints.back}</HintTag>
-                  {hints.page && <HintTag>{hints.page}</HintTag>}
-                </div>
               </div>
             </div>
           ) : (
-            <div className="flex h-full items-center justify-center px-8">
-              <p className="text-center text-sm text-(--color-muted)">Select a game to see details</p>
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-8">
+              <p className="text-center text-sm text-(--color-muted)">No game selected</p>
+              {currentRail.length === 0 && (
+                <p className="text-center text-xs text-(--color-muted)/50">
+                  This category has no games. Switch categories or browse All Games.
+                </p>
+              )}
             </div>
           )}
         </div>

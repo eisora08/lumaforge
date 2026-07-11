@@ -6,18 +6,14 @@ import {
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleSettings } from "./consoleSettings";
-import type { GameAchievementsSummary } from "../../types/gameAchievements";
-import type { SteamReviewSummary } from "../../types/gameReview";
 import type { StoreMediaItem, StoreTrailerMedia } from "../../types/store";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { achievementStore } from "../../services/achievementStore";
-import { resolveGameReviewSummaries } from "../../services/gameReviewResolver";
 import { buildStoreMedia } from "../../services/storeMediaService";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
-import { getCachedSnapshot } from "../../services/startupSnapshotService";
+import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
 import { useSettings } from "../../context/SettingsContext";
 import {
   formatRelativeTime,
@@ -42,7 +38,6 @@ import { handleConsolePrimaryAction, getConsoleGameActionModel, isInFlight, type
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 
 const DEBUG = false;
-const DEBUG_CONSOLE_ACHIEVEMENTS = false;
 const DEBUG_CONSOLE_PLAY = false;
 const DEBUG_CONSOLE_ACTIONS = false;
 const DEBUG_CONSOLE_DETAILS_ACTION = false;
@@ -690,71 +685,16 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const lastPlayedTs = useMemo(() => (game ? getGameLastPlayedTimestamp(game) : null), [game]);
   const lastPlayedStr = lastPlayedTs ? formatRelativeTime(lastPlayedTs) : "Never";
 
-  /* ── Achievements ── */
   const appIdStr = game?.appId ?? null;
 
-  const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
-    if (!appIdStr) return null;
-    const fromStore = achievementStore.getSummary(appIdStr);
-    if (fromStore) return fromStore;
-    const snap = getCachedSnapshot();
-    const snapGame = snap?.library?.games?.find(g => g.appId === appIdStr);
-    if (snapGame?.achievementSummary && snapGame.achievementSummary.total > 0) {
-      const a = snapGame.achievementSummary;
-      return {
-        appId: appIdStr,
-        source: "local-cache" as const,
-        total: a.total,
-        unlocked: a.unlocked ?? 0,
-        percent: a.percent ?? 0,
-        progressAvailable: a.progressAvailable ?? false,
-        updatedAt: snapGame.updatedAt ?? 0,
-        achievements: [],
-      };
-    }
-    return null;
-  });
-
-  useEffect(() => {
-    if (!appIdStr) return;
-    const unsub = achievementStore.subscribe((appId, summary) => {
-      if (appId !== appIdStr) return;
-      setAchievementsSummary(summary);
-    });
-    return unsub;
-  }, [appIdStr]);
-
-  useEffect(() => {
-    if (!appIdStr || !achievementsSummary) return;
-    if (achievementsSummary.progressAvailable) return;
-    const list = achievementsSummary.achievements;
-    if (!list || list.length === 0) return;
-    const unlocked = list.filter(a => a.unlocked).length;
-    if (unlocked === 0) return;
-    const total = list.length;
-    const percent = Math.round((unlocked / total) * 100);
-    const patched: GameAchievementsSummary = {
-      ...achievementsSummary,
-      unlocked,
-      total,
-      percent,
-      progressAvailable: true,
-    };
-    if (DEBUG_CONSOLE_ACHIEVEMENTS) console.log(`[CONSOLE_ACHIEVEMENTS][DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
-    achievementStore.setSummary(appIdStr, patched);
-    setAchievementsSummary(patched);
-  }, [appIdStr, achievementsSummary]);
-
-  const derivedUnlocked = achievementsSummary?.achievements?.filter(a => a.unlocked).length ?? 0;
-  const effectiveUnlocked = achievementsSummary?.unlocked ?? derivedUnlocked;
-  const effectiveTotal = achievementsSummary?.total ?? achievementsSummary?.achievements?.length ?? 0;
-  const effectivePercent = effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0;
-  const isPerfected = effectiveTotal > 0 && effectiveUnlocked >= effectiveTotal;
-
-  if (DEBUG_CONSOLE_ACHIEVEMENTS) {
-    const libSource = achievementStore.getSummary(appIdStr ?? "")?.source ?? "null";
-    console.log(`[CONSOLE_ACHIEVEMENTS] appid=${appIdStr} console=${achievementsSummary ? `${effectiveUnlocked}/${effectiveTotal}` : "null"} librarySource=${libSource} source=${achievementsSummary?.source ?? "null"}`);
-  }
+  const {
+    achievementsSummary,
+    effectiveUnlocked,
+    effectiveTotal,
+    effectivePercent,
+    isPerfected,
+    hasData: _hasAchievements,
+  } = useConsoleAchievements(appIdStr);
 
   const releaseYear = useMemo(() => {
     if (!game?.metadata?.release_date) return null;
@@ -818,31 +758,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     return sorted.slice(0, 2);
   }, [achievementsSummary]);
 
-  /* ══════════════════════════════════════════
-     REVIEWS CARD
-     ══════════════════════════════════════════ */
-  const [reviewSummary, setReviewSummary] = useState<SteamReviewSummary | null>(null);
-  const reviewFetchRef = useRef(false);
-
-  useEffect(() => {
-    if (!game?.appId) return;
-    reviewFetchRef.current = false;
-  }, [game?.appId]);
-
-  useEffect(() => {
-    if (!game?.appId) return;
-    const appIdNum = Number(game.appId);
-    if (!appIdNum || appIdNum <= 0) return;
-    if (reviewFetchRef.current) return;
-    reviewFetchRef.current = true;
-
-    resolveGameReviewSummaries([appIdNum]).then((result) => {
-      const s = result[appIdNum];
-      if (s && s.resolved && s.total_reviews > 0) {
-        setReviewSummary(s);
-      }
-    });
-  }, [game?.appId]);
+  const {
+    reviewSummary,
+    isLoading: reviewIsLoading,
+    hasData: _hasReviewData,
+  } = useConsoleReviews(appIdStr);
 
   const reviewColors = reviewSummary
     ? (REVIEW_COLORS[reviewSummary.review_score_desc] ?? DEFAULT_REVIEW_COLOR)
@@ -1509,7 +1429,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       <span className="text-xs font-semibold text-(--color-text)">Reviews</span>
                     </div>
                     <p className="mt-1.5 text-[11px] text-(--color-muted)">
-                      {reviewFetchRef.current ? "Loading review data…" : "No review data"}
+                      {reviewIsLoading ? "Loading review data…" : "No review data"}
                     </p>
                   </div>
                 )}

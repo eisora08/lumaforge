@@ -37,6 +37,7 @@ function getBlockedReason(action: string): string {
 const DEBUG_CONSOLE_MODE = false;
 const DEBUG_CONSOLE_PLAY = false;
 const DEBUG_CONSOLE_GRID_NAV = false;
+const DEBUG_CONSOLE_ENTRY = false;
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -457,9 +458,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       const rail = rails[focusedRail];
       if (focusedIndex < rail.length) return rail[focusedIndex];
     }
-    for (const rail of rails) {
-      if (rail.length > 0) return rail[0];
-    }
     return null;
   }, [focusedRail, focusedIndex, rails]);
 
@@ -479,6 +477,115 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const layoutModeRef = useRef(consoleSettings.layoutMode);
   layoutModeRef.current = consoleSettings.layoutMode;
 
+  /* ── Tracks whether the user intentionally selected an empty category ── */
+  const userSelectedEmptyRef = useRef(false);
+
+  const handleSelectCategory = useCallback((index: number) => {
+    const isEmpty = (rails[index]?.length ?? 0) === 0;
+    if (DEBUG_CONSOLE_ENTRY) {
+      const CATEGORY_ORDER = ["continue", "installed", "lua", "favorites", "all"];
+      console.log(`[CONSOLE_ENTRY][CATEGORY_VALIDATE] selected=${CATEGORY_ORDER[index] ?? index} count=${rails[index]?.length ?? 0} isEmpty=${isEmpty}`);
+    }
+    userSelectedEmptyRef.current = isEmpty;
+    focusRail(index, 0);
+  }, [rails, focusRail]);
+
+  /* ── Entry state initialization: ensure focusedRail points to a non-empty category ── */
+  const entryInitializedRef = useRef(false);
+
+  useEffect(() => {
+    if (entryInitializedRef.current) return;
+
+    if (focusedRail >= 0) {
+      entryInitializedRef.current = true;
+      return;
+    }
+
+    const CATEGORY_ORDER = ["continue", "installed", "lua", "favorites", "all"];
+    const startIdx = CATEGORY_ORDER.indexOf(consoleSettings.startCategory);
+    const preferredRail = startIdx >= 0 ? startIdx : 4;
+
+    if (DEBUG_CONSOLE_ENTRY) {
+      console.log(`[CONSOLE_ENTRY][CATEGORY] selected=${consoleSettings.startCategory} preferredRail=${preferredRail}`);
+    }
+
+    // Check if preferred rail has games
+    if (rails[preferredRail]?.length > 0) {
+      if (DEBUG_CONSOLE_ENTRY) {
+        console.log(`[CONSOLE_ENTRY][FOCUS_GAME] rail=${preferredRail} appid=${rails[preferredRail][0]?.appId}`);
+      }
+      focusRail(preferredRail, 0);
+      entryInitializedRef.current = true;
+      return;
+    }
+
+    // Fallback order: continue → installed → lua → favorites → all
+    const fallbackOrder = [0, 1, 2, 3, 4];
+    for (const i of fallbackOrder) {
+      if (i !== preferredRail && rails[i]?.length > 0) {
+        if (DEBUG_CONSOLE_ENTRY) {
+          console.log(`[CONSOLE_ENTRY][FALLBACK_CATEGORY] from=${consoleSettings.startCategory} to=${CATEGORY_ORDER[i]} reason=empty`);
+        }
+        focusRail(i, 0);
+        entryInitializedRef.current = true;
+        return;
+      }
+    }
+
+    // No games exist at all — show empty state, clear any stale preview
+    if (DEBUG_CONSOLE_ENTRY) {
+      console.log(`[CONSOLE_ENTRY][CLEAR_PREVIEW] reason=no-games`);
+    }
+    entryInitializedRef.current = true;
+  }, [focusedRail, rails, focusRail, consoleSettings.startCategory]);
+
+  /* ── Re-validate current category when rails change (games loaded, etc.) ──
+   *  If current rail becomes empty and user didn't manually select an empty
+   *  category, fallback to first non-empty rail. */
+  useEffect(() => {
+    if (!entryInitializedRef.current) return;
+
+    const currentLength = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail].length : 0;
+
+    if (currentLength > 0) {
+      userSelectedEmptyRef.current = false; // Category auto-recovered
+      if (focusedIndex >= currentLength) {
+        if (DEBUG_CONSOLE_ENTRY) {
+          console.log(`[CONSOLE_ENTRY][CLAMP_INDEX] rail=${focusedRail} from=${focusedIndex} to=0 reason=out-of-bounds`);
+        }
+        focusRail(focusedRail, 0);
+      }
+      return;
+    }
+
+    // Current rail is empty — check if user manually chose it
+    if (userSelectedEmptyRef.current) {
+      if (DEBUG_CONSOLE_ENTRY) {
+        console.log(`[CONSOLE_ENTRY][CLEAR_FOCUS] reason=user-selected-empty shadow=${focusedRail}`);
+      }
+      return;
+    }
+
+    // Auto-fallback to first non-empty category
+    const CATEGORY_ORDER = ["continue", "installed", "lua", "favorites", "all"];
+    for (let i = 0; i < rails.length; i++) {
+      if (rails[i].length > 0) {
+        if (DEBUG_CONSOLE_ENTRY) {
+          const fromLabel = focusedRail >= 0 && focusedRail < CATEGORY_ORDER.length ? CATEGORY_ORDER[focusedRail] : `rail-${focusedRail}`;
+          console.log(`[CONSOLE_ENTRY][FALLBACK_CATEGORY] from=${fromLabel} to=${CATEGORY_ORDER[i]} reason=empty`);
+        }
+        userSelectedEmptyRef.current = false;
+        focusRail(i, 0);
+        return;
+      }
+    }
+
+    // All categories empty
+    if (DEBUG_CONSOLE_ENTRY) {
+      console.log(`[CONSOLE_ENTRY][CLEAR_FOCUS] reason=all-empty`);
+    }
+  }, [rails, focusedRail, focusedIndex, focusRail]);
+
   const sharedProps = {
     focusedGame: currentFocusedGame,
     rails,
@@ -492,7 +599,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     onNavigate,
     categoryCounts: railLengths,
     activeCategory: focusedRail >= 0 ? focusedRail : 0,
-    onSelectCategory: focusRail,
+    onSelectCategory: handleSelectCategory,
     settings: consoleSettings,
     onSettingsPatch: patchConsoleSettings,
     allGames: enrichedGames,
