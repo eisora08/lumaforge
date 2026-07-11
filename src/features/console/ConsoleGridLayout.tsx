@@ -41,6 +41,7 @@ type Props = {
   allGames?: LibraryGame[];
   onRefreshLibrary?: () => void;
   gridColumnsRef?: React.MutableRefObject<number>;
+  dockFocusedIndex?: number;
 };
 
 

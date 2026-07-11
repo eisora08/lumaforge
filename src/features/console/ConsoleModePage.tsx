@@ -20,6 +20,7 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setOnGamepadAction } fro
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showSuccess, showError, showWarning } from "../../components/toast/GameToast";
+import { getPlaytimeEntryByAppId } from "../../services/playtimeService";
 
 function getBlockedReason(action: string): string {
   switch (action) {
@@ -52,6 +53,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [dockFocusedIndex, setDockFocusedIndex] = useState(-1);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -70,13 +72,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     patchConsoleSettings({ layoutMode: consoleSettings.layoutMode === "spotlight" ? "grid" : "spotlight" as ConsoleLayoutMode });
   }, [consoleSettings.layoutMode, patchConsoleSettings]);
 
-  const continuePlaying = useMemo(() => {
-    const withPlaytime = enrichedGames
-      .filter((g) => isSidebarInstalledGame(g) && (g.steamLastPlayedAt || g.steamPlaytimeMinutes))
-      .sort((a, b) => (b.steamLastPlayedAt ?? 0) - (a.steamLastPlayedAt ?? 0));
-    return withPlaytime.slice(0, 15);
-  }, [enrichedGames]);
-
   const installed = useMemo(() => {
     return enrichedGames.filter(isSidebarInstalledGame);
   }, [enrichedGames]);
@@ -92,6 +87,37 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const allGames = useMemo(() => {
     return enrichedGames;
   }, [enrichedGames]);
+
+  const session = useGameSession();
+  const pendingLaunchToastRef = useRef<Map<string, string>>(new Map());
+
+  const continuePlaying = useMemo(() => {
+    const activeAppIds = new Set<string>();
+    for (const key of Object.keys(session.sessions)) {
+      const state = session.getState(key);
+      if (state === "running" || state === "launching") {
+        const m = key.match(/^app-(.+)$/);
+        if (m) activeAppIds.add(m[1]);
+      }
+    }
+    const scored = enrichedGames
+      .filter((g) => isSidebarInstalledGame(g) && g.appId)
+      .map((g) => {
+        const appId = g.appId!;
+        const isActive = activeAppIds.has(appId);
+        const ptEntry = getPlaytimeEntryByAppId(appId);
+        const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? 0;
+        const lpa = ptEntry?.lastPlayedAt ?? g.steamLastPlayedAt ?? 0;
+        return { game: g, score: isActive ? Number.MAX_SAFE_INTEGER : lpa, totalSeconds, isActive };
+      })
+      .filter((s) => s.totalSeconds > 0 || s.score > 0 || s.isActive)
+      .sort((a, b) => {
+        if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+        return b.score - a.score;
+      })
+      .slice(0, 15);
+    return scored.map((s) => s.game);
+  }, [enrichedGames, session.sessions, session.getState]);
 
   const rails = useMemo(() => [continuePlaying, installed, luaOrInLibrary, favorites, allGames], [
     continuePlaying, installed, luaOrInLibrary, favorites, allGames,
@@ -147,9 +173,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
     setDetailGame(null);
   }, []);
-
-  const session = useGameSession();
-  const pendingLaunchToastRef = useRef<Map<string, string>>(new Map());
 
   const handleConsolePlay = useCallback(async (game: LibraryGame) => {
     if (!game?.appId) {
@@ -268,6 +291,40 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       const target = e.target as HTMLElement;
       const isInputActive = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
       const isInDialog = !!target.closest?.('[role="dialog"][aria-modal="true"]');
+
+      /* ── Dock focus navigation ──
+       * When the dock is focused (dockFocusedIndex >= 0), all navigation
+       * moves within the dock. ArrowUp and Enter return to the selected rail. */
+      if (dockFocusedIndexRef.current >= 0) {
+        const dfi = dockFocusedIndexRef.current;
+        const railCount = railsRef.current.length;
+        switch (e.key) {
+          case "ArrowLeft":
+            e.preventDefault();
+            setDockFocusedIndex(dfi <= 0 ? railCount - 1 : dfi - 1);
+            break;
+          case "ArrowRight":
+            e.preventDefault();
+            setDockFocusedIndex(dfi >= railCount - 1 ? 0 : dfi + 1);
+            break;
+          case "ArrowUp":
+            e.preventDefault();
+            focusRail(dfi, focusedIndexRef.current);
+            setDockFocusedIndex(-1);
+            break;
+          case "Enter":
+            e.preventDefault();
+            focusRail(dfi, 0);
+            setDockFocusedIndex(-1);
+            break;
+          case "Escape":
+            e.preventDefault();
+            setDockFocusedIndex(-1);
+            break;
+        }
+        return;
+      }
+
       switch (e.key) {
         case "ArrowUp":
           e.preventDefault();
@@ -308,7 +365,12 @@ export default function ConsoleModePage({ onNavigate }: Props) {
               }
             }
           } else {
-            moveDown();
+            const lastRail = railsRef.current.length - 1;
+            if (lastRail >= 0 && focusedRailRef.current === lastRail) {
+              setDockFocusedIndex(focusedRailRef.current);
+            } else {
+              moveDown();
+            }
           }
           break;
         case "ArrowLeft": e.preventDefault(); moveLeft(); break;
@@ -373,7 +435,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [moveUp, moveDown, moveLeft, moveRight, pageLeft, pageRight, tabForward, tabBackward, selectFocused, goBack, detailGame, closeDetails, optionsGame, handleOptionsGame, searchOpen, handleConsolePlay, profileOpen]);
+  }, [moveUp, moveDown, moveLeft, moveRight, pageLeft, pageRight, tabForward, tabBackward, selectFocused, goBack, focusRail, detailGame, closeDetails, optionsGame, handleOptionsGame, searchOpen, handleConsolePlay, profileOpen]);
 
   /* ── Gamepad input: enabled when no overlay blocks navigation ── */
   const gamepadEnabled = !searchOpen && !detailGame && !optionsGame && !profileOpen;
@@ -413,6 +475,8 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   focusedRailRef.current = focusedRail;
   const focusedIndexRef = useRef(focusedIndex);
   focusedIndexRef.current = focusedIndex;
+  const dockFocusedIndexRef = useRef(dockFocusedIndex);
+  dockFocusedIndexRef.current = dockFocusedIndex;
   const railsRef = useRef(rails);
   railsRef.current = rails;
   const gridColumnsRef = useRef(consoleSettings.gridColumns);
@@ -438,6 +502,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     onSettingsPatch: patchConsoleSettings,
     allGames: enrichedGames,
     gridColumnsRef,
+    dockFocusedIndex,
   };
 
   const layout = consoleSettings.layoutMode === "spotlight"

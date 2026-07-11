@@ -1143,6 +1143,19 @@ html[data-compact="true"] .lf-launch-bar {
   100% { transform: translateX(120%); }
 }
 
+@keyframes dock-label-in {
+  0% {
+    opacity: 0;
+    max-width: 0;
+    margin-left: -4px;
+  }
+  100% {
+    opacity: 1;
+    max-width: 100px;
+    margin-left: 6px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .console-card-shine {
     display: none !important;

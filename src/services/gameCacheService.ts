@@ -2624,7 +2624,7 @@ function fromCachedSource(cached: MediaSourcesCache | undefined | null, kind: Ga
 
 const DEBUG_MEDIA_ROLE_MAP = false;
 
-function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "capsule"): string | null {
+function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "capsule" | "cover"): string | null {
   const id = parseInt(appId, 10);
   if (!id || isNaN(id) || id <= 0) return null;
   const base = `https://steamcdn-a.akamaihd.net/steam/apps/${id}`;
@@ -2633,6 +2633,7 @@ function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "cap
     case "hero": return `${base}/library_hero.jpg`;
     case "logo": return `${base}/logo.png`;
     case "capsule": return `${base}/capsule_616x353.jpg`;
+    case "cover": return `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`;
     default: return null;
   }
 }
@@ -2660,7 +2661,7 @@ function fromSteamCdn(appId: string, meta: SteamAppMetadata | null | undefined, 
     switch (kind) {
       case "background": if (meta.library_hero_image || meta.hero_image) return undefined; break;
       case "logo":       if (meta.logo_image || meta.library_logo_image) return undefined; break;
-      case "cover":      if (meta.capsule_image_v5 || meta.capsule_image) return undefined; break;
+      case "cover":      break; // library_600x900.jpg is distinct from horizontal capsule; always try
       case "landscape":  if (meta.library_header_image) return undefined; break;
     }
   }
@@ -2670,7 +2671,7 @@ function fromSteamCdn(appId: string, meta: SteamAppMetadata | null | undefined, 
   switch (kind) {
     case "background": return asset("background", "steam-appdetails", buildSteamCdnUrl(appId, "hero"));
     case "logo":       return asset("logo", "steam-appdetails", buildSteamCdnUrl(appId, "logo"));
-    case "cover":      return asset("cover", "steam-appdetails", buildSteamCdnUrl(appId, "capsule"));
+    case "cover":      return asset("cover", "steam-appdetails", buildSteamCdnUrl(appId, "cover"));
     case "landscape":  return asset("landscape", "steam-appdetails", buildSteamCdnUrl(appId, "header"));
     case "icon":       return undefined;
     default:           return undefined;
@@ -2684,16 +2685,16 @@ function resolveCover(
   sgdb: SgdbArtworkData | undefined | null,
   _rawg: RawgArtworkData | undefined | null,
   igdb: IgdbArtworkData | undefined | null,
-  _meta: SteamAppMetadata | undefined | null,
+  meta: SteamAppMetadata | undefined | null,
   imageUrl: string | undefined | null,
   opts?: MediaResolutionOptions,
 ): ResolvedGameMediaAsset | undefined {
-  // Cover MUST be a poster/vertical image. Steam capsule/header assets are
-  // horizontal capsule bars — never use them as cover.  Only SGDB, IGDB,
-  // or catalog imageUrl can provide true vertical cover art.
+  // library_600x900.jpg is Steam's native vertical poster — preferred over
+  // SGDB/IGDB when available.
   const result = pickFirst([
     localPaths?.coverPath && asset("cover", "local", localPaths.coverPath),
     cached && fromCachedSource(cached, "cover"),
+    fromSteamCdn(appId, meta, "cover"),
     sgdb && opts?.useSteamGridDb !== false && fromSgdb(sgdb, "cover"),
     igdb && opts?.useIgdb !== false && fromIgdb(igdb, "cover"),
     imageUrl && asset("cover", "steam-appdetails", imageUrl),

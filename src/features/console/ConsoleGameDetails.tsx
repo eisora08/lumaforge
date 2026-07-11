@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useCallback, useRef, useState } from "react";
 import {
   ArrowLeft, Trophy, Heart, Gamepad2, Play, Square, Clock, HardDrive, CheckCircle2,
-  Star, Languages, Layers,
+  Star, Languages, Layers, Download, RefreshCw, Search,
 } from "lucide-react";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -11,6 +11,7 @@ import type { SteamReviewSummary } from "../../types/gameReview";
 import type { StoreMediaItem, StoreTrailerMedia } from "../../types/store";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useTheme } from "../../context/ThemeContext";
+import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
 import { achievementStore } from "../../services/achievementStore";
 import { resolveGameReviewSummaries } from "../../services/gameReviewResolver";
@@ -27,6 +28,7 @@ import {
 import ConsoleMediaGallery from "./ConsoleMediaGallery";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import ConsoleGameOptionsOverlay from "./ConsoleGameOptionsOverlay";
+import ConsoleInstallModal from "./ConsoleInstallModal";
 import { getConsoleInputHints } from "./consoleInputHints";
 import type { TrailerData } from "./consoleTrailerData";
 import { resolveConsoleDetailsArtwork, clearConsoleArtworkCache, consoleArtworkToBundle } from "./consoleArtworkResolver";
@@ -36,10 +38,14 @@ import { useGameSession, computeGameKey } from "../../context/GameSessionContext
 import { focusGameWindow } from "../../services/tauri";
 import { showWarning, showError } from "../../components/toast/GameToast";
 import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamepadInput";
+import { handleConsolePrimaryAction, getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel } from "./consoleGameActions";
+import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 
 const DEBUG = false;
 const DEBUG_CONSOLE_ACHIEVEMENTS = false;
 const DEBUG_CONSOLE_PLAY = false;
+const DEBUG_CONSOLE_ACTIONS = false;
+const DEBUG_CONSOLE_DETAILS_ACTION = false;
 
 function getBlockedReason(action: string): string {
   switch (action) {
@@ -146,7 +152,6 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const isLaunching = sessionState === "launching";
   const isRunning = sessionState === "running";
   const isStopping = sessionState === "stopping";
-  const allowPlay = !isLaunching && !isRunning && !isStopping;
   const hints = useMemo(() => getConsoleInputHints(settings.inputHints), [settings.inputHints]);
   const sheetRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLDivElement>(null);
@@ -162,14 +167,20 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const [carouselSelectedIndex, setCarouselSelectedIndex] = useState<number>(0);
   const [infoCardSide, setInfoCardSide] = useState<InfoCardSide>("achievements");
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [leftActionSubIndex, setLeftActionSubIndex] = useState(0);
+  const [installModalOpen, setInstallModalOpen] = useState(false);
+  const installModalClosedAtRef = useRef(0);
+  const BOUNCE_GUARD_MS = 400;
 
   /* ── Multi-source artwork enrichment ── */
   const [artwork, setArtwork] = useState<ConsoleArtwork | null>(null);
+  const _pendingArtworkRef = useRef<string | null>(null);
 
   useEffect(() => {
     const appId = game?.appId;
     if (!appId) return;
     setArtwork(null);
+    _pendingArtworkRef.current = appId;
 
     const opts: ConsoleArtworkOptions = {
       sgdbApiKey: appSettings.steamGridDbApiKey,
@@ -182,6 +193,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     };
 
     resolveConsoleDetailsArtwork(game, opts).then((a) => {
+      if (_pendingArtworkRef.current !== appId) {
+        if (DEBUG) console.log(`[CONSOLE][ARTWORK_STALE] appId=${appId} current=${_pendingArtworkRef.current} reason=stale-result`);
+        return;
+      }
       setArtwork(a);
     });
 
@@ -280,6 +295,103 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     }
   }, [gameSession]);
 
+  /* ── Shared action model — single source of truth ── */
+  const actionModel = useMemo<ConsoleGameActionModel | null>(
+    () => (game?.appId ? getConsoleGameActionModel(game) : null),
+    [game],
+  );
+  const actionInFlight = game?.appId ? isInFlight(game.appId) : false;
+  const { addJob, updateJob } = useDownloadQueueContext();
+  const libCtx = useLibraryGames();
+  const _mountedRef = useRef(true);
+
+  useEffect(() => {
+    _mountedRef.current = true;
+    return () => { _mountedRef.current = false; };
+  }, []);
+
+  const handlePrimaryAction = useCallback(() => {
+    if (!game || !game.appId || !actionModel) return;
+    const action = actionModel.action;
+    if (DEBUG_CONSOLE_DETAILS_ACTION) {
+      console.log(`[CONSOLE_DETAILS_ACTION][RUN] appid=${game.appId} action=${action} enabled=${actionModel.enabled}`);
+    }
+    if (action === "play") {
+      handlePlay();
+      return;
+    }
+    if (action === "install") {
+      setInstallModalOpen(true);
+      return;
+    }
+    handleConsolePrimaryAction(game, action, {
+      settings: appSettings,
+      addJob,
+      updateJob,
+      libraryRefresh: libCtx.refresh,
+      mountedRef: _mountedRef,
+      onPlayGame,
+    });
+  }, [game, actionModel, handlePlay, appSettings, addJob, updateJob, libCtx.refresh, onPlayGame]);
+
+  const handleConsoleAction = useCallback((action: ConsolePrimaryAction) => {
+    if (!game || !game.appId) return;
+    if (action === "play") {
+      handlePlay();
+      return;
+    }
+    if (action === "install") {
+      setInstallModalOpen(true);
+      return;
+    }
+    if (DEBUG_CONSOLE_ACTIONS) {
+      console.log(`[CONSOLE_ACTION_CLICK] appid=${game.appId} action=${action} enabled=${actionModel?.enabled ?? false}`);
+    }
+    handleConsolePrimaryAction(game, action, {
+      settings: appSettings,
+      addJob,
+      updateJob,
+      libraryRefresh: libCtx.refresh,
+      mountedRef: _mountedRef,
+      onPlayGame,
+    });
+  }, [game, actionModel, appSettings, addJob, updateJob, libCtx.refresh, handlePlay, onPlayGame]);
+
+  const handleFavoriteToggle = useCallback(() => {
+    if (game?.appId) toggleFavorite(game.appId);
+  }, [game, toggleFavorite]);
+
+  /* ── Sub-focus activation for left-actions zone ── */
+  /* Index 0 = primary action (Play/Install/etc.), 1 = favorite toggle */
+  const activateFocusedLeftAction = useCallback(() => {
+    if (DEBUG_CONSOLE_DETAILS_ACTION) {
+      console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex}`);
+    }
+    if (leftActionSubIndex === 0) {
+      handlePrimaryAction();
+    } else if (leftActionSubIndex === 1) {
+      handleFavoriteToggle();
+    }
+  }, [leftActionSubIndex, handlePrimaryAction, handleFavoriteToggle, game?.appId]);
+
+  /* ── Install modal confirm ── */
+  const handleInstallConfirm = useCallback(() => {
+    if (DEBUG_CONSOLE_DETAILS_ACTION) {
+      console.log(`[CONSOLE_DETAILS_ACTION][INSTALL_MODAL_CONFIRM] appid=${game?.appId}`);
+    }
+    installModalClosedAtRef.current = Date.now();
+    setInstallModalOpen(false);
+    if (!game || !game.appId) return;
+    handleConsolePrimaryAction(game, "install", {
+      settings: appSettings,
+      addJob,
+      updateJob,
+      libraryRefresh: libCtx.refresh,
+      mountedRef: _mountedRef,
+      onPlayGame,
+    });
+  }, [game, appSettings, addJob, updateJob, libCtx.refresh, onPlayGame]);
+
   /* ══════════════════════════════════════════
      KEYBOARD NAVIGATION — Focus zone model
      ══════════════════════════════════════════ */
@@ -299,6 +411,21 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
     // When options overlay is open, ignore all zone keys (overlay handles its own)
     if (optionsOpen) return;
+
+    // When install modal is open, ignore all zone keys (modal handles its own)
+    if (installModalOpen) return;
+
+    // Post-modal close bounce guard: ignore Enter/Space/Escape within 400ms of modal close.
+    // Catches the second Enter dispatched by the gamepad hook transition race
+    // (parent hook re-enables with empty heldButtons while A is still physically held).
+    if ((e.key === "Enter" || e.key === " " || e.key === "Escape") && installModalClosedAtRef.current > 0) {
+      const elapsed = Date.now() - installModalClosedAtRef.current;
+      if (elapsed < BOUNCE_GUARD_MS) {
+        if (DEBUG_CONSOLE_GAMEPAD) console.log(`[INSTALL_MODAL][BOUNCE_GUARD] key=${e.key} elapsed=${elapsed}ms installModalOpen=${installModalOpen}`);
+        e.preventDefault();
+        return;
+      }
+    }
 
     // X = Play from any zone
     if (e.key === "x" || e.key === "X") {
@@ -357,12 +484,24 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
           setFocusZone("back-button");
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setLeftActionSubIndex((i) => (i > 0 ? i - 1 : 1));
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
-          setFocusZone("media-preview");
+          setLeftActionSubIndex((i) => (i < 1 ? i + 1 : 0));
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          handlePlay();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          if (DEBUG_CONSOLE_DETAILS_ACTION) {
+            const actionLabel = leftActionSubIndex === 0 ? actionModel?.action ?? "none" : "favorite";
+            console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex} action=${actionLabel}`);
+          }
+          activateFocusedLeftAction();
+          if (DEBUG_CONSOLE_GAMEPAD) {
+            console.log(`[INSTALL_MODAL][OPEN_FROM_ACTION] key=${e.key} stopped=true`);
+          }
         }
         break;
       }
@@ -487,7 +626,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         break;
       }
     }
-  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen, onSearchOpen, handlePlay]);
+  }, [focusZone, carouselFocusIndex, carouselSelectedIndex, mediaItems.length, handleClose, hasPlayableVideo, game?.appId, optionsOpen, installModalOpen, onSearchOpen, handlePlay, leftActionSubIndex, activateFocusedLeftAction, actionModel]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleZoneKeyDown);
@@ -500,7 +639,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [carouselSelectedIndex]);
 
   /* ── Gamepad input: enabled while visible and no inner overlay active ── */
-  useConsoleGamepadInput(!optionsOpen && !gamepadDisabled);
+  useConsoleGamepadInput(!optionsOpen && !installModalOpen && !gamepadDisabled);
 
   /* ── Auto-focus left panel when entering left-info zone ── */
   useEffect(() => {
@@ -523,7 +662,16 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   /* ── Derived data ── */
   const heroSrc = mediaBundle?.background?.url ?? getConsoleHeroBackground(game);
   const coverSrc = mediaBundle?.cover?.url ?? getConsoleCardSrc(game, "poster");
-  const logoSrc = mediaBundle?.logo?.url ?? getConsoleLogoSrc(game);
+  const logoSrc = (() => {
+    const raw = mediaBundle?.logo?.url ?? getConsoleLogoSrc(game);
+    if (!raw || !game.appId) return null;
+    const appIdMatch = raw.match(/steam\/apps\/(\d+)\//);
+    if (appIdMatch && appIdMatch[1] !== game.appId) {
+      if (DEBUG) console.log(`[LOGO_DISPLAY][REJECT] appid=${game.appId} path=${raw} reason=cross-app-steam-url urlAppid=${appIdMatch[1]}`);
+      return null;
+    }
+    return raw;
+  })();
   const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
 
   const playtimeSeconds = useMemo(
@@ -611,7 +759,16 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   const developer = game?.metadata?.developer ?? null;
   const publisher = game?.metadata?.publishers?.join(", ") ?? null;
-  const genres = useMemo(() => game?.metadata?.genres?.slice(0, 4) ?? null, [game]);
+  const genres = useMemo(() => {
+    const raw = game?.metadata?.genres ?? [];
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const g of raw) {
+      if (!seen.has(g)) { seen.add(g); deduped.push(g); }
+      if (deduped.length >= 4) break;
+    }
+    return deduped.length > 0 ? deduped : null;
+  }, [game?.metadata]);
   const description = game?.metadata?.short_description ?? null;
 
   /* ══════════════════════════════════════════
@@ -625,7 +782,16 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     return stripped.length > 500 ? stripped.slice(0, 500) + "…" : stripped;
   }, [game?.metadata]);
 
-  const categories = useMemo(() => game?.metadata?.categories?.slice(0, 6) ?? null, [game?.metadata]);
+  const categories = useMemo(() => {
+    const raw = game?.metadata?.categories ?? [];
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const c of raw) {
+      if (!seen.has(c)) { seen.add(c); deduped.push(c); }
+      if (deduped.length >= 6) break;
+    }
+    return deduped.length > 0 ? deduped : null;
+  }, [game?.metadata]);
 
   const languagesLabel = useMemo(() => {
     const langs = game?.metadata?.languages;
@@ -638,10 +804,6 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const dlcLabel = dlcCount <= 0 ? null : dlcCount === 1 ? "1 DLC Available" : `${dlcCount} DLCs Available`;
 
   const hasRequirements = !!(game?.metadata?.pc_requirements?.minimum || game?.metadata?.pc_requirements?.recommended);
-
-  const handleFavoriteToggle = useCallback(() => {
-    if (game?.appId) toggleFavorite(game.appId);
-  }, [game, toggleFavorite]);
 
   /* ── Achievement mini rows (up to 2, compact) ── */
   const achievementMiniRows = useMemo(() => {
@@ -834,7 +996,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             {/* ── Identity + Actions (zone: left-actions) ── */}
             <div
               tabIndex={-1}
-              onFocus={() => setFocusZone("left-actions")}
+              onFocus={() => { setFocusZone("left-actions"); setLeftActionSubIndex(0); }}
               className={`shrink-0 rounded-2xl px-3 pt-3 pb-2 outline-none ${zoneFocusClass("left-actions")}`}
             >
               <div className="flex gap-3.5">
@@ -909,7 +1071,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       <>
                         <button
                           type="button"
-                          onClick={handleStop}
+                          onClick={() => { handleStop(); }}
+                          tabIndex={0}
+                          onFocus={() => setLeftActionSubIndex(0)}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110"
                         >
                           <Square className="h-4 w-4 fill-current" />
@@ -918,7 +1082,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                         {gameSession?.pid != null && (
                           <button
                             type="button"
-                            onClick={handleReturn}
+                            onClick={() => { handleReturn(); }}
+                            tabIndex={0}
+                            onFocus={() => setLeftActionSubIndex(1)}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40"
                             title="Return to game"
                           >
@@ -945,24 +1111,50 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                         <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                         Stopping…
                       </button>
+                    ) : actionInFlight ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/70 px-4 py-2 text-sm font-semibold text-white shadow-lg opacity-60 cursor-not-allowed"
+                      >
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                        {actionModel?.label ?? "Play"}…
+                      </button>
                     ) : (
                       <button
                         type="button"
-                        onClick={handlePlay}
-                        disabled={!allowPlay}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => {
+                          if (DEBUG_CONSOLE_DETAILS_ACTION) {
+                            console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
+                          }
+                          handlePrimaryAction();
+                        }}
+                        disabled={!actionModel?.enabled}
+                        tabIndex={0}
+                        onFocus={() => setLeftActionSubIndex(0)}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
+                          actionModel?.enabled === false
+                            ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed"
+                            : "bg-(--color-accent) shadow-lg shadow-(--color-accent)/25 hover:brightness-110"
+                        }`}
                       >
-                        <Play className="h-4 w-4" />
-                        Play
+                        <ActionIcon action={actionModel?.action ?? "unavailable"} />
+                        {actionModel?.label ?? "Play"}
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={handleFavoriteToggle}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-(--color-surface)/40"
+                      tabIndex={0}
+                      onFocus={() => setLeftActionSubIndex(1)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border border-(--color-border)/60 px-3 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-(--color-surface)/40 ${
+                        focusZone === "left-actions" && leftActionSubIndex === 1
+                          ? "ring-2 ring-(--color-accent)/40"
+                          : ""
+                      }`}
                       title={isFav ? "Remove from Favorites" : "Add to Favorites"}
                     >
-                      <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
+                      <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""} ${focusZone === "left-actions" && leftActionSubIndex === 1 ? "text-rose-400" : ""}`} />
                     </button>
                   </div>
 
@@ -1332,10 +1524,23 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           onClose={() => setOptionsOpen(false)}
           onOpenSearch={() => { setOptionsOpen(false); onSearchOpen?.(); }}
           onPlayGame={(g) => { setOptionsOpen(false); onPlayGame?.(g); }}
+          onAction={handleConsoleAction}
           inDetails={true}
           inputHints={settings.inputHints}
         />
       )}
+
+      {/* Install confirmation modal */}
+      <ConsoleInstallModal
+        game={game}
+        open={installModalOpen}
+        onClose={() => {
+          installModalClosedAtRef.current = Date.now();
+          setInstallModalOpen(false);
+        }}
+        onConfirm={handleInstallConfirm}
+        inputHints={settings.inputHints}
+      />
     </div>
   );
 }
@@ -1361,4 +1566,16 @@ function HintLabel({ children, focus }: { children: string | null; focus?: boole
       {m[2]}
     </span>
   );
+}
+
+/* ── Action icon helper ── */
+function ActionIcon({ action, className }: { action: ConsolePrimaryAction; className?: string }) {
+  const cls = `h-4 w-4 ${className ?? ""}`;
+  switch (action) {
+    case "install": return <Download className={cls} />;
+    case "update": return <RefreshCw className={cls} />;
+    case "check-update": return <Search className={cls} />;
+    case "up-to-date": return <CheckCircle2 className={cls} />;
+    default: return <Play className={cls} />;
+  }
 }

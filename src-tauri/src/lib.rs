@@ -173,6 +173,7 @@ pub fn run() {
             commands::game_cache::write_media_manifest,
             commands::game_cache::get_media_manifests_batch,
             commands::game_cache::save_game_media_file,
+            commands::game_cache::delete_game_media_file,
             commands::media_cache::get_media_cache_stats,
             commands::media_cache::compact_media_cache,
             commands::startup_snapshot::read_startup_snapshot,

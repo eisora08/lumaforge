@@ -9,10 +9,12 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamep
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { focusGameWindow } from "../../services/tauri";
-import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showError } from "../../components/toast/GameToast";
 import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
+import {
+  getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel,
+} from "./consoleGameActions";
 
 const FADE_DURATION = 180;
 
@@ -23,12 +25,13 @@ type Props = {
   onOpenDetails?: () => void;
   onOpenSearch?: () => void;
   onPlayGame?: (game: LibraryGame) => void;
+  onAction?: (action: ConsolePrimaryAction) => void;
   inDetails: boolean;
   inputHints: ConsoleInputHintStyle;
 };
 
 export default function ConsoleGameOptionsOverlay({
-  game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, inDetails, inputHints,
+  game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, onAction, inDetails, inputHints,
 }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const sessionCtx = useGameSession();
@@ -78,6 +81,12 @@ export default function ConsoleGameOptionsOverlay({
     if (game?.appId) toggleFavorite(game.appId);
   }, [game, toggleFavorite]);
 
+  /* ── Shared action model — single source of truth ── */
+  const actionModel = useMemo<ConsoleGameActionModel | null>(
+    () => (game?.appId ? getConsoleGameActionModel(game) : null),
+    [game],
+  );
+
   /* ── Row definitions ── */
   const rows = useMemo(() => {
     const list: {
@@ -89,7 +98,8 @@ export default function ConsoleGameOptionsOverlay({
       highlight?: boolean;
     }[] = [];
 
-    const action = getLauncherGamePrimaryAction(game);
+    const inFlight = game.appId ? isInFlight(game.appId) : false;
+    const model = actionModel;
 
     if (isRunning) {
       list.push({
@@ -133,13 +143,15 @@ export default function ConsoleGameOptionsOverlay({
         action: () => {},
       });
     } else {
-      const isPlayable = game.isPlayable && action === "play" && !isLaunching;
+      // Play row always shows "Play"; disabled when Library says not playable
+      const isPlayable = model?.baseAction === "play";
+      const playEnabled = isPlayable && !isLaunching;
       list.push({
         id: "play",
-        label: isPlayable ? "Play" : `Play (${action})`,
+        label: "Play",
         icon: Play,
-        disabled: !isPlayable,
-        action: () => { if (isPlayable) { onPlayGame?.(game); onClose(); } },
+        disabled: !playEnabled,
+        action: () => { if (playEnabled) { onPlayGame?.(game); onClose(); } },
         highlight: false,
       });
     }
@@ -176,13 +188,65 @@ export default function ConsoleGameOptionsOverlay({
       action: () => { setEditDialogOpen(true); },
     });
 
-    list.push({
-      id: "check-update",
-      label: "Check Update",
-      icon: RefreshCw,
-      disabled: true,
-      action: () => showToast("Use Library details for update checks for now"),
-    });
+    // Install row — from shared model (never disagrees with primary button)
+    if (model?.showInstallRow) {
+      list.push({
+        id: "install",
+        label: "Install",
+        icon: RefreshCw,
+        disabled: inFlight || !model.installRowEnabled,
+        action: () => { if (model.installRowEnabled) { onAction?.("install"); onClose(); } },
+      });
+      // Show disabled reason badge for Install when not executable
+      if (!model.installRowEnabled && model.installRowReason) {
+        // reason shown as label suffix through no-op badge
+      }
+    }
+
+    // Update Available row — from shared model
+    if (model?.showUpdateRow) {
+      list.push({
+        id: "update",
+        label: "Update Available",
+        icon: RefreshCw,
+        disabled: inFlight,
+        action: () => { onAction?.("update"); onClose(); },
+        highlight: true,
+      });
+    }
+
+    // Check Update row — from shared model
+    if (model?.showCheckUpdateRow) {
+      list.push({
+        id: "check-update",
+        label: "Check Update",
+        icon: Search,
+        disabled: inFlight,
+        action: () => { onAction?.("check-update"); onClose(); },
+      });
+    }
+
+    // Up to Date row — from shared model
+    if (model?.showUpToDateRow) {
+      list.push({
+        id: "up-to-date",
+        label: "Up to Date",
+        icon: RefreshCw,
+        disabled: true,
+        action: () => {},
+      });
+    }
+
+    // Blocked row — from shared model
+    if (model?.showBlockedRow && model.blockedRowReason) {
+      list.push({
+        id: "blocked",
+        label: model.blockedRowReason,
+        icon: RefreshCw,
+        disabled: true,
+        action: () => {},
+      });
+    }
 
     list.push({
       id: "open-steam",
@@ -209,7 +273,7 @@ export default function ConsoleGameOptionsOverlay({
     });
 
     return list;
-  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame, isLaunching, isRunning, isStopping, gameSession, sessionCtx]);
+  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame, onAction, isLaunching, isRunning, isStopping, gameSession, sessionCtx, actionModel]);
 
   /* ── Clamp focus index after rows change ── */
   useEffect(() => {

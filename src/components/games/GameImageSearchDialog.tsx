@@ -17,9 +17,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { showError, showSuccess } from "../toast/GameToast";
 import { notifyMediaUpdated } from "../../services/startupSnapshotService";
 import { invalidateResolvedMediaCache } from "../../services/gameCacheService";
+import { getGameAppInfo, updateGameAppinfoMedia } from "../../services/tauri";
+import type { GameMediaPaths } from "../../services/tauri";
 import { openExternalUrl } from "../../services/externalLinks";
 
 type MediaRole = "cover" | "landscape" | "background" | "logo" | "icon";
+
+const DEBUG_MEDIA_EDIT = false;
 
 type Props = {
   open: boolean;
@@ -192,6 +196,22 @@ export default function GameImageSearchDialog({
       if (result) {
         console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${result}`);
         invalidateResolvedMediaCache(appId);
+        // Persist to appinfo so the change survives reload
+        try {
+          const currentInfo = await getGameAppInfo(appId);
+          const mediaKey = `${role}Path` as keyof GameMediaPaths;
+          const mergedMedia: GameMediaPaths = {
+            coverPath: currentInfo?.media?.coverPath ?? null,
+            landscapePath: currentInfo?.media?.landscapePath ?? null,
+            backgroundPath: currentInfo?.media?.backgroundPath ?? null,
+            logoPath: currentInfo?.media?.logoPath ?? null,
+            iconPath: currentInfo?.media?.iconPath ?? null,
+            [mediaKey]: result,
+          };
+          await updateGameAppinfoMedia(appId, currentInfo?.name ?? null, mergedMedia, currentInfo?.remote ?? null, currentInfo?.mediaSources ?? null);
+        } catch (e) {
+          if (DEBUG_MEDIA_EDIT) console.log(`[WEB_IMAGE_SEARCH][APPINFO_WRITE_FAIL] error=${e}`);
+        }
         notifyMediaUpdated(appId, { source: `image-search-${source}` });
         showSuccess(`${role} downloaded`);
         onClose();

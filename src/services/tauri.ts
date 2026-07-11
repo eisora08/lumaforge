@@ -1438,6 +1438,10 @@ export async function saveGameMediaFile(appId: string, role: string, contentBase
   return await invoke<string>("save_game_media_file", { appId, role, contentBase64, ext });
 }
 
+export async function deleteGameMediaFile(appId: string, role: string): Promise<void> {
+  return await invoke("delete_game_media_file", { appId, role });
+}
+
 export async function openGameMetadataFolder(appId: string): Promise<void> {
   return await invoke("open_game_metadata_folder", { appId });
 }

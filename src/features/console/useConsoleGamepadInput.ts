@@ -59,7 +59,11 @@ function dispatchKey(key: string): void {
   _globalOnGamepadAction?.();
 }
 
-export function useConsoleGamepadInput(enabled: boolean): void {
+type GamepadInputOptions = {
+  suppressHeldOnEnable?: boolean;
+};
+
+export function useConsoleGamepadInput(enabled: boolean, options?: GamepadInputOptions): void {
   const lastConnectedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const heldButtonsRef = useRef(new Set<number>());
@@ -104,6 +108,26 @@ export function useConsoleGamepadInput(enabled: boolean): void {
       ["left", B.DPAD_LEFT, 0, "ArrowLeft"],
       ["right", B.DPAD_RIGHT, 0, "ArrowRight"],
     ];
+
+    /* ── suppressHeldOnEnable: pre-populate heldButtons with already-pressed buttons ── */
+    if (options?.suppressHeldOnEnable) {
+      const gamepads = navigator.getGamepads?.();
+      if (gamepads) {
+        for (let i = 0; i < gamepads.length; i++) {
+          const gp = gamepads[i];
+          if (!gp) continue;
+          for (let b = 0; b < gp.buttons.length; b++) {
+            if (gp.buttons[b]?.pressed) {
+              heldButtonsRef.current.add(b);
+              if (DEBUG_CONSOLE_GAMEPAD) {
+                console.log(`[INSTALL_MODAL][SUPPRESS_HELD_ON_ENABLE] button=${b}`);
+              }
+            }
+          }
+          break; // Only need one connected gamepad
+        }
+      }
+    }
 
     let _getGamepadLogCount = 0;
     function getGamepad(): Gamepad | null {

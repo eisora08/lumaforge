@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import type { GameMediaPaths, GameAppInfo } from "../../services/tauri";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getGameAppInfo, resolveSteamGridDbArtwork, openGameMetadataFolder, openGameMediaFolder, resolveGameMediaPaths } from "../../services/tauri";
+import { getGameAppInfo, resolveSteamGridDbArtwork, openGameMetadataFolder, openGameMediaFolder, resolveGameMediaPaths, deleteGameMediaFile } from "../../services/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { updateGameAppinfoMediaIfChanged, saveGameMediaFile, persistGameAppInfo, clearSessionAppInfoCache, localPathToUrl } from "../../services/gameCacheService";
 import { invalidateResolvedMediaCache, refreshGameDetailsArtwork } from "../../services/gameCacheService";
@@ -135,6 +135,13 @@ function readFileAsBase64(file: File): Promise<{ base64: string; ext: string }> 
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+}
+
+/** Steam library_600x900.jpg URL — the proper vertical poster for cover art. */
+function buildSteamCoverUrl(appId: string): string | null {
+  const id = parseInt(appId, 10);
+  if (!id || isNaN(id) || id <= 0) return null;
+  return `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`;
 }
 
 // ── Component ──
@@ -421,24 +428,35 @@ export default function GameEditDialog({
       showError("Failed to save game details");
     }
     setSaving(false);
-  }, [appId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, updateGame]);
+  }, [appId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, updateGame]);
 
   // ── Track edits ──
   useEffect(() => {
     if (!open) return;
+    const u = (v: unknown) => typeof v === "string" ? v : "";
     const hasChanges =
       nameDraft !== (appInfo?.name ?? "") ||
-      genresDraft !== (typeof appInfo?.userData?.genres === "string" ? appInfo.userData.genres : "") ||
-      developersDraft !== (typeof appInfo?.userData?.developers === "string" ? appInfo.userData.developers : "") ||
-      publishersDraft !== (typeof appInfo?.userData?.publishers === "string" ? appInfo.userData.publishers : "") ||
-      categoriesDraft !== (typeof appInfo?.userData?.categories === "string" ? appInfo.userData.categories : "") ||
-      featuresDraft !== (typeof appInfo?.userData?.features === "string" ? appInfo.userData.features : "") ||
-      tagsDraft !== (typeof appInfo?.userData?.tags === "string" ? appInfo.userData.tags : "") ||
-      releaseDateDraft !== (typeof appInfo?.userData?.releaseDate === "string" ? appInfo.userData.releaseDate : "") ||
-      descriptionDraft !== (typeof appInfo?.userData?.description === "string" ? appInfo.userData.description : "") ||
-      sortingNameDraft !== (typeof appInfo?.userData?.sortingName === "string" ? appInfo.userData.sortingName : "");
+      genresDraft !== u(appInfo?.userData?.genres) ||
+      developersDraft !== u(appInfo?.userData?.developers) ||
+      publishersDraft !== u(appInfo?.userData?.publishers) ||
+      categoriesDraft !== u(appInfo?.userData?.categories) ||
+      featuresDraft !== u(appInfo?.userData?.features) ||
+      tagsDraft !== u(appInfo?.userData?.tags) ||
+      releaseDateDraft !== u(appInfo?.userData?.releaseDate) ||
+      descriptionDraft !== u(appInfo?.userData?.description) ||
+      sortingNameDraft !== u(appInfo?.userData?.sortingName) ||
+      userScoreDraft !== u(appInfo?.userData?.userScore) ||
+      criticScoreDraft !== u(appInfo?.userData?.criticScore) ||
+      communityScoreDraft !== u(appInfo?.userData?.communityScore) ||
+      reviewSummaryDraft !== u(appInfo?.userData?.reviewSummary) ||
+      reviewCountDraft !== u(appInfo?.userData?.reviewCount) ||
+      (reviewSourceDraft ?? "") !== u(appInfo?.userData?.reviewSource) ||
+      seriesDraft !== u(appInfo?.userData?.series) ||
+      ageRatingDraft !== u(appInfo?.userData?.ageRating) ||
+      regionDraft !== u(appInfo?.userData?.region) ||
+      completionStatusDraft !== u(appInfo?.userData?.completionStatus);
     setHasEdits(hasChanges);
-  }, [open, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft]);
+  }, [open, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft]);
 
   // ── Escape key ──
 
@@ -482,8 +500,10 @@ export default function GameEditDialog({
       invalidateResolvedMediaCache(appId);
       notifyMediaUpdated(appId);
       setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
+      // Trigger immediate React re-render across library/tiles
+      updateGame(appId, {} as Partial<LibraryGame>);
     },
-    [appId, appInfo],
+    [appId, appInfo, updateGame],
   );
 
   // ── File pick handler ──
@@ -592,7 +612,7 @@ export default function GameEditDialog({
         if (sourceId === "steam" && metadata) {
           const steamUrlMap: Record<MediaRole, string | null | undefined> = {
             icon: null,
-            cover: metadata.capsule_image_v5 ?? metadata.capsule_image,
+            cover: buildSteamCoverUrl(appId),
             background: metadata.library_hero_image ?? metadata.hero_image ?? metadata.background_image,
             landscape: metadata.library_header_image ?? metadata.header_image,
             logo: metadata.library_logo_image ?? metadata.logo_image,
@@ -667,6 +687,8 @@ export default function GameEditDialog({
     async (role: MediaRole) => {
       setSaving(true);
       try {
+        await deleteGameMediaFile(appId, role);
+        if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][FILE_DELETED] appid=${appId} role=${role}`);
         const updatedMedia = buildUpdatedMedia(role, null);
         await commitMediaUpdate(updatedMedia);
         await refreshRolePreview(role);
@@ -676,7 +698,7 @@ export default function GameEditDialog({
       }
       setSaving(false);
     },
-    [buildUpdatedMedia, commitMediaUpdate],
+    [appId, buildUpdatedMedia, commitMediaUpdate],
   );
 
   // ── Backdrop click ──

@@ -2020,3 +2020,42 @@ pub fn save_game_media_file(
 
     Ok(rel_path)
 }
+
+#[tauri::command]
+pub fn delete_game_media_file(
+    app_handle: AppHandle,
+    app_id: String,
+    role: String,
+) -> Result<(), String> {
+    let valid_roles = ["cover", "landscape", "background", "logo", "icon"];
+    if !valid_roles.contains(&role.as_str()) {
+        return Err(format!("Invalid media role: {}. Must be one of: cover, landscape, background, logo, icon", role));
+    }
+
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+
+    // Try to delete any file named role.* in the media directory
+    let entries = fs::read_dir(&media_dir)
+        .map_err(|e| format!("Failed to read media directory: {}", e))?;
+
+    let mut deleted = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(stem) = path.file_stem() {
+            if stem == role.as_str() {
+                if fs::remove_file(&path).is_ok() {
+                    println!("[MEDIA][FILE_DELETED] appid={} role={} path={:?}", app_id, role, path);
+                    deleted = true;
+                }
+            }
+        }
+    }
+
+    if deleted {
+        Ok(())
+    } else {
+        // Not an error if file doesn't exist — already clean
+        println!("[MEDIA][FILE_DELETE_SKIP] appid={} role={} reason=not-found", app_id, role);
+        Ok(())
+    }
+}
