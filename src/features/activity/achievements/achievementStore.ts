@@ -158,6 +158,11 @@ export function unlockAchievements(ids: string[]): string[] {
 }
 
 // ─── XP ───────────────────────────────────────────────────────────────
+// TODO: Duration-based XP (awarding XP proportional to session length) is
+// intentionally disabled. Implementing it before the playtime store dedup
+// is guaranteed would allow double-awards (session history + playtime store
+// both counting the same play). Enable only after a single authoritative
+// playtime source is enforced across all consumers.
 
 function addXpEvent(event: PlayerXpEvent): void {
   _xpStore.events.push(event);

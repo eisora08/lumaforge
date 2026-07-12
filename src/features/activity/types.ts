@@ -80,6 +80,8 @@ export type PlayActivityDay = {
 export type SessionHistoryEntry = {
   gameTitle: string;
   appId?: string;
+  source?: string;
+  exitReason?: string;
   startedAt: number;
   endedAt: number;
   durationSeconds: number;

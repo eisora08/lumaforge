@@ -37,6 +37,21 @@ const HEATMAP_COLORS = [
   "bg-emerald-400/90",
 ];
 
+const SOURCE_BADGE_COLORS: Record<string, string> = {
+  steam: "border-sky-500/20 bg-sky-500/10 text-sky-300",
+  local: "border-slate-500/20 bg-slate-500/10 text-slate-300",
+  lua: "border-purple-500/20 bg-purple-500/10 text-purple-300",
+  system: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
+};
+
+const EXIT_REASON_LABELS: Record<string, string> = {
+  normal: "Clean exit",
+  stopped: "Stopped",
+  crashed: "Crashed",
+  "process-exited": "Process exited",
+  unknown: "Unknown",
+};
+
 function formatDateShort(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
@@ -380,7 +395,17 @@ export default function ActivityStats() {
                   <Gamepad2 className="h-4 w-4 text-(--color-muted)/40 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-(--color-text) truncate">{s.gameTitle}</div>
-                    <div className="text-[10px] text-(--color-muted)/50">{formatTimestamp(s.startedAt)}</div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-(--color-muted)/50">{formatTimestamp(s.startedAt)}</span>
+                      {s.source && (
+                        <span className={`inline-flex rounded-full border px-1.5 py-px text-[9px] font-medium ${SOURCE_BADGE_COLORS[s.source] || "border-white/10 bg-white/[0.04] text-(--color-muted)"}`}>
+                          {s.source === "steam" ? "Steam" : s.source === "local" ? "Local" : s.source === "lua" ? "Lua" : s.source}
+                        </span>
+                      )}
+                      {s.exitReason && s.exitReason !== "normal" && (
+                        <span className="text-[9px] text-(--color-muted)/40">{EXIT_REASON_LABELS[s.exitReason] || s.exitReason}</span>
+                      )}
+                    </div>
                   </div>
                   <span className="text-xs font-medium text-(--color-text)">{formatDuration(s.durationSeconds)}</span>
                 </div>

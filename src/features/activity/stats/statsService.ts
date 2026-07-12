@@ -50,15 +50,14 @@ export function computeLibraryStats(games: LibraryGame[]): LibraryStats {
     const gpStats = playStats[game.id];
     const gpMinutes = gpStats?.playtimeMinutes ?? 0;
     const gpSeconds = gpMinutes * 60;
-    const gpLaunches = gpStats?.launchCount ?? 0;
     const effectiveTotal = Math.max(total, gpSeconds);
 
     if (effectiveTotal > 0) {
       gamesPlayed++;
       totalSeconds += effectiveTotal;
-      // Prefer real session history count; fall back to legacy launch count
+      // Only count real session history — launch count is displayed separately via getTotalLaunchCount()
       const historyCount = sessionCountByAppId.get(appId) ?? 0;
-      totalSessions += historyCount > 0 ? historyCount : gpLaunches;
+      totalSessions += historyCount;
       if (effectiveTotal > mostPlayedSeconds) {
         mostPlayedSeconds = effectiveTotal;
         mostPlayedTitle = game.title;
@@ -116,6 +115,8 @@ export function computeFilteredPlaytime(games: LibraryGame[], filter: StatsTimeF
         sessions.push({
           gameTitle: s.title,
           appId: s.appId,
+          source: s.source,
+          exitReason: s.exitReason,
           startedAt: s.startedAt,
           endedAt: s.endedAt,
           durationSeconds: s.durationMs / 1000,
@@ -341,6 +342,8 @@ export function computeSessionHistory(games: LibraryGame[], limit = 20): Session
     result.push({
       gameTitle: s.title,
       appId: s.appId,
+      source: s.source,
+      exitReason: s.exitReason,
       startedAt: s.startedAt,
       endedAt: s.endedAt,
       durationSeconds: s.durationMs / 1000,
