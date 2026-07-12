@@ -12,4 +12,5 @@ export type AppPage =
   | "game-details"
   | "library-game-detail"
   | "global-search"
-  | "console";
+  | "console"
+  | "launcher-achievements";

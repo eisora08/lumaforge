@@ -8,6 +8,25 @@ import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
 import { setInstalledGameEntry, discoverAndRegister } from "../services/installedGamesRegistry";
 
+async function evaluateLauncherAchievements(): Promise<void> {
+  try {
+    const { evaluateAchievements } = await import("../features/activity/achievements/achievementEngine");
+    const { buildEvalContext } = await import("../features/activity/stats/statsService");
+    const { getReconciledGames } = await import("../services/gameStore");
+    const games = getReconciledGames();
+    if (games.length === 0) return;
+    const ctx = buildEvalContext(games);
+    const result = evaluateAchievements(ctx);
+    if (result.newlyUnlocked.length > 0) {
+      console.log(`[LAUNCHER_ACH] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
+      const { showAchievementToasts } = await import("../components/activity/AchievementToast");
+      showAchievementToasts(result.newlyUnlocked);
+    }
+  } catch {
+    // non-critical
+  }
+}
+
 const ENABLE_VERBOSE_LAUNCH_LOGS = false;
 const ENABLE_VERBOSE_SESSION_POLL = false;
 const ENABLE_VERBOSE_ACH_REFRESH_LOGS = false;
@@ -1234,6 +1253,11 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
         // Clean up media ref
         delete sessionMediaRef.current[key];
+
+        // Evaluate launcher achievements after session
+        if (durationSeconds >= 15) {
+          setTimeout(() => evaluateLauncherAchievements(), 2000);
+        }
 
         // Phase 1: Clear active played session
         if (prevSession.appId) {

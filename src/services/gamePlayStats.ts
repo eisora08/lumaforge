@@ -8,7 +8,7 @@ export type GamePlayStats = {
   playtimeMinutes: number;
 };
 
-function loadAll(): Record<string, GamePlayStats> {
+export function loadAll(): Record<string, GamePlayStats> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as Record<string, GamePlayStats>) : {};

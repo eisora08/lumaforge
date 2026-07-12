@@ -13,6 +13,7 @@ const KIND_FILTERS: { label: string; value: GameActivityKind | null }[] = [
   { label: "Metadata", value: "metadata-refreshed" },
   { label: "DLC", value: "dlc-detected" },
   { label: "Files", value: "local-file-change" },
+  { label: "System", value: "game-closed" },
 ];
 
 const SOURCE_FILTERS: { label: string; value: GameActivityItem["source"] | null }[] = [
@@ -35,7 +36,11 @@ function getTimeGroup(ts: number): string {
 
 const GROUP_ORDER = ["Today", "This Week", "This Month", "Earlier"];
 
-export default function ActivityFeed() {
+type ActivityFeedProps = {
+  compact?: boolean;
+};
+
+export default function ActivityFeed({ compact }: ActivityFeedProps) {
   const { activities, clearActivities } = useGameActivity();
   const [kindFilter, setKindFilter] = useState<GameActivityKind | null>(null);
   const [sourceFilter, setSourceFilter] = useState<GameActivityItem["source"] | null>(null);
@@ -51,9 +56,11 @@ export default function ActivityFeed() {
     return result;
   }, [activities, kindFilter, sourceFilter]);
 
+  const displayItems = compact ? filtered.slice(0, 15) : filtered;
+
   const grouped = useMemo(() => {
     const map = new Map<string, GameActivityItem[]>();
-    for (const item of filtered) {
+    for (const item of displayItems) {
       const group = getTimeGroup(item.createdAt);
       if (!map.has(group)) map.set(group, []);
       map.get(group)!.push(item);
@@ -62,67 +69,71 @@ export default function ActivityFeed() {
       group: g,
       items: map.get(g) ?? [],
     })).filter((g) => g.items.length > 0);
-  }, [filtered]);
+  }, [displayItems]);
 
   return (
     <section className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-(--color-text)">
-            Activity Feed
-          </h2>
-          <p className="mt-1 text-sm text-(--color-muted)">
-            Game events, system actions and updates.
-          </p>
+      {!compact && (
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-(--color-text)">
+              Activity Feed
+            </h2>
+            <p className="mt-1 text-sm text-(--color-muted)">
+              Game events, system actions and updates.
+            </p>
+          </div>
+
+          {activities.length > 0 && (
+            <button
+              type="button"
+              onClick={clearActivities}
+              className="flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/[0.03] px-3.5 py-2 text-xs font-medium text-(--color-muted) transition hover:border-red-500/30 hover:text-red-400"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Clear All
+            </button>
+          )}
         </div>
+      )}
 
-        {activities.length > 0 && (
-          <button
-            type="button"
-            onClick={clearActivities}
-            className="flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/[0.03] px-3.5 py-2 text-xs font-medium text-(--color-muted) transition hover:border-red-500/30 hover:text-red-400"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Clear All
-          </button>
-        )}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Filter className="h-4 w-4 text-(--color-muted)" />
-        {KIND_FILTERS.map((f) => (
-          <button
-            key={f.label}
-            type="button"
-            onClick={() => setKindFilter(f.value)}
-            className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
-              kindFilter === f.value
-                ? "bg-(--color-accent) text-black"
-                : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-        <span className="mx-1 h-5 w-px bg-(--surface-active-border)" />
-        {SOURCE_FILTERS.map((f) => (
-          <button
-            key={f.label}
-            type="button"
-            onClick={() => setSourceFilter(f.value)}
-            className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
-              sourceFilter === f.value
-                ? "bg-(--color-accent) text-black"
-                : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+      {!compact && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Filter className="h-4 w-4 text-(--color-muted)" />
+          {KIND_FILTERS.map((f) => (
+            <button
+              key={f.label}
+              type="button"
+              onClick={() => setKindFilter(f.value)}
+              className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
+                kindFilter === f.value
+                  ? "bg-(--color-accent) text-black"
+                  : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+          <span className="mx-1 h-5 w-px bg-(--surface-active-border)" />
+          {SOURCE_FILTERS.map((f) => (
+            <button
+              key={f.label}
+              type="button"
+              onClick={() => setSourceFilter(f.value)}
+              className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
+                sourceFilter === f.value
+                  ? "bg-(--color-accent) text-black"
+                  : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {grouped.length === 0 ? (
-        <section className="rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-12 text-center">
+        <div className="flex flex-col items-center justify-center py-10 text-center">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/[0.04]">
             <Activity className="h-7 w-7 text-(--color-muted)" />
           </div>
@@ -132,17 +143,19 @@ export default function ActivityFeed() {
           <p className="mt-1.5 text-sm text-(--color-muted)">
             Game events and system actions will appear here.
           </p>
-        </section>
+        </div>
       ) : (
-        <div className="space-y-10">
+        <div className={compact ? "space-y-4" : "space-y-10"}>
           {grouped.map(({ group, items }) => (
             <div key={group}>
-              <h3 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-(--color-muted)">
-                {group}
-              </h3>
-              <div className="space-y-2">
+              {!compact && (
+                <h3 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-(--color-muted)">
+                  {group}
+                </h3>
+              )}
+              <div className="space-y-1.5">
                 {items.map((item) => (
-                  <ActivityCard key={item.id} activity={item} />
+                  <ActivityCard key={item.id} activity={item} compact={compact} />
                 ))}
               </div>
             </div>

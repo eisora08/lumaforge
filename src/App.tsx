@@ -10,7 +10,8 @@ import Games from "./pages/Games";
 import GlobalSearchResults from "./pages/GlobalSearchResults";
 import Downloads from "./pages/Downloads";
 import Achievements from "./pages/Achievements";
-import Activity from "./pages/Activity";
+import ActivityStats from "./pages/ActivityStats";
+import LauncherAchievements from "./pages/LauncherAchievements";
 import Verification from "./pages/Verification";
 import Tools from "./pages/Tools";
 import Settings from "./pages/Settings";
@@ -23,6 +24,7 @@ import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
 import GameSessionHUD from "./components/system/GameSessionHUD";
 import { showSessionOverlay, isSessionOverlayEnabled } from "./services/sessionOverlayService";
 import { GameToastViewport } from "./components/toast/GameToast";
+import { AchievementToastViewport } from "./components/activity/AchievementToast";
 import { AppPage } from "./types/navigation";
 import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
@@ -43,6 +45,7 @@ const KNOWN_PAGES: Set<AppPage> = new Set([
   "home", "library", "games", "store", "downloads",
   "achievements", "activity", "verification", "tools",
   "settings", "game-details", "library-game-detail", "global-search", "console",
+  "launcher-achievements",
 ]);
 
 function restoreActivePage(): AppPage {
@@ -226,7 +229,10 @@ function App() {
         pageComponent = <Achievements />;
         break;
       case "activity":
-        pageComponent = <Activity />;
+        pageComponent = <ActivityStats />;
+        break;
+      case "launcher-achievements":
+        pageComponent = <LauncherAchievements />;
         break;
       case "verification":
         pageComponent = <Verification />;
@@ -278,6 +284,7 @@ function App() {
       </GameSessionProvider>
       <InstallerProgressListener />
       <GameToastViewport />
+      <AchievementToastViewport />
       {import.meta.env.DEV && <BackgroundJobDebugPanel />}
       {/* Mode switch splash — covers Desktop ↔ Console transitions */}
       {showModeSwitch && (
