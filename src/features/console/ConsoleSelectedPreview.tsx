@@ -35,6 +35,7 @@ type Props = {
 const DEBUG_PREVIEW = false;
 const DEBUG_HLS = false;
 const DEBUG_AUTO_OVERLAY = false;
+const DEBUG_PREVIEW_PIPE = false;
 const LOG_PREFIX = "[CONSOLE_PREVIEW]";
 const CONTROLS_HIDE_MS = 3000;
 /** For testing only: set to true and provide a known direct MP4 URL to
@@ -215,22 +216,22 @@ export default function ConsoleSelectedPreview({
   async function initThumbHls(video: HTMLVideoElement, url: string) {
     destroyThumbHls();
     setAutoHlsState("init");
-    console.log(`[PREVIEW_PIPE][HLS_INIT] appid=${game?.appId} url=${url.substring(0, 80)}`);
+    if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_INIT] appid=${game?.appId} url=${url.substring(0, 80)}`);
 
     // Native HLS (Safari, some WebViews)
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       setAutoHlsState("native");
       video.src = url;
       setAutoPlayCalled(true);
-      console.log(`[PREVIEW_PIPE][HLS_NATIVE] appid=${game?.appId}`);
+      if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_NATIVE] appid=${game?.appId}`);
       video.play().then(() => {
         setAutoPlaySuccess(true);
         setAutoplayFailed(false);
-        console.log(`[PREVIEW_PIPE][HLS_NATIVE_PLAY_SUCCESS] appid=${game?.appId}`);
+        if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_NATIVE_PLAY_SUCCESS] appid=${game?.appId}`);
       }).catch((err) => {
         setAutoPlayError(err.message ?? String(err));
         setAutoplayFailed(true);
-        console.log(`[PREVIEW_PIPE][HLS_NATIVE_PLAY_FAIL] appid=${game?.appId} error=${err.message ?? String(err)}`);
+        if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_NATIVE_PLAY_FAIL] appid=${game?.appId} error=${err.message ?? String(err)}`);
       });
       return;
     }
@@ -238,7 +239,7 @@ export default function ConsoleSelectedPreview({
     try {
       const { default: Hls } = await import("hls.js");
       const supported = Hls.isSupported();
-      console.log(`[PREVIEW_PIPE][HLS_SUPPORTED] appid=${game?.appId} supported=${supported}`);
+      if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_SUPPORTED] appid=${game?.appId} supported=${supported}`);
       if (supported) {
         setAutoHlsState("loading");
         thumbHlsRef.current = new Hls();
@@ -247,19 +248,19 @@ export default function ConsoleSelectedPreview({
         thumbHlsRef.current.on(Hls.Events.MANIFEST_PARSED, () => {
           setAutoHlsState("manifest_parsed");
           setAutoPlayCalled(true);
-          console.log(`[PREVIEW_PIPE][HLS_MANIFEST_PARSED] appid=${game?.appId}`);
+          if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_MANIFEST_PARSED] appid=${game?.appId}`);
           video.play().then(() => {
             setAutoPlaySuccess(true);
             setAutoplayFailed(false);
-            console.log(`[PREVIEW_PIPE][HLS_PLAY_SUCCESS] appid=${game?.appId}`);
+            if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_PLAY_SUCCESS] appid=${game?.appId}`);
           }).catch((err) => {
             setAutoPlayError(err.message ?? String(err));
             setAutoplayFailed(true);
-            console.log(`[PREVIEW_PIPE][HLS_PLAY_FAIL] appid=${game?.appId} error=${err.message ?? String(err)}`);
+            if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_PLAY_FAIL] appid=${game?.appId} error=${err.message ?? String(err)}`);
           });
         });
         thumbHlsRef.current.on(Hls.Events.ERROR, (_event: any, data: any) => {
-          console.log(`[PREVIEW_PIPE][HLS_ERROR] appid=${game?.appId} type=${data.type} details=${data.details} fatal=${data.fatal}`);
+          if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][HLS_ERROR] appid=${game?.appId} type=${data.type} details=${data.details} fatal=${data.fatal}`);
           if (data.fatal) {
             setAutoHlsState(`error:${data.type}:${data.details}`);
             setThumbAutoplayError(true);
@@ -274,6 +275,27 @@ export default function ConsoleSelectedPreview({
       setThumbAutoplayError(true);
     }
   }
+
+  /* ── Reset video/metadata state on game change ── */
+  useEffect(() => {
+    if (!game?.appId) return;
+    setIsPlaying(false);
+    setVideoError(false);
+    setIsLoading(false);
+    setHasEnded(false);
+    setImgError(false);
+    setThumbnailOnlyClicked(false);
+    setThumbAutoplayError(false);
+    setAutoplayFailed(false);
+    setAutoPlayCalled(false);
+    setAutoPlaySuccess(false);
+    setAutoPlayError(null);
+    setAutoVideoReady(false);
+    setAutoHlsState("idle");
+    setCurrentTime(0);
+    setDuration(0);
+    if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[GAME_CHANGE_RESET] appid=${game.appId}`);
+  }, [game?.appId]);
 
   /* ── Reset autoplay state on source/appId change ──
    *  Runs BEFORE the play-attempt effect to ensure stale failure state
@@ -320,15 +342,15 @@ export default function ConsoleSelectedPreview({
     if (!src) return;
 
     // ── PREVIEW_PIPE: received prop ──
-    console.log(`[PREVIEW_PIPE][RECEIVE_PROP] appid=${appId} src=${src.substring(0, 80)}`);
+    if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][RECEIVE_PROP] appid=${appId} src=${src.substring(0, 80)}`);
 
     const video = thumbAutoplayVideoRef.current;
     if (!video) {
-      console.log(`[PREVIEW_PIPE][REF_NULL] appid=${appId} — thumbAutoplayVideoRef is null`);
+      if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][REF_NULL] appid=${appId} — thumbAutoplayVideoRef is null`);
       setAutoplayFailed(true);
       return;
     }
-    console.log(`[PREVIEW_PIPE][REF_OK] appid=${appId} — video ref is set`);
+    if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][REF_OK] appid=${appId} — video ref is set`);
 
     // Determine source type
     const isHls = !DEBUG_FORCE_TEST_MP4 && trailerData?.playableType === "hls";
@@ -354,13 +376,13 @@ export default function ConsoleSelectedPreview({
       const onPlaying = () => {
         setAutoPlaySuccess(true);
         setAutoplayFailed(false);
-        console.log(`[PREVIEW_PIPE][PLAY_SUCCESS] appid=${appId}`);
+        if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][PLAY_SUCCESS] appid=${appId}`);
       };
       const onError_ = () => {
         const errMsg = video.error?.message ?? video.error?.code?.toString() ?? "unknown";
         setAutoPlayError(errMsg);
         setAutoplayFailed(true);
-        console.log(`[PREVIEW_PIPE][PLAY_ERROR] appid=${appId} error=${errMsg}`);
+        if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][PLAY_ERROR] appid=${appId} error=${errMsg}`);
       };
 
       video.addEventListener("loadedmetadata", onLoaded, { once: true });
@@ -368,12 +390,12 @@ export default function ConsoleSelectedPreview({
       video.addEventListener("error", onError_, { once: true });
 
       requestAnimationFrame(() => {
-        console.log(`[PREVIEW_PIPE][PLAY_ATTEMPT] appid=${appId} src=${src.substring(0, 80)}`);
+        if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][PLAY_ATTEMPT] appid=${appId} src=${src.substring(0, 80)}`);
         video.play().then(() => {
           // play() resolved — video might still be buffering, wait for 'playing' event
           if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_AUTOPLAY_PROMISE_RESOLVED] appid=${appId}`);
         }).catch((err) => {
-          console.log(`[PREVIEW_PIPE][PLAY_REJECTED] appid=${appId} error=${err.message ?? String(err)}`);
+          if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][PLAY_REJECTED] appid=${appId} error=${err.message ?? String(err)}`);
           setAutoPlayError(err.message ?? String(err));
           setAutoplayFailed(true);
           setAutoPlayCalled(false);
@@ -602,7 +624,7 @@ export default function ConsoleSelectedPreview({
     if (rendered !== autoVideoRenderedRef.current) {
       autoVideoRenderedRef.current = rendered;
       if (rendered && thumbnailAutoplaySrc) {
-        console.log(`[PREVIEW_PIPE][RENDER_VIDEO] appid=${game?.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
+        if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][RENDER_VIDEO] appid=${game?.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
       }
     }
   });
@@ -678,7 +700,7 @@ export default function ConsoleSelectedPreview({
           className="absolute inset-0 h-full w-full object-cover"
           onLoadedMetadata={() => { setAutoVideoReady(true); if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_VIDEO_LOADEDMETA] appid=${game?.appId}`); }}
           onPlaying={() => { setAutoPlaySuccess(true); setAutoplayFailed(false); if (DEBUG_PREVIEW) console.log(`${LOG_PREFIX}[THUMB_VIDEO_PLAYING] appid=${game?.appId}`); }}
-          onError={() => { setThumbAutoplayError(true); console.log(`[PREVIEW_PIPE][VIDEO_ELEMENT_ERROR] appid=${game?.appId}`); }}
+          onError={() => { setThumbAutoplayError(true); if (DEBUG_PREVIEW_PIPE) console.log(`[PREVIEW_PIPE][VIDEO_ELEMENT_ERROR] appid=${game?.appId}`); }}
           onEnded={(e) => { (e.target as HTMLVideoElement).play().catch(() => {}); }}
         />
       )}

@@ -1160,6 +1160,12 @@ html[data-compact="true"] .lf-launch-bar {
   .console-card-shine {
     display: none !important;
   }
+  .dock-label-animated {
+    animation: none !important;
+    opacity: 1 !important;
+    max-width: 100px !important;
+    margin-left: 6px !important;
+  }
 }
 
 /* Console Mode hero Ken Burns slow zoom/pan */

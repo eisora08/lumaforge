@@ -51,7 +51,7 @@ export default function ConsoleSpotlightDock({ activeIndex, focusedIndex = -1, c
               {/* Label appears on focus — slides in from the right */}
               {isFocused && (
                 <span
-                  className="ml-1.5 max-w-[100px] truncate text-[11px] font-semibold text-white/90"
+                  className="dock-label-animated ml-1.5 max-w-[100px] truncate text-[11px] font-semibold text-white/90"
                   style={{
                     animation: "dock-label-in 180ms ease-out both",
                   }}

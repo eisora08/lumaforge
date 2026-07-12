@@ -12,6 +12,7 @@ import type { ConsoleSettings } from "./consoleSettings";
 import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
 import ConsoleGameCard from "./ConsoleGameCard";
 import ConsoleTopHud from "./ConsoleTopHud";
+import { RichEmptyState } from "./ConsoleEmptyState";
 import ConsoleCategoryBar from "./ConsoleCategoryBar";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
@@ -20,7 +21,7 @@ import { setScrollTarget } from "./useConsoleGamepadInput";
 
 const DEBUG_CONSOLE_MODE = false;
 const DEBUG_CONSOLE_GRID_NAV = false;
-const DEBUG_CONSOLE_PREVIEW_AUTO = true;
+const DEBUG_CONSOLE_PREVIEW_AUTO = false;
 const DEBUG_FORCE_TEST_MP4 = false;
 
 type Props = {
@@ -124,7 +125,7 @@ export default function ConsoleGridLayout({
         if (DEBUG_CONSOLE_GRID_NAV) console.log(`[CONSOLE_GRID_NAV][COLUMNS] computed="${computed}" actual=${actual}`);
       }
     }
-  });
+  }, []);
 
   /* ── Register scroll target for right-stick gamepad scrolling ── */
   useEffect(() => {
@@ -203,7 +204,7 @@ export default function ConsoleGridLayout({
       if (td?.playableUrl && settings.showTrailerPreview) {
         // Playable source exists — autoplay (direct mp4/webm or HLS via hls.js)
         const src = DEBUG_FORCE_TEST_MP4 ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" : td.playableUrl;
-        console.log(`[PREVIEW_PIPE][SET_SRC] appid=${appId} src=${src.substring(0, 80)}`);
+        if (DEBUG_CONSOLE_PREVIEW_AUTO) console.log(`[PREVIEW_PIPE][SET_SRC] appid=${appId} src=${src.substring(0, 80)}`);
         setThumbnailAutoplaySrc(src);
         setPreviewMode("trailer");
         if (DEBUG_CONSOLE_PREVIEW_AUTO) {
@@ -244,7 +245,7 @@ export default function ConsoleGridLayout({
     if (DEBUG_CONSOLE_PREVIEW_AUTO && focusedGame?.appId) {
       console.log(`[CONSOLE_PREVIEW_AUTO] appid=${focusedGame.appId} showArtworkFirst=${showArtworkFirst} mode=${previewMode} autoplay=${!!thumbnailAutoplaySrc}`);
     }
-    if (thumbnailAutoplaySrc && focusedGame?.appId) {
+    if (DEBUG_CONSOLE_PREVIEW_AUTO && thumbnailAutoplaySrc && focusedGame?.appId) {
       console.log(`[PREVIEW_PIPE][PASS_PROP] appid=${focusedGame.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
     }
   }, [showArtworkFirst, previewMode, thumbnailAutoplaySrc, focusedGame?.appId]);
@@ -301,7 +302,7 @@ export default function ConsoleGridLayout({
             </div>
           ) : (
             <div className="flex h-full items-center justify-center">
-              <p className="text-sm text-(--color-muted)">No games in this category</p>
+              <RichEmptyState railIndex={focusedRail >= 0 ? focusedRail : 4} />
             </div>
           )}
         </div>

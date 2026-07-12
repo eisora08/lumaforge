@@ -86,6 +86,8 @@ type Props = {
   onProfileOpen?: () => void;
   /** When true, gamepad input is yielded to a higher-priority overlay (e.g. Search) */
   gamepadDisabled?: boolean;
+  /** When true, Quick Menu is open and owns all input */
+  quickMenuOpen?: boolean;
 };
 
 /* ── Media helpers ── */
@@ -136,7 +138,7 @@ const REVIEW_COLORS: Record<string, { bg: string; text: string; border: string }
 };
 const DEFAULT_REVIEW_COLOR = { bg: "bg-white/5", text: "text-(--color-muted)", border: "border-white/[0.04]" };
 
-export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen, gamepadDisabled = false }: Props) {
+export default function ConsoleGameDetails({ game, onClose, settings, onSearchOpen, onPlayGame, onProfileOpen, gamepadDisabled = false, quickMenuOpen = false }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { surfaceMode } = useTheme();
   const { settings: appSettings } = useSettings();
@@ -160,6 +162,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const [focusZone, setFocusZone] = useState<FocusZone>("media-preview");
   const [carouselFocusIndex, setCarouselFocusIndex] = useState<number>(0);
   const [carouselSelectedIndex, setCarouselSelectedIndex] = useState<number>(0);
+
+  /* ── Reset carousel index when game changes ── */
+  useEffect(() => {
+    setCarouselSelectedIndex(0);
+  }, [game?.appId]);
   const [infoCardSide, setInfoCardSide] = useState<InfoCardSide>("achievements");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [leftActionSubIndex, setLeftActionSubIndex] = useState(0);
@@ -400,6 +407,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     });
   }, [game, appSettings, addJob, updateJob, libCtx.refresh, onPlayGame]);
 
+  /* ── Ref for quickMenuOpen (avoid deps churn on handler) ── */
+  const quickMenuOpenRef = useRef(quickMenuOpen);
+  quickMenuOpenRef.current = quickMenuOpen;
+
   /* ══════════════════════════════════════════
      KEYBOARD NAVIGATION — Focus zone model
      ══════════════════════════════════════════ */
@@ -407,6 +418,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     if (DEBUG_CONSOLE_GAMEPAD) {
       console.log(`[CONSOLE_GAMEPAD][HANDLER_RECEIVED] key=${e.key} location=ConsoleGameDetails target=${(e.target as any)?.tagName ?? typeof e.target}`);
     }
+    // Quick Menu owns all input when open
+    if (quickMenuOpenRef.current) return;
+
     // Ignore Alt/Meta — browser/OS synthetic from unmapped controller buttons
     if (e.key === "Alt" || e.key === "Meta") return;
 
@@ -648,7 +662,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [carouselSelectedIndex]);
 
   /* ── Gamepad input: enabled while visible and no inner overlay active ── */
-  useConsoleGamepadInput(!optionsOpen && !installModalOpen && !gamepadDisabled);
+  useConsoleGamepadInput(!optionsOpen && !installModalOpen && !gamepadDisabled && !quickMenuOpen);
 
   /* ── Auto-focus left panel when entering left-info zone ── */
   useEffect(() => {
@@ -671,7 +685,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   /* ── Derived data ── */
   const heroSrc = mediaBundle?.background?.url ?? getConsoleHeroBackground(game);
   const coverSrc = mediaBundle?.cover?.url ?? getConsoleCardSrc(game, "poster");
-  const logoSrc = (() => {
+  const logoSrc = useMemo(() => {
     const raw = mediaBundle?.logo?.url ?? getConsoleLogoSrc(game);
     if (!raw || !game.appId) return null;
     const appIdMatch = raw.match(/steam\/apps\/(\d+)\//);
@@ -680,7 +694,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       return null;
     }
     return raw;
-  })();
+  }, [mediaBundle?.logo?.url, game]);
   const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
 
   const playtimeSeconds = useMemo(

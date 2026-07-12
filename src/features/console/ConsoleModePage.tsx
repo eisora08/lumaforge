@@ -589,11 +589,11 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
   }, [rails, focusedRail, focusedIndex, focusRail]);
 
-  const sharedProps = {
+  const sharedProps = useMemo(() => ({
     focusedGame: currentFocusedGame,
     rails,
     focusedRail,
-    focusedIndex: focusedIndex,
+    focusedIndex,
     onSelectGame: handleSelectGame,
     onOptionsGame: handleOptionsGame,
     onPlayGame: handleConsolePlay,
@@ -608,7 +608,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     allGames: enrichedGames,
     gridColumnsRef,
     dockFocusedIndex,
-  };
+  }), [currentFocusedGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, gridColumnsRef, dockFocusedIndex]);
 
   const layout = consoleSettings.layoutMode === "spotlight"
     ? <ConsoleSwitchSpotlightLayout {...sharedProps} />
@@ -631,6 +631,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onPlayGame={handleConsolePlay}
           onProfileOpen={() => { setProfileOpen(true); }}
           gamepadDisabled={searchOpen}
+          quickMenuOpen={profileOpen}
         />
       )}
 

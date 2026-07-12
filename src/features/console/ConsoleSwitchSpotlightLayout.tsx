@@ -1,5 +1,5 @@
 import { useMemo, useRef, useCallback, useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Play, HardDrive, Code, Heart, LayoutGrid } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -12,6 +12,7 @@ import ConsoleSpotlightDock from "./ConsoleSpotlightDock";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleActionHints from "./ConsoleActionHints";
 import { deduplicateByAppId } from "../../services/gameCacheService";
+import { RichEmptyState } from "./ConsoleEmptyState";
 
 const DEBUG_SWITCH_SPOTLIGHT = false;
 
@@ -342,7 +343,7 @@ export default function ConsoleSwitchSpotlightLayout({
          *
          *  overflow: visible on the stage lets hints extend above stage
          *  bounds without clipping. */}
-        {settings.showButtonHints && focusedGame && dedupedRail.length > 0 && (
+        {settings.showButtonHints && focusedGame && dedupedRail.length > 0 && dockFocusedIndex < 0 && (
           <div className="absolute left-1/2 z-[25] -translate-x-1/2 pointer-events-none"
             style={{ bottom: `calc(${LAYOUT.CAROUSEL_HEIGHT} - 26px)` }}>
             <div className="pointer-events-auto">
@@ -466,7 +467,7 @@ export default function ConsoleSwitchSpotlightLayout({
                       {/* Focus shine */}
                       {isFocused && settings.focusShine !== false && (
                         <div
-                          className="pointer-events-none absolute inset-0 overflow-hidden"
+                          className="pointer-events-none absolute inset-0 overflow-hidden console-card-shine"
                           style={{ borderRadius: scs.cornerRadius, mixBlendMode: "screen" }}
                         >
                           <div
@@ -574,59 +575,6 @@ export default function ConsoleSwitchSpotlightLayout({
         onSelectGame={onSelectGame}
         onRefreshLibrary={onRefreshLibrary}
       />
-    </div>
-  );
-}
-
-const EMPTY_STATE_CONFIGS = [
-  {
-    icon: Play,
-    title: "Continue Playing",
-    message: "Play a game to see it here",
-    color: "text-emerald-400",
-    bgGlow: "from-emerald-500/10",
-  },
-  {
-    icon: HardDrive,
-    title: "Installed Games",
-    message: "Install a game to see it here",
-    color: "text-sky-400",
-    bgGlow: "from-sky-500/10",
-  },
-  {
-    icon: Code,
-    title: "Lua / In Library",
-    message: "Lua-powered games will appear here",
-    color: "text-violet-400",
-    bgGlow: "from-violet-500/10",
-  },
-  {
-    icon: Heart,
-    title: "Favorites",
-    message: "Favorite a game to see it here",
-    color: "text-rose-400",
-    bgGlow: "from-rose-500/10",
-  },
-  {
-    icon: LayoutGrid,
-    title: "All Games",
-    message: "No games found in your library",
-    color: "text-amber-400",
-    bgGlow: "from-amber-500/10",
-  },
-];
-
-function RichEmptyState({ railIndex }: { railIndex: number }) {
-  const cfg = EMPTY_STATE_CONFIGS[railIndex] ?? EMPTY_STATE_CONFIGS[4];
-  const Icon = cfg.icon;
-  return (
-    <div className="flex w-full items-center justify-center py-12">
-      <div className="flex flex-col items-center gap-3">
-        <div className={`flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br ${cfg.bgGlow} to-transparent ring-1 ring-white/[0.06]`}>
-          <Icon className={`h-7 w-7 ${cfg.color}`} />
-        </div>
-        <p className="text-sm font-medium text-(--color-muted)/40">{cfg.message}</p>
-      </div>
     </div>
   );
 }
