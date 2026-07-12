@@ -25,6 +25,12 @@ export type ConsoleBottomBarPosition = "center" | "left" | "right";
 
 export type ConsoleStartCategory = "continue" | "installed" | "lua" | "favorites" | "all";
 
+export type ConsoleTimeFormat = "12h" | "24h" | "system" | "hidden";
+
+export type ConsoleLaunchMode = "console" | "desktop" | "last-used";
+
+export type ConsoleWindowMode = "fullscreen" | "maximized" | "minimized" | "tray" | "windowed";
+
 export type SpotlightCardVisual = "poster" | "landscape" | "hero";
 
 export type GridCardStyle = {
@@ -90,6 +96,25 @@ export type ConsoleSettings = {
   showTrailerPreview: boolean;
   autoplayTrailerPreviews: boolean;
   preferDirectVideo: boolean;
+
+  /* ── Time format ── */
+  timeFormat: ConsoleTimeFormat;
+  showSeconds: boolean;
+
+  /* ── Startup ── */
+  autostart: boolean;
+  launchMode: ConsoleLaunchMode;
+  windowMode: ConsoleWindowMode;
+  startMaximized: boolean;
+  startInTray: boolean;
+  closeToTray: boolean;
+  showDashboard: boolean;
+  disableUpdate: boolean;
+
+  /* ── System bar indicators ── */
+  showNetworkIndicator: boolean;
+  showControllerIndicator: boolean;
+  showJobIndicator: boolean;
 };
 
 const STORAGE_KEY = "lumaforge-console-settings-v1";
@@ -148,6 +173,19 @@ export const DEFAULT_CONSOLE_SETTINGS: ConsoleSettings = {
   showTrailerPreview: true,
   autoplayTrailerPreviews: false,
   preferDirectVideo: true,
+  timeFormat: "system",
+  showSeconds: false,
+  autostart: false,
+  launchMode: "console",
+  windowMode: "fullscreen",
+  startMaximized: false,
+  startInTray: false,
+  closeToTray: false,
+  showDashboard: true,
+  disableUpdate: false,
+  showNetworkIndicator: true,
+  showControllerIndicator: true,
+  showJobIndicator: true,
 };
 
 export const WIDTH_PRESETS: { label: string; value: number; description: string }[] = [
@@ -366,6 +404,57 @@ export const INPUT_DEFAULTS: Pick<ConsoleSettings,
 export function resetConsoleInputSettings(): ConsoleSettings {
   const current = loadConsoleSettings();
   const patched = { ...current, ...INPUT_DEFAULTS };
+  persistConsoleSettings(patched);
+  return patched;
+}
+
+export const TIME_FORMAT_DEFAULTS: Pick<ConsoleSettings,
+  "timeFormat" | "showSeconds"
+> = {
+  timeFormat: "system",
+  showSeconds: false,
+};
+
+export function resetConsoleTimeFormatSettings(): ConsoleSettings {
+  const current = loadConsoleSettings();
+  const patched = { ...current, ...TIME_FORMAT_DEFAULTS };
+  persistConsoleSettings(patched);
+  return patched;
+}
+
+export const STARTUP_DEFAULTS: Pick<ConsoleSettings,
+  "autostart" | "launchMode" | "windowMode" | "startMaximized" | "startInTray" | "closeToTray" | "showDashboard" | "disableUpdate"
+> = {
+  autostart: false,
+  launchMode: "console",
+  windowMode: "fullscreen",
+  startMaximized: false,
+  startInTray: false,
+  closeToTray: false,
+  showDashboard: true,
+  disableUpdate: false,
+};
+
+export function resetConsoleStartupSettings(): ConsoleSettings {
+  const current = loadConsoleSettings();
+  const patched = { ...current, ...STARTUP_DEFAULTS };
+  persistConsoleSettings(patched);
+  return patched;
+}
+
+export const SYSTEM_BAR_DEFAULTS: Pick<ConsoleSettings,
+  "showClock" | "showNetworkIndicator" | "showControllerIndicator" | "showJobIndicator" | "showProfileHud"
+> = {
+  showClock: true,
+  showNetworkIndicator: true,
+  showControllerIndicator: true,
+  showJobIndicator: true,
+  showProfileHud: true,
+};
+
+export function resetConsoleSystemBarSettings(): ConsoleSettings {
+  const current = loadConsoleSettings();
+  const patched = { ...current, ...SYSTEM_BAR_DEFAULTS };
   persistConsoleSettings(patched);
   return patched;
 }

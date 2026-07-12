@@ -1,6 +1,7 @@
  use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
+use tauri::Manager;
 
 use crate::commands::game_cache::{get_game_dir, get_media_dir};
 
@@ -20,6 +21,110 @@ pub fn open_game_metadata_folder(app_handle: AppHandle, app_id: String) -> Resul
 pub fn open_game_media_folder(app_handle: AppHandle, app_id: String) -> Result<(), String> {
     let dir = get_media_dir(&app_handle, &app_id)?;
     open::that(&dir).map_err(|e| format!("Failed to open media folder: {}", e))
+}
+
+#[tauri::command]
+pub fn open_app_data(app_handle: AppHandle) -> Result<(), String> {
+    let dir = app_handle.path().app_data_dir().map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create app data dir: {}", e))?;
+    }
+    open::that(&dir).map_err(|e| format!("Failed to open app data folder: {}", e))
+}
+
+#[tauri::command]
+pub fn open_logs(app_handle: AppHandle) -> Result<(), String> {
+    let dir = app_handle.path().app_log_dir().map_err(|e| format!("Failed to resolve logs dir: {}", e))?;
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create logs dir: {}", e))?;
+    }
+    open::that(&dir).map_err(|e| format!("Failed to open logs folder: {}", e))
+}
+
+#[tauri::command]
+pub async fn clear_temp_cache(app_handle: AppHandle) -> Result<usize, String> {
+    let cache_dir = app_handle.path().app_cache_dir().map_err(|e| format!("Failed to resolve cache dir: {}", e))?;
+    let temp_dirs = vec![
+        cache_dir.join("temp"),
+        cache_dir.join("thumbnails"),
+        cache_dir.join("screenshots"),
+    ];
+    let mut removed = 0usize;
+    for dir in &temp_dirs {
+        if dir.exists() {
+            match std::fs::remove_dir_all(dir) {
+                Ok(_) => { removed += 1; }
+                Err(e) => eprintln!("[DESKTOP] clear_temp_cache: failed to remove {:?}: {}", dir, e),
+            }
+        }
+    }
+    Ok(removed)
+}
+
+#[tauri::command]
+pub fn get_system_info() -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    Ok(json!({
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "family": std::env::consts::FAMILY,
+        "exe_path": std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()),
+        "current_dir": std::env::current_dir().ok().map(|p| p.to_string_lossy().to_string()),
+    }))
+}
+
+#[tauri::command]
+pub async fn power_shutdown() -> Result<(), String> {
+    let cmd = if cfg!(target_os = "windows") {
+        std::process::Command::new("shutdown").args(["/s", "/t", "3"]).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to shut down"]).spawn()
+    } else {
+        std::process::Command::new("systemctl").args(["poweroff"]).spawn()
+    };
+    cmd.map_err(|e| format!("Failed to trigger shutdown: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn power_suspend() -> Result<(), String> {
+    let cmd = if cfg!(target_os = "windows") {
+        std::process::Command::new("rundll32.exe")
+            .args(["powrprof.dll,SetSuspendState", "0", "1", "0"])
+            .spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to sleep"]).spawn()
+    } else {
+        std::process::Command::new("systemctl").args(["suspend"]).spawn()
+    };
+    cmd.map_err(|e| format!("Failed to trigger suspend: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn power_hibernate() -> Result<(), String> {
+    let cmd = if cfg!(target_os = "windows") {
+        std::process::Command::new("shutdown").args(["/h"]).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to sleep"]).spawn()
+    } else {
+        std::process::Command::new("systemctl").args(["hibernate"]).spawn()
+    };
+    cmd.map_err(|e| format!("Failed to trigger hibernate: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn power_restart() -> Result<(), String> {
+    let cmd = if cfg!(target_os = "windows") {
+        std::process::Command::new("shutdown").args(["/r", "/t", "3"]).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("osascript").args(["-e", "tell app \"System Events\" to restart"]).spawn()
+    } else {
+        std::process::Command::new("systemctl").args(["reboot"]).spawn()
+    };
+    cmd.map_err(|e| format!("Failed to trigger restart: {}", e))?;
+    Ok(())
 }
 
 #[tauri::command]

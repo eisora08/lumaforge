@@ -2534,8 +2534,60 @@ All merged functions are re-exported from their new homes, so consumers (`Librar
 
 ### Build
 - `tsc --noEmit` ✅ (0 errors)
-- `vite build` ✅ (1992 modules, only pre-existing chunk warnings)
+- `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ✅ (0 errors)
+
+## Session — Console Quick Menu Parts 1-5, 8-10 Implementation
+
+### Goal
+Add controller connection/disconnection toasts (Part 1), top system bar with network/controller/jobs indicators (Part 2+3), time format settings (Part 4), startup settings page (Part 5), hover/focus visual polish (Part 8), system bar settings sub-page (Part 9), and input ownership enforcement (Part 10).
+
+### Parts implemented
+
+#### Part 1: Controller connection/disconnection toasts
+- `src/features/console/useControllerDetection.ts` — **new** — listens to `gamepadconnected`/`gamepaddisconnected` events, fires `showInfo` toasts with controller name, calls `setGamepadDetected()` for auto hint detection. One-shot dedup via `knownRef` Set.
+
+#### Part 2+3: Top System Bar indicators
+- `ConsoleTopHud.tsx` fully rewritten:
+  - **network indicator**: `useNetworkStatus()` hook returns "online"/"offline", shows `Wifi` (emerald) or `WifiOff` (rose) icon
+  - **controller indicator**: `ControllerIndicator` sub-component listens to gamepad events, shows `Gamepad2` emerald/ muted
+  - **jobs indicator**: polls `backgroundJobQueue.getStatus()` every 5s, shows `HardDrive` icon + badge count, hidden when 0
+  - **enhanced clock**: `useClock(format, showSeconds)` — uses `Intl.DateTimeFormat` with 12h/24h/system/hidden modes, 1s or 60s interval
+
+#### Part 4: Time format settings
+- `ConsoleSettings` type extended with: `timeFormat: "12h"|"24h"|"system"|"hidden"`, `showSeconds: boolean`
+- `CONSOLE_TIME_FORMAT_OPTIONS` in ConsoleSettingsPanelV2
+- `TIME_FORMAT_DEFAULTS` + `resetConsoleTimeFormatSettings()` export from consoleSettings.ts
+- `SETTING_ROWS_TIME` with time format segmented row, show seconds toggle, show clock toggle, reset button
+
+#### Part 5: Startup settings page
+- `ConsoleSettings` type extended with: `autostart: boolean`, `launchMode: "console"|"desktop"`, `windowMode: "fullscreen"|"maximized"|"windowed"`
+- `LAUNCH_MODE_OPTIONS` / `WINDOW_MODE_OPTIONS` in ConsoleSettingsPanelV2
+- `STARTUP_DEFAULTS` + `resetConsoleStartupSettings()` export
+- `SETTING_ROWS_STARTUP` with launch mode segmented, window mode segmented, autostart toggle, reset button
+
+#### Part 8+9: System bar settings sub-page
+- `ConsoleSettings` type extended with: `showNetworkIndicator`, `showControllerIndicator`, `showJobIndicator`
+- `SYSTEM_BAR_DEFAULTS` + `resetConsoleSystemBarSettings()` export
+- `SETTING_ROWS_SYSTEM_BAR` with toggles for profile, clock, network, controller, jobs indicators, reset button
+- Both "Time & Clock" and "System Bar" added to `SettingsCategoryGrid` and `SETTINGS_KEYS`
+
+#### Part 10: Input ownership enforcement (already correct)
+- Page-level handler returns early when `profileOpen` is true; settings panel's `handleGlobalKeyDown` uses `stopPropagation`
+- `SETTINGS_KEYS` updated to include `"time"`, `"startup"`, `"system-bar"` for gamepad navigation
+
+### Key Files Changed/Created
+- `src/features/console/consoleSettings.ts` — extended type (8 fields), time/startup/system-bar defaults + reset functions
+- `src/features/console/useControllerDetection.ts` — **new**
+- `src/features/console/useNetworkStatus.ts` — **new**
+- `src/features/console/ConsoleTopHud.tsx` — full rewrite with indicators + enhanced clock
+- `src/features/console/ConsoleModePage.tsx` — `useControllerDetection` wired
+- `src/features/console/ConsoleSettingsPanelV2.tsx` — 3 new sub-pages (time, startup, system-bar), 3 setting row groups, expanded SETTINGS_KEYS
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors, no Rust changes)
 
 ## Session — Media provider priority: Steam original assets before SteamGridDB for Steam games
 
@@ -2949,3 +3001,67 @@ Enhance Console Mode home screen with real session-priority Continue section, do
 ### Build
 - `tsc --noEmit` ✅ (0 errors)
 - `vite build` ✅ (only pre-existing chunk warnings)
+
+## Session — Console Quick Menu Tools + Power Actions
+
+### Problem
+The Quick Menu (Console Mode) Tools sub-panel was a placeholder with "coming soon" entries. Power actions (Shutdown/Suspend/Hibernate/Restart) were also "coming soon" with no real implementation.
+
+### Part 1: Rust power commands
+- `src-tauri/src/commands/power.rs` — **new** — `power_shutdown`, `power_suspend`, `power_hibernate`, `power_restart` commands using `std::process::Command` calling Windows `shutdown.exe`
+- `src-tauri/src/lib.rs` — registered all 4 power commands
+- `src/services/tauri.ts` — added TS bindings
+
+### Part 2: Rust utility commands
+- `src-tauri/src/commands/tools.rs` — **new** — `open_app_data` (opens `<appData>/games/steam/` in Explorer), `open_logs` (opens log directory), `clear_temp_cache` (removes `<appData>/cache/temp/`), `get_system_info` (returns CPU/OS/memory/uptime/totalGames info)
+- All commands registered in `lib.rs`
+- `src/services/tauri.ts` — added TS bindings
+
+### Part 3: ConsoleToolsSubPanel — real entries
+- `ConsoleToolsSubPanel.tsx` — 5 real entries instead of placeholders:
+  - **Open App Data Folder** — calls `openAppData()` (Rust → `open::that`)
+  - **Open Logs Folder** — calls `openLogs()` (Rust → log dir)
+  - **Clear Temp Cache** — calls `clearTempCache()` + toast result
+  - **System Information** — calls `getSystemInfo()` + displays modal with CPU/OS/RAM/Uptime/Total Games
+  - **Run Diagnostics** — calls existing `window.__runDiagnostics?.()` placeholder
+
+### Part 4: MAIN_OPTIONS — power actions wired
+- `MAIN_OPTIONS` entries changed from `action: "coming-soon"` to `action: "power"` for Shutdown, Suspend, Hibernate, Restart
+- Three dispatch points wired with `case "power":`:
+  1. `handleMainKeyDown` — React keyboard handler
+  2. Window keydown handler (`Enter` on focused option)
+  3. Main option click handler
+- All dispatch points call `executePowerAction(key, handleClose)` which shows confirm dialog, then calls the corresponding Rust command
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+## Session — Console Quick Menu: Language page, ConfirmModal, keyboard nav for tools/help
+
+### Objective
+- Add App Language placeholder sub-page to Console Settings, replace `window.confirm` with existing `ConfirmModal` component for power actions, add keyboard/gamepad navigation (ArrowUp/Down/Enter) for Tools and Help sub-pages, expand Startup settings with new boolean fields, and remove conflicting local keyboard handlers.
+
+### Changes
+- `ConsoleSettings` type in `consoleSettings.ts` extended: `launchMode` now includes `"last-used"`; `windowMode` includes `"minimized"` and `"tray"`; added `startMaximized`, `startInTray`, `closeToTray`, `showDashboard`, `disableUpdate` (all boolean).
+- `STARTUP_DEFAULTS` updated with new fields; `LAUNCH_MODE_OPTIONS` now 3 items; `WINDOW_MODE_OPTIONS` now 5 items.
+- `SETTING_ROWS_STARTUP` expanded with toggle rows for all 5 new boolean fields.
+- `SETTING_ROWS_LANGUAGE` added with `appLanguage` segmented (Follow System only) and `languageComingSoon` button row.
+- `SUBPAGE_ROWS`, `SUBPAGE_TITLES`, `subPageLabel()`, `SETTINGS_KEYS`, and `SettingsCategoryGrid` all register `"language"` page.
+- `ConfirmModal` imported from `../../components/common/ConfirmModal` and wired for all 4 power actions (shutdown/suspend/hibernate/restart):
+  - `POWER_CONFIRM_CONFIGS` map replaces old `confirmLabels` record.
+  - `executePowerAction` replaced by `executePowerCommand(key)` (no confirm, no `handleClose`).
+  - `powerConfirm` state drives ConfirmModal rendering at bottom of panel.
+- Window `keydown` handler restructured for sub-pages: `subPage === "tools"` handles ArrowUp/Down/Enter/Escape; `subPage === "help"` handles ArrowUp/Down/Escape; all other sub-pages handle Escape only.
+- Local `handleKeyDown` removed from `ConsoleToolsSubPanel` and `ConsoleHelpSubPanel` to prevent double-firing with window handler.
+- Unused `onFocusChange` props renamed to `_onFocusChange` to suppress TS6133.
+
+### Key Files Changed
+- `src/features/console/consoleSettings.ts` — type extended, defaults/options updated
+- `src/features/console/ConsoleSettingsPanelV2.tsx` — SETTING_ROWS_LANGUAGE, ConfirmModal integration, window handler restructured, local key handlers removed, SETTINGS_KEYS/SETTINGS_CATEGORIES/SUBPAGE_ROWS all updated
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)

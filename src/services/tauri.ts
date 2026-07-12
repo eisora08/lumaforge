@@ -1935,3 +1935,45 @@ export async function saveProfileMedia(kind: "avatar" | "banner", extension: str
 export async function deleteProfileMedia(path: string): Promise<void> {
   await invoke("delete_profile_media", { path });
 }
+
+// --- Desktop / Quick Menu ---
+
+export async function openAppDataFolder(): Promise<void> {
+  await invoke("open_app_data");
+}
+
+export async function openLogsFolder(): Promise<void> {
+  await invoke("open_logs");
+}
+
+export async function clearTempCache(): Promise<number> {
+  return await invoke<number>("clear_temp_cache");
+}
+
+export type SystemInfo = {
+  os: string;
+  arch: string;
+  family: string;
+  exe_path: string | null;
+  current_dir: string | null;
+};
+
+export async function getSystemInfo(): Promise<SystemInfo> {
+  return await invoke<SystemInfo>("get_system_info");
+}
+
+export async function powerShutdown(): Promise<void> {
+  await invoke("power_shutdown");
+}
+
+export async function powerSuspend(): Promise<void> {
+  await invoke("power_suspend");
+}
+
+export async function powerHibernate(): Promise<void> {
+  await invoke("power_hibernate");
+}
+
+export async function powerRestart(): Promise<void> {
+  await invoke("power_restart");
+}

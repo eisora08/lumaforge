@@ -20,6 +20,7 @@ import { useGameSession, computeGameKey } from "../../context/GameSessionContext
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showSuccess, showError, showWarning } from "../../components/toast/GameToast";
 import { getPlaytimeEntryByAppId } from "../../services/playtimeService";
+import { useControllerDetection } from "./useControllerDetection";
 
 function getBlockedReason(action: string): string {
   switch (action) {
@@ -58,6 +59,8 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   useEffect(() => {
     return () => { mountedRef.current = false; };
   }, []);
+
+  useControllerDetection();
 
   if (DEBUG_CONSOLE_MODE) {
     const installedCount = enrichedGames.filter(isSidebarInstalledGame).length;

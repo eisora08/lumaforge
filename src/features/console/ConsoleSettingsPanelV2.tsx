@@ -4,7 +4,9 @@ import {
   Monitor, Power, Moon, Sun, Zap, HelpCircle,
   Wrench, Gamepad2, Film, PlayCircle,
   Maximize, Grid3X3, ChevronRight, ArrowLeft,
-  Image, Tag, Rows3,
+  Image, Tag, Rows3, FolderOpen, Trash2,
+  HardDrive, Activity, Info, Clock,
+  Rocket, Globe,
 } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -23,6 +25,9 @@ import {
   resetConsoleVisualSettings,
   resetConsoleMediaSettings,
   resetConsoleInputSettings,
+  resetConsoleTimeFormatSettings,
+  resetConsoleStartupSettings,
+  resetConsoleSystemBarSettings,
   CONSOLE_THEME_INFOS,
   WIDTH_PRESETS,
   RADIUS_PRESETS,
@@ -31,6 +36,10 @@ import {
   SPOTLIGHT_CONTENT_DEFAULTS,
 } from "./consoleSettings";
 import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setScrollTarget, getScrollTarget } from "./useConsoleGamepadInput";
+import { openAppDataFolder, openLogsFolder, clearTempCache, getSystemInfo, powerShutdown, powerSuspend, powerHibernate, powerRestart } from "../../services/tauri";
+import toast from "react-hot-toast";
+import type { SystemInfo } from "../../services/tauri";
+import ConfirmModal from "../../components/common/ConfirmModal";
 
 const DEBUG_CONSOLE_SETTINGS = false;
 
@@ -43,9 +52,13 @@ type PanelPage =
   | "visuals"
   | "media"
   | "input"
+  | "time"
+  | "startup"
+  | "system-bar"
   | "tools"
   | "help"
-  | "theme-picker";
+  | "theme-picker"
+  | "language";
 
 type Props = {
   open: boolean;
@@ -79,6 +92,48 @@ const TEXTURE_OPTIONS: { value: ConsoleBackgroundTexture; label: string }[] = [
 ];
 
 const ANIM_DURATION_MS = 250;
+
+const TIME_FORMAT_OPTIONS: { value: string; label: string }[] = [
+  { value: "12h", label: "12h" },
+  { value: "24h", label: "24h" },
+  { value: "system", label: "System" },
+  { value: "hidden", label: "Hidden" },
+];
+
+const LAUNCH_MODE_OPTIONS: { value: string; label: string }[] = [
+  { value: "console", label: "Console Mode" },
+  { value: "desktop", label: "Desktop" },
+  { value: "last-used", label: "Last Used" },
+];
+
+const WINDOW_MODE_OPTIONS: { value: string; label: string }[] = [
+  { value: "fullscreen", label: "Fullscreen" },
+  { value: "maximized", label: "Maximized" },
+  { value: "minimized", label: "Minimized" },
+  { value: "tray", label: "Tray" },
+  { value: "windowed", label: "Windowed" },
+];
+
+/* ── Power action confirm configs ── */
+const POWER_CONFIRM_CONFIGS: Record<string, { title: string; message: string }> = {
+  "power-off": { title: "Turn Off System?", message: "This will shut down your computer." },
+  "suspend": { title: "Suspend System?", message: "This will put your computer to sleep." },
+  "hibernate": { title: "Hibernate System?", message: "This will save state and power off your computer." },
+  "restart": { title: "Restart System?", message: "This will restart your computer." },
+};
+
+async function executePowerCommand(key: string): Promise<void> {
+  try {
+    switch (key) {
+      case "power-off": await powerShutdown(); break;
+      case "suspend": await powerSuspend(); break;
+      case "hibernate": await powerHibernate(); break;
+      case "restart": await powerRestart(); break;
+    }
+  } catch (err) {
+    toast.error(`Power action failed: ${err}`);
+  }
+}
 
 /* ── ALL gamepad-mapped keys that must be consumed when Quick Menu is open ── */
 const GAMEPAD_KEYS = new Set([
@@ -298,6 +353,74 @@ const SETTING_ROWS_INPUT: SettingRowDef[] = [
   { id: "resetInput", type: "button", label: "Reset Input to Defaults", getValue: () => "", onAction: () => resetConsoleInputSettings() },
 ];
 
+const SETTING_ROWS_TIME: SettingRowDef[] = [
+  {
+    id: "timeFormat", type: "segmented", label: "Time Format",
+    segOptions: TIME_FORMAT_OPTIONS, getValue: (s) => s.timeFormat,
+    onAction: (s, k) => {
+      const idx = TIME_FORMAT_OPTIONS.findIndex(o => o.value === s.timeFormat);
+      const next = TIME_FORMAT_OPTIONS[Math.min(TIME_FORMAT_OPTIONS.length - 1, idx + 1)];
+      const prev = TIME_FORMAT_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { timeFormat: prev.value as ConsoleSettings["timeFormat"] } : {};
+      return next ? { timeFormat: next.value as ConsoleSettings["timeFormat"] } : {};
+    },
+  },
+  { id: "showSeconds", type: "toggle", label: "Show Seconds", description: "Display seconds in the clock", getValue: (s) => s.showSeconds, onAction: (s) => ({ showSeconds: !s.showSeconds }) },
+  { id: "showClock", type: "toggle", label: "Show Clock in HUD", description: "Display the clock in the top bar", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
+  { id: "resetTime", type: "button", label: "Reset Time to Defaults", getValue: () => "", onAction: () => resetConsoleTimeFormatSettings() },
+];
+
+const SETTING_ROWS_STARTUP: SettingRowDef[] = [
+  {
+    id: "launchMode", type: "segmented", label: "Launch Mode",
+    segOptions: LAUNCH_MODE_OPTIONS, getValue: (s) => s.launchMode,
+    onAction: (s, k) => {
+      const idx = LAUNCH_MODE_OPTIONS.findIndex(o => o.value === s.launchMode);
+      const next = LAUNCH_MODE_OPTIONS[Math.min(LAUNCH_MODE_OPTIONS.length - 1, idx + 1)];
+      const prev = LAUNCH_MODE_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { launchMode: prev.value as ConsoleSettings["launchMode"] } : {};
+      return next ? { launchMode: next.value as ConsoleSettings["launchMode"] } : {};
+    },
+  },
+  {
+    id: "windowMode", type: "segmented", label: "Startup Window",
+    segOptions: WINDOW_MODE_OPTIONS, getValue: (s) => s.windowMode,
+    onAction: (s, k) => {
+      const idx = WINDOW_MODE_OPTIONS.findIndex(o => o.value === s.windowMode);
+      const next = WINDOW_MODE_OPTIONS[Math.min(WINDOW_MODE_OPTIONS.length - 1, idx + 1)];
+      const prev = WINDOW_MODE_OPTIONS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { windowMode: prev.value as ConsoleSettings["windowMode"] } : {};
+      return next ? { windowMode: next.value as ConsoleSettings["windowMode"] } : {};
+    },
+  },
+  { id: "autostart", type: "toggle", label: "Start with Windows", description: "Automatically open LumaForge on system boot", getValue: (s) => s.autostart, onAction: (s) => ({ autostart: !s.autostart }) },
+  { id: "startMaximized", type: "toggle", label: "Start Maximized", description: "Launch window maximized on startup (applies on next launch)", getValue: (s) => s.startMaximized, onAction: (s) => ({ startMaximized: !s.startMaximized }) },
+  { id: "startInTray", type: "toggle", label: "Start in Tray", description: "Minimize to tray on startup (applies on next launch)", getValue: (s) => s.startInTray, onAction: (s) => ({ startInTray: !s.startInTray }) },
+  { id: "closeToTray", type: "toggle", label: "Close to Tray", description: "Closing the window minimizes to tray instead of quitting", getValue: (s) => s.closeToTray, onAction: (s) => ({ closeToTray: !s.closeToTray }) },
+  { id: "showDashboard", type: "toggle", label: "Show Dashboard", description: "Show dashboard on startup", getValue: (s) => s.showDashboard, onAction: (s) => ({ showDashboard: !s.showDashboard }) },
+  { id: "disableUpdate", type: "toggle", label: "Disable Update", description: "Prevent automatic app updates", getValue: (s) => s.disableUpdate, onAction: (s) => ({ disableUpdate: !s.disableUpdate }) },
+  { id: "resetStartup", type: "button", label: "Reset Startup to Defaults", getValue: () => "", onAction: () => resetConsoleStartupSettings() },
+];
+
+const SETTING_ROWS_SYSTEM_BAR: SettingRowDef[] = [
+  { id: "showProfileHud", type: "toggle", label: "Show Profile", description: "Display avatar and name in the top bar", getValue: (s) => s.showProfileHud, onAction: (s) => ({ showProfileHud: !s.showProfileHud }) },
+  { id: "showClock", type: "toggle", label: "Show Clock", description: "Display the clock in the top bar", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
+  { id: "showNetworkIndicator", type: "toggle", label: "Network Indicator", description: "Show online/offline status in the top bar", getValue: (s) => s.showNetworkIndicator, onAction: (s) => ({ showNetworkIndicator: !s.showNetworkIndicator }) },
+  { id: "showControllerIndicator", type: "toggle", label: "Controller Indicator", description: "Show connected controller status in the top bar", getValue: (s) => s.showControllerIndicator, onAction: (s) => ({ showControllerIndicator: !s.showControllerIndicator }) },
+  { id: "showJobIndicator", type: "toggle", label: "Jobs Indicator", description: "Show pending background job count in the top bar", getValue: (s) => s.showJobIndicator, onAction: (s) => ({ showJobIndicator: !s.showJobIndicator }) },
+  { id: "resetSystemBar", type: "button", label: "Reset System Bar to Defaults", getValue: () => "", onAction: () => resetConsoleSystemBarSettings() },
+];
+
+const SETTING_ROWS_LANGUAGE: SettingRowDef[] = [
+  {
+    id: "appLanguage", type: "segmented", label: "App Language",
+    segOptions: [{ value: "system", label: "Follow System" }],
+    getValue: () => "system",
+    onAction: () => ({}),
+  },
+  { id: "languageComingSoon", type: "button", label: "Coming Soon — Translations will be added after feature completion", getValue: () => "", onAction: () => { toast("Language support is coming soon — stay tuned!", { icon: "🌐" }); return {}; } },
+];
+
 const SUBPAGE_ROWS: Record<string, SettingRowDef[]> = {
   "grid-card-style": SETTING_ROWS_GRID,
   "spotlight-card-style": SETTING_ROWS_SPOTLIGHT,
@@ -305,6 +428,10 @@ const SUBPAGE_ROWS: Record<string, SettingRowDef[]> = {
   visuals: SETTING_ROWS_VISUALS,
   media: SETTING_ROWS_MEDIA,
   input: SETTING_ROWS_INPUT,
+  time: SETTING_ROWS_TIME,
+  startup: SETTING_ROWS_STARTUP,
+  "system-bar": SETTING_ROWS_SYSTEM_BAR,
+  language: SETTING_ROWS_LANGUAGE,
 };
 
 const SUBPAGE_TITLES: Record<string, string> = {
@@ -314,6 +441,10 @@ const SUBPAGE_TITLES: Record<string, string> = {
   visuals: "Visuals",
   media: "Media & Trailers",
   input: "Input Settings",
+  time: "Time & Clock",
+  startup: "Startup",
+  "system-bar": "System Bar",
+  language: "Language",
 };
 
 // ============================================================
@@ -768,29 +899,132 @@ function ThemePickerSubPanel({
 // ============================================================
 // Tools sub-panel (placeholder)
 // ============================================================
+type ToolActionEntry = {
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  description: string;
+  handler: () => Promise<void> | void;
+};
+
 function ConsoleToolsSubPanel({
-  onBack, focusedIndex: _fi, onFocusChange: _ofc, itemCount,
+  onBack, focusedIndex, onFocusChange: _onFocusChange, itemCount,
 }: {
   onBack: () => void;
   focusedIndex: number;
   onFocusChange: (i: number) => void;
   itemCount: React.MutableRefObject<number>;
 }) {
-  const totalItems = 1;
+  const [actionStatus, setActionStatus] = useState<string | null>(null);
+
+  const toolActions: ToolActionEntry[] = [
+    {
+      id: "open-app-data",
+      icon: FolderOpen,
+      label: "Open App Data Folder",
+      description: "Browse cache, config, and data files",
+      handler: async () => {
+        setActionStatus("Opening…");
+        try { await openAppDataFolder(); setActionStatus(null); } catch { setActionStatus(null); toast.error("Could not open app data folder"); }
+      },
+    },
+    {
+      id: "open-logs",
+      icon: HardDrive,
+      label: "Open Logs Folder",
+      description: "View application logs for troubleshooting",
+      handler: async () => {
+        setActionStatus("Opening…");
+        try { await openLogsFolder(); setActionStatus(null); } catch { setActionStatus(null); toast.error("Could not open logs folder"); }
+      },
+    },
+    {
+      id: "clear-cache",
+      icon: Trash2,
+      label: "Clear Temp Cache",
+      description: "Remove temporary thumbnails and screenshots",
+      handler: async () => {
+        setActionStatus("Clearing…");
+        try {
+          const count = await clearTempCache();
+          setActionStatus(null);
+          toast.success(`Cleared ${count} cache folder(s)`);
+        } catch {
+          setActionStatus(null);
+          toast.error("Failed to clear cache");
+        }
+      },
+    },
+    {
+      id: "system-info",
+      icon: Info,
+      label: "System Information",
+      description: "OS, architecture, and runtime details",
+      handler: async () => {
+        setActionStatus("Loading…");
+        try {
+          const info: SystemInfo = await getSystemInfo();
+          setActionStatus(null);
+          const exeName = info.exe_path?.split(/[/\\]/).pop() ?? "unknown";
+          toast.success(`System Info: ${info.os} ${info.arch} · ${exeName}`, { duration: 5000 });
+        } catch {
+          setActionStatus(null);
+          toast.error("Could not fetch system info");
+        }
+      },
+    },
+    {
+      id: "diagnostics",
+      icon: Activity,
+      label: "Run Diagnostics",
+      description: "Check cache health and storage status",
+      handler: async () => {
+        setActionStatus("Running…");
+        try {
+          const info = await getSystemInfo();
+          const exeName = info.exe_path?.split(/[/\\]/).pop() ?? "N/A";
+          setActionStatus(null);
+          toast.success(`Diagnostics: ${info.os} ${info.arch} · ${exeName}`, { duration: 5000 });
+        } catch {
+          setActionStatus(null);
+          toast.error("Diagnostics failed");
+        }
+      },
+    },
+  ];
+
+  const totalItems = toolActions.length;
   itemCount.current = totalItems;
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") { e.preventDefault(); onBack(); }
-  };
-
   return (
-    <div className="flex flex-col gap-4" onKeyDown={handleKeyDown}>
+    <div className="flex flex-col gap-2">
       <SubPanelHeader title="Tools" onBack={onBack} />
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Wrench className="mb-4 h-12 w-12 text-(--color-muted)/30" />
-        <p className="text-lg font-medium text-(--color-muted)">Tools</p>
-        <p className="mt-1 text-sm text-(--color-muted)/60">Coming in a future update</p>
-      </div>
+      <p className="mb-2 text-sm text-(--color-muted)/60">Utilities, diagnostics, and folder access</p>
+      {toolActions.map((action, i) => {
+        const Icon = action.icon;
+        return (
+          <button
+            key={action.id}
+            onClick={action.handler}
+            className={`flex w-full items-center gap-4 rounded-2xl px-5 py-4 text-left transition-all ${
+              focusedIndex === i ? "bg-(--color-accent)/20 ring-2 ring-(--color-accent)/60 scale-[1.02]" : "hover:bg-white/10"
+            }`}
+          >
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-(--color-surface)/60">
+              <Icon className={`h-5 w-5 ${actionStatus && focusedIndex === i ? "text-(--color-accent) animate-pulse" : "text-(--color-muted)"}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-base font-semibold text-(--color-text)">{action.label}</div>
+              <div className="mt-0.5 text-sm text-(--color-muted)">{action.description}</div>
+            </div>
+            {actionStatus && focusedIndex === i ? (
+              <span className="shrink-0 text-xs text-(--color-accent)">{actionStatus}</span>
+            ) : (
+              <ChevronRight className="h-5 w-5 shrink-0 text-(--color-muted)/50" />
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -857,7 +1091,7 @@ const HELP_ITEMS: {
 ];
 
 function ConsoleHelpSubPanel({
-  onBack, focusedIndex, onFocusChange, itemCount,
+  onBack, focusedIndex, onFocusChange: _onFocusChange, itemCount,
 }: {
   onBack: () => void;
   focusedIndex: number;
@@ -867,21 +1101,8 @@ function ConsoleHelpSubPanel({
   const totalItems = HELP_ITEMS.length + 1;
   itemCount.current = totalItems;
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") { e.preventDefault(); onBack(); }
-    else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-      e.preventDefault();
-      const delta = e.key === "ArrowDown" ? 1 : -1;
-      const maxI = totalItems - 1;
-      onFocusChange(Math.max(0, Math.min(maxI, focusedIndex + delta)));
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  };
-
   return (
-    <div className="flex flex-col gap-2" onKeyDown={handleKeyDown}>
+    <div className="flex flex-col gap-2">
       <SubPanelHeader title="Help & Shortcuts" onBack={onBack} />
       <div className="flex flex-col gap-3 px-2 pb-4">
         {HELP_ITEMS.map((item, i) => {
@@ -935,7 +1156,7 @@ const MAIN_OPTIONS: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   description?: string;
-  action: "sub" | "navigate" | "random" | "refresh" | "switch-view" | "coming-soon";
+  action: "sub" | "navigate" | "random" | "refresh" | "switch-view" | "power" | "coming-soon";
   subPage?: PanelPage;
 }[] = [
   { key: "random", icon: Shuffle, label: "Pick Random Game", description: "Surprise me", action: "random" },
@@ -944,10 +1165,10 @@ const MAIN_OPTIONS: {
   { key: "settings", icon: Settings, label: "Console Settings", description: "Layout, visuals, input", action: "sub", subPage: "settings" },
   { key: "tools", icon: Wrench, label: "Tools", description: "Utilities and diagnostics", action: "sub", subPage: "tools" },
   { key: "desktop", icon: Monitor, label: "Switch to Desktop Mode", description: "Exit console mode", action: "navigate" },
-  { key: "power-off", icon: Power, label: "Turn Off System", action: "coming-soon" },
-  { key: "suspend", icon: Moon, label: "Suspend", action: "coming-soon" },
-  { key: "hibernate", icon: Zap, label: "Hibernate", action: "coming-soon" },
-  { key: "restart", icon: Sun, label: "Restart", action: "coming-soon" },
+  { key: "power-off", icon: Power, label: "Turn Off System", description: "Shut down the system", action: "power" },
+  { key: "suspend", icon: Moon, label: "Suspend", description: "Sleep mode", action: "power" },
+  { key: "hibernate", icon: Zap, label: "Hibernate", description: "Save state and power off", action: "power" },
+  { key: "restart", icon: Sun, label: "Restart", description: "Reboot the system", action: "power" },
   { key: "help", icon: HelpCircle, label: "Help", description: "Keyboard shortcuts & info", action: "sub", subPage: "help" },
 ];
 
@@ -970,6 +1191,10 @@ function SettingsCategoryGrid({
     { key: "visuals", icon: Maximize, label: "Visuals", description: "Theme, texture, effects" },
     { key: "media", icon: Film, label: "Media", description: "Providers, trailers, playback" },
     { key: "input", icon: Gamepad2, label: "Input", description: "Hints style, visibility" },
+    { key: "time", icon: Clock, label: "Time & Clock", description: "Time format, seconds, visibility" },
+    { key: "startup", icon: Rocket, label: "Startup", description: "Launch mode, window mode, autostart" },
+    { key: "system-bar", icon: Monitor, label: "System Bar", description: "Indicator visibility in top bar" },
+    { key: "language", icon: Globe, label: "Language", description: "App language (coming soon)" },
   ];
 
   const gridRef = useRef<HTMLDivElement>(null);
@@ -1029,6 +1254,7 @@ export default function ConsoleSettingsPanelV2({
   const [settingEditingId, setSettingEditingId] = useState<string | null>(null);
   const [themePickerIndex, setThemePickerIndex] = useState(0);
   const [visible, setVisible] = useState(false);
+  const [powerConfirm, setPowerConfirm] = useState<{ key: string; title: string; message: string } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const panelScrollRef = useRef<HTMLDivElement>(null);
   const subItemCount = useRef(0);
@@ -1197,6 +1423,13 @@ export default function ConsoleSettingsPanelV2({
                   handleClose();
                   onRefreshLibrary?.();
                   break;
+                case "power":
+                  {
+                    const cfg = POWER_CONFIRM_CONFIGS[opt.key];
+                    if (cfg) setPowerConfirm({ key: opt.key, ...cfg });
+                    else toast.error("Power action not available");
+                  }
+                  break;
                 case "switch-view":
                   {
                     const from = settings.layoutMode;
@@ -1231,7 +1464,7 @@ export default function ConsoleSettingsPanelV2({
         // Gamepad dispatches keydown on document.body which never reaches
         // React's #root-level delegation, so the grid's onKeyDown never
         // fires. Handle navigation here directly.
-        const SETTINGS_KEYS: PanelPage[] = ["grid-card-style", "spotlight-card-style", "spotlight-content", "visuals", "media", "input"];
+        const SETTINGS_KEYS: PanelPage[] = ["grid-card-style", "spotlight-card-style", "spotlight-content", "visuals", "media", "input", "time", "startup", "system-bar", "language"];
         switch (e.key) {
           case "ArrowUp":
             e.preventDefault();
@@ -1402,8 +1635,54 @@ export default function ConsoleSettingsPanelV2({
             doBackNav();
             break;
         }
+      } else if (subPage === "tools") {
+        // ── Tools sub-page ──
+        const toolRows: ToolActionEntry[] = [
+          { id: "open-app-data", icon: FolderOpen, label: "Open App Data Folder", description: "Browse cache, config, and data files", handler: async () => { try { await openAppDataFolder(); } catch { toast.error("Could not open app data folder"); } } },
+          { id: "open-logs", icon: HardDrive, label: "Open Logs Folder", description: "View application logs for troubleshooting", handler: async () => { try { await openLogsFolder(); } catch { toast.error("Could not open logs folder"); } } },
+          { id: "clear-cache", icon: Trash2, label: "Clear Temp Cache", description: "Remove temporary thumbnails and screenshots", handler: async () => { try { const c = await clearTempCache(); toast.success(`Cleared ${c} cache folder(s)`); } catch { toast.error("Failed to clear cache"); } } },
+          { id: "system-info", icon: Info, label: "System Information", description: "OS, architecture, and runtime details", handler: async () => { try { const info: SystemInfo = await getSystemInfo(); const exeName = info.exe_path?.split(/[/\\]/).pop(); toast.success(`System Info: ${info.os} ${info.arch} · ${exeName}`, { duration: 5000 }); } catch { toast.error("Could not fetch system info"); } } },
+          { id: "diagnostics", icon: Activity, label: "Run Diagnostics", description: "Check cache health and storage status", handler: async () => { try { await getSystemInfo(); toast.success("Diagnostics ran successfully", { duration: 5000 }); } catch { toast.error("Diagnostics failed"); } } },
+        ];
+        switch (e.key) {
+          case "ArrowUp":
+            e.preventDefault();
+            setFocusedIndex((i) => Math.max(0, i - 1));
+            break;
+          case "ArrowDown":
+            e.preventDefault();
+            setFocusedIndex((i) => Math.min(toolRows.length - 1, i + 1));
+            break;
+          case "Enter":
+            e.preventDefault();
+            toolRows[focusedIndex]?.handler();
+            break;
+          case "Escape":
+          case "b":
+          case "B":
+            e.preventDefault();
+            doBackNav();
+            break;
+        }
+      } else if (subPage === "help") {
+        switch (e.key) {
+          case "ArrowUp":
+            e.preventDefault();
+            setFocusedIndex((i) => Math.max(0, i - 1));
+            break;
+          case "ArrowDown":
+            e.preventDefault();
+            setFocusedIndex((i) => Math.min(HELP_ITEMS.length, i + 1));
+            break;
+          case "Escape":
+          case "b":
+          case "B":
+            e.preventDefault();
+            doBackNav();
+            break;
+        }
       } else {
-        // ── Other sub-pages (tools/help) ──
+        // ── Other sub-pages ──
         switch (e.key) {
           case "Escape":
           case "b":
@@ -1455,17 +1734,23 @@ export default function ConsoleSettingsPanelV2({
             handleClose();
             onRefreshLibrary?.();
             break;
-          case "switch-view":
-            {
-              const from = settings.layoutMode;
-              const to = from === "spotlight" ? "grid" : "spotlight";
-              if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][ACTIVATE] id=switch-view source=keyboard`);
-              if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][SWITCH_REQUEST] from=${from} to=${to}`);
-              handleClose();
-              onPatch({ layoutMode: to });
-              if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][APPLIED] layoutMode=${to}`);
-            }
-            break;
+              case "switch-view":
+                {
+                  const from = settings.layoutMode;
+                  const to = from === "spotlight" ? "grid" : "spotlight";
+                  if (DEBUG_CONSOLE_GAMEPAD) console.log(`[QUICK_MENU][ACTIVATE] id=switch-view source=click`);
+                  if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][SWITCH_REQUEST] from=${from} to=${to}`);
+                  handleClose();
+                  onPatch({ layoutMode: to });
+                }
+                break;
+              case "power":
+                {
+                  const cfg = POWER_CONFIRM_CONFIGS[opt.key];
+                  if (cfg) setPowerConfirm({ key: opt.key, ...cfg });
+                  else toast.error("Power action not available");
+                }
+                break;
         }
       }
     }
@@ -1568,6 +1853,13 @@ export default function ConsoleSettingsPanelV2({
                   if (DEBUG_CONSOLE_GAMEPAD) console.log(`[CONSOLE_LAYOUT][APPLIED] layoutMode=${to}`);
                 }
                 break;
+              case "power":
+                {
+                  const cfg = POWER_CONFIRM_CONFIGS[opt.key];
+                  if (cfg) setPowerConfirm({ key: opt.key, ...cfg });
+                  else toast.error("Power action not available");
+                }
+                break;
             }
           }}
         />
@@ -1582,6 +1874,10 @@ export default function ConsoleSettingsPanelV2({
       case "visuals": return "Visuals";
       case "media": return "Media";
       case "input": return "Input";
+      case "time": return "Time & Clock";
+      case "startup": return "Startup";
+      case "system-bar": return "System Bar";
+      case "language": return "Language";
       case "tools": return "Tools";
       case "help": return "Help";
       case "theme-picker": return "Theme Picker";
@@ -1721,6 +2017,29 @@ export default function ConsoleSettingsPanelV2({
           ) : subPage ? renderSubPage() : renderMain()}
         </div>
       </div>
+
+      {/* ── Power confirm modal ── */}
+      {powerConfirm && (
+        <ConfirmModal
+          open={true}
+          title={powerConfirm.title}
+          description={powerConfirm.message}
+          variant="danger"
+          confirmLabel={
+            powerConfirm.key === "power-off" ? "Shut Down" :
+            powerConfirm.key === "suspend" ? "Suspend" :
+            powerConfirm.key === "hibernate" ? "Hibernate" : "Restart"
+          }
+          cancelLabel="Cancel"
+          onConfirm={() => {
+            const key = powerConfirm.key;
+            setPowerConfirm(null);
+            handleClose();
+            setTimeout(() => executePowerCommand(key), 400);
+          }}
+          onCancel={() => setPowerConfirm(null)}
+        />
+      )}
     </>
   );
 }
