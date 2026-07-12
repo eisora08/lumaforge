@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ElementType } from "react";
 
 import {
-  Activity,
   Award,
   Store,
   Download,
@@ -15,6 +14,7 @@ import {
   PanelLeftOpen,
   PanelLeftClose,
   Ellipsis,
+  BarChart3,
 } from "lucide-react";
 
 import type { AppPage } from "../../types/navigation";
@@ -22,6 +22,7 @@ import SidebarLibraryList from "./SidebarLibraryList";
 import { useUserProfile, saveUserProfile, resolveProfileMediaUrl } from "../../features/profile/userProfile";
 import { getAvatarPreset } from "../../features/profile/profilePresets";
 import ProfileModal from "../../features/profile/ProfileModal";
+import { getPlayerProfile, subscribeAchievementStore } from "../../features/activity/achievements/achievementStore";
 
 export type SidebarMode = "expanded" | "compact" | "collapsed" | "drawer";
 
@@ -45,8 +46,8 @@ const mainItems: SidebarItem[] = [
   { label: "Biblioteca", page: "library", icon: Library },
   { label: "Tienda", page: "store", icon: Store },
   { label: "Descargas", page: "downloads", icon: Download },
-  { label: "Actividad", page: "activity", icon: Activity },
-  { label: "Logros", page: "achievements", icon: Award },
+  { label: "Stats", page: "activity", icon: BarChart3 },
+  { label: "Logros", page: "launcher-achievements", icon: Award },
 ];
 
 const toolItems: SidebarItem[] = [
@@ -77,6 +78,11 @@ export default function Sidebar({
   const profileBtnRef = useRef<HTMLButtonElement | null>(null);
   const avatarPreset = getAvatarPreset(profile.avatarPreset);
   const avatarDisplayUrl = resolveProfileMediaUrl(profile.avatarUrl);
+  const [playerProfile, setPlayerProfile] = useState(() => getPlayerProfile());
+
+  useEffect(() => {
+    return subscribeAchievementStore(() => setPlayerProfile(getPlayerProfile()));
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -305,6 +311,22 @@ export default function Sidebar({
                 <span className="text-[11px] text-(--color-muted)/70 truncate max-w-32">
                   {profile.status}
                 </span>
+                {playerProfile.level > 0 && (
+                  <div className="mt-1.5 w-full">
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/15 px-1.5">
+                        <span className="text-[9px] font-bold text-amber-400">Lv.{playerProfile.level}</span>
+                      </div>
+                      <span className="text-[9px] text-amber-400/50">{playerProfile.totalXp} XP</span>
+                    </div>
+                    <div className="mt-1 h-1 w-full rounded-full bg-white/[0.06] overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-amber-400/50 transition-all duration-500"
+                        style={{ width: `${Math.max(2, playerProfile.progressPercent)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

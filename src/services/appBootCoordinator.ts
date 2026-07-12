@@ -888,6 +888,27 @@ export async function runBootTasks(): Promise<void> {
           backgroundJobQueue.setBootCompleted(true);
           logBoot("phase=idle-ready");
 
+          // Evaluate launcher achievements after boot
+          setTimeout(() => {
+            import("../features/activity/achievements/achievementEngine").then(({ evaluateAchievements }) => {
+              import("../features/activity/stats/statsService").then(({ buildEvalContext }) => {
+                import("./gameStore").then(({ getReconciledGames }) => {
+                  const games = getReconciledGames();
+                  if (games.length > 0) {
+                    const ctx = buildEvalContext(games);
+                    const result = evaluateAchievements(ctx);
+                    if (result.newlyUnlocked.length > 0) {
+                      console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
+                      import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
+                        showAchievementToasts(result.newlyUnlocked);
+                      });
+                    }
+                  }
+                });
+              });
+            });
+          }, 3000);
+
           // Log performance counter summary after boot settles (deferred via microtask)
           const { logBootPerfSummary } = await import("./perfCounters");
           setTimeout(() => logBootPerfSummary(), 100);

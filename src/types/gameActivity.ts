@@ -12,7 +12,9 @@ export type GameActivityKind =
   | "artwork-refreshed"
   | "dlc-detected"
   | "local-file-change"
-  | "game-closed";
+  | "game-closed"
+  | "achievement-unlocked"
+  | "xp-earned";
 
 export type GameActivityItem = {
   id: string;
@@ -22,7 +24,7 @@ export type GameActivityItem = {
   title: string;
   description?: string;
   createdAt: number;
-  source: "local" | "steam" | "lua" | "provider" | "system";
+  source: "local" | "steam" | "lua" | "provider" | "system" | "launcher";
   severity?: "info" | "success" | "warning" | "error";
 };
 

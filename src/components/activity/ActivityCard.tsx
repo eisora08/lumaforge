@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Award,
   CheckCircle2,
   Download,
   Gamepad2,
@@ -9,17 +10,21 @@ import {
   ShieldCheck,
   Upload,
   XCircle,
+  Timer,
+  Zap,
 } from "lucide-react";
 import type { GameActivityItem } from "../../types/gameActivity";
 
 type ActivityCardProps = {
   activity: GameActivityItem;
+  compact?: boolean;
 };
 
 const KIND_ICONS: Record<string, typeof Info> = {
   "game-detected": Gamepad2,
   "game-installed": Download,
   "game-launched": Gamepad2,
+  "game-closed": Timer,
   "lua-installed": Package,
   "lua-synced": Upload,
   "lua-updated": RefreshCw,
@@ -30,6 +35,17 @@ const KIND_ICONS: Record<string, typeof Info> = {
   "artwork-refreshed": RefreshCw,
   "dlc-detected": Package,
   "local-file-change": Info,
+  "achievement-unlocked": Award,
+  "xp-earned": Zap,
+};
+
+const SOURCE_COLORS: Record<string, string> = {
+  local: "border-slate-500/20 bg-slate-500/10 text-slate-300",
+  steam: "border-sky-500/20 bg-sky-500/10 text-sky-300",
+  lua: "border-purple-500/20 bg-purple-500/10 text-purple-300",
+  provider: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+  system: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
+  launcher: "border-amber-500/20 bg-amber-500/10 text-amber-300",
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -45,6 +61,7 @@ const SOURCE_LABELS: Record<string, string> = {
   lua: "Lua",
   provider: "Provider",
   system: "System",
+  launcher: "Launcher",
 };
 
 function formatTimestamp(ts: number) {
@@ -60,8 +77,28 @@ function formatTimestamp(ts: number) {
   return new Date(ts).toLocaleDateString();
 }
 
-export default function ActivityCard({ activity }: ActivityCardProps) {
+export default function ActivityCard({ activity, compact }: ActivityCardProps) {
   const Icon = KIND_ICONS[activity.kind] || Info;
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-white/[0.04]">
+        <div
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/5 ${
+            activity.severity && SEVERITY_COLORS[activity.severity]
+              ? SEVERITY_COLORS[activity.severity]
+              : "text-(--color-muted)"
+          }`}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs text-(--color-text) truncate">{activity.title}</div>
+        </div>
+        <span className="shrink-0 text-[10px] text-(--color-muted)">{formatTimestamp(activity.createdAt)}</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-3 rounded-2xl border border-(--surface-active-border) bg-white/[0.03] p-4 transition hover:border-white/15 hover:bg-white/[0.06]">
@@ -92,9 +129,15 @@ export default function ActivityCard({ activity }: ActivityCardProps) {
         )}
 
         <div className="mt-2 flex items-center gap-2">
-          <span className="inline-flex rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
+          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${SOURCE_COLORS[activity.source] || "border-white/10 bg-white/[0.04] text-(--color-muted)"}`}>
             {SOURCE_LABELS[activity.source] || activity.source}
           </span>
+          {activity.kind === "game-closed" && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300">
+              <Timer className="h-3 w-3" />
+              Session
+            </span>
+          )}
           {activity.severity && activity.severity !== "info" && (
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
