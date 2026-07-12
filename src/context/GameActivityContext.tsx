@@ -37,6 +37,19 @@ const MAX_UPDATES = 50;
 
 const ActivityContext = createContext<GameActivityContextValue | null>(null);
 
+// Module-level callback so GameSessionContext can push activity events without hooks
+export type ActivityEventCallback = (input: AddActivityInput) => void;
+let _activityEventCallback: ActivityEventCallback | null = null;
+
+export function setActivityEventCallback(fn: ActivityEventCallback | null): void {
+  _activityEventCallback = fn;
+}
+
+/** Module-level function: push an activity event if the provider is mounted. */
+export function pushActivityEvent(input: AddActivityInput): void {
+  _activityEventCallback?.(input);
+}
+
 function loadFromStorage<T>(key: string): T[] {
   try {
     const raw = localStorage.getItem(key);
@@ -131,7 +144,11 @@ export function GameActivityProvider({
         severity: "success",
       });
     });
-    return () => { setAchievementUnlockCallback(null); };
+    _activityEventCallback = addActivityRef.current;
+    return () => {
+      setAchievementUnlockCallback(null);
+      _activityEventCallback = null;
+    };
   }, []);
 
   const value = useMemo(

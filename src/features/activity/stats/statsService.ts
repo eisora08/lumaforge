@@ -1,5 +1,7 @@
 import { getCachedPlaytimeStore } from "../../../services/playtimeService";
 import { getGameStats, loadAll } from "../../../services/gamePlayStats";
+import { getAllSessions } from "../../../services/gameSessionHistory";
+import type { GameSessionRecord } from "../../../services/gameSessionHistory";
 import type { LibraryGame } from "../../../types/libraryGame";
 import type { StatsTimeFilter, PlayActivityDay, SessionHistoryEntry } from "../types";
 import type React from "react";
@@ -29,6 +31,11 @@ export function computeLibraryStats(games: LibraryGame[]): LibraryStats {
   let mostPlayedSeconds = 0;
 
   const playStats = loadAll();
+  const allSessions = getAllSessions();
+  const sessionCountByAppId = new Map<string, number>();
+  for (const s of allSessions) {
+    sessionCountByAppId.set(s.appId, (sessionCountByAppId.get(s.appId) ?? 0) + 1);
+  }
 
   for (const game of games) {
     const appId = game.appId;
@@ -38,7 +45,6 @@ export function computeLibraryStats(games: LibraryGame[]): LibraryStats {
     const ls = game.localPlaytimeMinutes ? game.localPlaytimeMinutes * 60 : 0;
     const ext = entry?.externalPlaytimeSeconds ?? 0;
     const total = entry?.totalPlaytimeSeconds ?? (ls + ext);
-    const trackedSessions = entry?.sessions?.length ?? 0;
 
     // Also count via gamePlayStats (legacy)
     const gpStats = playStats[game.id];
@@ -50,8 +56,9 @@ export function computeLibraryStats(games: LibraryGame[]): LibraryStats {
     if (effectiveTotal > 0) {
       gamesPlayed++;
       totalSeconds += effectiveTotal;
-      // Use tracked sessions when available; fall back to legacy launch count
-      totalSessions += trackedSessions > 0 ? trackedSessions : gpLaunches;
+      // Prefer real session history count; fall back to legacy launch count
+      const historyCount = sessionCountByAppId.get(appId) ?? 0;
+      totalSessions += historyCount > 0 ? historyCount : gpLaunches;
       if (effectiveTotal > mostPlayedSeconds) {
         mostPlayedSeconds = effectiveTotal;
         mostPlayedTitle = game.title;
@@ -93,25 +100,46 @@ export function computeFilteredPlaytime(games: LibraryGame[], filter: StatsTimeF
   let gamesPlayed = 0;
   const sessions: SessionHistoryEntry[] = [];
 
-  if (!store) return { totalSeconds: 0, gamesPlayed: 0, sessions: [] };
+  // Use session history for session data
+  const allSessions = getAllSessions();
 
   for (const game of games) {
     if (!game.appId) continue;
-    const entry = store.games[`app-${game.appId}`];
-    if (!entry) continue;
 
     let gameTotal = 0;
-    for (const s of entry.sessions) {
-      const sessionEnd = s.endedAt ?? s.startedAt;
-      if (sessionEnd >= cutoff && s.durationSeconds) {
-        gameTotal += s.durationSeconds;
+
+    // Real sessions from history
+    for (const s of allSessions) {
+      if (s.appId !== game.appId) continue;
+      if (s.endedAt >= cutoff) {
+        gameTotal += s.durationMs / 1000;
         sessions.push({
-          gameTitle: entry.title || game.title,
-          appId: game.appId,
+          gameTitle: s.title,
+          appId: s.appId,
           startedAt: s.startedAt,
-          endedAt: s.endedAt ?? s.startedAt,
-          durationSeconds: s.durationSeconds,
+          endedAt: s.endedAt,
+          durationSeconds: s.durationMs / 1000,
         });
+      }
+    }
+
+    // Fallback: playtime store sessions (for LumaForge-launched games without history)
+    if (gameTotal === 0 && store) {
+      const entry = store.games[`app-${game.appId}`];
+      if (entry) {
+        for (const s of entry.sessions) {
+          const sessionEnd = s.endedAt ?? s.startedAt;
+          if (sessionEnd >= cutoff && s.durationSeconds) {
+            gameTotal += s.durationSeconds;
+            sessions.push({
+              gameTitle: entry.title || game.title,
+              appId: game.appId,
+              startedAt: s.startedAt,
+              endedAt: s.endedAt ?? s.startedAt,
+              durationSeconds: s.durationSeconds,
+            });
+          }
+        }
       }
     }
 
@@ -131,7 +159,6 @@ export function computePlayActivityByDay(
   games: LibraryGame[],
   days = 90
 ): PlayActivityDay[] {
-  const store = getCachedPlaytimeStore();
   const result: PlayActivityDay[] = [];
   const now = new Date();
 
@@ -142,20 +169,39 @@ export function computePlayActivityByDay(
     result.push({ date: dayStr, seconds: 0, launches: 0 });
   }
 
-  if (!store) return result;
+  // Use session history as primary source
+  const allSessions = getAllSessions();
+  const gameAppIds = new Set(games.filter(g => g.appId).map(g => g.appId));
 
-  for (const game of games) {
-    if (!game.appId) continue;
-    const entry = store.games[`app-${game.appId}`];
-    if (!entry) continue;
+  for (const s of allSessions) {
+    if (!gameAppIds.has(s.appId)) continue;
+    if (s.durationMs <= 0) continue;
+    const sessionDate = new Date(s.startedAt).toISOString().slice(0, 10);
+    const bucket = result.find((r) => r.date === sessionDate);
+    if (bucket) {
+      bucket.seconds += s.durationMs / 1000;
+      bucket.launches++;
+    }
+  }
 
-    for (const s of entry.sessions) {
-      if (!s.durationSeconds) continue;
-      const sessionDate = new Date(s.startedAt).toISOString().slice(0, 10);
-      const bucket = result.find((r) => r.date === sessionDate);
-      if (bucket) {
-        bucket.seconds += s.durationSeconds;
-        bucket.launches++;
+  // Fallback: playtime store sessions (for games without history records)
+  if (allSessions.length === 0) {
+    const store = getCachedPlaytimeStore();
+    if (store) {
+      for (const game of games) {
+        if (!game.appId) continue;
+        const entry = store.games[`app-${game.appId}`];
+        if (!entry) continue;
+
+        for (const s of entry.sessions) {
+          if (!s.durationSeconds) continue;
+          const sessionDate = new Date(s.startedAt).toISOString().slice(0, 10);
+          const bucket = result.find((r) => r.date === sessionDate);
+          if (bucket) {
+            bucket.seconds += s.durationSeconds;
+            bucket.launches++;
+          }
+        }
       }
     }
   }
@@ -251,17 +297,27 @@ export function computeTopGames(games: LibraryGame[], limit = 10): TopGame[] {
   if (!store) return [];
 
   const topGames: TopGame[] = [];
+  const allSessions = getAllSessions();
+  const sessionCountByAppId = new Map<string, number>();
+  for (const s of allSessions) {
+    sessionCountByAppId.set(s.appId, (sessionCountByAppId.get(s.appId) ?? 0) + 1);
+  }
 
   for (const game of games) {
     if (!game.appId) continue;
     const entry = store.games[`app-${game.appId}`];
     if (!entry || entry.totalPlaytimeSeconds <= 0) continue;
 
+    // Prefer session history count; fall back to playtime store
+    const historyCount = sessionCountByAppId.get(game.appId) ?? 0;
+    const storeCount = entry.sessions.length;
+    const effectiveSessions = historyCount > 0 ? historyCount : storeCount;
+
     topGames.push({
       title: entry.title || game.title,
       appId: game.appId,
       totalSeconds: entry.totalPlaytimeSeconds,
-      sessions: entry.sessions.length,
+      sessions: effectiveSessions,
     });
   }
 
@@ -273,29 +329,48 @@ export function computeTopGames(games: LibraryGame[], limit = 10): TopGame[] {
 // ─── Session history ──────────────────────────────────────────────────
 
 export function computeSessionHistory(games: LibraryGame[], limit = 20): SessionHistoryEntry[] {
-  const store = getCachedPlaytimeStore();
-  if (!store) return [];
+  const allSessions = getAllSessions();
+  const gameAppIds = new Set(games.filter(g => g.appId).map(g => g.appId));
 
-  const allSessions: SessionHistoryEntry[] = [];
+  // Map session history records to SessionHistoryEntry format
+  const result: SessionHistoryEntry[] = [];
 
-  for (const game of games) {
-    if (!game.appId) continue;
-    const entry = store.games[`app-${game.appId}`];
-    if (!entry) continue;
+  for (const s of allSessions) {
+    if (!gameAppIds.has(s.appId)) continue;
+    if (s.durationMs <= 0) continue;
+    result.push({
+      gameTitle: s.title,
+      appId: s.appId,
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+      durationSeconds: s.durationMs / 1000,
+    });
+  }
 
-    for (const s of entry.sessions) {
-      if (!s.durationSeconds || s.durationSeconds < 10) continue;
-      allSessions.push({
-        gameTitle: entry.title || game.title,
-        appId: game.appId,
-        startedAt: s.startedAt,
-        endedAt: s.endedAt ?? s.startedAt,
-        durationSeconds: s.durationSeconds,
-      });
+  // Fallback: playtime store sessions (for LumaForge-launched games without history)
+  if (result.length === 0) {
+    const store = getCachedPlaytimeStore();
+    if (store) {
+      for (const game of games) {
+        if (!game.appId) continue;
+        const entry = store.games[`app-${game.appId}`];
+        if (!entry) continue;
+
+        for (const s of entry.sessions) {
+          if (!s.durationSeconds || s.durationSeconds < 10) continue;
+          result.push({
+            gameTitle: entry.title || game.title,
+            appId: game.appId,
+            startedAt: s.startedAt,
+            endedAt: s.endedAt ?? s.startedAt,
+            durationSeconds: s.durationSeconds,
+          });
+        }
+      }
     }
   }
 
-  return allSessions
+  return result
     .sort((a, b) => b.startedAt - a.startedAt)
     .slice(0, limit);
 }
@@ -395,6 +470,19 @@ export function buildEvalContext(games: LibraryGame[]): EvaluationContextInput {
   let earlyBirdSessions = 0;
   const genresPlayed = new Set<string>();
 
+  // Use session history as primary source for session data
+  const allSessions = getAllSessions();
+  const gameAppIds = new Set(games.filter(g => g.appId).map(g => g.appId));
+
+  // Count sessions per game from history
+  const sessionsByAppId = new Map<string, GameSessionRecord[]>();
+  for (const s of allSessions) {
+    if (!gameAppIds.has(s.appId)) continue;
+    const arr = sessionsByAppId.get(s.appId) ?? [];
+    arr.push(s);
+    sessionsByAppId.set(s.appId, arr);
+  }
+
   if (store) {
     for (const game of games) {
       if (!game.appId) continue;
@@ -403,17 +491,34 @@ export function buildEvalContext(games: LibraryGame[]): EvaluationContextInput {
 
       if (entry.totalPlaytimeSeconds > 0) gamesPlayed++;
       totalSeconds += entry.totalPlaytimeSeconds;
-      totalSessions += entry.sessions.length;
 
-      for (const s of entry.sessions) {
-        if (!s.durationSeconds) continue;
-        if (s.durationSeconds >= 4 * 3600) marathonSessions++;
+      // Prefer session history; fall back to playtime store sessions
+      const historySessions = sessionsByAppId.get(game.appId);
+      if (historySessions && historySessions.length > 0) {
+        totalSessions += historySessions.length;
+        for (const s of historySessions) {
+          const durSec = s.durationMs / 1000;
+          if (durSec >= 4 * 3600) marathonSessions++;
 
-        const startHour = new Date(s.startedAt).getHours();
-        if (startHour < 7) earlyBirdSessions++;
+          const startHour = new Date(s.startedAt).getHours();
+          if (startHour < 7) earlyBirdSessions++;
 
-        const endHour = new Date(s.endedAt ?? s.startedAt).getHours();
-        if (endHour >= 0 && endHour < 5) nightOwlSessions++;
+          const endHour = new Date(s.endedAt).getHours();
+          if (endHour >= 0 && endHour < 5) nightOwlSessions++;
+        }
+      } else {
+        // Fallback to playtime store sessions (for LumaForge-launched games without history)
+        totalSessions += entry.sessions.length;
+        for (const s of entry.sessions) {
+          if (!s.durationSeconds) continue;
+          if (s.durationSeconds >= 4 * 3600) marathonSessions++;
+
+          const startHour = new Date(s.startedAt).getHours();
+          if (startHour < 7) earlyBirdSessions++;
+
+          const endHour = new Date(s.endedAt ?? s.startedAt).getHours();
+          if (endHour >= 0 && endHour < 5) nightOwlSessions++;
+        }
       }
 
       // Collect genres from metadata

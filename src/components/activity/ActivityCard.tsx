@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   Upload,
   XCircle,
-  Square,
+  Timer,
   Zap,
 } from "lucide-react";
 import type { GameActivityItem } from "../../types/gameActivity";
@@ -24,7 +24,7 @@ const KIND_ICONS: Record<string, typeof Info> = {
   "game-detected": Gamepad2,
   "game-installed": Download,
   "game-launched": Gamepad2,
-  "game-closed": Square,
+  "game-closed": Timer,
   "lua-installed": Package,
   "lua-synced": Upload,
   "lua-updated": RefreshCw,
@@ -132,6 +132,12 @@ export default function ActivityCard({ activity, compact }: ActivityCardProps) {
           <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${SOURCE_COLORS[activity.source] || "border-white/10 bg-white/[0.04] text-(--color-muted)"}`}>
             {SOURCE_LABELS[activity.source] || activity.source}
           </span>
+          {activity.kind === "game-closed" && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300">
+              <Timer className="h-3 w-3" />
+              Session
+            </span>
+          )}
           {activity.severity && activity.severity !== "info" && (
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${

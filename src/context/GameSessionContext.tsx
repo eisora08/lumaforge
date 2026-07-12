@@ -3,6 +3,8 @@ import { isProcessRunning, terminateProcess, terminateProcessTree, terminateProc
 import { findGameProcess, findGameProcesses, findCandidates, pickBestCandidate, resolveExecutablePath, getExeNamesFromSession, extractExeName } from "../utils/gameProcessDetection";
 import { startPlaySession, endPlaySession, getCachedPlaytimeStore } from "../services/playtimeService";
 import { setActivePlayedSession, clearActivePlayedSession } from "../services/achievementAutoSyncService";
+import { createSessionRecord, addSession } from "../services/gameSessionHistory";
+import { pushActivityEvent } from "./GameActivityContext";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
@@ -1246,6 +1248,40 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             }).catch((err: unknown) => {
               console.warn("[Playtime] end failed", err);
             });
+
+            // Persist session record to local history
+            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "local" ? "local" : "system";
+            const sessionRecord = createSessionRecord({
+              appId: prevSession.appId || "",
+              title: prevSession.title || "Unknown Game",
+              source: activitySource,
+              startedAt: prevSession.launchedAt,
+              endedAt: Date.now(),
+              exitReason: exitReason as "normal" | "stopped" | "crashed" | "unknown",
+            });
+            if (sessionRecord) {
+              const added = addSession(sessionRecord);
+              if (added) {
+                console.log(`[SESSION_HISTORY] recorded appid=${prevSession.appId} duration=${durationSeconds}s id=${sessionRecord.id}`);
+
+                // Emit activity feed event (works from any page, not just GameDetails)
+                const durStr = durationSeconds >= 3600
+                  ? `${Math.floor(durationSeconds / 3600)}h ${Math.floor((durationSeconds % 3600) / 60)}m`
+                  : durationSeconds >= 60
+                    ? `${Math.floor(durationSeconds / 60)}m`
+                    : `${durationSeconds}s`;
+                const exitLabel = exitReason === "stopped" ? "Stopped" : "Process exited";
+                pushActivityEvent({
+                  gameId: prevSession.appId || key,
+                  appId: prevSession.appId,
+                  kind: "game-closed",
+                  title: prevSession.title || "Unknown Game",
+                  description: `Played for ${durStr} · ${exitLabel}`,
+                  source: activitySource,
+                  severity: "info",
+                });
+              }
+            }
           } else {
             console.debug("[Playtime] skipped end — duration below 15s", { gameKey: key, durationSeconds });
           }

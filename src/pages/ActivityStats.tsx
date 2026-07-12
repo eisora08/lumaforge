@@ -196,6 +196,14 @@ export default function ActivityStats() {
         {/* Streaks */}
         <PanelCard>
           <SectionTitle icon={Flame}>Streaks</SectionTitle>
+          {!hasAnyPlaytime ? (
+            <ActivityEmptyState
+              icon={Flame}
+              title="No streaks yet"
+              description="Play games on consecutive days to build a streak."
+              compact
+            />
+          ) : (
           <div className="grid grid-cols-3 gap-3">
             <div className="text-center">
               <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400/10 mb-2">
@@ -219,6 +227,7 @@ export default function ActivityStats() {
               <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">Days Played</div>
             </div>
           </div>
+          )}
         </PanelCard>
 
         {/* XP & Level — polished */}

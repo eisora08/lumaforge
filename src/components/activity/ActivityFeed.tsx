@@ -15,7 +15,7 @@ const KIND_FILTERS: { label: string; value: GameActivityKind | null }[] = [
   { label: "Achievements", value: "achievement-unlocked" },
   { label: "XP", value: "xp-earned" },
   { label: "Files", value: "local-file-change" },
-  { label: "System", value: "game-closed" },
+  { label: "Sessions", value: "game-closed" },
 ];
 
 const SOURCE_FILTERS: { label: string; value: GameActivityItem["source"] | null }[] = [
