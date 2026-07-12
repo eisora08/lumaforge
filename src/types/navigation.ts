@@ -11,4 +11,5 @@ export type AppPage =
   | "settings"
   | "game-details"
   | "library-game-detail"
-  | "global-search";
+  | "global-search"
+  | "console";

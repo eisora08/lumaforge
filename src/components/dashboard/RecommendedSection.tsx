@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Heart, Sparkles } from "lucide-react";
+import { Heart, Sparkles } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { GameEntry } from "../../services/tauri";
 import type { CatalogStatus } from "../../services/globalCatalogService";
@@ -16,11 +16,13 @@ import { getRecommendedWithGlobalFill } from "../../services/recommendationServi
 
 const DEBUG_DASH_RECOMMEND = false;
 const DEBUG_DASH_RECOMMEND_PER_GAME = false;
+import { useSettings } from "../../context/SettingsContext";
 import { localPathToUrl, deduplicateByAppId } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
+import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -35,9 +37,9 @@ function resolveImageSrc(src: string | undefined): string | undefined {
 }
 
 export default function RecommendedSection({ onNavigate, continuePlayingAppIds }: Props) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
+  const { settings } = useSettings();
   const [catalogEntries, setCatalogEntries] = useState<GameEntry[]>([]);
 
   const playtimeStore = useMemo(() => getCachedPlaytimeStore(), []);
@@ -184,13 +186,6 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
 
   if (displayGames.length === 0) return null;
 
-  function scroll(direction: "left" | "right") {
-    const el = scrollRef.current;
-    if (!el) return;
-    const amount = Math.round(el.clientWidth * 0.85);
-    el.scrollBy({ left: direction === "left" ? -amount : amount, behavior: "smooth" });
-  }
-
   function handleOpen(game: LibraryGame) {
     if (!game.appId) return;
     const libGame = libraryGames.find((g) => g.appId === game.appId);
@@ -217,99 +212,79 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
         </div>
       </div>
 
-      <div className="group/row relative">
-        <button
-          type="button"
-          onClick={() => scroll("left")}
-          className="absolute -left-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </button>
+      <DashboardHorizontalRail gap={settings.dashboardGridGap}>
+        {deduplicateByAppId(displayGames).map((game) => {
+          const imgSrc = resolveImageSrc(
+            game.imageUrl || game.metadata?.header_image || game.metadata?.capsule_image || undefined,
+          );
 
-        <div
-          ref={scrollRef}
-          className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
-        >
-          {deduplicateByAppId(displayGames).map((game) => {
-            const imgSrc = resolveImageSrc(
-              game.imageUrl || game.metadata?.header_image || game.metadata?.capsule_image || undefined,
-            );
-
-            return (
+          return (
+            <div
+              key={"dashboard:recommended:steam:" + game.appId}
+              className="shrink-0 snap-start"
+              style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
+            >
               <div
-                key={"dashboard:recommended:steam:" + game.appId}
-                className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56"
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpen(game)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleOpen(game);
+                  }
+                }}
+                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleOpen(game)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleOpen(game);
-                    }
-                  }}
-                  className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
-                >
-                  <div className="relative aspect-video overflow-hidden">
-                    {imgSrc ? (
-                      <AsyncImage
-                        src={imgSrc}
-                        alt={game.title}
-                        className="h-full w-full object-cover"
-                        fallback={
-                          <div className="flex h-full w-full items-center justify-center bg-white/5">
-                            <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
-                          </div>
-                        }
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-white/5">
-                        <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
-                      </div>
-                    )}
-                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (game.appId) toggleFavorite(game.appId);
-                      }}
-                      className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
-                      title={favoriteIds.has(game.appId!) ? "Remove from favorites" : "Add to favorites"}
-                    >
-                      <Heart
-                        className="h-4 w-4"
-                        fill={favoriteIds.has(game.appId!) ? "currentColor" : "none"}
-                      />
-                    </button>
-                  </div>
+                <div className="relative aspect-video overflow-hidden">
+                  {imgSrc ? (
+                    <AsyncImage
+                      src={imgSrc}
+                      alt={game.title}
+                      className="h-full w-full object-cover"
+                      fallback={
+                        <div className="flex h-full w-full items-center justify-center bg-white/5">
+                          <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
+                        </div>
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-white/5">
+                      <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
+                    </div>
+                  )}
+                  <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (game.appId) toggleFavorite(game.appId);
+                    }}
+                    className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
+                    title={favoriteIds.has(game.appId!) ? "Remove from favorites" : "Add to favorites"}
+                  >
+                    <Heart
+                      className="h-4 w-4"
+                      fill={favoriteIds.has(game.appId!) ? "currentColor" : "none"}
+                    />
+                  </button>
+                </div>
 
-                  <div className="p-3">
-                    <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                      {game.title}
-                    </h3>
-                    {game.metadata?.genres && game.metadata.genres.length > 0 && (
-                      <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
-                        {game.metadata.genres.slice(0, 2).join(", ")}
-                      </span>
-                    )}
-                  </div>
+                <div className="p-3">
+                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                    {game.title}
+                  </h3>
+                  {game.metadata?.genres && game.metadata.genres.length > 0 && (
+                    <span className="mt-1 inline-block text-[11px] text-(--color-muted)">
+                      {game.metadata.genres.slice(0, 2).join(", ")}
+                    </span>
+                  )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => scroll("right")}
-          className="absolute -right-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronRight className="h-5 w-5" />
-        </button>
-      </div>
+            </div>
+          );
+        })}
+      </DashboardHorizontalRail>
     </section>
   );
 }

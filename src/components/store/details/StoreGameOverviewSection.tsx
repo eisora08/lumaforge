@@ -127,7 +127,7 @@ export default function StoreGameOverviewSection({
                   Features
                 </span>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {categories.slice(0, 6).map((cat) => (
+                  {[...new Set(categories)].slice(0, 6).map((cat) => (
                     <span
                       key={cat}
                       className="rounded-full border border-(--surface-active-border) bg-white/[0.03] px-3 py-1 text-xs text-(--color-muted)"

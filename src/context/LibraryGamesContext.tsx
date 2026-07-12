@@ -25,6 +25,9 @@ import {
 import {
   scheduleSnapshotWrite,
 } from "../services/startupSnapshotService";
+import {
+  refreshSingleGameSteamStatus,
+} from "../services/providerStatusReconciliation";
 import { installTrackerService } from "../services/installTrackingService";
 import {
   reportLibraryProgress,
@@ -115,6 +118,7 @@ type LibraryGamesState = {
   setSelectedGame: (game: LibraryGame | null) => void;
   refresh: () => Promise<void>;
   updateGame: (appId: string, updates: Partial<LibraryGame>) => void;
+  checkGameProviderStatus: (appId: string, force?: boolean) => Promise<{ steamInstalled: boolean } | null>;
   appInfoMap: LibraryAppInfoMap;
   status: LibraryRuntimeStatus;
   librarySource: LibrarySource;
@@ -519,6 +523,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       setInitialLoading(false);
       bootLoaded.current = true;
 
+      // Schedule post-hydration Steam install reconciliation
+      if (loadedGames && loadedGames.length > 0) {
+        const { schedulePostSnapshotSteamReconciliation } = await import("../services/providerStatusReconciliation");
+        schedulePostSnapshotSteamReconciliation(loadedGames, updateGame, { steamRoot: settings.steamRoot });
+      }
+
       reportLibraryProgress({ phase: "done", source: (loadSource === "empty" ? "unknown" : loadSource) as LibraryLoadSource, itemsFound: loadedGames?.length });
 
       // Schedule background Steam scan after main window is visible
@@ -787,6 +797,27 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     });
   }, []);
 
+  const checkGameProviderStatus = useCallback(async (appId: string, force?: boolean): Promise<{ steamInstalled: boolean } | null> => {
+    const steamRoot = settingsRef.current.steamRoot;
+    const current = gamesRef.current;
+    const game = current.find((g) => g.appId === appId);
+    if (!game) {
+      console.log(`[PROVIDER][CHECK_SKIP] appid=${appId} reason=game-not-found`);
+      return null;
+    }
+    const result = await refreshSingleGameSteamStatus(appId, { steamRoot, force });
+    if (result && result.steamInstalled !== game.steamInstalled) {
+      const newSource = result.steamInstalled ? "steam" as const : (game.hasLua ? "lua" as const : game.source);
+      updateGame(appId, {
+        steamInstalled: result.steamInstalled,
+        isPlayable: result.steamInstalled,
+        isInstallable: !result.steamInstalled,
+        source: newSource,
+      });
+    }
+    return result;
+  }, [updateGame]);
+
   // Subscribe to install completion events — re-ingest through real installed Steam pipeline
   useEffect(() => {
     return installTrackerService.onInstalled(async (appId) => {
@@ -1011,11 +1042,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     selectedId, setSelectedId, selectedGame, setSelectedGame,
     refresh,
     updateGame,
+    checkGameProviderStatus,
     appInfoMap, status, librarySource, libraryFingerprint,
   }), [
     games, warnings, loading, initialLoading,
     selectedId, selectedGame,
-    refresh, updateGame,
+    refresh, updateGame, checkGameProviderStatus,
     appInfoMap, status, librarySource, libraryFingerprint,
   ]);
 

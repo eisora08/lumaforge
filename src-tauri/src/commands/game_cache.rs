@@ -332,7 +332,7 @@ pub fn cache_landscape_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path) {
+            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path, false) {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -374,7 +374,7 @@ pub fn cache_cover_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path) {
+            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path, false) {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -416,7 +416,7 @@ pub fn cache_background_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path) {
+            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path, false) {
                 Ok(Some(path)) => {
                     media_log(&format!("saved background for {}", app_id));
                     return Ok(Some(path));
@@ -460,7 +460,7 @@ pub fn cache_logo_image(
     }
 
     if let Some(url) = urls.sgdb_logo_url {
-        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path) {
+        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path, false) {
             Ok(Some(path)) => {
                 media_log(&format!("saved logo for {}", app_id));
                 return Ok(Some(path));
@@ -495,7 +495,7 @@ pub fn cache_icon_image(
     }
 
     if let Some(url) = urls.sgdb_icon_url {
-        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path) {
+        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path, false) {
             Ok(Some(path)) => {
                 media_log(&format!("saved icon for {}", app_id));
                 return Ok(Some(path));
@@ -568,6 +568,7 @@ pub fn update_game_appinfo_media(
             media: None,
             media_sources: None,
             remote: None,
+            user_data: None,
         })
     } else {
         GameAppInfo {
@@ -578,6 +579,7 @@ pub fn update_game_appinfo_media(
             media: None,
             media_sources: None,
             remote: None,
+            user_data: None,
         }
     };
 
@@ -862,6 +864,7 @@ pub fn migrate_to_canonical_cache(app_handle: AppHandle) -> Result<MigrationSumm
                             media: None,
                             media_sources: None,
                             remote: None,
+                            user_data: None,
                         };
                         if let Ok(content) = serde_json::to_string_pretty(&game_info) {
                             if fs::write(&p, &content).is_ok() {
@@ -964,6 +967,7 @@ fn safe_single_download(
     url: &str,
     media_type: &str,
     dest_path: &Path,
+    skip_classification: bool,
 ) -> Result<Option<String>, String> {
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
@@ -1012,37 +1016,33 @@ fn safe_single_download(
         }
     };
 
-    // Classify image by aspect ratio to ensure role matches actual dimensions.
-    // This prevents vertical/poster images from being saved as landscape.jpg.
-    let actual_role = match image_utils::classify_image_role(&bytes, media_type) {
-        Ok(Some(role)) => role,
-        Ok(None) => {
-            media_log(&format!("[MediaClassify] rejected {} for {} — skipping", media_type, _app_id));
-            return Ok(None);
-        }
-        Err(e) => {
-            media_log(&format!("[MediaClassify] classification error for {}: {}", media_type, e));
-            // Fall through to original media_type
-            media_type.to_string()
-        }
-    };
-
-    // If reclassified to a different role, adjust dest_path
-    let (actual_dest_path, actual_media_type) = if actual_role != media_type {
-        let new_filename = match actual_role.as_str() {
-            "cover" => "cover.jpg",
-            "landscape" => "landscape.jpg",
-            "background" => "background.jpg",
-            "logo" => "logo.png",
-            "icon" => "icon.png",
-            _ => media_type,
+    // When skip_classification is true (manual Refresh Artwork, force_refresh),
+    // bypass the aspect-ratio classifier and save the image directly as the
+    // intended role.  This allows Steam CDN assets (e.g. capsule_616x353.jpg
+    // for cover) to be saved even when their aspect ratio differs from the
+    // poster-style classifier threshold.
+    if !skip_classification {
+        // Classify image by aspect ratio to ensure role matches actual dimensions.
+        // This prevents vertical/poster images from being saved as landscape.jpg.
+        let _actual_role = match image_utils::classify_image_role(&bytes, media_type) {
+            Ok(Some(role)) => role,
+            Ok(None) => {
+                media_log(&format!("[MediaClassify] rejected {} for {} — skipping", media_type, _app_id));
+                return Ok(None);
+            }
+            Err(e) => {
+                media_log(&format!("[MediaClassify] classification error for {}: {}", media_type, e));
+                // Fall through to original media_type
+                media_type.to_string()
+            }
         };
-        let new_path = dest_path.parent().unwrap().join(new_filename);
-        media_log(&format!("[MediaClassify] reclassified {} -> {}, path: {}", media_type, actual_role, new_path.display()));
-        (new_path, actual_role)
     } else {
-        (dest_path.to_path_buf(), media_type.to_string())
-    };
+        media_log(&format!("[MediaClassify] bypassed classification for {} (force_refresh)", media_type));
+    }
+
+    // No reclassification: the actual role must match the intended role,
+    // or the image is rejected above. Use original dest_path and media_type.
+    let (actual_dest_path, actual_media_type) = (dest_path.to_path_buf(), media_type.to_string());
 
     // Write to temp file first, then rename for atomicity.
     // The hash index is updated by process_and_save_with_dedup with the
@@ -1156,7 +1156,62 @@ pub fn safe_download_image(
         return Ok(Some(dest_path.to_string_lossy().to_string()));
     }
 
-    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path)
+    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh)
+}
+
+// ---------------------------------------------------------------------------
+// cache_trailer_file — download a trailer video or thumbnail to
+// <gameDir>/media/trailers/<filename>.
+// Lightweight — no image classification, no content-type check.
+// Skips existing files; returns the local path on success.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn cache_trailer_file(
+    app_handle: AppHandle,
+    app_id: String,
+    filename: String,
+    url: String,
+) -> Result<Option<String>, String> {
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+    let trailers_dir = media_dir.join("trailers");
+    fs::create_dir_all(&trailers_dir)
+        .map_err(|e| format!("Failed to create trailers dir: {}", e))?;
+
+    let dest_path = trailers_dir.join(&filename);
+    if dest_path.exists() {
+        if let Ok(meta) = fs::metadata(&dest_path) {
+            if meta.len() > 0 {
+                return Ok(Some(dest_path.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .user_agent("LumaForge/0.2.0")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client.get(&url).send()
+        .map_err(|e| format!("Download failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+
+    let bytes = response.bytes()
+        .map_err(|e| format!("Read failed: {}", e))?;
+
+    let tmp_path = trailers_dir.join(format!(".{}.tmp", filename));
+    fs::write(&tmp_path, &bytes)
+        .map_err(|e| format!("Write failed: {}", e))?;
+    fs::rename(&tmp_path, &dest_path)
+        .map_err(|e| format!("Rename failed: {}", e))?;
+
+    Ok(Some(dest_path.to_string_lossy().to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1909,4 +1964,98 @@ pub fn resolve_game_media_paths_batch(
         });
     }
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// save_game_media_file — save a base64-encoded image to the game's media dir.
+// Used by the GameEditDialog for local file selection and URL paste.
+// Accepts: app_id, role (cover/landscape/background/logo/icon), base64 content,
+// file extension. Writes to media/<role>.<ext>, validates role, enforces 10MB
+// limit. Returns the relative path (e.g. "media/cover.jpg").
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn save_game_media_file(
+    app_handle: AppHandle,
+    app_id: String,
+    role: String,
+    content_base64: String,
+    ext: String,
+) -> Result<String, String> {
+    let valid_roles = ["cover", "landscape", "background", "logo", "icon"];
+    if !valid_roles.contains(&role.as_str()) {
+        return Err(format!("Invalid media role: {}. Must be one of: cover, landscape, background, logo, icon", role));
+    }
+
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&content_base64)
+        .map_err(|e| format!("Failed to decode base64 content: {}", e))?;
+
+    if bytes.len() > 10 * 1024 * 1024 {
+        return Err("File too large (>10MB)".to_string());
+    }
+
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+
+    let ext_clean = ext.trim_start_matches('.').to_lowercase();
+    let safe_ext = match ext_clean.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "ico" => ext_clean.clone(),
+        _ => {
+            match role.as_str() {
+                "logo" | "icon" => "png".to_string(),
+                _ => "jpg".to_string(),
+            }
+        }
+    };
+
+    let filename = format!("{}.{}", role, safe_ext);
+    let dest_path = media_dir.join(&filename);
+
+    fs::write(&dest_path, &bytes)
+        .map_err(|e| format!("Failed to write media file: {}", e))?;
+
+    let rel_path = format!("media/{}", filename);
+    println!("[MEDIA][FILE_SAVED] appid={} role={} path={}", app_id, role, rel_path);
+
+    Ok(rel_path)
+}
+
+#[tauri::command]
+pub fn delete_game_media_file(
+    app_handle: AppHandle,
+    app_id: String,
+    role: String,
+) -> Result<(), String> {
+    let valid_roles = ["cover", "landscape", "background", "logo", "icon"];
+    if !valid_roles.contains(&role.as_str()) {
+        return Err(format!("Invalid media role: {}. Must be one of: cover, landscape, background, logo, icon", role));
+    }
+
+    let media_dir = get_media_dir(&app_handle, &app_id)?;
+
+    // Try to delete any file named role.* in the media directory
+    let entries = fs::read_dir(&media_dir)
+        .map_err(|e| format!("Failed to read media directory: {}", e))?;
+
+    let mut deleted = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(stem) = path.file_stem() {
+            if stem == role.as_str() {
+                if fs::remove_file(&path).is_ok() {
+                    println!("[MEDIA][FILE_DELETED] appid={} role={} path={:?}", app_id, role, path);
+                    deleted = true;
+                }
+            }
+        }
+    }
+
+    if deleted {
+        Ok(())
+    } else {
+        // Not an error if file doesn't exist — already clean
+        println!("[MEDIA][FILE_DELETE_SKIP] appid={} role={} reason=not-found", app_id, role);
+        Ok(())
+    }
 }

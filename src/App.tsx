@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import { countRender, logRenderSummary, startRenderSession, markNavigation } from "./services/perfCounters";
 
 import AppLayout from "./components/layout/AppLayout";
@@ -16,6 +16,7 @@ import Tools from "./pages/Tools";
 import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
 import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
+import ConsoleModePage from "./features/console/ConsoleModePage";
 import { GameDetailsProvider } from "./context/GameDetailsContext";
 import { GameSessionProvider, useGameSession } from "./context/GameSessionContext";
 import GameSessionOverlay from "./components/overlays/GameSessionOverlay";
@@ -26,6 +27,8 @@ import { AppPage } from "./types/navigation";
 import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
+import ModeSwitchSplash from "./components/splash/ModeSwitchSplash";
+import type { ModeSwitchMode } from "./components/splash/ModeSwitchSplash";
 import LibraryLoadProgressCard from "./components/loading/LibraryLoadProgressCard";
 import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
 import BackgroundJobDebugPanel from "./components/common/BackgroundJobDebugPanel";
@@ -33,12 +36,13 @@ import { runBootTasks } from "./services/appBootCoordinator";
 import AppRouteTransition from "./components/common/AppRouteTransition";
 import { ConfirmProvider } from "./services/confirmService";
 import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
+import { setAppFullscreen, toggleAppFullscreen } from "./services/windowModeService";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
   "home", "library", "games", "store", "downloads",
   "achievements", "activity", "verification", "tools",
-  "settings", "game-details", "library-game-detail", "global-search",
+  "settings", "game-details", "library-game-detail", "global-search", "console",
 ]);
 
 function restoreActivePage(): AppPage {
@@ -61,6 +65,9 @@ function restoreActivePage(): AppPage {
 
 const NAV_PERF_ENABLED = true;
 const DEBUG_ROUTE_RENDER = false;
+const DEBUG_ROUTE_SHELL = false;
+
+
 
 function SessionOverlayWrapper() {
   const { overlayEvent, clearOverlay } = useGameSession();
@@ -104,7 +111,9 @@ function App() {
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
   const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
   const [bootStarted, setBootStarted] = useState(false);
-  const [, startTransition] = useTransition();
+  const [showModeSwitch, setShowModeSwitch] = useState(false);
+  const [modeSwitchMode, setModeSwitchMode] = useState<ModeSwitchMode>("enter-console");
+  const modeSwitchKeyRef = useRef(0);
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
 
@@ -131,6 +140,18 @@ function App() {
     prevPageRef.current = activePage;
   }, [activePage]);
 
+  // F11 fullscreen toggle — only active in Console Mode
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "F11") return;
+      if (activePage !== "console") return;
+      e.preventDefault();
+      toggleAppFullscreen();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activePage]);
+
   function handleNavigate(page: AppPage) {
     if (page === activePage) return;
     const startTime = NAV_PERF_ENABLED ? performance.now() : 0;
@@ -138,15 +159,32 @@ function App() {
     // Phase 9: Mark navigation timestamp so services can defer background work
     markNavigation();
 
+    const isEnteringConsole = page === "console";
+    const isLeavingConsole = activePage === "console" && !isEnteringConsole;
+
+    // Show mode switch splash for Desktop ↔ Console transitions
+    if (isEnteringConsole || isLeavingConsole) {
+      modeSwitchKeyRef.current += 1;
+      setModeSwitchMode(isEnteringConsole ? "enter-console" : "exit-console");
+      setShowModeSwitch(true);
+    }
+
+    if (isEnteringConsole) {
+      setAppFullscreen(true);
+    } else if (isLeavingConsole) {
+      setAppFullscreen(false);
+    }
+
     if (page === "game-details") {
       setGameDetailsPrevPage(activePage);
     }
 
     pauseBackgroundFill();
 
-    startTransition(() => {
-      setActivePage(page);
-    });
+    // CRITICAL: setActivePage must be synchronous — do NOT wrap in startTransition.
+    // Deferring activePage causes a race window where ModeSwitchSplash disappears
+    // before the new route mounts, leaving lf-route-visible empty.
+    setActivePage(page);
 
     if (NAV_PERF_ENABLED) {
       requestAnimationFrame(() => {
@@ -161,40 +199,61 @@ function App() {
   }
 
   function renderPage() {
-    // Phase 2: Confirm only the active route page renders
     if (DEBUG_ROUTE_RENDER && import.meta.env.DEV) {
-      console.log(`[ROUTE][PAGE_RENDER] active=${activePage} rendered=${activePage}`);
+      console.log(`[ROUTE][PAGE_RENDER] active=${activePage}`);
     }
+    let pageComponent: React.ReactNode = null;
     switch (activePage) {
       case "home":
-        return <Home onNavigate={handleNavigate} />;
+        pageComponent = <Home onNavigate={handleNavigate} />;
+        break;
       case "library":
-        return <Library onNavigate={handleNavigate} />;
+        pageComponent = <Library onNavigate={handleNavigate} />;
+        break;
       case "games":
-        return <Games />;
+        pageComponent = <Games />;
+        break;
       case "store":
-        return <Store />;
+        pageComponent = <Store />;
+        break;
       case "global-search":
-        return <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
+        pageComponent = <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
+        break;
       case "downloads":
-        return <Downloads onNavigate={handleNavigate} />;
+        pageComponent = <Downloads onNavigate={handleNavigate} />;
+        break;
       case "achievements":
-        return <Achievements />;
+        pageComponent = <Achievements />;
+        break;
       case "activity":
-        return <Activity />;
+        pageComponent = <Activity />;
+        break;
       case "verification":
-        return <Verification />;
+        pageComponent = <Verification />;
+        break;
       case "tools":
-        return <Tools />;
+        pageComponent = <Tools />;
+        break;
       case "settings":
-        return <Settings />;
+        pageComponent = <Settings />;
+        break;
       case "game-details":
-        return <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
+        pageComponent = <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
+        break;
       case "library-game-detail":
-        return <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
+        pageComponent = <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
+        break;
+      case "console":
+        pageComponent = <ConsoleModePage onNavigate={handleNavigate} />;
+        break;
       default:
-        return <Home />;
+        pageComponent = <Home />;
+        break;
     }
+    if (DEBUG_ROUTE_SHELL) {
+      console.log(`[ROUTE][RENDER] activePage=${activePage} hasComponent=${!!pageComponent}`);
+    }
+    return pageComponent;
   }
 
 
@@ -205,9 +264,14 @@ function App() {
       <AchievementWatcherInit />
       <GameDetailsProvider>
         <GameSessionHUD onNavigate={handleNavigate} />
-        <AppLayout activePage={activePage} onNavigate={handleNavigate}>
+        <AppLayout activePage={activePage} onNavigate={handleNavigate} isConsoleMode={activePage === "console"}>
           <AppRouteTransition routeKey={activePage}>
-            {renderPage()}
+            {renderPage() ?? (
+              <div className="flex h-full items-center justify-center text-(--color-muted)">
+                {DEBUG_ROUTE_SHELL && console.warn(`[ROUTE][EMPTY] activePage=${activePage} renderPage returned null`)}
+                <span>Page failed to render</span>
+              </div>
+            )}
           </AppRouteTransition>
         </AppLayout>
       </GameDetailsProvider>
@@ -215,6 +279,15 @@ function App() {
       <InstallerProgressListener />
       <GameToastViewport />
       {import.meta.env.DEV && <BackgroundJobDebugPanel />}
+      {/* Mode switch splash — covers Desktop ↔ Console transitions */}
+      {showModeSwitch && (
+        <ModeSwitchSplash
+          key={modeSwitchKeyRef.current}
+          mode={modeSwitchMode}
+          visible={true}
+          onComplete={() => setShowModeSwitch(false)}
+        />
+      )}
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
       <LibraryLoadProgressCard />

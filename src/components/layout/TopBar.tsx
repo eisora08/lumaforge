@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Bell, Menu, Sparkles } from "lucide-react";
+import { Bell, Gamepad2, Menu, Monitor } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useSearch } from "../../context/SearchContext";
 import { useGameDetails } from "../../context/GameDetailsContext";
+
 import PackagesToolbarSearch from "../packages/PackagesToolbarSearch";
 import type { StoreSearchDropdownItem } from "../packages/PackagesToolbar";
 import PackageUpdatePanel from "../notifications/PackageUpdatePanel";
@@ -69,7 +70,7 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between px-4 lg:px-6">
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between px-4 lg:px-6 bg-(--shell-bg)" style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}>
       <div className="flex items-center gap-3">
         {sidebarDrawerMode && (
           <button
@@ -92,9 +93,16 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
       </div>
 
       <div className="flex items-center gap-2">
-        <button className="hidden h-9 items-center gap-2 rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 text-sm text-(--color-accent) transition hover:bg-(--color-accent)/15 sm:inline-flex">
-          <Sparkles className="h-3.5 w-3.5" />
-          Premium Mode
+        <button
+          onClick={() => onNavigate?.(activePage === "console" ? "home" : "console")}
+          className="hidden h-9 items-center gap-2 rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 text-sm text-(--color-accent) transition hover:bg-(--color-accent)/15 sm:inline-flex"
+        >
+          {activePage === "console" ? (
+            <Monitor className="h-3.5 w-3.5" />
+          ) : (
+            <Gamepad2 className="h-3.5 w-3.5" />
+          )}
+          {activePage === "console" ? "Desktop Mode" : "Console Mode"}
         </button>
 
         <div className="relative">

@@ -15,6 +15,11 @@ pub struct GameAppInfo {
     #[serde(rename = "mediaSources", alias = "media_sources")]
     pub media_sources: Option<GameMediaSources>,
     pub remote: Option<GameRemoteRefs>,
+    /// User-editable metadata overrides (genres, developers, description, etc.)
+    /// Stored as arbitrary JSON key-value pairs so the TS side can evolve
+    /// fields without Rust changes.
+    #[serde(rename = "userData", alias = "user_data", default)]
+    pub user_data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1115,6 +1115,7 @@ export type GameAppInfo = {
   media: GameMediaPaths | null;
   mediaSources: GameMediaSources | null;
   remote: GameRemoteRefs | null;
+  userData: Record<string, unknown> | null;
 };
 
 export type GameMediaSources = {
@@ -1396,6 +1397,20 @@ export async function repairAppinfoMediaPaths(appId: string): Promise<boolean> {
   }
 }
 
+// cacheTrailerFile — download a trailer video/thumbnail to
+// <gameDir>/media/trailers/<filename>. Returns local path or null.
+export async function cacheTrailerFile(
+  appId: string,
+  filename: string,
+  url: string,
+): Promise<string | null> {
+  try {
+    return await invoke<string | null>("cache_trailer_file", { appId, filename, url });
+  } catch {
+    return null;
+  }
+}
+
 // repair_media_roles — inspect cached images and fix misclassified files
 // (e.g. vertical image saved as landscape.jpg)
 export async function repairMediaRoles(appId: string): Promise<boolean> {
@@ -1417,6 +1432,22 @@ export type GameRemoteRefsInput = {
 
 export async function updateGameAppinfoMedia(appId: string, name: string | null, media: GameMediaPaths, remote?: GameRemoteRefsInput | null, mediaSources?: GameMediaSources | null): Promise<void> {
   return await invoke("update_game_appinfo_media", { appId, name, media, remote: remote ?? null, mediaSources: mediaSources ?? null });
+}
+
+export async function saveGameMediaFile(appId: string, role: string, contentBase64: string, ext: string): Promise<string> {
+  return await invoke<string>("save_game_media_file", { appId, role, contentBase64, ext });
+}
+
+export async function deleteGameMediaFile(appId: string, role: string): Promise<void> {
+  return await invoke("delete_game_media_file", { appId, role });
+}
+
+export async function openGameMetadataFolder(appId: string): Promise<void> {
+  return await invoke("open_game_metadata_folder", { appId });
+}
+
+export async function openGameMediaFolder(appId: string): Promise<void> {
+  return await invoke("open_game_media_folder", { appId });
 }
 
 export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | null, paths: GameMediaPaths): Promise<void> {
@@ -1893,4 +1924,56 @@ export async function readScanState(): Promise<ScanState | null> {
 
 export async function writeScanState(payload: string): Promise<void> {
   await invoke("write_scan_state", { payload });
+}
+
+// --- Profile Media ---
+
+export async function saveProfileMedia(kind: "avatar" | "banner", extension: string, data: number[]): Promise<string> {
+  return await invoke<string>("save_profile_media", { kind, extension, data });
+}
+
+export async function deleteProfileMedia(path: string): Promise<void> {
+  await invoke("delete_profile_media", { path });
+}
+
+// --- Desktop / Quick Menu ---
+
+export async function openAppDataFolder(): Promise<void> {
+  await invoke("open_app_data");
+}
+
+export async function openLogsFolder(): Promise<void> {
+  await invoke("open_logs");
+}
+
+export async function clearTempCache(): Promise<number> {
+  return await invoke<number>("clear_temp_cache");
+}
+
+export type SystemInfo = {
+  os: string;
+  arch: string;
+  family: string;
+  exe_path: string | null;
+  current_dir: string | null;
+};
+
+export async function getSystemInfo(): Promise<SystemInfo> {
+  return await invoke<SystemInfo>("get_system_info");
+}
+
+export async function powerShutdown(): Promise<void> {
+  await invoke("power_shutdown");
+}
+
+export async function powerSuspend(): Promise<void> {
+  await invoke("power_suspend");
+}
+
+export async function powerHibernate(): Promise<void> {
+  await invoke("power_hibernate");
+}
+
+export async function powerRestart(): Promise<void> {
+  await invoke("power_restart");
 }

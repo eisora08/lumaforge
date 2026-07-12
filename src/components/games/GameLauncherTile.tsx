@@ -14,6 +14,8 @@ import {
   Settings,
   X,
   XCircle,
+  Edit,
+  Image,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -58,6 +60,7 @@ import type { SyncIndexItem } from "../../types/syncIndex";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
+import GameEditDialog from "./GameEditDialog";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -110,6 +113,8 @@ export default function GameLauncherTile({
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editInitialTab, setEditInitialTab] = useState<"general" | "media">("general");
   const { isFavorite, toggleFavorite } = useFavorites();
   const favorite = game.appId ? isFavorite(game.appId) : false;
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
@@ -418,7 +423,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] lf-press-effect">
+    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
       {/* Image */}
       <div
         role="button"
@@ -770,8 +775,18 @@ export default function GameLauncherTile({
               label="Manage"
               icon={<Settings className="h-3.5 w-3.5" />}
               children={[
-                hasPendingUninstall
-                  ? {
+                {
+                  label: "Edit Game Details",
+                  icon: <Edit className="h-3.5 w-3.5" />,
+                  onClick: () => { setMenuOpen(false); setEditInitialTab("general"); setEditDialogOpen(true); },
+                },
+                {
+                  label: "Manage Artwork",
+                  icon: <Image className="h-3.5 w-3.5" />,
+                  onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); },
+                },
+                ...(hasPendingUninstall
+                  ? [{
                     label: "Cancel tracking",
                     icon: <XCircle className="h-3.5 w-3.5" />,
                     onClick: () => {
@@ -781,8 +796,8 @@ export default function GameLauncherTile({
                       showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(String(game.appId))}`);
                     },
-                  }
-                  : {
+                  }]
+                  : [{
                     label: "Uninstall in Steam",
                     icon: <ExternalLink className="h-3.5 w-3.5" />,
                     disabled: !game.steamInstalled,
@@ -807,7 +822,7 @@ export default function GameLauncherTile({
                         }
                       }
                     } : undefined,
-                  },
+                  }]),
                 ...(hasLua
                   ? [{
                     label: "Delete Lua",
@@ -823,6 +838,23 @@ export default function GameLauncherTile({
             />
           </CardActionMenu>
         </div>
+
+        {game.appId && (
+          <GameEditDialog
+            appId={game.appId}
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editInitialTab}
+            game={game}
+            settings={{
+              rawgApiKey: settings.rawgApiKey,
+              igdbClientId: settings.igdbClientId,
+              igdbClientSecret: settings.igdbClientSecret,
+              steamGridDbApiKey: settings.steamGridDbApiKey,
+              steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
+            }}
+          />
+        )}
       </div>
     </div>
   );

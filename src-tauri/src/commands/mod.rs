@@ -34,3 +34,4 @@ pub mod hubcap;
 pub mod provider_status_cache;
 pub mod scan_state;
 pub mod steam_owned;
+pub mod profile;

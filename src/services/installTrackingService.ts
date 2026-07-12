@@ -1,4 +1,4 @@
-import { checkSteamGameInstalled, installSteamApp, type DownloadProgress } from "./tauri";
+import { checkSteamGameInstalled, type DownloadProgress } from "./tauri";
 
 export type InstallStatus = "idle" | "opening-steam" | "waiting" | "installing" | "installed" | "timeout" | "dismissed";
 
@@ -83,15 +83,8 @@ class InstallTrackerService {
     this._states.set(appId, state);
     this._notify(appId);
 
-    // Open steam://install/<appid>
-    try {
-      await installSteamApp(Number(appId));
-      console.log(`[INSTALL_TRACK] steam://install opened for appid=${appId}`);
-    } catch (err) {
-      console.error(`[INSTALL_TRACK] failed to open steam://install for appid=${appId}:`, err);
-      this._updateState(appId, { status: "dismissed" });
-      return;
-    }
+    // Caller already opened steam://install/<appid> — we only track progress
+    console.log(`[INSTALL_TRACK] tracking started for appid=${appId}`);
 
     // Move to waiting state after a short delay
     setTimeout(() => {

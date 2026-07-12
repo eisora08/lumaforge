@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Gamepad2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Gamepad2 } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
+import { useSettings } from "../../context/SettingsContext";
 import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
 
 const DEBUG_MEDIA_DASH = false;
@@ -9,6 +10,7 @@ const DEBUG_NAME_DASH = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
+import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 type Props = {
   snapshot: StartupSnapshot | null;
@@ -17,8 +19,8 @@ type Props = {
 };
 
 export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: Props) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
+  const { settings } = useSettings();
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string | null>>({});
 
   const [titleMap, setTitleMap] = useState<Record<string, string>>({});
@@ -91,13 +93,6 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
 
   if (displayGames.length === 0) return null;
 
-  function scroll(direction: "left" | "right") {
-    const el = scrollRef.current;
-    if (!el) return;
-    const amount = Math.round(el.clientWidth * 0.85);
-    el.scrollBy({ left: direction === "left" ? -amount : amount, behavior: "smooth" });
-  }
-
   function handleOpen(game: SnapshotGame) {
     if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
@@ -127,84 +122,64 @@ export default function LibrarySection({ snapshot, onNavigate, excludeAppIds }: 
         </button>
       </div>
 
-      <div className="group/row relative">
-        <button
-          type="button"
-          onClick={() => scroll("left")}
-          className="absolute -left-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </button>
+      <DashboardHorizontalRail gap={settings.dashboardGridGap}>
+        {deduplicateByAppId(displayGames).map((game) => {
+          const imgUrl = game.appId ? (resolvedUrls[game.appId] ?? null) : null;
+          const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
 
-        <div
-          ref={scrollRef}
-          className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
-        >
-          {deduplicateByAppId(displayGames).map((game) => {
-            const imgUrl = game.appId ? (resolvedUrls[game.appId] ?? null) : null;
-            const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
-
-            return (
+          return (
+            <div
+              key={"dashboard:library:steam:" + (game.appId ?? "unknown")}
+              className="shrink-0 snap-start"
+              style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
+            >
               <div
-                key={"dashboard:library:steam:" + (game.appId ?? "unknown")}
-                className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56"
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpen(game)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleOpen(game);
+                  }
+                }}
+                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleOpen(game)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleOpen(game);
-                    }
-                  }}
-                  className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
-                >
-                  <div className="relative aspect-video overflow-hidden">
-                    {imgUrl ? (
-                      <AsyncImage
-                        src={imgUrl}
-                        alt={displayTitle}
-                        className="h-full w-full object-cover"
-                        fallback={
-                          <div className="flex h-full w-full items-center justify-center bg-white/5">
-                            <Gamepad2 className="h-6 w-6 text-(--color-muted)/40" />
-                          </div>
-                        }
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-white/5">
-                        <Gamepad2 className="h-6 w-6 text-(--color-muted)/40" />
-                      </div>
-                    )}
-                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
-                  </div>
+                <div className="relative aspect-video overflow-hidden">
+                  {imgUrl ? (
+                    <AsyncImage
+                      src={imgUrl}
+                      alt={displayTitle}
+                      className="h-full w-full object-cover"
+                      fallback={
+                        <div className="flex h-full w-full items-center justify-center bg-white/5">
+                          <Gamepad2 className="h-6 w-6 text-(--color-muted)/40" />
+                        </div>
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-white/5">
+                      <Gamepad2 className="h-6 w-6 text-(--color-muted)/40" />
+                    </div>
+                  )}
+                  <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
+                  {game.installed && (
+                    <span className="absolute left-2 top-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur-sm">
+                      Installed
+                    </span>
+                  )}
+                </div>
 
-                  <div className="p-3">
-                    <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                      {displayTitle}
-                    </h3>
-                    {game.installed && (
-                      <span className="mt-1 inline-block rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-                        Installed
-                      </span>
-                    )}
-                  </div>
+                <div className="p-3">
+                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                    {displayTitle}
+                  </h3>
                 </div>
               </div>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => scroll("right")}
-          className="absolute -right-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronRight className="h-5 w-5" />
-        </button>
-      </div>
+            </div>
+          );
+        })}
+      </DashboardHorizontalRail>
     </section>
   );
 }

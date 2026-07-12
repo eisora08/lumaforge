@@ -372,8 +372,8 @@ export default function LibraryPage({ onNavigate }: Props) {
   }
 
   return (
-    <div className="flex h-full lf-fade-in">
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+    <div className="flex h-full flex-col lf-fade-in">
+      <div className="flex min-w-0 flex-1 flex-col">
         {showLuaSetup ? (
           <div className="flex flex-1 items-center justify-center p-5 lg:p-7">
             <div className="max-w-md text-center">
@@ -388,7 +388,7 @@ export default function LibraryPage({ onNavigate }: Props) {
             </div>
           </div>
         ) : initialLoading ? (
-          <PageContainer className="py-5 lg:py-7">
+          <PageContainer className="flex flex-1 flex-col py-5 lg:py-7">
             <LibrarySectionSkeleton />
             <GridSkeleton
               poster={(settings.libraryCardArtworkMode ?? "landscape") === "poster"}
@@ -408,196 +408,209 @@ export default function LibraryPage({ onNavigate }: Props) {
             </div>
           </div>
         ) : (
-          <PageContainer className="py-6 lg:py-8">
-            <div className="lg:grid lg:grid-cols-[1fr_300px] lg:gap-6">
-              <div className="min-w-0">
-                <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+          <>
+            <PageContainer className={`flex flex-1 flex-col py-6 lg:py-8 ${settings.libraryUseFullWidth ? "!max-w-none" : ""}`}>
+              <div className="flex-1 lg:grid lg:gap-6" style={{ gridTemplateColumns: `1fr ${settings.libraryFilterPanelWidth}px` }}>
+                <div className="min-w-0 flex flex-col">
                   <div>
-                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/15 bg-(--color-accent)/8 px-3 py-1 text-xs text-(--color-accent)">
-                      <Library className="h-3.5 w-3.5" />
-                      Library
-                    </div>
-                    <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Biblioteca</h1>
-                    <p className="mt-1 text-sm text-(--color-muted)">
-                      {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
-                      {loading && !initialLoading && " · scanning..."}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleCheckUpdates}
-                      disabled={checkingUpdates || !hasLuaGames}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50 lf-press-effect"
-                      title="Check Updates"
-                    >
-                      <RefreshCcw className={`h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`} />
-                      <span className="hidden sm:inline">Updates</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={refresh}
-                      disabled={loading}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 lf-press-effect"
-                      title="Scan"
-                    >
-                      <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                      <span className="hidden sm:inline">{loading ? "Scanning..." : "Scan"}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {warnings.length > 0 && (
-                  <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
-                    <p className="mb-1 font-medium">Warnings:</p>
-                    <ul className="space-y-0.5">
-                      {warnings.map((w, i) => <li key={i}>• {w}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-
-                {paginatedGames.length === 0 ? (
-                  <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
-                    {filter === "updates" ? (
-                      <>
-                        <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
-                        <h2 className="mt-4 font-semibold text-(--color-text)">No package updates available</h2>
-                        <p className="mt-1.5 text-sm text-(--color-muted)">All installed Lua packages are up to date.</p>
-                      </>
-                    ) : (
-                      <>
-                        <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
-                        <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
-                        <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
-                      </>
-                    )}
-                    {(filter !== "all" || searchQuery) && (
-                    <button
-                      type="button"
-                      onClick={handleResetFilters}
-                      className="mt-4 inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90"
-                    >
-                      Reset filters
-                    </button>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <div className={
-                      (settings.libraryCardArtworkMode ?? "landscape") === "poster"
-                        ? "grid grid-cols-[repeat(auto-fill,minmax(165px,1fr))] gap-5.5 lf-card-stagger"
-                        : "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5.5 lf-card-stagger"
-                    }>
-                      {paginatedGames.map((game) => (
-                        <GameLauncherTile
-                          key={game.id}
-                          game={game}
-                          appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
-                          onSelect={(g) => handleOpenGame(g)}
-                          onPlay={handlePlay}
-                          onInstall={handleInstall}
-                          onDeleteScript={handleDeleteScript}
-                        />
-                      ))}
-                    </div>
-                    {/* Pagination */}
-                    <div className="mt-7 flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-xs text-(--color-muted)">
-                        <span>Grid:</span>
-                        <select
-                          value={pageSize}
-                          onChange={(e) => {
-                            setPageSize(Number(e.target.value));
-                            setCurrentPage(1);
-                          }}
-                          className="lf-select lf-popover-enter rounded-lg border px-2 py-1 text-xs outline-none focus:border-(--color-accent)/40"
-                        >
-                          {PAGE_SIZES.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
+                    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/15 bg-(--color-accent)/8 px-3 py-1 text-xs text-(--color-accent)">
+                          <Library className="h-3.5 w-3.5" />
+                          Library
+                        </div>
+                        <h1 className="text-2xl font-bold text-(--color-text) lg:text-3xl">Biblioteca</h1>
+                        <p className="mt-1 text-sm text-(--color-muted)">
+                          {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
+                          {loading && !initialLoading && " · scanning..."}
+                        </p>
                       </div>
 
-                      {totalPages > 1 && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            disabled={currentPage <= 1}
-                            onClick={() => startTransition(() => setCurrentPage((p) => Math.max(1, p - 1)))}
-                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
-                          >
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          </button>
-                          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                            <button
-                              key={page}
-                              type="button"
-                              onClick={() => startTransition(() => setCurrentPage(page))}
-                              className={`inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-xs font-medium transition ${
-                                page === currentPage
-                                  ? "bg-(--color-accent)/20 text-(--color-accent)"
-                                  : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
-                              }`}
-                            >
-                              {page}
-                            </button>
-                          ))}
-                          <button
-                            type="button"
-                            disabled={currentPage >= totalPages}
-                            onClick={() => startTransition(() => setCurrentPage((p) => Math.min(totalPages, p + 1)))}
-                            className="inline-flex cursor-pointer items-center justify-center rounded-lg px-2 py-1 text-xs text-(--color-muted) transition hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
-                          >
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleCheckUpdates}
+                          disabled={checkingUpdates || !hasLuaGames}
+                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-white/[0.04] px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
+                          title="Check Updates"
+                        >
+                          <RefreshCcw className={`h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`} />
+                          <span className="hidden sm:inline">Updates</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={refresh}
+                          disabled={loading}
+                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/15 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
+                          title="Scan"
+                        >
+                          <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                          <span className="hidden sm:inline">{loading ? "Scanning..." : "Scan"}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {warnings.length > 0 && (
+                      <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
+                        <p className="mb-1 font-medium">Warnings:</p>
+                        <ul className="space-y-0.5">
+                          {warnings.map((w, i) => <li key={i}>• {w}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {paginatedGames.length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
+                      {filter === "updates" ? (
+                        <>
+                          <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
+                          <h2 className="mt-4 font-semibold text-(--color-text)">No package updates available</h2>
+                          <p className="mt-1.5 text-sm text-(--color-muted)">All installed Lua packages are up to date.</p>
+                        </>
+                      ) : (
+                        <>
+                          <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
+                          <h2 className="mt-4 font-semibold text-(--color-text)">No items match these filters.</h2>
+                          <p className="mt-1.5 text-sm text-(--color-muted)">Try clearing filters or changing your search.</p>
+                        </>
+                      )}
+                      {(filter !== "all" || searchQuery) && (
+                      <button
+                        type="button"
+                        onClick={handleResetFilters}
+                        className="mt-4 inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent)/10 px-3 py-2 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/15 focus-visible:ring-2 focus-visible:ring-(--color-accent)/30"
+                      >
+                        Reset filters
+                      </button>
                       )}
                     </div>
-                  </>
-                )}
-              </div>
+                  ) : (
+                    <div className="flex-1">
+                      <div
+                        className="grid lf-card-stagger"
+                        style={{
+                          gridTemplateColumns: `repeat(auto-fill, minmax(${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeCardSize : settings.libraryCardSize}px, 1fr))`,
+                          gap: `${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeGap : settings.libraryGridGap}px`,
+                        }}>
+                        {paginatedGames.map((game) => (
+                          <GameLauncherTile
+                            key={game.id}
+                            game={game}
+                            appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
+                            onSelect={(g) => handleOpenGame(g)}
+                            onPlay={handlePlay}
+                            onInstall={handleInstall}
+                            onDeleteScript={handleDeleteScript}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
 
-              <div className="hidden lg:block">
-                <LibraryFilterPanel
-                  filter={filter}
-                  sort={sort}
-                  query={searchQuery}
-                  filteredCount={filteredGames.length}
-                  totalCount={displayGames.length}
-                  onFilterChange={setFilter}
-                  onSortChange={setSort}
-                  onQueryChange={setSearchQuery}
-                  onReset={handleResetFilters}
-                />
+                <div className="hidden lg:block">
+                  <LibraryFilterPanel
+                    filter={filter}
+                    sort={sort}
+                    query={searchQuery}
+                    filteredCount={filteredGames.length}
+                    totalCount={displayGames.length}
+                    panelWidth={settings.libraryFilterPanelWidth}
+                    onFilterChange={setFilter}
+                    onSortChange={setSort}
+                    onQueryChange={setSearchQuery}
+                    onReset={handleResetFilters}
+                  />
+                </div>
               </div>
-            </div>
-          </PageContainer>
+            </PageContainer>
+
+            {paginatedGames.length > 0 && (
+              <div className="shrink-0 bg-(--color-bg)/60">
+                <div className={`mx-auto flex w-full items-center justify-between px-6 py-2.5 lg:px-8 xl:px-10 ${settings.libraryUseFullWidth ? "" : "max-w-[1900px]"}`}>
+                  <div className="flex items-center gap-2 text-sm text-(--color-muted)">
+                    <span className="text-xs font-medium uppercase tracking-wider text-(--color-muted)/60">Grid</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="lf-select rounded-lg bg-(--color-surface) px-3 py-1.5 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-(--color-accent)/20"
+                    >
+                      {PAGE_SIZES.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {totalPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={currentPage <= 1}
+                        onClick={() => startTransition(() => setCurrentPage((p) => Math.max(1, p - 1)))}
+                        className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-sm text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                        <button
+                          key={page}
+                          type="button"
+                          onClick={() => startTransition(() => setCurrentPage(page))}
+                          className={`inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-sm font-medium transition ${
+                            page === currentPage
+                              ? "bg-(--color-accent)/20 text-(--color-accent)"
+                              : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={currentPage >= totalPages}
+                        onClick={() => startTransition(() => setCurrentPage((p) => Math.min(totalPages, p + 1)))}
+                        className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-sm text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="text-xs text-(--color-muted)/60">
+                    {filteredGames.length} game{filteredGames.length === 1 ? "" : "s"}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
-
-        <StoreSourceSelectorModal
-          open={Boolean(sourceSelectorGame)}
-          game={sourceSelectorGame ? {
-            appId: sourceSelectorGame.appId || "",
-            title: sourceSelectorGame.title,
-            developer: sourceSelectorGame.metadata?.developer || "",
-            imageUrl: sourceSelectorGame.imageUrl || "",
-            platforms: sourceSelectorGame.metadata?.platforms || [],
-            sources: sourceSelectorGame.sources,
-          } : null}
-          selectedSource={sourceSelectorGame?.sources.find((s) => s.available)}
-          onClose={() => setSourceSelectorGame(null)}
-          onDownloadSource={(source: PackageSource) => {
-            if (sourceSelectorGame) handleDownloadSource(sourceSelectorGame, source);
-          }}
-          onOpenDetails={(_game: PackageGame) => {
-            setSourceSelectorGame(null);
-            if (sourceSelectorGame) setSelectedGame(sourceSelectorGame);
-          }}
-        />
       </div>
+
+      <StoreSourceSelectorModal
+        open={Boolean(sourceSelectorGame)}
+        game={sourceSelectorGame ? {
+          appId: sourceSelectorGame.appId || "",
+          title: sourceSelectorGame.title,
+          developer: sourceSelectorGame.metadata?.developer || "",
+          imageUrl: sourceSelectorGame.imageUrl || "",
+          platforms: sourceSelectorGame.metadata?.platforms || [],
+          sources: sourceSelectorGame.sources,
+        } : null}
+        selectedSource={sourceSelectorGame?.sources.find((s) => s.available)}
+        onClose={() => setSourceSelectorGame(null)}
+        onDownloadSource={(source: PackageSource) => {
+          if (sourceSelectorGame) handleDownloadSource(sourceSelectorGame, source);
+        }}
+        onOpenDetails={(_game: PackageGame) => {
+          setSourceSelectorGame(null);
+          if (sourceSelectorGame) setSelectedGame(sourceSelectorGame);
+        }}
+      />
     </div>
   );
 }

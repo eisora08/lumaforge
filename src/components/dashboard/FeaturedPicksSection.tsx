@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 const DEBUG_DASH_GLOBAL_MEDIA = false;
 const DEBUG_DASH_FEATURED = false;
@@ -10,11 +10,13 @@ import {
   loadNormalizedCatalog,
   getCatalogState,
 } from "../../services/globalCatalogService";
+import { useSettings } from "../../context/SettingsContext";
 import { deduplicateByAppId } from "../../services/gameCacheService";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
+import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -39,8 +41,8 @@ function resolveBestMedia(game: NormalizedCatalogGame): string | null {
 }
 
 export default function FeaturedPicksSection({ onNavigate }: Props) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
+  const { settings } = useSettings();
   const [entries, setEntries] = useState<NormalizedCatalogGame[]>(() => getCachedCatalog());
   const [status, setStatus] = useState<CatalogStatus>(() => getCatalogState().status);
 
@@ -137,13 +139,6 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
 
   if (status !== "ready" || displayGames.length === 0) return null;
 
-  function scroll(direction: "left" | "right") {
-    const el = scrollRef.current;
-    if (!el) return;
-    const amount = Math.round(el.clientWidth * 0.85);
-    el.scrollBy({ left: direction === "left" ? -amount : amount, behavior: "smooth" });
-  }
-
   function handleOpen(game: NormalizedCatalogGame) {
     if (!game.appId) return;
     const libGame = libraryGames.find((g) => g.appId === game.appId);
@@ -171,83 +166,63 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
         </div>
       </div>
 
-      <div className="group/row relative">
-        <button
-          type="button"
-          onClick={() => scroll("left")}
-          className="absolute -left-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </button>
-
-        <div
-          ref={scrollRef}
-          className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none"
-        >
-          {deduplicateByAppId(displayGames).map((game) => {
-            const imgSrc = resolveBestMedia(game);
-            if (imgSrc && DEBUG_DASH_GLOBAL_MEDIA) {
-              console.log(`[DASH][GLOBAL_MEDIA] section=FeaturedPicks appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
-            }
-            return (
+      <DashboardHorizontalRail gap={settings.dashboardGridGap}>
+        {deduplicateByAppId(displayGames).map((game) => {
+          const imgSrc = resolveBestMedia(game);
+          if (imgSrc && DEBUG_DASH_GLOBAL_MEDIA) {
+            console.log(`[DASH][GLOBAL_MEDIA] section=FeaturedPicks appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
+          }
+          return (
+            <div
+              key={"dashboard:featured:steam:" + game.appId}
+              className="shrink-0 snap-start"
+              style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
+            >
               <div
-                key={"dashboard:featured:steam:" + game.appId}
-                className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56"
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpen(game)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleOpen(game);
+                  }
+                }}
+                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleOpen(game)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleOpen(game);
-                    }
-                  }}
-                  className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
-                >
-                  <div className="relative aspect-video overflow-hidden">
-                    {imgSrc ? (
-                      <AsyncImage
-                        src={imgSrc}
-                        alt={game.title}
-                        className="h-full w-full object-cover"
-                        fallback={
-                          <div className="flex h-full w-full items-center justify-center bg-white/5">
-                            <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
-                          </div>
-                        }
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-white/5">
-                        <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
-                      </div>
-                    )}
-                    <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
-                  </div>
+                <div className="relative aspect-video overflow-hidden">
+                  {imgSrc ? (
+                    <AsyncImage
+                      src={imgSrc}
+                      alt={game.title}
+                      className="h-full w-full object-cover"
+                      fallback={
+                        <div className="flex h-full w-full items-center justify-center bg-white/5">
+                          <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
+                        </div>
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-white/5">
+                      <Sparkles className="h-6 w-6 text-(--color-muted)/40" />
+                    </div>
+                  )}
+                  <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
+                </div>
 
-                  <div className="p-3">
-                    <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                      {game.title}
-                    </h3>
-                    <span className="mt-1 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
-                      Available
-                    </span>
-                  </div>
+                <div className="p-3">
+                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                    {game.title}
+                  </h3>
+                  <span className="mt-1 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
+                    Available
+                  </span>
                 </div>
               </div>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => scroll("right")}
-          className="absolute -right-2 top-1/2 z-30 hidden h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-black/60 text-white/80 shadow-xl backdrop-blur transition hover:bg-black/80 group-hover/row:flex"
-        >
-          <ChevronRight className="h-5 w-5" />
-        </button>
-      </div>
+            </div>
+          );
+        })}
+      </DashboardHorizontalRail>
     </section>
   );
 }

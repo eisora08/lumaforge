@@ -14,10 +14,14 @@ import {
   Flame,
   PanelLeftOpen,
   PanelLeftClose,
+  Ellipsis,
 } from "lucide-react";
 
 import type { AppPage } from "../../types/navigation";
 import SidebarLibraryList from "./SidebarLibraryList";
+import { useUserProfile, saveUserProfile, resolveProfileMediaUrl } from "../../features/profile/userProfile";
+import { getAvatarPreset } from "../../features/profile/profilePresets";
+import ProfileModal from "../../features/profile/ProfileModal";
 
 export type SidebarMode = "expanded" | "compact" | "collapsed" | "drawer";
 
@@ -66,6 +70,37 @@ export default function Sidebar({
   const isCollapsed = mode === "collapsed";
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [profile, patchProfile] = useUserProfile();
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const profileBtnRef = useRef<HTMLButtonElement | null>(null);
+  const avatarPreset = getAvatarPreset(profile.avatarPreset);
+  const avatarDisplayUrl = resolveProfileMediaUrl(profile.avatarUrl);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        profileMenuRef.current &&
+        !profileMenuRef.current.contains(e.target as Node) &&
+        profileBtnRef.current &&
+        !profileBtnRef.current.contains(e.target as Node)
+      ) {
+        setProfileMenuOpen(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setProfileMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   function handleNavigate(page: AppPage) {
     onNavigate(page);
@@ -93,9 +128,10 @@ export default function Sidebar({
 
   const sidebarContent = (
     <div
-      className={`flex h-full flex-col lf-sidebar-panel ${
-        isCollapsed ? "w-[72px]" : mode === "compact" ? "w-[340px]" : "w-[360px]"
+      className={`flex h-full flex-col lf-sidebar-panel bg-(--shell-bg) ${
+        isCollapsed ? "w-18" : mode === "compact" ? "w-85" : "w-90"
       }`}
+      style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}
     >
       {/* Header — shrink-0 */}
       <div
@@ -224,52 +260,95 @@ export default function Sidebar({
 
       {/* Bottom block — shrink-0, pinned at bottom */}
       <div className={`shrink-0 ${
-        showLabels ? "px-4 pt-2 pb-4" : "px-3 pt-2 pb-3"
+        showLabels ? "px-4 pt-1 pb-4" : "px-3 pt-1 pb-3"
       }`}>
-        {/* Restart Steam */}
-        <button
-          title={isCollapsed ? "Reiniciar Steam" : undefined}
-          className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-xs text-(--color-muted)/60 transition-colors hover:bg-white/[0.04] hover:text-(--color-muted) lf-press-effect ${
-            isCollapsed ? "justify-center" : ""
-          }`}
-        >
-          <RotateCcw className="h-5 w-5 shrink-0 text-(--color-muted)" />
-          <span
-            className={`lf-sidebar-label ${
-              showLabels
-                ? "lf-sidebar-label-visible"
-                : "lf-sidebar-label-hidden"
+        {/* Profile card — distinct from game rows */}
+        <div className="relative">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setProfileModalOpen(true)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setProfileModalOpen(true); } }}
+            className={`group flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-(--color-border)/30 bg-(--color-surface) p-3 text-left transition hover:border-(--color-border)/60 hover:brightness-110 hover:ring-1 hover:ring-(--color-accent)/15 ${
+              isCollapsed ? "justify-center" : ""
             }`}
+            title={isCollapsed ? `${profile.displayName} — ${profile.status}` : undefined}
           >
-            Reiniciar Steam
-          </span>
-        </button>
-
-        {/* System status */}
-        <div
-          className={`lf-surface rounded-2xl ${
-            isCollapsed ? "p-2" : "p-3"
-          }`}
-          title={isCollapsed ? "Sistema listo" : undefined}
-        >
-          {isCollapsed ? (
-            <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10">
-              <Store className="h-4 w-4 text-emerald-400" />
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center gap-2 text-sm font-medium text-(--color-text)">
-                <div className="flex h-2 w-2 items-center justify-center">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
-                </div>
-                Sistema listo
+            <div className="relative shrink-0">
+              <div
+                className={`flex items-center justify-center overflow-hidden rounded-full ring-1 ring-white/10 ${
+                  isCollapsed ? "h-10 w-10" : "h-10 w-10"
+                }`}
+                style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
+              >
+                {avatarDisplayUrl ? (
+                  <img
+                    src={avatarDisplayUrl}
+                    alt=""
+                    className="h-full w-full rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="text-lg">{avatarPreset?.icon ?? "🎮"}</span>
+                )}
               </div>
-              {mode === "expanded" && (
-                <p className="mt-1.5 text-[11px] text-(--color-muted)">
-                  Esperando detección de Steam.
-                </p>
-              )}
-            </>
+              <span
+                className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-(--color-bg)"
+                style={{ background: "var(--color-accent)" }}
+              />
+            </div>
+
+            {!isCollapsed && (
+              <div className="flex min-w-0 flex-1 flex-col items-start text-left">
+                <span className="text-sm font-semibold text-(--color-text) truncate w-full">
+                  {profile.displayName}
+                </span>
+                <span className="text-[11px] text-(--color-muted)/70 truncate max-w-32">
+                  {profile.status}
+                </span>
+              </div>
+            )}
+
+            {!isCollapsed && (
+              <button
+                ref={profileBtnRef}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setProfileMenuOpen((p) => !p);
+                }}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted)/30 opacity-0 transition hover:bg-white/8 hover:text-(--color-muted) group-hover:opacity-100"
+                aria-label="Profile menu"
+              >
+                <Ellipsis className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Dropdown menu — anchored to ellipsis button corner */}
+          {profileMenuOpen && (
+            <div
+              ref={profileMenuRef}
+              className="absolute right-0 bottom-full mb-2 w-48 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-2xl z-[100]"
+            >
+              <button
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                  onNavigate("settings");
+                }}
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-(--color-text) transition hover:bg-white/8"
+              >
+                <Settings className="h-4 w-4 text-(--color-muted)" />
+                Configuración
+              </button>
+              <button
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-(--color-muted)/70 transition hover:bg-white/8 hover:text-(--color-text)"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reiniciar Steam
+              </button>
+            </div>
           )}
         </div>
 
@@ -279,6 +358,17 @@ export default function Sidebar({
           </p>
         )}
       </div>
+
+      {/* Profile Modal */}
+      <ProfileModal
+        open={profileModalOpen}
+        profile={profile}
+        onSave={(updated) => {
+          saveUserProfile(updated);
+          patchProfile(updated);
+        }}
+        onClose={() => setProfileModalOpen(false)}
+      />
 
 
     </div>
@@ -312,7 +402,7 @@ export default function Sidebar({
   return (
     <aside
       className={`relative z-10 lf-sidebar-panel ${
-        isCollapsed ? "w-[72px]" : mode === "compact" ? "w-[340px]" : "w-[360px]"
+        isCollapsed ? "w-18" : mode === "compact" ? "w-85" : "w-90"
       }`}
     >
       {sidebarContent}
@@ -355,10 +445,10 @@ function SidebarSection({
               key={item.label}
               onClick={() => onNavigate(item.page)}
               title={isCollapsed ? item.label : undefined}
-              className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors lf-press-effect lf-hover-lift ${
+              className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect lf-hover-lift ${
                 isActive
-                  ? "bg-(--color-accent)/8 text-(--color-text) lf-active-glow"
-                  : "text-(--color-muted) hover:bg-white/[0.06] hover:text-(--color-text)"
+                  ? "bg-(--color-accent)/8 text-(--color-text) lf-active-glow shadow-[inset_3px_0_0_0] shadow-(--color-accent)/40"
+                  : "text-(--color-muted) hover:bg-white/6 hover:text-(--color-text)"
               } ${isCollapsed ? "justify-center" : ""}`}
             >
               <Icon

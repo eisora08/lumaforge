@@ -48,7 +48,7 @@ import {
   getSteamDbUrl,
 } from "../../utils/steamLinks";
 import toast from "react-hot-toast";
-import AsyncImage from "../common/AsyncImage";
+
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
 
@@ -59,6 +59,7 @@ import {
   localPathToUrl,
   isLocalPath,
 } from "../../services/libraryLocalCacheService";
+import type { ResolvedGameMediaBundle } from "../../types/gameMedia";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
 import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel, subscribePlaytimeStore } from "../../services/playtimeService";
@@ -76,6 +77,7 @@ import { achievementWatcherService } from "../../services/achievementWatcherServ
 import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import GameEditDialog from "../games/GameEditDialog";
 import { useGameSession } from "../../context/GameSessionContext";
 import { invoke } from "@tauri-apps/api/core";
 import AchievementsModal from "./AchievementsModal";
@@ -89,6 +91,7 @@ type LibraryGameDetailsProps = {
   canonicalAppInfo?: GameAppInfo | null;
   canonicalDiskFallback?: string | null;
   localDetailsData?: unknown;
+  fallbackBundle?: ResolvedGameMediaBundle | null;
   loading?: boolean;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
@@ -114,41 +117,41 @@ function logDetailsCanonical(appId: string, msg: string): void {
   }
 }
 
-function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null): string | undefined {
-  // Hero priority: backgroundPath > landscapePath > coverPath > remote metadata > placeholder
-  if (canonicalAppInfo?.media?.backgroundPath) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`);
-    return canonicalAppInfo.media.backgroundPath;
-  }
-  if (canonicalAppInfo?.media?.landscapePath) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`);
-    return canonicalAppInfo.media.landscapePath;
-  }
-  if (canonicalAppInfo?.media?.coverPath) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=cover path=${canonicalAppInfo.media.coverPath}`);
-    return canonicalAppInfo.media.coverPath;
-  }
-  if (mediaEntry?.hero_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.hero_path path=${mediaEntry.hero_path}`); return mediaEntry.hero_path; }
-  if (mediaEntry?.grid_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.grid_path path=${mediaEntry.grid_path}`); return mediaEntry.grid_path; }
-  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image path=${appInfoEntry.header_image}`); return appInfoEntry.header_image; }
+function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null, fallbackBundle?: ResolvedGameMediaBundle | null): string | undefined {
+  // Priority: local disk → metadata primary → fallbackBundle background → metadata secondary → fallbackBundle L/C → imageUrl → placeholder
+  if (canonicalAppInfo?.media?.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`); return canonicalAppInfo.media.backgroundPath; }
+  if (canonicalAppInfo?.media?.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`); return canonicalAppInfo.media.landscapePath; }
+  if (canonicalAppInfo?.media?.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=cover path=${canonicalAppInfo.media.coverPath}`); return canonicalAppInfo.media.coverPath; }
+  if (mediaEntry?.hero_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.hero_path`); return mediaEntry.hero_path; }
+  if (mediaEntry?.grid_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.grid_path`); return mediaEntry.grid_path; }
+  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image`); return appInfoEntry.header_image; }
   if (artwork?.sgdbHeroUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
   if (artwork?.sgdbGridUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
-  const remoteSrc = game.metadata?.library_hero_image
-    || game.metadata?.background_image
-    || game.metadata?.hero_image
-    || game.metadata?.library_header_image
-    || game.metadata?.header_image
+  // Metadata primary background fields
+  const metaPrimary = game.metadata?.background_image
+    || (game.metadata as any)?.background
+    || (game.metadata as any)?.background_raw
+    || game.metadata?.library_hero_image
+    || game.metadata?.hero_image;
+  if (metaPrimary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataPrimary`); return metaPrimary; }
+  // FallbackBundle: resolved by multi-provider chain (steam-appdetails metadata → cached → SGDB → IGDB → RAWG)
+  // Prefer localPath (materialized on disk) before remote URL
+  if (fallbackBundle?.background?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background.localPath path=${fallbackBundle.background.localPath}`); return fallbackBundle.background.localPath; }
+  if (fallbackBundle?.landscape?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape.localPath path=${fallbackBundle.landscape.localPath}`); return fallbackBundle.landscape.localPath; }
+  if (fallbackBundle?.cover?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover.localPath path=${fallbackBundle.cover.localPath}`); return fallbackBundle.cover.localPath; }
+  if (fallbackBundle?.background?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background source=${fallbackBundle.background.source}`); return fallbackBundle.background.url; }
+  if (fallbackBundle?.landscape?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape source=${fallbackBundle.landscape.source}`); return fallbackBundle.landscape.url; }
+  if (fallbackBundle?.cover?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover source=${fallbackBundle.cover.source}`); return fallbackBundle.cover.url; }
+  // Metadata secondary fields (less reliable as hero images)
+  const metaSecondary = game.metadata?.header_image
+    || (game.metadata?.screenshots?.[0])
     || game.metadata?.capsule_image
-    || game.metadata?.wide_cover_image
-    || game.metadata?.capsule_image_v5
-    || game.imageUrl;
-  if (remoteSrc) {
-    logDetailsCanonical(game.appId ?? "", `heroSelected=remoteMetadata`);
-    return remoteSrc;
-  }
-  if (mediaEntry?.cover_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.cover_path path=${mediaEntry.cover_path}`); return mediaEntry.cover_path; }
-  if (canonicalDiskFallback) { logDetailsCanonical(game.appId ?? "", `heroSelected=canonicalDiskFallback path=${canonicalDiskFallback}`); return canonicalDiskFallback; }
-  logDetailsCanonical(game.appId ?? "", `heroSelected=placeholder path=null exists=false`);
+    || game.metadata?.capsule_image_v5;
+  if (metaSecondary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataSecondary`); return metaSecondary; }
+  if (game.imageUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=imageUrl`); return game.imageUrl; }
+  if (mediaEntry?.cover_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.cover_path`); return mediaEntry.cover_path; }
+  if (canonicalDiskFallback) { logDetailsCanonical(game.appId ?? "", `heroSelected=canonicalDiskFallback`); return canonicalDiskFallback; }
+  logDetailsCanonical(game.appId ?? "", `heroSelected=placeholder`);
   return undefined;
 }
 
@@ -228,10 +231,16 @@ export default function LibraryGameDetails({
   launchInfo,
   onCancelLaunch,
   onOpenStopModal,
+  fallbackBundle,
 }: LibraryGameDetailsProps) {
   countRender("LibraryGameDetails");
+  if (game.appId === "4717430") {
+    console.log(`[LIB_MEDIA_DEBUG][FALLBACK_BUNDLE_PROP] appid=4717430 hasBundle=${!!fallbackBundle} hasBg=${!!fallbackBundle?.background?.url} bgUrl=${fallbackBundle?.background?.url ?? "(null)"} source=${fallbackBundle?.background?.source ?? "(null)"}`);
+  }
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [heroImgError, setHeroImgError] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const favorite = game.appId ? isFavorite(game.appId) : false;
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -306,14 +315,17 @@ export default function LibraryGameDetails({
     });
   }, [appIdStr, game.achievementsSupported, settings.steamRoot]);
 
-  const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback);
+  const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback, fallbackBundle);
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
-  const [heroFallbackPath, setHeroFallbackPath] = useState<string | null>(null);
+
+  // Reset hero image error when a new URL is resolved
+  useEffect(() => {
+    setHeroImgError(false);
+  }, [rawImageUrl]);
 
   useEffect(() => {
     if (!rawImageUrl) {
       setImageUrl(undefined);
-      setHeroFallbackPath(null);
       return;
     }
     const resolve = async () => {
@@ -328,35 +340,51 @@ export default function LibraryGameDetails({
         if (pathAppIdMatch && pathAppIdMatch[1] !== game.appId) {
           console.log(`[MEDIA][BLOCKED] reason=cross-appid-media currentAppid=${game.appId} pathAppid=${pathAppIdMatch[1]} path=${resolved}`);
           setImageUrl(undefined);
-          setHeroFallbackPath(null);
           return;
         }
       }
       const isLocal = isLocalPath(resolved);
       const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
       setImageUrl(url);
-      setHeroFallbackPath(isLocal ? resolved : null);
+      if (game.appId === "4717430") {
+        console.log(`[LIB_MEDIA_DEBUG][HERO_FINAL] appid=4717430 url=${url ?? "(null)"} rawUrl=${rawImageUrl} fallbackBundle=${!!fallbackBundle} fbBg=${fallbackBundle?.background?.url ?? "(null)"} canonicalBg=${canonicalAppInfo?.media?.backgroundPath ?? "(null)"} metaBg=${game.metadata?.background_image ?? "(null)"}`);
+      }
     };
     resolve();
-  }, [rawImageUrl, game.appId]);
+  }, [rawImageUrl, game.appId, fallbackBundle, canonicalAppInfo, game.metadata?.background_image]);
 
   const rawLogoUrl = (() => {
+    const fallbackLogoSrc = fallbackBundle?.logo?.url;
+    const fallbackLogoLocal = fallbackBundle?.logo?.localPath;
     const src = canonicalAppInfo?.media?.logoPath
       || artwork?.sgdbLogoUrl
       || game.metadata?.logo_image
-      || game.metadata?.library_logo_image;
+      || game.metadata?.library_logo_image
+      || fallbackLogoLocal
+      || fallbackLogoSrc;
     if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
       if (canonicalAppInfo?.media?.logoPath) console.log("[LibraryDetails] selected logo source: logoPath");
       else if (artwork?.sgdbLogoUrl) console.log("[LibraryDetails] selected logo source: sgdbLogoUrl");
       else if (game.metadata?.logo_image) console.log("[LibraryDetails] selected logo source: logo_image");
       else if (game.metadata?.library_logo_image) console.log("[LibraryDetails] selected logo source: library_logo_image");
+      else if (fallbackLogoSrc) console.log("[LibraryDetails] selected logo source: fallbackBundle");
       else console.log("[LibraryDetails] selected logo source: none");
     }
     return src;
   })();
-  const logoUrl = rawLogoUrl && isLocalPath(rawLogoUrl)
-    ? (localPathToUrl(rawLogoUrl) ?? undefined)
-    : rawLogoUrl;
+  // Defense-in-depth: reject logo URL from a different appId's Steam CDN
+  const _validatedLogoSrc = (() => {
+    if (!rawLogoUrl || !game.appId) return rawLogoUrl;
+    const appIdMatch = rawLogoUrl.match(/steam\/apps\/(\d+)\//);
+    if (appIdMatch && appIdMatch[1] !== game.appId) {
+      console.log(`[LOGO_DISPLAY][REJECT] appid=${game.appId} reason=cross-app-steam-url urlAppid=${appIdMatch[1]}`);
+      return undefined;
+    }
+    return rawLogoUrl;
+  })();
+  const logoUrl = _validatedLogoSrc && isLocalPath(_validatedLogoSrc)
+    ? (localPathToUrl(_validatedLogoSrc) ?? undefined)
+    : _validatedLogoSrc;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
   const { installState, dismiss } = useInstallTracker(game.appId);
@@ -976,13 +1004,8 @@ export default function LibraryGameDetails({
   if (loading) {
     return (
       <div className="flex h-full flex-col overflow-y-auto">
-        <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
-          <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
-            <div className="h-4 w-32 animate-pulse rounded bg-white/10" />
-          </div>
-        </div>
-        <div className="h-72 animate-pulse bg-white/5 lg:h-96" />
-        <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
+        <div className="aspect-[21/9] min-h-[340px] max-h-[520px] animate-pulse bg-white/5" />
+        <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
           <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
             <div className="mb-2 h-9 w-24 animate-pulse rounded-xl bg-white/10" />
             <div className="flex flex-wrap gap-x-5 gap-y-1">
@@ -1017,56 +1040,81 @@ export default function LibraryGameDetails({
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      {/* Back bar */}
-      <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
-        <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex cursor-pointer items-center gap-2 text-sm text-(--color-muted) transition hover:text-(--color-text) focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Library
-          </button>
-        </div>
-      </div>
+      {/* Hero banner — Steam-style header */}
+      <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
+        {/* Back to Library — subtle at idle, lights up with theme accent */}
+        <button
+          type="button"
+          onClick={onBack}
+          className="absolute left-4 top-4 z-40 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-black/15 px-3 py-1.5 text-sm text-white/60 backdrop-blur-sm transition-all hover:bg-(--color-accent)/85 hover:text-white hover:shadow-lg hover:shadow-(--color-accent)/25 focus-visible:ring-2 focus-visible:ring-(--color-accent)/60"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Library
+        </button>
 
-      {/* Hero banner */}
-      <div className="relative h-72 shrink-0 overflow-hidden bg-white/5 lg:h-96">
-        <AsyncImage
-          src={imageUrl}
-          alt={detailTitle}
-          className="absolute inset-0 h-full w-full"
-          fallbackLocalPath={heroFallbackPath}
-          fallback={
-            <div className="flex h-full w-full items-center justify-center bg-linear-to-br from-white/10 via-white/5 to-black/50">
+        {/* Layer 1 — Steam-style colorful blurred backdrop */}
+        {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
+            object-position: center ensures the same crop region as the sharp image. */}
+        <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
+          {imageUrl && !heroImgError ? (
+            <img
+              src={imageUrl}
+              alt=""
+              onError={() => setHeroImgError(true)}
+              className="h-full w-full scale-105 object-cover blur-2xl"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-black/40">
               <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
             </div>
-          }
-        />
-        <div className="absolute inset-0 bg-linear-to-t from-black/95 via-black/50 to-transparent" />
+          )}
+        </div>
 
-        {/* Logo overlay */}
-        {logoUrl ? (
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+        {/* Layer 2 — Main sharp image centered, with graduated side fade */}
+        {/* 0-4% transparent buffer → 4-12% linear fade-in → 12-88% full opacity → 88-96% fade-out → 96-100% transparent.
+            Wider 8% transition zone creates a smooth, invisible seam with the blurred backdrop. */}
+        <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
+          {imageUrl && !heroImgError ? (
             <img
-              src={logoUrl}
-              alt={`${detailTitle} logo`}
-              loading="lazy"
-              decoding="async"
-              className="max-h-28 max-w-[300px] object-contain drop-shadow-2xl lg:max-h-36 lg:max-w-[420px]"
+              src={imageUrl}
+              alt={detailTitle}
+              onError={() => setHeroImgError(true)}
+              className="block h-full w-auto max-w-none shrink-0 [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]"
             />
-          </div>
-        ) : null}
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
+            </div>
+          )}
+        </div>
 
-        <div className="absolute bottom-0 left-0 right-0">
-          <div className="mx-auto w-full max-w-[1440px] px-5 pb-5 lg:pb-6">
-            <h1 className="line-clamp-1 text-2xl font-black text-white drop-shadow-sm lg:text-3xl">
+        {/* Layer 3 — Gentle side vignette + bottom gradient */}
+        {/* Light enough that the colorful blur still shows through */}
+        <div className="absolute inset-y-0 left-0 z-20 w-[clamp(40px,5vw,100px)] bg-linear-to-r from-black/10 to-transparent pointer-events-none" />
+        <div className="absolute inset-y-0 right-0 z-20 w-[clamp(40px,5vw,100px)] bg-linear-to-l from-black/10 to-transparent pointer-events-none" />
+        {/* Bottom: readability gradient with minimal darkening */}
+        <div className="absolute inset-x-0 bottom-0 z-20 h-[clamp(80px,15vh,180px)] bg-linear-to-t from-black/60 via-black/5 to-transparent pointer-events-none" />
+
+        {/* Bottom content: logo + title */}
+        <div className="absolute bottom-0 left-0 right-0 z-30">
+          <div className="mx-auto w-full max-w-[1440px] px-5 pb-4 lg:pb-5">
+            {logoUrl ? (
+              <div className="mb-2">
+                <img
+                  src={logoUrl}
+                  alt={`${detailTitle} logo`}
+                  loading="lazy"
+                  decoding="async"
+                  className="max-h-14 max-w-[180px] object-contain drop-shadow-2xl lg:max-h-20 lg:max-w-[300px]"
+                />
+              </div>
+            ) : null}
+            <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
               {detailTitle}
             </h1>
 
             {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
-              <p className="mt-1 text-sm text-white/70">
+              <p className="mt-0.5 text-sm text-white/70">
                 {(localDetailsData as any)?.developer || game.metadata?.developer}
               </p>
             )}
@@ -1074,8 +1122,8 @@ export default function LibraryGameDetails({
         </div>
       </div>
 
-      {/* Compact action/stats row */}
-      <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02]">
+      {/* Compact action/stats row with gradient transition */}
+      <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
         <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
@@ -1399,6 +1447,13 @@ export default function LibraryGameDetails({
                         />
                       )}
                       <div className="border-t border-(--surface-active-border) my-1" />
+                      <DropdownItem
+                        label="Edit Game Details"
+                        onClick={() => {
+                          setShowActions(false);
+                          setEditDialogOpen(true);
+                        }}
+                      />
                       <DropdownItem
                         label="Refresh Artwork"
                         onClick={() => {
@@ -2144,6 +2199,26 @@ export default function LibraryGameDetails({
               });
           }}
           refreshing={achievementsRefreshing}
+        />
+      )}
+
+      {game.appId && (
+        <GameEditDialog
+          appId={game.appId}
+          open={editDialogOpen}
+          onClose={() => setEditDialogOpen(false)}
+          initialTab="general"
+          game={game}
+          settings={{
+            rawgApiKey: settings.rawgApiKey,
+            igdbClientId: settings.igdbClientId,
+            igdbClientSecret: settings.igdbClientSecret,
+            steamGridDbApiKey: settings.steamGridDbApiKey,
+            steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
+            googleSearchApiKey: (settings as Record<string, unknown>).googleSearchApiKey as string,
+            googleSearchCx: (settings as Record<string, unknown>).googleSearchCx as string,
+            bingSearchApiKey: (settings as Record<string, unknown>).bingSearchApiKey as string,
+          }}
         />
       )}
     </div>

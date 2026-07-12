@@ -14,6 +14,8 @@ import {
   Gamepad2,
   Cog,
   Trophy,
+  LayoutDashboard,
+  Columns3,
 } from "lucide-react";
 
 import {
@@ -69,6 +71,10 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("paths");
   const [showSgdbKey, setShowSgdbKey] = useState(false);
   const [showSteamApiKey, setShowSteamApiKey] = useState(false);
+  const [showIgdbSecret, setShowIgdbSecret] = useState(false);
+  const [showRawgKey, setShowRawgKey] = useState(false);
+  const [showGoogleKey, setShowGoogleKey] = useState(false);
+  const [showBingKey, setShowBingKey] = useState(false);
   const [newScanFolder, setNewScanFolder] = useState("");
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
@@ -541,6 +547,209 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
+
+              {/* IGDB Provider */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Gamepad2 className="h-4 w-4" />
+                  IGDB Metadata
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  IGDB (Internet Game Database) provides cover art and metadata enrichment. Requires a Twitch/IGDB Client ID and OAuth access token.
+                </p>
+
+                {(!settings.igdbClientId || !settings.igdbClientSecret) && (
+                  <p className="text-xs text-amber-400">
+                    Fill in both Client ID and Client Secret to enable IGDB artwork and metadata sources.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Client ID
+                    </p>
+                  </div>
+                  <input
+                    type="text"
+                    value={settings.igdbClientId}
+                    onChange={(e) => updateSetting("igdbClientId", e.target.value)}
+                    className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                    placeholder="Enter your IGDB Client ID"
+                  />
+                </label>
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Client Secret / Access Token
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showIgdbSecret ? "text" : "password"}
+                      value={settings.igdbClientSecret}
+                      onChange={(e) => updateSetting("igdbClientSecret", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your IGDB Client Secret"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowIgdbSecret(!showIgdbSecret)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showIgdbSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
+              {/* RAWG Provider */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Globe className="h-4 w-4" />
+                  RAWG Metadata
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  RAWG provides background artwork and metadata enrichment. Requires a free API key from rawg.io.
+                </p>
+
+                {!settings.rawgApiKey && (
+                  <p className="text-xs text-amber-400">
+                    Add a RAWG API key to enable RAWG background artwork.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      API Key
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showRawgKey ? "text" : "password"}
+                      value={settings.rawgApiKey}
+                      onChange={(e) => updateSetting("rawgApiKey", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your RAWG API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRawgKey(!showRawgKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showRawgKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
+              {/* Google Custom Search */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Globe className="h-4 w-4" />
+                  Google Custom Search
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  Google Custom Search enables in-app image search for manual artwork selection. Requires a Custom Search API Key and Search Engine ID (cx) from the Google Cloud Console.
+                </p>
+
+                {(!settings.googleSearchApiKey || !settings.googleSearchCx) && (
+                  <p className="text-xs text-amber-400">
+                    Fill in both fields to enable Google image search in the Media editor.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      API Key
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showGoogleKey ? "text" : "password"}
+                      value={settings.googleSearchApiKey}
+                      onChange={(e) => updateSetting("googleSearchApiKey", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your Google API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowGoogleKey(!showGoogleKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showGoogleKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Search Engine ID (cx)
+                    </p>
+                  </div>
+                  <input
+                    type="text"
+                    value={settings.googleSearchCx}
+                    onChange={(e) => updateSetting("googleSearchCx", e.target.value)}
+                    className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                    placeholder="Enter your Search Engine ID"
+                  />
+                </label>
+              </div>
+
+              {/* Bing Image Search */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Globe className="h-4 w-4" />
+                  Bing Image Search
+                </div>
+
+                <p className="text-xs text-(--color-muted)">
+                  Bing Image Search provides an alternative in-app image search source. Requires a Bing Search API key from the Azure portal.
+                </p>
+
+                {!settings.bingSearchApiKey && (
+                  <p className="text-xs text-amber-400">
+                    Add a Bing Search API key to enable Bing image search in the Media editor.
+                  </p>
+                )}
+
+                <label className="block">
+                  <div className="mb-2">
+                    <p className="text-sm font-medium text-(--color-text)">
+                      API Key
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showBingKey ? "text" : "password"}
+                      value={settings.bingSearchApiKey}
+                      onChange={(e) => updateSetting("bingSearchApiKey", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="Enter your Bing Search API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowBingKey(!showBingKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                      tabIndex={-1}
+                    >
+                      {showBingKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
             </SettingsSection>
           </div>
         )}
@@ -587,6 +796,296 @@ export default function Settings() {
                       onSelect={setSurfaceMode}
                     />
                   ))}
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Dashboard Layout"
+              description="Adjust card sizes, spacing and width for the Home dashboard."
+            >
+              <div className="space-y-4">
+                <div className="mb-2 flex items-center gap-2 text-sm text-(--color-accent)">
+                  <LayoutDashboard className="h-4 w-4" />
+                  Dashboard
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Content max width
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardContentWidth}px — max width of dashboard content area
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">1200</span>
+                    <input
+                      type="range"
+                      min={1200}
+                      max={2400}
+                      step={40}
+                      value={settings.dashboardContentWidth}
+                      onChange={(e) => updateSetting("dashboardContentWidth", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">2400</span>
+                  </div>
+                </div>
+
+                <ToggleOption
+                  label="Expanded dashboard"
+                  description="Remove content max-width so dashboard fills the full window width."
+                  enabled={settings.useExpandedDashboard}
+                  onChange={(enabled) => updateSetting("useExpandedDashboard", enabled)}
+                />
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Featured card size
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardFeaturedCardSize}px — Continue Playing cards
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">280</span>
+                    <input
+                      type="range"
+                      min={280}
+                      max={480}
+                      step={10}
+                      value={settings.dashboardFeaturedCardSize}
+                      onChange={(e) => updateSetting("dashboardFeaturedCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">480</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Standard card size
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardCardSize}px — all other dashboard section cards
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">200</span>
+                    <input
+                      type="range"
+                      min={200}
+                      max={400}
+                      step={10}
+                      value={settings.dashboardCardSize}
+                      onChange={(e) => updateSetting("dashboardCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">400</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Card gap
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.dashboardGridGap}px — spacing between cards in scroll rows
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">8</span>
+                    <input
+                      type="range"
+                      min={8}
+                      max={48}
+                      step={4}
+                      value={settings.dashboardGridGap}
+                      onChange={(e) => updateSetting("dashboardGridGap", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">48</span>
+                  </div>
+                </div>
+
+                <div className="mb-2 mt-6 flex items-center gap-2 text-sm text-(--color-accent)">
+                  <Columns3 className="h-4 w-4" />
+                  Library Landscape
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Landscape card size
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryLandscapeCardSize}px — used when artwork mode is Landscape
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">160</span>
+                    <input
+                      type="range"
+                      min={160}
+                      max={300}
+                      step={5}
+                      value={settings.libraryLandscapeCardSize}
+                      onChange={(e) => updateSetting("libraryLandscapeCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">300</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Landscape grid gap
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryLandscapeGap}px — spacing between landscape cards
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">16</span>
+                    <input
+                      type="range"
+                      min={16}
+                      max={56}
+                      step={4}
+                      value={settings.libraryLandscapeGap}
+                      onChange={(e) => updateSetting("libraryLandscapeGap", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">56</span>
+                  </div>
+                </div>
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateSetting("dashboardContentWidth", 1760);
+                      updateSetting("useExpandedDashboard", false);
+                      updateSetting("dashboardCardSize", 260);
+                      updateSetting("dashboardFeaturedCardSize", 340);
+                      updateSetting("dashboardGridGap", 16);
+                      updateSetting("libraryLandscapeCardSize", 200);
+                      updateSetting("libraryLandscapeGap", 28);
+                      updateSetting("maxLandscapeColumns", 0);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text)"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Restore display layout defaults
+                  </button>
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Biblioteca"
+              description="Ajusta la visualización de la cuadrícula de juegos."
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Tamaño de tarjeta
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryCardSize}px — ancho mínimo por tarjeta
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">160</span>
+                    <input
+                      type="range"
+                      min={160}
+                      max={280}
+                      step={5}
+                      value={settings.libraryCardSize}
+                      onChange={(e) => updateSetting("libraryCardSize", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">280</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Espaciado entre tarjetas
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryGridGap}px
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">16</span>
+                    <input
+                      type="range"
+                      min={16}
+                      max={48}
+                      step={4}
+                      value={settings.libraryGridGap}
+                      onChange={(e) => updateSetting("libraryGridGap", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">48</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                  <div className="space-y-0.5">
+                    <label className="text-sm font-medium text-(--color-text)">
+                      Ancho del panel de filtros
+                    </label>
+                    <p className="text-xs text-(--color-muted)">
+                      {settings.libraryFilterPanelWidth}px
+                    </p>
+                  </div>
+                  <div className="flex w-36 items-center gap-2">
+                    <span className="text-[11px] text-(--color-muted)/60">240</span>
+                    <input
+                      type="range"
+                      min={240}
+                      max={360}
+                      step={10}
+                      value={settings.libraryFilterPanelWidth}
+                      onChange={(e) => updateSetting("libraryFilterPanelWidth", Number(e.target.value))}
+                      className="w-full accent-(--color-accent)"
+                    />
+                    <span className="text-[11px] text-(--color-muted)/60">360</span>
+                  </div>
+                </div>
+
+                <ToggleOption
+                  label="Usar ancho completo"
+                  description="La cuadrícula ocupa todo el ancho disponible en lugar de estar centrada con límite."
+                  enabled={settings.libraryUseFullWidth}
+                  onChange={(enabled) => updateSetting("libraryUseFullWidth", enabled)}
+                />
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateSetting("libraryCardSize", 200);
+                      updateSetting("libraryGridGap", 28);
+                      updateSetting("libraryUseFullWidth", true);
+                      updateSetting("libraryFilterPanelWidth", 280);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text)"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Restaurar diseño de biblioteca
+                  </button>
                 </div>
               </div>
             </SettingsSection>

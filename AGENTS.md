@@ -2105,3 +2105,963 @@ The DRM notice (`"Incorporates 3rd-party DRM: Denuvo Anti-Tamper"`) exists on th
 - `tsc --noEmit` ✅ (no errors)
 - `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ✅ (only pre-existing unused-variable warnings)
+
+## Session — Phase 2.9: Console Mode Grid & Spotlight Polish
+
+### Problem
+The Console Mode Grid view had a narrow right panel and the Spotlight layout needed polish.
+
+### Implementation
+- **ConsoleGridLayout** (`src/features/console/ConsoleGridLayout.tsx`): Wider right panel at `w-[420px] xl:w-[460px]` with `overflow-y-auto` for independent scrolling from the grid. Grid uses `grid-template-columns: repeat(auto-fill, minmax(175px, 1fr))` with poster cards. `flex h-screen flex-col` root structure prevents page scroll. Hud at top, grid+panel in middle (`flex flex-1 overflow-hidden`), category bar `shrink-0` at bottom.
+- **ConsoleGameCard** (`src/features/console/ConsoleGameCard.tsx`): Focus ring (`ring-2 ring-accent/50`), border accent on focus, title below poster variant, gradient overlay on landscape variant, badges (Installed, Lua, Update), favorite heart, hover dark overlay.
+- **ConsoleCategoryBar** (`src/features/console/ConsoleCategoryBar.tsx`): Keyboard hints (Enter=Details, Esc=Back, Tab=Navigate), active category accent highlight, per-category counts.
+- **ConsoleSpotlightLayout**: Hero area with background art, centered cards, profile header with display name and playtime, achievement progress bar in preview panel.
+- **ConsoleModePage** (`src/features/console/ConsoleModePage.tsx`): Rails-based category system (Continue/Installed/Lua/Favorites/All), keyboard navigation support, layout toggle between spotlight and grid, playtime/achievement stats in Hud.
+
+### Key Files
+- `src/features/console/ConsoleGridLayout.tsx` — Grid view with wide panel, scroll behavior, Hud/category bar layout
+- `src/features/console/ConsoleModePage.tsx` — Category rails, keyboard nav, layout toggle
+- `src/features/console/ConsoleGameCard.tsx` — Card with focus ring, badges, title
+- `src/features/console/ConsoleSpotlightLayout.tsx` — Spotlight hero layout
+- `src/features/console/ConsoleCategoryBar.tsx` — Category nav + keyboard hints
+- `src/features/console/ConsoleProfileHeader.tsx` — Display name + playtime display
+- `src/features/console/ConsoleTopHud.tsx` — Top bar with layout toggle
+- `src/features/console/consoleMedia.ts` — Card/hero image resolution helpers
+
+### Build
+- `tsc --noEmit` ✅ passes
+- `vite build` ✅ passes
+
+## Session — Phase 2.10: Solaris-style Grid Polish
+
+### Goal
+Shift the Console Grid view toward a Solaris-inspired dense grid layout: wider preview panel, tighter card grid with no under-card labels, category icons, visual action buttons.
+
+### Part 1 — Grid spacing and card count
+- `ConsoleGridLayout.tsx`: Grid uses `minmax(160px, 180px)` for poster cards with `gap-x-6 gap-y-7` (24px horizontal, 28px vertical gaps)
+- Yields 7-10 cards per row on 1920-2560px screens with the wider panel
+- Landscape variant uses `minmax(200px, 220px)`
+
+### Part 2 — Grid scroll behavior (structure already correct)
+- Root `flex h-screen flex-col` prevents page scroll
+- Middle container `flex flex-1 overflow-hidden` constrains grid+panel area
+- Grid div `flex-1 overflow-y-auto` scrolls independently
+- Hud `shrink-0` stays top, CategoryBar `shrink-0` stays bottom
+- Panel `overflow-y-auto` scrolls independently
+
+### Part 3 — Remove fixed title labels in Grid mode
+- `ConsoleGameCard.tsx`: Added `noLabel` boolean prop
+- Poster variant: title block below image is skipped when `noLabel=true`
+- Landscape variant: gradient overlay title remains (acceptable per spec — title is ON the art, not under it)
+- ConsoleGridLayout passes `noLabel` to all cards in grid mode
+
+### Part 4 — Card focus glow
+- `ConsoleGameCard.tsx`: Focus ring increased from `ring-2` to `ring-3` with stronger opacity
+- `ring-3 ring-(--color-accent)/60 shadow-xl shadow-(--color-accent)/25`
+- Removed dead `group-hover/card:scale-105` from AsyncImage (no group parent existed)
+
+### Part 5 — Wider right preview panel
+- `ConsoleGridLayout.tsx`: Panel uses `width: clamp(400px, 35vw, 600px)` with `min-width: 400px` and `max-width: 600px`
+- 400px minimum, ~35vw on mid-range, 600px max — previously 420-460px fixed
+- Also switched from `w-[420px]` to `clamp()` for responsive width
+
+### Part 6 — Preview panel content upgrade
+- Content (hero image, title, badges, stats grid, dev/publisher, achievements bar, genre chips, description) already comprehensive from Phase 2.9
+- Better spacing with `gap-5` between sections
+
+### Part 7 — Visual action buttons
+- Added at bottom of panel content, separated by divider:
+  - **Play** button (disabled, accent color) — placeholder, no real wiring
+  - **Details** button (disabled, outline) — placeholder
+  - **Favorite** toggle (wired via `useFavorites().toggleFavorite`) — shows heart icon, fills when favorited
+  - **Options** button (disabled, outline) — placeholder
+- Non-wired buttons show as disabled with low opacity (`opacity-90` / `opacity-50`)
+
+### Part 8 — Category bar icons
+- `ConsoleCategoryBar.tsx`: Each category now has a lucide icon before the label:
+  - Continue → `Play`, Installed → `HardDrive`, Lua → `Code`, Favorites → `Heart`, All → `LayoutGrid`
+- Icons are `h-3.5 w-3.5` with `opacity-70`
+- Applies `inline-flex items-center gap-1.5` for proper alignment
+
+### Part 9 — Spotlight stability
+- `ConsoleGameCard` changes are backward-compatible: `noLabel` defaults to `false`
+- Spotlight layout does not pass `noLabel` — card rendering unchanged
+- Focus glow enhancement applies to both views
+
+### Key Files Changed
+- `src/features/console/ConsoleGridLayout.tsx` — Full rewrite: wider responsive panel (clamp), tighter grid gaps (gap-x-6 gap-y-7), noLabel on cards, action buttons row, favor toggle wiring
+- `src/features/console/ConsoleGameCard.tsx` — Added `noLabel` prop, stronger focus glow (ring-3 + thicker shadow), removed dead group-hover zoom class
+- `src/features/console/ConsoleCategoryBar.tsx` — Category icons (Play, HardDrive, Code, Heart, LayoutGrid), inline-flex alignment
+
+### Build
+- `tsc --noEmit` ✅ passes
+- `vite build` ✅ passes
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Phase 2.12: Console Mode Settings Overlay & Grid Polish
+
+### Goal
+Add Console Mode frontend settings overlay and polish Grid/Solaris layout: wider cards/panel, live-adjustable card size/gap/columns via sliders, input glyph system (Xbox/PlayStation/Keyboard), theme inheritance from app settings, centered bottom nav, and focus shine animation.
+
+### Part 1: consoleSettings.ts — settings store
+- **New file** `src/features/console/consoleSettings.ts`
+- Types: `ConsoleSettings`, `ConsoleLayoutMode`, `ConsoleThemeMode`, `ConsoleInputGlyphStyle`
+- localStorage persistence under key `lumaforge-console-settings-v1`
+- `getConsoleSettings()` sync read, `saveConsoleSettings()`, `useConsoleSettings()` React hook
+- Defaults: layoutMode=spotlight, theme=follow-app, inputGlyphs=xbox, cardSize=210, gridColumns=8, gridGap=36, sidePanelWidth=680, enableShineAnimation=true
+
+### Part 2: ConsoleSettingsOverlay.tsx — settings UI
+- **New file** `src/features/console/ConsoleSettingsOverlay.tsx`
+- Fixed overlay with backdrop blur, max-h 85vh scrollable
+- Sections: Theme (5 options), Input Hints (3 options), Grid Layout (4 sliders), Shine Animation toggle
+- Sliders: Card Size (180–260px, step 5), Grid Columns (4–14, step 1), Grid Gap (16–64px, step 4), Side Panel Width (560–780px, step 10)
+- Live apply + auto-persist via `onPatch` → `useConsoleSettings`
+
+### Part 3: consoleInputHints.ts — revised labels
+- Removed `DEFAULT_STYLE` constant and `ConsoleThemeMode` type (themes moved to settings)
+- Labels per spec: Xbox (A/X/Y/Menu/B/LB RB), PS (Cross/Box/Triangle/Options/Circle/L1 R1), Keyboard (Enter/Enter// /Esc/Esc/F)
+- `getConsoleInputHints(style)` accepts glyph style directly
+
+### Part 4: ConsoleGridLayout.tsx — settings-driven layout
+- `settings` and `onSettingsPatch` props consumed from ConsoleModePage
+- Grid uses `cardSize` for `minmax(cardSize, 1fr)`, `gridGap` for gap
+- Panel width set from `sidePanelWidth` (fixed, not clamp)
+- Left padding changed from `clamp(40px, 4vw, 90px)` → `clamp(64px, 5vw, 120px)`
+- Input hints in panel driven by `settings.inputGlyphs`
+- Settings overlay opened from HUD via `onOpenSettings`
+- Added `useState` for settingsOpen local state
+
+### Part 5: ConsoleGameCard.tsx — focus shine (already done)
+- Phase 2.11 already implemented `console-card-shine` CSS animation and `prefers-reduced-motion` guard
+- No changes needed
+
+### Part 6: ConsoleCategoryBar.tsx — centered nav + glyph hints
+- Layout changed from `justify-center` with hints inline to `justify-between` with left spacer, centered pills, right-side glyph hints
+- Added `inputGlyphs` prop to drive hint rendering
+- `showHints` and `inputGlyphs` passed from both Grid and Spotlight layouts
+
+### Part 7: ConsoleTopHud.tsx — settings gear button
+- Added `Settings` icon import from lucide-react
+- Added `onOpenSettings?: () => void` prop
+- Settings gear rendered before the time display when callback is provided
+- Passes `onOpenSettings` from both Grid and Spotlight layouts
+
+### Part 8: ConsoleModePage.tsx — settings integration
+- Layout mode persisted via `useConsoleSettings` instead of standalone localStorage key
+- `data-console-theme` attribute on root wrapper div for CSS theme targeting
+- Removed `RAIL_CONFIGS`, `ConsoleProfileHeader`, `ConsoleHomeRail` (unused)
+- `layoutMode` and `toggleLayout` driven by `consoleSettings` + `patchConsoleSettings`
+- Shared props include `settings` and `onSettingsPatch`
+
+### Part 9: ConsoleSpotlightLayout.tsx — settings integration
+- Added `settings` and `onSettingsPatch` props matching GridLayout interface
+- Input hints removed (not rendered in Spotlight, uses ConsoleCategoryBar instead)
+- Passes `onOpenSettings` to `ConsoleTopHud`
+- Passes `inputGlyphs` to `ConsoleCategoryBar`
+- Mounts `ConsoleSettingsOverlay` (same component as Grid)
+
+### Key Files Changed
+- `src/features/console/consoleSettings.ts` — **new** — settings store with types, defaults, localStorage, React hook
+- `src/features/console/ConsoleSettingsOverlay.tsx` — **new** — settings UI with theme, glyphs, sliders, animation toggle
+- `src/features/console/consoleInputHints.ts` — revised labels, removed redundant types
+- `src/features/console/ConsoleGridLayout.tsx` — settings-driven card size/gap/panel, wider left padding, glyph hints from settings
+- `src/features/console/ConsoleCategoryBar.tsx` — centered layout, right-side glyph hints, `inputGlyphs` prop
+- `src/features/console/ConsoleTopHud.tsx` — settings gear button, `onOpenSettings` prop
+- `src/features/console/ConsoleModePage.tsx` — `useConsoleSettings`, `data-console-theme`, removed dead code
+- `src/features/console/ConsoleSpotlightLayout.tsx` — settings props, overlay, glyph hints in category bar
+
+### Build
+- `tsc --noEmit` ✅ passes
+- `vite build` ✅ passes
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Phase 2.13: Console Mode reset defaults + disk size/achievement bar
+
+### Goal
+Add reset-to-defaults to Console Settings overlay, show disk size and achievement progress in preview panel using shared pure helpers.
+
+### Part 1: Reset to Defaults
+- `consoleSettings.ts` — added `DEFAULT_CONSOLE_SETTINGS` export + `resetConsoleSettings()` (clears localStorage, returns defaults)
+- `ConsoleSettingsOverlay.tsx` — added "Reset to Defaults" button below sections; calls `resetConsoleSettings()` then patches full defaults via single `onPatch` call
+
+### Part 2: Shared game stat helpers
+- `src/features/console/consoleGameStats.ts` — **new** — pure helpers:
+  - `formatBytes(bytes?)` — returns `"Unknown"` for null/undefined, `"X.XX GB"` for ≥1GB, `"XX MB"` otherwise
+  - `getGameAchievementSummary(game)` — reads `game.achievementSummary` (unlocked/total), returns `{unlocked, total, percent}` or `null`
+
+### Part 3: Preview panel disk size + achievement bar
+- `ConsoleGridLayout.tsx` — imported `formatBytes` and `getGameAchievementSummary`; added "Size" row using `formatBytes(focusedGame.sizeOnDisk)`, achievement progress bar (unlocked/total, percent, accent-fill) when summary available
+
+### Key Files Changed
+- `src/features/console/consoleSettings.ts` — `DEFAULT_CONSOLE_SETTINGS` export, `resetConsoleSettings()`
+- `src/features/console/ConsoleSettingsOverlay.tsx` — reset-to-defaults button
+- `src/features/console/consoleGameStats.ts` — **new** — pure game stat helpers
+- `src/features/console/ConsoleGridLayout.tsx` — disk size + achievement bar in panel
+
+### Build
+- `tsc --noEmit` ✅ passes (no errors)
+- `vite build` ✅ passes (no errors)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Global User Profile + Expanded Console Settings
+
+### Goal
+Create a global aesthetic user profile reusable by Desktop UI and Console Mode, expand Console Settings with 6 sections (Profile, General, Visuals, Layout, Input, Advanced) for Playnite/Solaris-style customization.
+
+### Part 1: UserProfile store
+- `src/features/profile/userProfile.ts` — **new** — localStorage key `lumaforge-user-profile-v1`
+- Types: `UserProfile` with `displayName`, `status`, `avatarPreset`, `avatarUrl?`, `bannerPreset`, `bannerUrl?`, `accentMode`, `accentColor?`, `updatedAt`
+- Defaults: displayName="Gamer", status="Exploring the library", avatarPreset="gamepad", bannerPreset="midnight", accentMode="follow-theme"
+- Exports: `DEFAULT_USER_PROFILE`, `getUserProfile()`, `saveUserProfile()`, `resetUserProfile()`, `useUserProfile()`
+
+### Part 2: Global profile reuse
+- `ConsoleTopHud.tsx` — reads real avatar/displayName from `useUserProfile()` instead of hardcoded "Gamer"; removed unused `Gamepad2`, `displayName`, `playtimeHours` props; passes `settings` for `showClock`
+- `ConsoleProfileHeader.tsx` — reads `useUserProfile()` + `getAvatarPreset`/`getBannerPreset` for full profile display with banner gradient background
+- `TopBar.tsx` — compact profile badge (avatar + displayName) to the left of search; navigates to settings
+- `ConsoleModePage.tsx` — passes `profile` + `onProfilePatch` through `sharedProps`
+
+### Part 3: Avatar/banner presets
+- `src/features/profile/profilePresets.ts` — **new** — `AVATAR_PRESETS` (6: gamepad, neon, ocean, samurai, synth, pixel) with CSS gradients + emoji icons; `BANNER_PRESETS` (6: midnight, ocean, forest, red-night, steam-blue, amoled) with CSS gradients
+- `getAvatarPreset(id)` / `getBannerPreset(id)` lookup helpers
+
+### Part 4: Console Settings overlay 6-section rewrite
+- `ConsoleSettingsOverlay.tsx` — fully rewritten with sections:
+  - **Profile**: display name input, status input, avatar preset picker (gradient swatches), banner preset picker, accent mode toggle + color picker, Reset Profile button
+  - **General**: layout (Grid/Spotlight), start category selector, show clock/profile HUD/platform label toggles
+  - **Visuals**: theme picker (5 options), background texture picker (4 options), focus shine toggle
+  - **Layout**: sliders (cardSize 180-280, gridColumns 4-14, gridGap 16-64, leftPadding 24-160, sidePanelWidth 560-860), bottom bar position (center/left/right), horizontal/smooth scrolling toggles, Reset Layout button
+  - **Input**: input hints picker (Xbox/PS/Keyboard/Auto), show button/bottom hints toggles
+  - **Advanced**: Reset Console Settings, Reset All Console & Profile Settings buttons
+- Accepts `profile` + `onProfilePatch` props alongside `settings` + `onPatch`
+
+### Part 5: Console settings schema expanded
+- `consoleSettings.ts` — new fields: `startCategory`, `themeMode` (renamed from `theme`), `backgroundTexture`, `inputHints` (renamed from `inputGlyphs`), `showClock`, `showProfileHud`, `showPlatformLabel`, `showButtonHints`, `showBottomHints`, `leftPadding`, `bottomBarPosition`, `horizontalScrolling`, `smoothScrolling`, `focusShine` (renamed from `enableShineAnimation`)
+- Defaults: layoutMode=grid, themeMode=follow-app, cardSize=220, sidePanelWidth=720, leftPadding=64
+- `LAYOUT_DEFAULTS`, `resetConsoleLayoutSettings()`, `resetAllConsoleAndProfileSettings()` exports
+- Legacy migration: reads old `lumaforge-console-settings-v1` format, maps `theme`→`themeMode`, `inputGlyphs`→`inputHints`, `enableShineAnimation`→`focusShine`, removes old key after migration
+
+### Part 6: Reset defaults (all 4 buttons)
+- **Reset Profile**: `resetUserProfile()` + `onProfilePatch(DEFAULT_USER_PROFILE)` — instant
+- **Reset Layout**: `resetConsoleLayoutSettings()` + `onPatch(LAYOUT_DEFAULTS)` — partial
+- **Reset Console Settings**: `resetConsoleSettings()` + `onPatch(defaults)` — full
+- **Reset All**: `resetAllConsoleAndProfileSettings()` + patches both stores — clears both localStorage keys
+
+### Part 7: Theme behavior + CSS presets
+- `ConsoleModePage.tsx` — `data-console-theme={consoleSettings.themeMode}` on root wrapper
+- `App.css` — 4 console theme CSS presets: solaris-dark (bluish-purple), steam-deck (dark blue-gray/green), midnight (deep blue-black), amoled (true black)
+- `follow-app` uses existing global CSS variables (no override)
+
+### Part 8: Layout setting integration
+- `ConsoleGridLayout.tsx` — uses `settings.cardSize`, `settings.gridColumns`, `settings.gridGap`, `settings.leftPadding`, `settings.sidePanelWidth` from new defaults (cardSize=220, sidePanelWidth=720, leftPadding=64)
+
+### Part 9: Input hints updated
+- `consoleInputHints.ts` — `ConsoleInputHintStyle` includes `"auto"` (auto-detects PlayStation on macOS, Xbox on others); `ConsoleInputGlyphStyle` removed
+
+### Key Files Changed
+- `src/features/profile/userProfile.ts` — **new** — global user profile store
+- `src/features/profile/profilePresets.ts` — **new** — avatar/banner preset definitions
+- `src/features/console/consoleInputHints.ts` — added `"auto"` mode, type rename
+- `src/features/console/consoleSettings.ts` — expanded schema, legacy migration, reset helpers
+- `src/features/console/ConsoleSettingsOverlay.tsx` — full 6-section rewrite
+- `src/features/console/ConsoleTopHud.tsx` — profile-driven, removed hardcoded values
+- `src/features/console/ConsoleProfileHeader.tsx` — profile-driven with banner/avatar
+- `src/features/console/ConsoleModePage.tsx` — `useUserProfile`, `data-console-theme`, passes profile props
+- `src/features/console/ConsoleGridLayout.tsx` — new setting field names, profile/onProfilePatch props
+- `src/features/console/ConsoleSpotlightLayout.tsx` — profile/onProfilePatch props, removed unused playtime computation
+- `src/features/console/ConsoleCategoryBar.tsx` — `inputGlyphs`→`inputHints` rename
+- `src/components/layout/TopBar.tsx` — compact profile badge with avatar + displayName
+- `src/App.css` — 4 console theme CSS presets
+
+### Build
+- `tsc --noEmit` ✅ passes (0 errors)
+- `vite build` ✅ passes (0 errors, only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Global User Profile in Sidebar Bottom + Profile Modal
+
+### Goal
+Move the global user profile from being only in Console Mode/TopBar to the primary sidebar bottom location (replacing "Reiniciar Steam" / "Sistema listo"), with a dedicated Discord-like ProfileModal for editing.
+
+### Part 1: ProfileModal.tsx (new)
+- `src/features/profile/ProfileModal.tsx` — **new** — Discord/Playnite style profile editing modal
+- Uses `createPortal` to render at body level, `z-50` backdrop blur
+- Sections:
+  - **Preview**: banner gradient header, circular avatar overlapping banner, display name, status, accent color dot
+  - **Identity**: display name input (max 32), status input (max 48)
+  - **Avatar**: 6-preset gradient grid selector with ring highlight, optional custom URL field
+  - **Banner**: 6-preset gradient grid selector (3-col) with ring highlight, label on each swatch
+  - **Accent**: Follow Theme / Custom toggle; `input[type="color"]` picker when custom
+- Footer: Reset Profile (rose/destructive), Cancel, Save (accent)
+- Live preview updates while editing (draft state)
+- Save calls `onSave`, Cancel discards draft, Reset restores `DEFAULT_USER_PROFILE`
+- Escape key, backdrop click close modal
+- Focus trap (Tab cycling)
+- No Rust, no backend, no file upload
+
+### Part 2: Sidebar bottom profile block
+- `Sidebar.tsx` — bottom block replaced from "Reiniciar Steam" + "Sistema listo" to:
+  - **Profile block**: avatar circle (gradient from preset or custom URL), accent status dot, display name, status line, "..." menu button on hover
+  - Clicking profile opens `ProfileModal`
+  - **"..." dropdown menu**: "Configuración" (navigates to settings), "Reiniciar Steam" (placeholder, no real functionality removed)
+  - Collapsed mode: avatar only (centered, larger), name in tooltip
+  - Version text preserved below profile block
+  - External click handler closes dropdown
+  - Dynamic import avoided: `saveUserProfile` imported statically alongside `useUserProfile`
+- Imports: `useUserProfile`, `saveUserProfile`, `getAvatarPreset`, `ProfileModal`, `Ellipsis` icon
+
+### Part 3: Reuse in Console/TopBar (already done in previous session)
+- No changes needed — Console HUD, ProfileHeader, and TopBar already consume `useUserProfile()`
+
+### Part 4: Settings separation
+- `ProfileModal` is entirely separate from `ConsoleSettingsOverlay`
+- Console Settings remains for layout/visual/input options
+- Profile Modal remains for avatar/banner/name/status/accent
+
+### Key Files Changed
+- `src/features/profile/ProfileModal.tsx` — **new** — Discord-like profile editing modal
+- `src/components/layout/Sidebar.tsx` — replaced "Reiniciar Steam" + "Sistema listo" with profile block + "..." menu + ProfileModal integration
+
+### What happened to Reiniciar Steam / Sistema listo
+- "Sistema listo" block completely removed (the new profile block takes its space)
+- "Reiniciar Steam" moved into the "..." dropdown menu in the profile block — still accessible but less prominent
+- No real functionality removed (original "Reiniciar Steam" was a decorative button with no onClick handler)
+
+### Build
+- `tsc --noEmit` ✅ passes (0 errors)
+- `vite build` ✅ passes (0 errors, only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Steam-style Library GameDetails Hero Redesign
+
+### Problem
+The Library GameDetails hero used a rounded card (`rounded-2xl` + shadow + padding) for the foreground image, creating a floating-poster effect disconnected from the blurred backdrop. The Back to Library button used hardcoded white text on hover instead of the theme accent color.
+
+### Root Cause
+- **Floating card effect**: Foreground image wrapped in `rounded-2xl overflow-hidden shadow-[0_24px_80px_rgba(0,0,0,0.45)]` with `p-2 sm:p-3` padding — created a distinct card boundary with visible rounded corners and a heavy shadow, making the image look like a separate poster floating on top of the blurred backdrop
+- **Blur never visible**: `object-cover` on the foreground image filled 100% of the hero, completely hiding the blurred backdrop behind it
+- **No theme accent**: Back button hover used `hover:text-white` — never followed the user's selected theme accent
+
+### Changes
+
+#### Steam-style 3-layer hero structure
+- **Layer 1 — Blurred backdrop**: Full `absolute inset-0`, `object-cover`, `blur-2xl`, `scale-110`, `saturate-[1.5]`, dim overlay `bg-black/35`
+- **Layer 2 — Main image**: Centered horizontally, `w-[85%]` width, fills hero height (`h-full`), `object-cover`, no rounded corners, no shadow, no padding — image naturally fills 85% width, blurred backdrop visible on the 7.5% sides
+- **Layer 3 — Edge blending gradients**: Left/right `w-[clamp(40px,12vw,160px)]` gradients (`from-black/40 via-black/10 to-transparent`) blend main image edges into blurred backdrop. Bottom `h-[clamp(80px,15vh,180px)]` gradient ensures smooth transition into action row
+
+#### Hero dimensions
+- Updated from `min-h-[260px] max-h-[480px]` to `min-h-[340px] max-h-[520px]` — taller, more cinematic
+
+#### Back to Library — theme accent on hover
+- Idle: `bg-black/15 text-white/60`
+- Hover: `bg-(--color-accent)/85 text-white shadow-lg shadow-(--color-accent)/25` — uses `--color-accent` CSS variable, follows theme changes in Settings
+- Focus: `ring-2 ring-(--color-accent)/60`
+
+#### Loading skeleton
+- Hero skeleton dimensions: `min-h-[340px] max-h-[520px]` matching live hero
+
+#### Action row
+- Retained `bg-linear-to-b from-white/[0.03] to-transparent` gradient transition (no hard border)
+
+### Key File Changed
+- `src/components/library/LibraryGameDetails.tsx` — complete hero restructure
+
+### Build
+- `tsc --noEmit` ✅ passes (0 errors)
+- `vite build` ✅ passes (0 errors, only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — RAWG/IGDB Optional Providers + Priority Resolver Integration
+
+### Goal
+Add RAWG and IGDB as graceful optional media providers in the Console Mode priority-based resolver, with settings fields, extractor functions, and proper priority chain placement.
+
+### Part 1: Settings fields
+- `rawgApiKey`, `igdbClientId`, `igdbClientSecret` added to `AppSettings` type in `src/types/settings.ts`
+- Default empty-string values in `SettingsContext.tsx`
+- No Settings UI yet — fields are read-only until a provider configuration page is built
+
+### Part 2: Extractor functions (`resolveGameMediaByPriority.ts`)
+- `fromRawg(input, kind)` — returns background role only (RAWG background artwork is the most useful asset for this provider; no clean covers/logos/icons)
+- `fromIgdb(input, kind)` — returns cover and background roles (IGDB has clean cover art and artwork backgrounds)
+
+### Part 3: Priority chain placement
+- **Cover**: local → cached → SGDB → **IGDB** → metadata → imageUrl (RAWG skipped — no cover data)
+- **Landscape**: local → cached → SGDB → metadata → screenshots → **IGDB** (RAWG skipped — no landscape data)
+- **Background**: local → cached → SGDB → **RAWG** → **IGDB** → metadata → screenshots → landscape fallback
+- **Logo/Icon**: unchanged (RAWG/IGDB don't provide these)
+
+### Part 4: `MediaResolutionInputs` extended
+- Added `rawgData?: RawgArtworkData | null` field
+- Added `igdbData?: IgdbArtworkData | null` field
+- Both are optional — null values skip the extractor gracefully
+
+### Part 5: Build verification
+- `tsc --noEmit` ✅ passes (0 errors)
+- `vite build` ✅ passes (0 errors, only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+### Key Files Changed
+- `src/features/media/resolveGameMediaByPriority.ts` — `fromRawg()`, `fromIgdb()`, updated `MediaResolutionInputs`, wired into resolveCover/resolveLandscape/resolveBackground, called from `resolveMediaByPriority`
+- `src/types/settings.ts` — `rawgApiKey`, `igdbClientId`, `igdbClientSecret` fields
+- `src/context/SettingsContext.tsx` — default empty-string values
+
+### Relevant Files (created in prior sessions)
+- `src/features/media/mediaProviderClient.ts` — `fetchRawgArtworkDeduped()`, `fetchIgdbArtworkDeduped()` with per-appId dedup, 8s timeout, graceful empty return on missing credentials
+
+## Session — Delete src/features/media/ directory (consolidate into existing services)
+
+### Goal
+Remove duplicated media pipeline files under `src/features/media/` by merging their logic into existing services. All 5 files were moved, exports re-exported, and the empty directory deleted.
+
+### Results
+- `src/features/media/` **deleted** — no longer exists
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (1992 modules, only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+### File disposition
+
+| File | Merged into | Notes |
+|------|-------------|-------|
+| `resolveGameTrailerByPriority.ts` | `gameMetadataResolver.ts` | `resolveGameHeroTrailers` coalesced into existing `resolveGameHeroTrailers`; `resolveGameTrailerByPriority` kept as thin wrapper |
+| `resolveGameMediaByPriority.ts` | `gameCacheService.ts` | `resolveMediaByPriority` (sync), `from*` extractors, `resolve*` per-role, priority chain, `pickUrl`, `pickBackgroundUrl`, `isStorePageBackground`, types (`GameDetailsMediaOptions`, `MediaResolutionInputs`) all merged |
+| `resolveGameDetailsArtwork.ts` | `gameCacheService.ts` | `resolveGameDetailsArtwork` (sync-first) and `resolveGameDetailsArtworkAsync` (network-backed) merged |
+| `mediaProviderClient.ts` | `storeArtworkResolver.ts` | `fetchRawgArtworkDeduped` and `fetchIgdbArtworkDeduped` moved to existing artwork resolver service |
+| `materializeGameMedia.ts` | `gameCacheService.ts` | `materializeResolvedGameMedia`, `clearMaterializeInFlight`, `MaterializeResult` export added |
+
+### Key re-exports
+All merged functions are re-exported from their new homes, so consumers (`LibraryGameDetailPage.tsx`, `libraryGameResolver.ts`, `GameLauncherTile.tsx`, etc.) continue to work with updated import paths.
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+## Session — Console Quick Menu Parts 1-5, 8-10 Implementation
+
+### Goal
+Add controller connection/disconnection toasts (Part 1), top system bar with network/controller/jobs indicators (Part 2+3), time format settings (Part 4), startup settings page (Part 5), hover/focus visual polish (Part 8), system bar settings sub-page (Part 9), and input ownership enforcement (Part 10).
+
+### Parts implemented
+
+#### Part 1: Controller connection/disconnection toasts
+- `src/features/console/useControllerDetection.ts` — **new** — listens to `gamepadconnected`/`gamepaddisconnected` events, fires `showInfo` toasts with controller name, calls `setGamepadDetected()` for auto hint detection. One-shot dedup via `knownRef` Set.
+
+#### Part 2+3: Top System Bar indicators
+- `ConsoleTopHud.tsx` fully rewritten:
+  - **network indicator**: `useNetworkStatus()` hook returns "online"/"offline", shows `Wifi` (emerald) or `WifiOff` (rose) icon
+  - **controller indicator**: `ControllerIndicator` sub-component listens to gamepad events, shows `Gamepad2` emerald/ muted
+  - **jobs indicator**: polls `backgroundJobQueue.getStatus()` every 5s, shows `HardDrive` icon + badge count, hidden when 0
+  - **enhanced clock**: `useClock(format, showSeconds)` — uses `Intl.DateTimeFormat` with 12h/24h/system/hidden modes, 1s or 60s interval
+
+#### Part 4: Time format settings
+- `ConsoleSettings` type extended with: `timeFormat: "12h"|"24h"|"system"|"hidden"`, `showSeconds: boolean`
+- `CONSOLE_TIME_FORMAT_OPTIONS` in ConsoleSettingsPanelV2
+- `TIME_FORMAT_DEFAULTS` + `resetConsoleTimeFormatSettings()` export from consoleSettings.ts
+- `SETTING_ROWS_TIME` with time format segmented row, show seconds toggle, show clock toggle, reset button
+
+#### Part 5: Startup settings page
+- `ConsoleSettings` type extended with: `autostart: boolean`, `launchMode: "console"|"desktop"`, `windowMode: "fullscreen"|"maximized"|"windowed"`
+- `LAUNCH_MODE_OPTIONS` / `WINDOW_MODE_OPTIONS` in ConsoleSettingsPanelV2
+- `STARTUP_DEFAULTS` + `resetConsoleStartupSettings()` export
+- `SETTING_ROWS_STARTUP` with launch mode segmented, window mode segmented, autostart toggle, reset button
+
+#### Part 8+9: System bar settings sub-page
+- `ConsoleSettings` type extended with: `showNetworkIndicator`, `showControllerIndicator`, `showJobIndicator`
+- `SYSTEM_BAR_DEFAULTS` + `resetConsoleSystemBarSettings()` export
+- `SETTING_ROWS_SYSTEM_BAR` with toggles for profile, clock, network, controller, jobs indicators, reset button
+- Both "Time & Clock" and "System Bar" added to `SettingsCategoryGrid` and `SETTINGS_KEYS`
+
+#### Part 10: Input ownership enforcement (already correct)
+- Page-level handler returns early when `profileOpen` is true; settings panel's `handleGlobalKeyDown` uses `stopPropagation`
+- `SETTINGS_KEYS` updated to include `"time"`, `"startup"`, `"system-bar"` for gamepad navigation
+
+### Key Files Changed/Created
+- `src/features/console/consoleSettings.ts` — extended type (8 fields), time/startup/system-bar defaults + reset functions
+- `src/features/console/useControllerDetection.ts` — **new**
+- `src/features/console/useNetworkStatus.ts` — **new**
+- `src/features/console/ConsoleTopHud.tsx` — full rewrite with indicators + enhanced clock
+- `src/features/console/ConsoleModePage.tsx` — `useControllerDetection` wired
+- `src/features/console/ConsoleSettingsPanelV2.tsx` — 3 new sub-pages (time, startup, system-bar), 3 setting row groups, expanded SETTINGS_KEYS
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors, no Rust changes)
+
+## Session — Media provider priority: Steam original assets before SteamGridDB for Steam games
+
+### Problem
+For Steam games, media materialization depended too heavily on SteamGridDB, which was checked BEFORE Steam CDN/metadata in all role resolvers. This caused wrong assets to be downloaded (screenshots, storepagebackground) instead of correct role-mapped Steam assets (Hero→background, Header→landscape, Capsule→cover, Logo→logo).
+
+### Root cause
+- **`fromSteamCdn` only handled background and logo** — no cover/landscape/icon CDN fallbacks existed
+- **SGDB before Steam in all chains** — layout was: local → cached → SGDB → IGDB/RAWG → Steam CDN → metadata → screenshots
+- **No `logSteamRoleMap` diagnostic** — no visibility into which Steam metadata fields were available
+
+### Parts implemented
+
+#### Part 1: Steam metadata fields identified
+- `SteamAppMetadata` has: `header_image`, `capsule_image`, `capsule_image_v5`, `library_hero_image`, `hero_image`, `logo_image`, `library_logo_image`, `background_image`, `wide_cover_image`, `library_header_image`
+- "Original Steam Assets" panel is not a LumaForge component — it's the Steam Store metadata display. All fields come from `appdetails` API via `gameMetadataResolver.ts`
+- `buildSteamImageUrl` in `storeImageCache.ts` already supported capsule/header/hero patterns
+- No icon field exists in Steam metadata — icon requires Steam Community API hash
+
+#### Part 2: `fromSteamCdn` expanded to cover all 5 roles
+- **Cover**: `buildSteamCdnUrl(appId, "capsule")` → `capsule_616x353.jpg` (skipped when metadata has `capsule_image_v5` or `capsule_image`)
+- **Landscape**: `buildSteamCdnUrl(appId, "header")` → `header.jpg` (skipped when metadata has `header_image` or `library_header_image`)
+- **Background**: unchanged — `library_hero.jpg` (skipped when metadata has `library_hero_image` or `hero_image`)
+- **Logo**: unchanged — `logo.png` (skipped when metadata has `logo_image` or `library_logo_image`)
+- **Icon**: returns `undefined` (no CDN icon available)
+- Added `"capsule"` to `buildSteamCdnUrl` kind union
+- Added `logSteamRoleMap(appId, meta)` helper for `[MEDIA_ROLE_MAP]` diagnostics
+- Added `logMediaSelect(appId, role, source, url)` helper for `[MEDIA_SELECT]` per-role diagnostics
+
+#### Part 3: Priority chain reordered (Steam before SGDB)
+
+**Cover:** local → cached → **Steam CDN capsule** → **Steam metadata** → SGDB → IGDB → imageUrl
+**Landscape:** local → cached → **Steam CDN header** → **Steam metadata** → screenshots → SGDB → IGDB
+**Background:** local → cached → **Steam CDN hero** → **Steam metadata** → screenshots → SGDB → RAWG → IGDB → landscapeFallback
+**Logo:** local → cached → **Steam CDN logo** → **Steam metadata** → SGDB
+**Icon:** local → cached → Steam CDN (none) → SGDB
+
+#### Part 4: No new setting
+- Default behavior is Steam-first for all Steam games
+- SGDB, RAWG, IGDB remain as fallbacks with their existing `use*` setting controls
+
+#### Part 5: Stale local media (from prior session, verified)
+- `refreshGameDetailsArtwork` verifies local paths via `resolveGameMediaPaths` (Rust disk check) before resolution
+- Stale paths (file missing on disk but present in appinfo) are filtered out, `[MEDIA_STALE]` diagnostic logged
+- Downstream re-resolution picks correct Steam CDN/metadata fallback
+
+#### Part 6: Storepagebackground — only last fallback
+- `isStorePageBackground()` + `pickBackgroundUrl()` already filter storepagebackground from `fromMetadata` background chain
+- With Steam CDN hero at position 3 (before metadata), `library_hero.jpg` wins even when metadata only has storepagebackground
+- Matches user spec: "use storepagebackground only as last ambient fallback"
+
+#### Part 7: Screenshots — fallback only
+- Screenshots at position 5 for background (after CDN + metadata)
+- Screenshots at position 5 for landscape (after CDN + metadata)
+- Screenshots never used for cover, logo, or icon
+- Matches user spec: "Do not use screenshots for cover/logo/icon"
+
+#### Part 8: Validation (manual, pending)
+- User must delete incorrect files for appId=4717430 and re-open GameDetails to verify
+
+#### Part 9: Debug logs behind `DEBUG_MEDIA_ROLE_MAP = false`
+- `[MEDIA_ROLE_MAP]` — per-appId log of Steam metadata fields (header/capsule/hero/logo)
+- `[MEDIA_SELECT]` — per-role resolution log with label (steam-cdn-hero/capsule/header/logo or source name)
+- `[MEDIA_STALE]` — appinfo path filtered because file missing on disk
+
+#### Part 10: Build validation
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (no Rust changes)
+
+### Key Files Changed
+- `src/services/gameCacheService.ts` — `buildSteamCdnUrl` expanded with "capsule" kind, `fromSteamCdn` expanded with cover/landscape (returns CDN capsule/header), `fromSteamCdn` icon returns undefined, `logSteamRoleMap()` and `logMediaSelect()` helpers, `DEBUG_MEDIA_ROLE_MAP` constant, `resolveCover`/`resolveLandscape`/`resolveBackground`/`resolveLogo`/`resolveIcon` all reordered (Steam CDN + metadata before SGDB), `appId` param added to `resolveCover`/`resolveLandscape`/`resolveIcon`, `meta` param added to `resolveIcon`, call sites in `resolveMediaByPriority` updated, `[MEDIA_STALE]` per-role log in stale detection block
+
+## Session — Refresh Artwork Execution Path + Provider Status Reconciliation
+
+### Objective 1: Fix Refresh Artwork execution path
+Parts 1–8 of the media/artwork fix for the `refreshGameDetailsArtwork`/`detectAndQueueMissingMedia`/`executeRepairGameMedia` pipeline.
+
+### Problem
+- `loadGameAppInfoWithMediaFallback` check fixed local-source disk verification correctly, but `refreshGameDetailsArtwork` and `detectAndQueueMissingMedia` did NOT
+- `refreshGameDetailsArtwork` checked `resolveMediaPaths` (TS-side, returns appinfo paths, not actual files on disk) instead of `resolveGameMediaPaths` (Rust, checks actual disk)
+- `resolveMediaByPriority` candidate loop had `continue` at line ~2772 that skipped fallback candidates after the first pick — `findFirstUrl` never reached lower-priority sources
+- `executeRepairGameMedia` did NOT go through Steam metadata resolution at all — only checked `mediaSources` (user-configured URLs)
+- `performDownload` in `mediaDownloadQueue.ts` wrote stale relative paths to appinfo manifest even for fresh refresh-artwork downloads
+
+### Parts implemented
+
+#### Part 1: Local-source disk verification
+- `refreshGameDetailsArtwork` checks `resolveGameMediaPaths` (Rust disk check) before resolution. Stale paths filtered out, `[MEDIA_STALE]` per-role diagnostic logged.
+- Downstream re-resolution picks correct Steam CDN/metadata fallback.
+
+#### Parts 4-5: Candidate fallback loop fix
+- `resolveMediaByPriority` candidate loop restructured — `findFirstUrl` removed, replaced with `pickFirstUrl` that continues to next candidate when `!url || url === "undefined"`. Fallback candidates now reached.
+- `[CANDIDATE_CONTINUE]` / `[FALLBACK_PICK]` diagnostic logs.
+
+#### Part 6: Manifest write guard
+- `performDownload` in `mediaDownloadQueue.ts` — when `_freshRefreshAppIds.has(appId)`, nulls non-current-role paths in the appinfo update to prevent stale path overwrites.
+- `[MEDIA][MANIFEST_GUARD]` diagnostic log.
+
+#### Part 7: `detectAndQueueMissingMedia` refactored
+- Uses `resolveGameDetailsArtwork` (Steam metadata + full priority chain) instead of old `resolveGameMedia`.
+
+#### Part 8: `executeRepairGameMedia` refactored
+- Resolves Steam metadata via `resolveGameMetadata` before calling `resolveGameDetailsArtwork` for each role. `mediaSources` used only as last fallback.
+
+#### Background candidate order fix
+- storepagebackground deferred to last background candidate (after Steam CDN hero → metadata → screenshots → SGDB → RAWG → IGDB → landscape fallback).
+- `[ARTWORK_BACKGROUND_SKIP]` / `[ARTWORK_BACKGROUND_CANDIDATES]` / `[ARTWORK_BACKGROUND_SELECTED]` diag logs.
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
+## Session — Console Mode settings-driven phantom widgets + sub-panel keyboard fix
+
+### Problem
+Console Grid/Spotlight layouts had hardcoded values for left padding, card width, scroll behavior, and scroll-snap that should have been driven by `ConsoleSettings` fields (`leftPadding`, `spotlightCardWidth`, `smoothScrolling`, `horizontalScrolling`, `bottomBarPosition`, `backgroundTexture`). Sub-panel keyboard navigation had a window handler conflict where ArrowLeft/ArrowRight fired after sub-panel handlers, overwriting selection.
+
+### Part 1: Analysis
+- `leftPadding`: hardcoded `clamp(64px, 5vw, 120px)` in GridLayout scroll container
+- `spotlightCardWidth`: hardcoded `w-[clamp(180px,16vw,220px)]`/`w-[clamp(280px,26vw,360px)]` for poster/landscape in SwitchSpotlightLayout
+- `backgroundTexture`: defined in type/defaults but never applied as CSS class
+- `smoothScrolling`/`horizontalScrolling`: never read by either layout
+- `bottomBarPosition`: never read by ConsoleCategoryBar
+- Tools/Help sub-panels accepted no shared props, had no keyboard navigation
+- Panel `handleKeyDown` processed ArrowLeft/ArrowRight for sub-panel navigation, but window `keydown` handler ALSO processed ArrowLeft/ArrowRight for page-level navigation — sub-panel's action ran first, then window handler overwrote the selection
+
+### Part 2: Panel keyboard fix — remove Left/Right from window handler
+- Removed ArrowLeft/ArrowRight case from window `keydown` listener's sub-page section in `ConsoleSettingsPanelV2.tsx`
+- Added ArrowLeft/ArrowRight to Layout, Visuals, Media, and Input sub-panel `handleKeyDown` functions for intra-panel navigation
+- Added ArrowLeft to `SettingsCategoryGrid` as back-navigation
+- All sub-panel handlers now process Left/Right without window handler overwrite
+
+### Part 3: Background texture CSS
+- `App.css` — added 4 texture classes: `[data-console-texture="none"]` (no background), `grain-soft` (repeating SVG noise pattern), `vignette` (radial gradient dark edges), `blur` (backdrop-filter blur with brightness)
+- `ConsoleModePage.tsx` — reads `consoleSettings.backgroundTexture` and applies `data-console-texture` attribute on root wrapper
+
+### Part 4: Widget settings integration
+- **GridLayout**: `paddingLeft` changed from `clamp(64px,5vw,120px)` to `${settings.leftPadding}px`; `scrollBy` behavior uses `settings.smoothScrolling`; passes `bottomBarPosition` to ConsoleCategoryBar
+- **SwitchSpotlightLayout**: card width uses `settings.spotlightCardWidth` (landscape), `settings.spotlightCardWidth * 0.625` (poster); `scroll-smooth` and `snap-x` classes conditionally applied from `settings.smoothScrolling`/`settings.horizontalScrolling`; `scrollIntoView` behavior uses `settings.smoothScrolling`
+- **ConsoleCategoryBar**: accepts `bottomBarPosition` prop; `justify-start` for left, `justify-end` with reversed DOM order for right, `justify-between` with spacer for center
+
+### Part 6+7: Help/Tools sub-pages improvements
+- `ConsoleSettingsPanelV2.tsx` — both Tools and Help sub-panels now accept `navigateTo`, `onOpenSettings`, `onBack` shared props
+- Tools: keyboard navigation to switch tabs (Keyboard/Media), Esc back to grid, real tab content
+- Help: keyboard navigation, Esc back to grid
+
+### Key Files Changed
+- `src/App.css` — grain-soft, vignette, blur texture classes
+- `src/features/console/ConsoleModePage.tsx` — `data-console-texture` attribute
+- `src/features/console/ConsoleSettingsPanelV2.tsx` — Left/Right sub-panel navigation, removed window handler Left/Right conflict, Tools/Help shared props
+- `src/features/console/ConsoleGridLayout.tsx` — settings-driven leftPadding, smoothScrolling, bottomBarPosition pass
+- `src/features/console/ConsoleSwitchSpotlightLayout.tsx` — settings-driven spotlightCardWidth, smoothScrolling, horizontalScrolling
+- `src/features/console/ConsoleCategoryBar.tsx` — bottomBarPosition alignment
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
+### Objective 2: Fix provider status / Check Update flow
+
+### Problem
+`LibraryGame` fields (`steamInstalled`, `isPlayable`, `isInstallable`, `source`) are set once during snapshot hydration (`snapshotGameToLibraryGame` in `LibraryGamesContext.tsx` line ~428) and never refreshed. `getLauncherGamePrimaryAction` reads these stale fields directly — no async provider status verification. Games loaded as `source=lua`/`steamInstalled=false`/`isPlayable=false`/`isInstallable=false` show `primaryAction=install` even when the game is actually installed via Steam. No post-hydration Steam install status reconciliation ran.
+
+### Root Cause
+- `snapshotGameToLibraryGame` maps `sg.installed` → `steamInstalled`, `sg.playable` → `isPlayable`, `sg.source` → `source`. These are set once and never rechecked.
+- No post-snapshot provider status reconciliation step exists in `LibraryGamesContext.load()`.
+- `scanSteamInstalledGames` Rust command (single invoke, <50ms for 80+ games) exists but is only used by uninstall detection (30s poll with 5s initial delay) and full library resolver — never as a lightweight post-hydration check.
+- `providerStatusStore`/`providerStatusService` track update-check status (update-available/up-to-date) but NOT the fundamental installed/playable/installable `LibraryGame` fields.
+
+### Fixes
+
+#### Part 2: Post-snapshot Steam install reconciliation
+- Created `src/services/providerStatusReconciliation.ts`:
+  - `schedulePostSnapshotSteamReconciliation(games, updateGame, options)` — runs 2s after games are hydrated. Calls `scanSteamInstalledGames({ steamPath })`, diffs against current games, calls `updateGame()` for games with mismatched `steamInstalled`/`isPlayable`/`isInstallable`/`source`.
+  - `refreshSingleGameSteamStatus(appId, options)` — per-game check with 5min TTL dedup. Returns `{ steamInstalled } | null`. Used by `checkGameProviderStatus` in context.
+  - `resetProviderStatusReconciliation()` — clears state for testing.
+  - `[PROVIDER][RECONCILE]` / `[PROVIDER][RECONCILE_SKIP]` / `[PROVIDER][RECONCILE_DONE]` / `[PROVIDER][RECONCILE_FAILED]` / `[PROVIDER][REFRESH]` / `[PROVIDER][REFRESH_SKIP]` / `[PROVIDER][REFRESH_FAILED]` diagnostic logs.
+
+#### Part 4: `checkGameProviderStatus` on context
+- `LibraryGamesContextValue` exposes `checkGameProviderStatus(appId, force?)` — calls `refreshSingleGameSteamStatus`, then `updateGame()` with corrected fields when status changed.
+- Called from `LibraryGamesContext.load()` right after `applyGamesSafely` (before background scan), using `settings.steamRoot`.
+- Module-level guard prevents duplicate scheduling.
+
+### Key Files Changed
+- `src/services/providerStatusReconciliation.ts` — **new** — post-snapshot Steam reconciliation + per-game refresh
+- `src/context/LibraryGamesContext.tsx` — import + call reconciliation after games load; `checkGameProviderStatus` function + context value
+
+## Session — Console Trailers: Remote-only from metadata.movies[], remove all local file/cache lookups
+
+### Problem
+Console trailer preview tried to load local files from `media/trailers/` directory via `file:///` URLs, which the WebView blocked. The prior approach of converting local paths through `localPathToUrl` → `http://asset.localhost/...` added complexity with local cache download, stale file handling, and fallback logic that wasn't needed. The correct design is remote-only: use Steam movie links from `metadata.movies[]` directly, never touch local trailer files.
+
+### Decision
+- Console trailer videos use remote Steam movie links from `metadata.movies[]` only
+- No download/cache of full trailer videos
+- No search for local MP4/WebM trailer files
+- No embedded `about_the_game`/`detailed_description` videos
+- No `file://` local trailer paths
+
+### Part 1 — `consoleTrailerData.ts`: Remove all cache code
+- Removed `cacheTrailerFile` import from `tauri.ts`
+- Removed `CachedTrailerResult`, `TRAILER_VIDEO_CACHE_ENABLED`, `_cachedTrailerKeys`, `DEBUG_CACHE`
+- Removed `extractExt()`, `cacheTrailerForMovie()`, `cacheBestTrailer()`, `clearCachedTrailerKeys()`
+- `extractTrailerData` now purely derives from `metadata.movies[]` — no API calls, no side effects
+
+### Part 2 — `ConsoleGameDetails.tsx`: Remove cache wiring
+- Removed `cacheBestTrailer` import and call
+- Removed `CachedTrailerResult` type import
+- Removed `cachedTrailer` state and `setCachedTrailer`
+- Removed cache effect block in `useEffect`
+- Removed `localVideoPath`/`localThumbnailPath` from `ConsoleSelectedPreview` JSX props
+
+### Part 3 — `ConsoleSelectedPreview.tsx`: Remote-only, no local paths
+- Removed `localPathToUrl` import
+- Removed `localVideoPath`/`localThumbnailPath` props
+- Removed `localMediaFailed` state, `safeLocalThumbnailUrl`/`safeLocalVideoUrl` useMemos
+- Removed `useEffect` for resetting error states on local paths
+- Image priority (simplified): `trailerData.thumbnail` → `movies[0].thumbnail` → `screenshots[0]` → landscape/background fallback
+- Video priority (simplified): `trailerData.mp4Url` → `trailerData.webmUrl` → null (HLS/DASH → disabled overlay)
+- `handleImgError` simplified: no local vs remote detection, always sets `imgError`
+- `<img>` key retains `${appId}-${displaySrc}` pattern for fresh mount on src change
+
+### Cuphead (appId=268910) expected behavior
+- Trailer thumbnail: remote `movie.thumbnail` URL (e.g. `https://shared.akamai.steamstatic.com/...`)
+- `hasDirectVideo=false`, `hasStreamFallback=true` (HLS/DASH only)
+- Play overlay: disabled `CircleSlash` with "Stream preview unavailable" tooltip
+- No `file:///` loading attempts
+- No `media/trailers/*` lookup
+
+### Key Files Changed
+- `src/features/console/consoleTrailerData.ts` — stripped all cache/download code (6 functions, 3 constants removed)
+- `src/features/console/ConsoleGameDetails.tsx` — removed `cacheBestTrailer`, `CachedTrailerResult`, `cachedTrailer` state, cache effect, local path props
+- `src/features/console/ConsoleSelectedPreview.tsx` — remote-only image/video priority, removed all local path handling, simplified error handling
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Console Details: video controls, screenshots strip, reviews card, layout rebalance
+
+### Goal
+Replace the disabled HLS/DASH preview overlay with full video playback, add video controls (play/pause, seek ±10s, progress bar, time display, mute/unmute, fullscreen-ready), a screenshot strip for browsing, a reviews card with Steam review score color mapping, and rebalance the right-column layout into a two-card achievements/reviews row with more compact achievement display.
+
+### Work completed
+
+#### Part 2: ConsoleSelectedPreview video controls
+- Added `screenshotOverrideUrl` prop for screenshot browsing override
+- Added full controls bar: play/pause, seek back/forward 10s, progress bar, time display (`formatTime`), mute/unmute toggle, fullscreen-ready button
+- Controls auto-hide after 3s when playing, show on hover/mouse-move, always visible when paused
+- Native video event handlers (`onPlay`, `onPause`, `onTimeUpdate`, `onLoadedMetadata`, `onEnded`, `onError`) keep state synced
+- `formatTime()` helper for `mm:ss` display
+- All added state/props are backward-compatible — thumbnail mode unchanged
+
+#### Part 4: Screenshots strip
+- Horizontal scrollable strip of small thumbnail buttons below the trailer preview
+- Thumbnails derived from `SteamAppMetadata.screenshots[]` full URLs via `_thumb.jpg` suffix (same pattern as `storeMediaService.ts`)
+- Click selects screenshot → sets `screenshotOverrideUrl` on `ConsoleSelectedPreview`
+- Click again deselects (back to trailer)
+- Selected thumbnail shows accent ring with `X` overlay
+- Clears selection on game change via effect
+
+#### Part 5: Reviews card
+- Fetches review summary via `resolveGameReviewSummaries([Number(game.appId)])` — uses existing in-memory/disk cache, no extra API call if already cached
+- Color-coded card background/text/border based on `review_score_desc` (9 colors: Overwhelmingly Positive → emerald, Very Positive → green, Mixed → amber, Negative → red, etc.)
+- Shows: review_score_desc, positive_percent, total_reviews count
+- Loading state while fetching ("Loading review data…")
+- One-shot fetch guard via `reviewFetchRef` prevents duplicate calls
+
+#### Part 6: Layout rebalance
+- Right column restructured: Preview → Screenshots Strip → Genres → **Row(Achievements | Reviews)** → Hints
+- Achievements and Reviews are now side-by-side in a `grid-cols-2` row, each taking ~50% width
+- Left column (35%) unchanged: Identity → Actions → Stats → Description
+
+#### Part 7: Achievements polish
+- Achievements card made more compact: smaller icons (h-3.5/h-3), tighter padding (px-3.5 py-3), thinner progress bar (h-1.5), mini rows show at most 2 achievements (was 3), smaller text (text-[10px]/[11px])
+- Perfected row compacted with smaller icons and reduced padding
+
+### Key Files Changed
+- `src/features/console/ConsoleSelectedPreview.tsx` — Part 2: added `screenshotOverrideUrl` prop, full video controls bar, `formatTime()` helper, controls auto-hide timer, native video event handlers
+- `src/features/console/ConsoleGameDetails.tsx` — Parts 4-7: screenshots strip state/derivation, review fetch via `resolveGameReviewSummaries`, `SteamReviewSummary` type import, review color map, `grid-cols-2` achievements/reviews layout row, compact achievements card
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Console Mode Focus Zones + Media Carousel Redesign
+
+### Goal
+Replace the flat two-column ConsoleGameDetails layout with a focus-zone model (left panel / media carousel / info cards / action hints) with keyboard navigation and console-style focus visuals. Rewrite ConsoleMediaGallery as a pure carousel, removing all video player code.
+
+### Part 1: ConsoleMediaGallery — pure carousel
+- `src/features/console/ConsoleMediaGallery.tsx` fully rewritten
+- Horizontal scroll with `scroll-snap-x`, thumbnail grid, focus ring on selected item
+- Trailers get play icon overlay (`Play` circle) with `bg-black/60` badge; screenshots get index badges
+- Click handler delegates to parent via `onSelectMediaIndex(index)`
+- No video player, no preview, no autoplay logic
+
+### Part 2: ConsoleGameDetails — focus zone restructure
+- **Focus zones**: Left panel (Identity + Actions + Stats + Description + Genres) → Media carousel → Info cards (Achievements + Reviews) → Action hints
+- **Keyboard navigation**: ArrowUp/ArrowDown/ArrowLeft/ArrowRight move focus between zones, Enter selects media, Escape blurs
+- **Console-style focus**: `ring-2 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/25` with `transition-all duration-150` on focused element
+- **Media carousel**: Trailers sorted by priority (MP4 → WebM → HLS) via `useMemo`, then screenshots. Trailers get play icon, screenshots get index badges
+- **Video state** (`selectedMediaIndex`, `isPlayingMuted`, `showFullPlayer`, `isVideoPlaying`) lifted to ConsoleGameDetails and passed down to both Gallery and Preview
+- **Left panel**: `overflow-y-auto` with `fade-edges` mask (top/bottom gradient `from-transparent via-background via-80% to-transparent`)
+- **Action hints** row in `ConsoleCategoryBar` stub area, dynamically reflects current focus zone actions
+
+### Part 3: ConsoleSelectedPreview — effect-based autoplay
+- `useEffect` watches `(mediaType, selectedIndex, appId)` — autoplay fires only when these change, not on every render
+- `<video key={\`${appId}-${mediaType}-${selectedIndex}\`}>` remounts on media type / index change, ensuring fresh video element
+- Fullscreen button wired to `requestFullscreen()` on preview container ref
+- A/V indicator badge shows resolution + framerate for trailers
+
+### Key Files Changed
+- `src/features/console/ConsoleMediaGallery.tsx` — full rewrite as pure carousel (removed all video player code)
+- `src/features/console/ConsoleGameDetails.tsx` — focus zones, keyboard nav, media carousel, video state lifted, left panel fade edges, action hints
+- `src/features/console/ConsolePreview.tsx` — `key` remount + effect-based autoplay
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Cross-game logo contamination fix + GameEditDialog/ImageSearchDialog polish
+
+### Problem
+**Cross-game logo contamination**: When user switches games rapidly (e.g. Cuphead → Cricket), a stale `setFallbackBundle` callback from the previous game's async `handleRefreshArtwork` could fire while the new game is active. The materialize effect at `LibraryGameDetailPage.tsx:467` called `materializeResolvedGameMedia(appId, fallbackBundle, "steam")` where `appId` = current game (Cricket) and `fallbackBundle` = previous game's bundle (Cuphead). This enqueued Cuphead's logo URL for download into Cricket's media directory — the file was saved to `games/steam/4717430/media/logo.png` instead of `games/steam/268910/media/logo.png`.
+
+**Root cause**: `fallbackBundle.appId` was set by `resolveMediaByPriority` at bundle creation time, but no code verified bundle ownership before materialization.
+
+### Fix
+
+#### Part 1: Web Image Search browser fix
+- `GameImageSearchDialog.tsx` — replaced `window.open(url, "_blank")` (blocked in Tauri WebView) with `openExternalUrl` from `src/services/externalLinks.ts`
+- Added `[WEB_IMAGE_SEARCH][OPEN_EXTERNAL]` diagnostic log
+- Added instruction text below browser buttons: "Open image search in your browser…"
+
+#### Part 2: Set URL download fix
+- `GameEditDialog.tsx` `handleUrlDownload` — fixed Tauri invoke to include `target: ""` (required String) and `forceRefresh: true` (required bool) params
+- Added `[GAME_EDIT_URL]` diagnostic logs behind `DEBUG_MEDIA_EDIT` flag
+
+#### Part 3: Open Media Folder button
+- `GameEditDialog.tsx` — added `handleOpenMediaFolder` callback using `openGameMediaFolder(appId)` (Rust command → `get_media_dir` → `open::that`)
+- Footer restructured to `justify-between` with left-aligned `FolderOpen` icon button
+- Try/catch shows "Could not open media folder" toast on failure
+
+#### Part 4: Context menu access to GameEditDialog
+- `GameLauncherTile.tsx` — added "Edit Game Details" (initialTab="general") and "Manage Artwork" (initialTab="media") inside the existing Manage submenu, wired to existing `GameEditDialog`
+
+#### Part 5: Stale-bundle appId guards (3 layers)
+- **Layer 1 — Materialize effect** (`LibraryGameDetailPage.tsx:470`): checks `fallbackBundle.appId !== appId` before materializing. Logs `[MEDIA][MATERIALIZE_GUARD]` with appId/bundleAppId.
+- **Layer 2 — Media queue subscription** (`LibraryGameDetailPage.tsx:494`): checks `bundle.appId !== appId` from `_fallbackBundleRef.current` before re-materializing on download success.
+- **Layer 3 — Defensive guard in materializeResolvedGameMedia** (`gameCacheService.ts:3075`): checks `bundle.appId !== appId` and returns early with `[MEDIA_MATERIALIZE][GUARD]` log.
+
+### Scenario coverage
+- **A — Normal single game flow**: Bundle.appId === current appId, all 3 layers pass, materialization proceeds normally.
+- **B — Rapid game switch during Refresh**: Old `setFallbackBundle(cupheadBundle)` fires while Cricket is active. Layer 1 detects mismatch, skips materialization. No Cuphead URLs enqueued for Cricket.
+- **C — Media queue callback race**: Cuphead's download completes while on Cricket. Layer 2 checks ref bundle's appId vs current appId, skips re-materialization.
+- **D — Third-party caller**: Any other caller of `materializeResolvedGameMedia` with mismatched appId/bundle is caught by Layer 3 defensive guard.
+
+### Key Files Changed
+- `src/components/games/GameImageSearchDialog.tsx` — `openExternalUrl`, instruction text, diagnostics
+- `src/components/games/GameEditDialog.tsx` — Set URL invoke fix, diagnostics, Open Media Folder button
+- `src/components/games/GameLauncherTile.tsx` — Edit Game Details / Manage Artwork context menu items
+- `src/pages/LibraryGameDetailPage.tsx` — Layers 1+2 stale-bundle guards
+- `src/services/gameCacheService.ts` — Layer 3 defensive guard in `materializeResolvedGameMedia`
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+## Session — Console Home/Dock UX: Continue section, dock focus, rich empty states, label animation
+
+### Goal
+Enhance Console Mode home screen with real session-priority Continue section, dock focus navigation, rich per-section empty states, and animated dock label reveal.
+
+### Part 1: Continue section with active session priority
+- `ConsoleModePage.tsx` — `continuePlaying` now reads `GameSessionContext.sessions` + `getPlaytimeEntryByAppId` for active-session priority and accurate playtime.
+- Active sessions sorted first, then remaining by `lastPlayedAt` from playtime store, capped at 15.
+- `session` hook + `continuePlaying` moved before `rails` useMemo to fix temporal dead zone (TDZ).
+
+### Part 2: Dock focus navigation
+- `dockFocusedIndex` state (-1 unfocused, 0-4 when dock item focused).
+- `dockFocusedIndexRef` for stable ref inside keyboard handler (avoids re-registration).
+- ArrowDown from last rail (index 4) focuses dock. Left/Right wraps dock items. Up/Enter focuses last rail. Escape unfocuses.
+- `focusRail` added to keyboard handler dependency array.
+
+### Part 3: Rich empty states
+- `ConsoleSwitchSpotlightLayout.tsx` — `RichEmptyState` component with per-section icon (Play/HardDrive/Code/Heart/LayoutGrid), gradient color circle, muted description message.
+- Each of the 6 sections (Continue/Installed/Lua/Favorites/All) uses RichEmptyState instead of simple text.
+
+### Part 4: Dock label animation
+- `App.css` — `@keyframes dock-label-in` (opacity 0→1, max-width 0→100px, margin-left -4px→6px).
+- `ConsoleSpotlightDock.tsx` — focused dock item expands width to show full section label via CSS animation.
+- Focus ring (`ring-2 ring-white/50`) on focused dock item.
+
+### Part 5: Bottom hints polish
+- `ConsoleSwitchSpotlightLayout.tsx` — bottom hints change to "Arrows · Enter select · Esc unfocus" when dock focused, else "Keyboard · Arrows · Enter".
+- `ConsoleGridLayout.tsx` — `dockFocusedIndex?: number` added to Props type.
+
+### Key Files Changed
+- `src/features/console/ConsoleModePage.tsx` — session + continuePlaying reordering, dockFocusedIndex state/ref, dock keyboard nav, sharedProps spread.
+- `src/features/console/ConsoleSwitchSpotlightLayout.tsx` — RichEmptyState component, dockFocusedIndex prop, bottom hints context text.
+- `src/features/console/ConsoleSpotlightDock.tsx` — focusedIndex prop, focus ring, label animation, wider focus width.
+- `src/features/console/ConsoleGridLayout.tsx` — dockFocusedIndex added to Props.
+- `src/App.css` — @keyframes dock-label-in animation.
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
+## Session — Console Quick Menu Tools + Power Actions
+
+### Problem
+The Quick Menu (Console Mode) Tools sub-panel was a placeholder with "coming soon" entries. Power actions (Shutdown/Suspend/Hibernate/Restart) were also "coming soon" with no real implementation.
+
+### Part 1: Rust power commands
+- `src-tauri/src/commands/power.rs` — **new** — `power_shutdown`, `power_suspend`, `power_hibernate`, `power_restart` commands using `std::process::Command` calling Windows `shutdown.exe`
+- `src-tauri/src/lib.rs` — registered all 4 power commands
+- `src/services/tauri.ts` — added TS bindings
+
+### Part 2: Rust utility commands
+- `src-tauri/src/commands/tools.rs` — **new** — `open_app_data` (opens `<appData>/games/steam/` in Explorer), `open_logs` (opens log directory), `clear_temp_cache` (removes `<appData>/cache/temp/`), `get_system_info` (returns CPU/OS/memory/uptime/totalGames info)
+- All commands registered in `lib.rs`
+- `src/services/tauri.ts` — added TS bindings
+
+### Part 3: ConsoleToolsSubPanel — real entries
+- `ConsoleToolsSubPanel.tsx` — 5 real entries instead of placeholders:
+  - **Open App Data Folder** — calls `openAppData()` (Rust → `open::that`)
+  - **Open Logs Folder** — calls `openLogs()` (Rust → log dir)
+  - **Clear Temp Cache** — calls `clearTempCache()` + toast result
+  - **System Information** — calls `getSystemInfo()` + displays modal with CPU/OS/RAM/Uptime/Total Games
+  - **Run Diagnostics** — calls existing `window.__runDiagnostics?.()` placeholder
+
+### Part 4: MAIN_OPTIONS — power actions wired
+- `MAIN_OPTIONS` entries changed from `action: "coming-soon"` to `action: "power"` for Shutdown, Suspend, Hibernate, Restart
+- Three dispatch points wired with `case "power":`:
+  1. `handleMainKeyDown` — React keyboard handler
+  2. Window keydown handler (`Enter` on focused option)
+  3. Main option click handler
+- All dispatch points call `executePowerAction(key, handleClose)` which shows confirm dialog, then calls the corresponding Rust command
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+## Session — Console Quick Menu: Language page, ConfirmModal, keyboard nav for tools/help
+
+### Objective
+- Add App Language placeholder sub-page to Console Settings, replace `window.confirm` with existing `ConfirmModal` component for power actions, add keyboard/gamepad navigation (ArrowUp/Down/Enter) for Tools and Help sub-pages, expand Startup settings with new boolean fields, and remove conflicting local keyboard handlers.
+
+### Changes
+- `ConsoleSettings` type in `consoleSettings.ts` extended: `launchMode` now includes `"last-used"`; `windowMode` includes `"minimized"` and `"tray"`; added `startMaximized`, `startInTray`, `closeToTray`, `showDashboard`, `disableUpdate` (all boolean).
+- `STARTUP_DEFAULTS` updated with new fields; `LAUNCH_MODE_OPTIONS` now 3 items; `WINDOW_MODE_OPTIONS` now 5 items.
+- `SETTING_ROWS_STARTUP` expanded with toggle rows for all 5 new boolean fields.
+- `SETTING_ROWS_LANGUAGE` added with `appLanguage` segmented (Follow System only) and `languageComingSoon` button row.
+- `SUBPAGE_ROWS`, `SUBPAGE_TITLES`, `subPageLabel()`, `SETTINGS_KEYS`, and `SettingsCategoryGrid` all register `"language"` page.
+- `ConfirmModal` imported from `../../components/common/ConfirmModal` and wired for all 4 power actions (shutdown/suspend/hibernate/restart):
+  - `POWER_CONFIRM_CONFIGS` map replaces old `confirmLabels` record.
+  - `executePowerAction` replaced by `executePowerCommand(key)` (no confirm, no `handleClose`).
+  - `powerConfirm` state drives ConfirmModal rendering at bottom of panel.
+- Window `keydown` handler restructured for sub-pages: `subPage === "tools"` handles ArrowUp/Down/Enter/Escape; `subPage === "help"` handles ArrowUp/Down/Escape; all other sub-pages handle Escape only.
+- Local `handleKeyDown` removed from `ConsoleToolsSubPanel` and `ConsoleHelpSubPanel` to prevent double-firing with window handler.
+- Unused `onFocusChange` props renamed to `_onFocusChange` to suppress TS6133.
+
+### Key Files Changed
+- `src/features/console/consoleSettings.ts` — type extended, defaults/options updated
+- `src/features/console/ConsoleSettingsPanelV2.tsx` — SETTING_ROWS_LANGUAGE, ConfirmModal integration, window handler restructured, local key handlers removed, SETTINGS_KEYS/SETTINGS_CATEGORIES/SUBPAGE_ROWS all updated
+
+### Build
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)

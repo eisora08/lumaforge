@@ -14,6 +14,7 @@ import { getCachedSnapshot } from "../services/startupSnapshotService";
 import { importSnapshotPlaytime } from "../services/playtimeService";
 import { useGameActivity } from "../context/GameActivityContext";
 import { useGameSession } from "../context/GameSessionContext";
+import { useSettings } from "../context/SettingsContext";
 import { subscribeCatalogState, getCatalogState, getCachedCatalog, discoverGlobalCatalog } from "../services/globalCatalogService";
 import type { AppPage } from "../types/navigation";
 import type { CatalogStatus } from "../services/globalCatalogService";
@@ -100,6 +101,8 @@ export default function Home({ onNavigate }: Props) {
     }
   }, [snapshot]);
 
+  const { settings } = useSettings();
+
   const runningAppId = useMemo(() => {
     const running = Object.values(sessions).find((s) => s.state === "running");
     return running?.appId;
@@ -124,8 +127,10 @@ export default function Home({ onNavigate }: Props) {
     ? new Date(snapshot.updatedAt * 1000).toLocaleString()
     : null;
 
+  const maxWidth = settings.useExpandedDashboard ? undefined : settings.dashboardContentWidth;
+
   return (
-    <div className="mx-auto w-full max-w-[1760px] px-6 py-6 lg:px-8 xl:px-10 lf-fade-in">
+    <div className="mx-auto w-full px-6 py-6 lg:px-8 xl:px-10 lf-fade-in" style={{ maxWidth: maxWidth ? `${maxWidth}px` : undefined }}>
       <div className="space-y-8">
         <GameHero onNavigate={onNavigate} />
         <ContinuePlayingSection

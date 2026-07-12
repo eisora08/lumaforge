@@ -22,6 +22,15 @@ export type AppSettings = {
   steamGridDbApiKey: string;
   steamGridDbArtworkEnabled: boolean;
 
+  rawgApiKey: string;
+  igdbClientId: string;
+  igdbClientSecret: string;
+
+  googleSearchApiKey: string;
+  googleSearchCx: string;
+  bingSearchApiKey: string;
+  defaultImageSearchProvider: "google" | "bing";
+
   steamWebApiKey: string;
   steamId64: string;
   steamAccountId: string;
@@ -36,6 +45,21 @@ export type AppSettings = {
   achievementAutoSyncIntervalSeconds: number;
 
   libraryCardArtworkMode: "landscape" | "poster";
+  libraryCardSize: number;
+  libraryGridGap: number;
+  libraryUseFullWidth: boolean;
+  libraryFilterPanelWidth: number;
+
+  dashboardCardSize: number;
+  dashboardFeaturedCardSize: number;
+  dashboardGridGap: number;
+  dashboardContentWidth: number;
+  useExpandedDashboard: boolean;
+
+  libraryLandscapeCardSize: number;
+  libraryLandscapeGap: number;
+  maxLandscapeColumns: number;
+
   mediaCacheProfile: "minimal" | "playnite-balanced" | "full";
 
   gameScanFolders: string[];

@@ -18,7 +18,7 @@
 :root[data-surface="solid"] {
   --page-bg: var(--color-bg);
 
-  --shell-bg: var(--color-bg);
+  --shell-bg: var(--color-sidebar);
   --shell-border: transparent;
   --shell-blur: none;
 
@@ -31,6 +31,25 @@
   );
   --surface-active-shadow: none;
   --surface-active-blur: none;
+}
+
+/* Solid mode: flat background, no ambient gradients */
+:root[data-surface="solid"] body {
+  background: var(--color-bg);
+  background-image: none !important;
+}
+
+:root[data-surface="solid"] .lf-backdrop {
+  display: none;
+}
+
+:root[data-surface="solid"] .lf-shell {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+:root[data-surface="solid"] .lf-surface {
+  border-color: transparent;
 }
 
 
@@ -1115,4 +1134,287 @@ html[data-compact="true"] .lf-launch-bar {
 
 .lf-card-hover-overlay:hover .lf-card-overlay {
   background: rgba(0, 0, 0, 0.35);
+}
+
+/* Console Mode card focus shine */
+@keyframes console-shine-sweep {
+  0% { transform: translateX(-120%); }
+  40% { transform: translateX(120%); }
+  100% { transform: translateX(120%); }
+}
+
+@keyframes dock-label-in {
+  0% {
+    opacity: 0;
+    max-width: 0;
+    margin-left: -4px;
+  }
+  100% {
+    opacity: 1;
+    max-width: 100px;
+    margin-left: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-card-shine {
+    display: none !important;
+  }
+  .dock-label-animated {
+    animation: none !important;
+    opacity: 1 !important;
+    max-width: 100px !important;
+    margin-left: 6px !important;
+  }
+}
+
+/* Console Mode hero Ken Burns slow zoom/pan */
+@keyframes spotlight-hero-kenburns {
+  0% {
+    transform: scale(1) translate(0, 0);
+    transform-origin: center;
+  }
+  100% {
+    transform: scale(1.06) translate(-1%, 0.5%);
+    transform-origin: center;
+  }
+}
+
+.spotlight-hero-motion {
+  animation: spotlight-hero-kenburns 25s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-hero-motion {
+    animation: none !important;
+  }
+}
+
+/* Spotlight grain overlay — subtle film grain texture */
+.spotlight-grain-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-size: 512px 512px;
+  background-repeat: repeat;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-grain-overlay::after {
+    opacity: 0.01;
+  }
+}
+
+/* Spotlight vignette overlay */
+.spotlight-vignette {
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.35) 100%);
+  pointer-events: none;
+}
+
+/* Spotlight dock active glow pulse */
+@keyframes spotlight-dock-glow {
+  0%, 100% { box-shadow: 0 0 12px 0 var(--color-accent); }
+  50% { box-shadow: 0 0 20px 4px var(--color-accent); }
+}
+
+.spotlight-dock-active {
+  animation: spotlight-dock-glow 2.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-dock-active {
+    animation: none !important;
+  }
+}
+
+/* =========================
+   CONSOLE THEME: SOLARIS DARK
+   Dark bluish-purple palette
+========================= */
+
+[data-console-theme="solaris-dark"] {
+  --color-bg: #0f0d1a;
+  --color-surface: #1a1833;
+  --color-surface-soft: #14122a;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-text: #e8e6f0;
+  --color-muted: #8b87a0;
+  --color-accent: #7c6ff0;
+}
+
+/* =========================
+   CONSOLE THEME: STEAM DECK
+   Dark blue-gray with green accent
+========================= */
+
+[data-console-theme="steam-deck"] {
+  --color-bg: #111215;
+  --color-surface: #1b1d22;
+  --color-surface-soft: #16171c;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-text: #e8eaed;
+  --color-muted: #8b8f9a;
+  --color-accent: #4c9a76;
+}
+
+/* =========================
+   CONSOLE THEME: MIDNIGHT
+   Deep blue-black
+========================= */
+
+[data-console-theme="midnight"] {
+  --color-bg: #0a0e1a;
+  --color-surface: #121726;
+  --color-surface-soft: #0e1320;
+  --color-border: rgba(255, 255, 255, 0.07);
+  --color-text: #dce0f0;
+  --color-muted: #7a7f99;
+  --color-accent: #4f7cf7;
+}
+
+/* =========================
+   CONSOLE THEME: AMOLED
+   True black
+========================= */
+
+[data-console-theme="amoled"] {
+  --color-bg: #000000;
+  --color-surface: #0a0a0a;
+  --color-surface-soft: #050505;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-text: #e0e0e0;
+  --color-muted: #666666;
+  --color-accent: #888888;
+}
+
+/* =========================
+   CONSOLE THEME: LUMA DARK
+   Warm dark with golden amber accent
+========================= */
+
+[data-console-theme="luma-dark"] {
+  --color-bg: #0d0b08;
+  --color-surface: #1a1510;
+  --color-surface-soft: #14100c;
+  --color-border: rgba(240, 160, 48, 0.12);
+  --color-text: #e8ddd0;
+  --color-muted: #8a7a60;
+  --color-accent: #f0a030;
+}
+
+/* =========================
+   CONSOLE THEME: AURORA
+   Vibrant purple-teal atmospheric tones
+========================= */
+
+[data-console-theme="aurora"] {
+  --color-bg: #0a0e12;
+  --color-surface: #141c24;
+  --color-surface-soft: #0e141c;
+  --color-border: rgba(168, 85, 247, 0.15);
+  --color-text: #dce8f0;
+  --color-muted: #7090a8;
+  --color-accent: #a855f7;
+}
+
+/* =========================
+   CONSOLE THEME: CRIMSON
+   Deep red with ruby accents
+========================= */
+
+[data-console-theme="crimson"] {
+  --color-bg: #0f0707;
+  --color-surface: #1a0e0e;
+  --color-surface-soft: #140a0a;
+  --color-border: rgba(220, 38, 38, 0.15);
+  --color-text: #e8d0d0;
+  --color-muted: #8a5050;
+  --color-accent: #dc2626;
+}
+
+/* =========================
+   CONSOLE THEME: ARCTIC
+   Cool icy blue-white palette
+========================= */
+
+[data-console-theme="arctic"] {
+  --color-bg: #0f141a;
+  --color-surface: #1a2230;
+  --color-surface-soft: #141c28;
+  --color-border: rgba(96, 165, 250, 0.18);
+  --color-text: #e0eaf5;
+  --color-muted: #8098b0;
+  --color-accent: #60a5fa;
+}
+
+/* =========================
+   CONSOLE THEME: NEON NOIR
+   Dark cyberpunk with hot pink & cyan
+========================= */
+
+[data-console-theme="neon-noir"] {
+  --color-bg: #08080f;
+  --color-surface: #12101e;
+  --color-surface-soft: #0c0a15;
+  --color-border: rgba(244, 114, 182, 0.15);
+  --color-text: #e0dce8;
+  --color-muted: #706a90;
+  --color-accent: #f472b6;
+}
+
+/* =========================
+   CONSOLE TEXTURE: GRAIN SOFT
+   Subtle noise overlay on the full viewport
+   Uses a fixed pseudo-element with pointer-events: none
+   so it never interferes with interaction.
+========================= */
+
+[data-console-texture="grain-soft"]::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background-image: repeating-conic-gradient(
+    rgba(255, 255, 255, 0.02) 0% 25%,
+    transparent 0% 50%
+  );
+  background-size: 3px 3px;
+  mix-blend-mode: overlay;
+}
+
+/* =========================
+   CONSOLE TEXTURE: VIGNETTE
+   Darkens edges with radial gradient
+========================= */
+
+[data-console-texture="vignette"]::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+}
+
+/* =========================
+   CONSOLE TEXTURE: BLUR
+   Soft fog overlay (light muting)
+========================= */
+
+[data-console-texture="blur"]::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.06);
 }

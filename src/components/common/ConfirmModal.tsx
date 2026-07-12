@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, AlertCircle, Info, CheckCircle } from "lucide-react";
 
@@ -24,33 +24,49 @@ const variantConfig: Record<ConfirmVariant, {
   iconBg: string;
   iconColor: string;
   btnClass: string;
+  focusedBtnClass: string;
   iconEl: React.ReactNode;
 }> = {
   danger: {
     iconBg: "bg-red-500/10",
     iconColor: "text-red-500",
     btnClass: "bg-red-500 text-white hover:bg-red-500/80 active:scale-[0.97]",
+    focusedBtnClass: "bg-red-500 text-white ring-4 ring-red-500/60 shadow-xl shadow-red-500/40 scale-105",
     iconEl: <AlertTriangle className="h-5 w-5" />,
   },
   warning: {
     iconBg: "bg-(--color-warning)/10",
     iconColor: "text-(--color-warning)",
     btnClass: "bg-(--color-warning) text-white hover:opacity-85 active:scale-[0.97]",
+    focusedBtnClass: "bg-(--color-warning) text-white ring-4 ring-(--color-warning)/60 shadow-xl shadow-(--color-warning)/30 scale-105",
     iconEl: <AlertCircle className="h-5 w-5" />,
   },
   info: {
     iconBg: "bg-(--color-info)/10",
     iconColor: "text-(--color-info)",
     btnClass: "bg-(--color-info) text-(--color-bg) hover:opacity-90 active:scale-[0.97]",
+    focusedBtnClass: "bg-(--color-info) text-(--color-bg) ring-4 ring-(--color-info)/60 shadow-xl shadow-(--color-info)/30 scale-105",
     iconEl: <Info className="h-5 w-5" />,
   },
   success: {
     iconBg: "bg-(--color-success)/10",
     iconColor: "text-(--color-success)",
     btnClass: "bg-(--color-success) text-white hover:opacity-85 active:scale-[0.97]",
+    focusedBtnClass: "bg-(--color-success) text-white ring-4 ring-(--color-success)/60 shadow-xl shadow-(--color-success)/30 scale-105",
     iconEl: <CheckCircle className="h-5 w-5" />,
   },
 };
+
+const CONSUMED_KEYS = new Set([
+  "Enter", " ", "Escape",
+  "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+  "x", "X", "y", "Y", "o", "O", "v", "V",
+  "q", "Q", "e", "E", "PageUp", "PageDown",
+  "ContextMenu", "Apps", "Alt",
+]);
+
+const ACTIVATION_LOCK_MS = 300;
+const OPEN_GUARD_MS = 250;
 
 export default function ConfirmModal({
   open,
@@ -67,66 +83,104 @@ export default function ConfirmModal({
   secondaryVariant,
   extraActions,
 }: Props) {
+  const [focusedButton, setFocusedButton] = useState<"cancel" | "confirm">("cancel");
+  const focusedButtonRef = useRef<"cancel" | "confirm">("cancel");
+  const activationLockedRef = useRef(false);
+  const openTimeRef = useRef(0);
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+
+  const onCancelRef = useRef(onCancel);
+  const onConfirmRef = useRef(onConfirm);
+
+  useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
+  useEffect(() => { onConfirmRef.current = onConfirm; }, [onConfirm]);
+
   const titleId = "confirm-modal-title";
   const descId = "confirm-modal-desc";
   const cfg = variantConfig[variant];
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!open) return;
-    if (e.key === "Escape") {
-      onCancel();
-      return;
-    }
-  }, [open, onCancel]);
-
+  /* ── Reset on open ── */
   useEffect(() => {
     if (!open) return;
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
-
-  useEffect(() => {
-    if (!open) return;
-    const panel = panelRef.current;
-    if (!panel) return;
-    const focusable = panel.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    );
-    if (focusable.length > 0) {
-      focusable[0].focus();
-    }
+    setFocusedButton("cancel");
+    focusedButtonRef.current = "cancel";
+    openTimeRef.current = Date.now();
+    activationLockedRef.current = false;
+    requestAnimationFrame(() => cancelRef.current?.focus());
   }, [open]);
 
+  /* ── Cleanup lock on close ── */
   useEffect(() => {
-    if (!open || !panelRef.current) return;
-    const panel = panelRef.current;
-    const focusable = panel.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    );
-    if (focusable.length === 0) return;
+    if (!open) activationLockedRef.current = false;
+  }, [open]);
 
-    function handleTab(e: KeyboardEvent) {
-      if (e.key !== "Tab") return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
+  /* ── Helper: sync state + ref + DOM focus ── */
+  const setFocus = (btn: "cancel" | "confirm") => {
+    setFocusedButton(btn);
+    focusedButtonRef.current = btn;
+    if (btn === "cancel") cancelRef.current?.focus();
+    else confirmRef.current?.focus();
+  };
+
+  /* ── Keydown: ownership + navigation + activation ── */
+  useEffect(() => {
+    if (!open) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (!CONSUMED_KEYS.has(e.key)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      try { e.stopImmediatePropagation?.(); } catch { /* noop */ }
+
+      const sinceOpen = Date.now() - openTimeRef.current;
+      const isActivationKey = e.key === "Enter" || e.key === " ";
+
+      /* Open guard: ignore activation keys for first 250ms */
+      if (sinceOpen < OPEN_GUARD_MS && isActivationKey) return;
+
+      /* Activation lock */
+      if (activationLockedRef.current) return;
+
+      switch (e.key) {
+        case "Escape":
+        case "b":
+        case "B":
+          onCancelRef.current();
+          break;
+
+        case "ArrowLeft":
+          setFocus("cancel");
+          break;
+
+        case "ArrowRight":
+          setFocus("confirm");
+          break;
+
+        case "ArrowUp":
+        case "ArrowDown":
+          setFocus(focusedButtonRef.current === "cancel" ? "confirm" : "cancel");
+          break;
+
+        default:
+          if (isActivationKey) {
+            activationLockedRef.current = true;
+            setTimeout(() => { activationLockedRef.current = false; }, ACTIVATION_LOCK_MS);
+            if (focusedButtonRef.current === "cancel") onCancelRef.current();
+            else onConfirmRef.current();
+          }
+          break;
       }
-    }
-    panel.addEventListener("keydown", handleTab);
-    return () => panel.removeEventListener("keydown", handleTab);
+    };
+
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
   }, [open]);
 
+  /* ── Backdrop click ── */
   function handleBackdropClick(e: React.MouseEvent) {
     if (e.target === backdropRef.current) onCancel();
   }
@@ -183,21 +237,37 @@ export default function ConfirmModal({
 
           <div className="flex flex-wrap items-center gap-3">
             <button
+              ref={cancelRef}
               type="button"
               onClick={onCancel}
-              className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-text) transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-(--color-text)/20"
+              className={`cursor-pointer rounded-xl border px-5 py-2.5 text-sm font-medium transition-all ${
+                focusedButton === "cancel"
+                  ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent) ring-3 ring-(--color-accent)/60 shadow-lg shadow-(--color-accent)/25 scale-105"
+                  : "border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+              }`}
             >
               {cancelLabel}
             </button>
 
             <button
+              ref={confirmRef}
               type="button"
               onClick={onConfirm}
-              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition focus-visible:ring-2 focus-visible:ring-(--color-text)/30 ${cfg.btnClass}`}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-bold transition-all ${
+                focusedButton === "confirm" ? cfg.focusedBtnClass : cfg.btnClass
+              }`}
             >
               {confirmLabel}
             </button>
           </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-center gap-1 text-xs text-(--color-muted)/50">
+          <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">A</kbd>
+          <span>Select</span>
+          <span className="mx-1">·</span>
+          <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">B</kbd>
+          <span>Back</span>
         </div>
       </div>
     </div>,
