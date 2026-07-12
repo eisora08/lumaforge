@@ -12,6 +12,8 @@ const KIND_FILTERS: { label: string; value: GameActivityKind | null }[] = [
   { label: "Lua", value: "lua-installed" },
   { label: "Metadata", value: "metadata-refreshed" },
   { label: "DLC", value: "dlc-detected" },
+  { label: "Achievements", value: "achievement-unlocked" },
+  { label: "XP", value: "xp-earned" },
   { label: "Files", value: "local-file-change" },
   { label: "System", value: "game-closed" },
 ];
@@ -23,6 +25,7 @@ const SOURCE_FILTERS: { label: string; value: GameActivityItem["source"] | null 
   { label: "Lua", value: "lua" },
   { label: "Provider", value: "provider" },
   { label: "System", value: "system" },
+  { label: "Launcher", value: "launcher" },
 ];
 
 function getTimeGroup(ts: number): string {

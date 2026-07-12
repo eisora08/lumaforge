@@ -19,6 +19,8 @@ import type {
 } from "../features/activity/types";
 import { RARITY_COLORS, RARITY_ICONS, CATEGORY_ICONS } from "../features/activity/types";
 import ActivityEmptyState from "../components/activity/ActivityEmptyState";
+import AchievementDetailModal from "../components/activity/AchievementDetailModal";
+import type { EvaluationContextInput } from "../features/activity/stats/statsService";
 
 const CATEGORIES: Array<{ value: AchievementCategory | "all"; label: string; icon?: React.ComponentType<{ className?: string }> }> = [
   { value: "all", label: "All" },
@@ -53,6 +55,43 @@ const RARITY_ACCENT_BAR: Record<AchievementRarity, string> = {
   legendary: "bg-amber-400",
 };
 
+type ProgressInfo = { current: number; target: number; label: string } | null;
+
+function getAchievementProgress(id: string, ctx: EvaluationContextInput): ProgressInfo {
+  switch (id) {
+    // Library
+    case "starter-collection":  return { current: ctx.librarySize, target: 10, label: "Games in library" };
+    case "collector":           return { current: ctx.librarySize, target: 50, label: "Games in library" };
+    case "hoarder":             return { current: ctx.librarySize, target: 200, label: "Games in library" };
+    case "archivist":           return { current: ctx.librarySize, target: 500, label: "Games in library" };
+    // Play
+    case "first-launch":        return { current: ctx.totalSessions, target: 1, label: "Play sessions" };
+    case "marathon-runner":     return { current: ctx.marathonSessions, target: 5, label: "Marathon sessions (4h+)" };
+    case "session-master":      return { current: ctx.totalSessions, target: 500, label: "Play sessions" };
+    case "night-owl":           return { current: ctx.nightOwlSessions, target: 10, label: "Sessions after midnight" };
+    case "early-bird":          return { current: ctx.earlyBirdSessions, target: 10, label: "Sessions before 7 AM" };
+    // Completion
+    case "finisher":            return { current: ctx.completedGames, target: 1, label: "Games completed" };
+    case "closer":              return { current: ctx.completedGames, target: 5, label: "Games completed" };
+    case "backlog-slayer":      return { current: ctx.completedGames, target: 10, label: "Games completed" };
+    case "completionist":       return { current: ctx.completedGames, target: 25, label: "Games completed" };
+    // Streak
+    case "week-warrior":        return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 7, label: "Day play streak" };
+    case "fortnight-fighter":   return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 14, label: "Day play streak" };
+    case "monthly-dedication":  return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 30, label: "Day play streak" };
+    case "quarterly-commitment":return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 90, label: "Day play streak" };
+    case "year-of-gaming":      return { current: Math.max(ctx.currentStreak, ctx.longestStreak), target: 365, label: "Day play streak" };
+    // Exploration
+    case "genre-hopper":        return { current: ctx.genreCount, target: 5, label: "Genres played" };
+    case "renaissance-gamer":   return { current: ctx.genreCount, target: 10, label: "Genres played" };
+    case "hidden-gem-hunter":   return null;
+    // Session
+    case "session-centurion":   return { current: ctx.totalSessions, target: 100, label: "Play sessions" };
+    case "weekend-warrior":     return { current: ctx.weekendStreak, target: 4, label: "Consecutive weekends played" };
+    default: return null;
+  }
+}
+
 function formatXpNumber(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return `${n}`;
@@ -78,6 +117,7 @@ export default function LauncherAchievements() {
   const [rarityFilter, setRarityFilter] = useState<AchievementRarity | "all">("all");
   const [stateFilter, setStateFilter] = useState<"all" | "unlocked" | "locked">("all");
   const [search, setSearch] = useState("");
+  const [selectedAch, setSelectedAch] = useState<AchievementWithState | null>(null);
 
   useEffect(() => {
     return subscribeAchievementStore(() => {
@@ -126,6 +166,16 @@ export default function LauncherAchievements() {
   }, [unlockedIds]);
 
   const completionPercent = profile.totalCount > 0 ? Math.round((profile.unlockedCount / profile.totalCount) * 100) : 0;
+
+  const evalCtx = useMemo(() => {
+    if (games.length === 0) return null;
+    return buildEvalContext(games);
+  }, [games]);
+
+  const selectedProgress = useMemo<ProgressInfo>(() => {
+    if (!selectedAch || !evalCtx) return null;
+    return getAchievementProgress(selectedAch.id, evalCtx);
+  }, [selectedAch, evalCtx]);
 
   return (
     <div className="w-full px-6 lg:px-8 xl:px-10 py-6">
@@ -277,7 +327,11 @@ export default function LauncherAchievements() {
       {/* Achievement grid */}
       <div className="mt-5 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
         {filtered.map((ach) => (
-          <AchievementCard key={ach.id} achievement={ach} />
+          <AchievementCard
+            key={ach.id}
+            achievement={ach}
+            onClick={() => setSelectedAch(ach)}
+          />
         ))}
       </div>
 
@@ -290,19 +344,28 @@ export default function LauncherAchievements() {
           />
         </div>
       )}
+
+      <AchievementDetailModal
+        open={selectedAch !== null}
+        achievement={selectedAch}
+        progress={selectedProgress}
+        onClose={() => setSelectedAch(null)}
+      />
     </div>
   );
 }
 
-function AchievementCard({ achievement }: { achievement: AchievementWithState }) {
+function AchievementCard({ achievement, onClick }: { achievement: AchievementWithState; onClick: () => void }) {
   const rarity = RARITY_COLORS[achievement.rarity];
   const isLocked = !achievement.unlocked;
   const AchIcon = achievement.icon;
   const RarityIcon = RARITY_ICONS[achievement.rarity];
 
   return (
-    <div
-      className={`group relative overflow-hidden rounded-2xl border transition-all duration-200 ${
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group relative overflow-hidden rounded-2xl border text-left transition-all duration-200 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50 ${
         isLocked
           ? "border-(--color-border)/10 bg-(--color-surface)/80 hover:bg-(--color-surface) hover:border-(--color-border)/20"
           : `bg-(--color-surface) hover:brightness-110 ${rarity.border}`
@@ -358,6 +421,6 @@ function AchievementCard({ achievement }: { achievement: AchievementWithState })
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }

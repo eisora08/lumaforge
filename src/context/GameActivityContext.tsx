@@ -1,5 +1,6 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { GameActivityItem, GameUpdateItem } from "../types/gameActivity";
+import { setAchievementUnlockCallback } from "../features/activity/achievements/achievementStore";
 
 type AddActivityInput = {
   gameId: string;
@@ -113,6 +114,25 @@ export function GameActivityProvider({
   function clearUpdates() {
     commitUpdates([]);
   }
+
+  // Register achievement unlock → activity bridge
+  const addActivityRef = useRef(addActivity);
+  addActivityRef.current = addActivity;
+
+  useEffect(() => {
+    setAchievementUnlockCallback((achievementId, title, xp, _rarity) => {
+      addActivityRef.current({
+        gameId: achievementId,
+        appId: achievementId,
+        kind: "achievement-unlocked",
+        title: `Unlocked: ${title}`,
+        description: `+${xp} XP`,
+        source: "launcher",
+        severity: "success",
+      });
+    });
+    return () => { setAchievementUnlockCallback(null); };
+  }, []);
 
   const value = useMemo(
     () => ({

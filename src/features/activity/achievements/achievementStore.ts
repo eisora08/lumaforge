@@ -1,6 +1,7 @@
 import type { AchievementUnlock, PlayerXpEvent, PlayerProfile } from "../types";
 import { ACHIEVEMENT_DEFINITIONS, TOTAL_XP_AVAILABLE } from "./achievementDefinitions";
 
+const DEBUG_ACH_STORE = false;
 const STORAGE_KEY = "lumaforge-launcher-achievements-v1";
 const XP_STORAGE_KEY = "lumaforge-launcher-xp-v1";
 
@@ -68,6 +69,15 @@ export function subscribeAchievementStore(fn: StoreListener): () => void {
   return () => { _listeners.delete(fn); };
 }
 
+// ─── Activity event hook (avoids React context circular dep) ──────────
+
+type UnlockCallback = (achievementId: string, title: string, xp: number, rarity: string) => void;
+let _onUnlockCallback: UnlockCallback | null = null;
+
+export function setAchievementUnlockCallback(cb: UnlockCallback | null): void {
+  _onUnlockCallback = cb;
+}
+
 // ─── Unlocks ──────────────────────────────────────────────────────────
 
 export function getUnlockedIds(): ReadonlySet<string> {
@@ -91,10 +101,16 @@ export function getUnlock(achievementId: string): AchievementUnlock | undefined 
  * Returns true if newly unlocked, false if already unlocked.
  */
 export function unlockAchievement(achievementId: string): boolean {
-  if (_unlockedIds.has(achievementId)) return false;
+  if (_unlockedIds.has(achievementId)) {
+    if (DEBUG_ACH_STORE) console.log(`[LF_XP][SKIP_ALREADY_UNLOCKED] id=${achievementId}`);
+    return false;
+  }
 
   const def = ACHIEVEMENT_DEFINITIONS.find((a) => a.id === achievementId);
-  if (!def) return false;
+  if (!def) {
+    if (DEBUG_ACH_STORE) console.log(`[LF_XP][UNKNOWN_ACHIEVEMENT] id=${achievementId}`);
+    return false;
+  }
 
   const now = Date.now();
   const unlock: AchievementUnlock = {
@@ -107,6 +123,8 @@ export function unlockAchievement(achievementId: string): boolean {
   _unlockedIds.add(achievementId);
   saveAchievementStore(_store);
 
+  if (DEBUG_ACH_STORE) console.log(`[LF_XP][UNLOCK] id=${achievementId} title="${def.title}" xp=${def.xp} rarity=${def.rarity}`);
+
   // Award XP
   addXpEvent({
     id: `xp-ach-${achievementId}-${now}`,
@@ -116,6 +134,11 @@ export function unlockAchievement(achievementId: string): boolean {
     label: `Achievement: ${def.title}`,
     refId: achievementId,
   });
+
+  // Emit activity event (non-React, callback registered by GameActivityContext)
+  if (_onUnlockCallback) {
+    _onUnlockCallback(achievementId, def.title, def.xp, def.rarity);
+  }
 
   notify();
   return true;
@@ -139,10 +162,13 @@ export function unlockAchievements(ids: string[]): string[] {
 function addXpEvent(event: PlayerXpEvent): void {
   _xpStore.events.push(event);
   saveXpStore(_xpStore);
+  if (DEBUG_ACH_STORE) console.log(`[LF_XP][ADD_EVENT] source=${event.source} amount=${event.amount} label="${event.label}"`);
 }
 
 export function getTotalXp(): number {
-  return _xpStore.events.reduce((sum, e) => sum + e.amount, 0);
+  const total = _xpStore.events.reduce((sum, e) => sum + e.amount, 0);
+  if (DEBUG_ACH_STORE) console.log(`[LF_XP][TOTAL_XP] events=${_xpStore.events.length} totalXp=${total}`);
+  return total;
 }
 
 export function getXpEvents(): PlayerXpEvent[] {

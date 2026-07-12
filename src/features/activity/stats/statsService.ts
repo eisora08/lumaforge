@@ -38,18 +38,20 @@ export function computeLibraryStats(games: LibraryGame[]): LibraryStats {
     const ls = game.localPlaytimeMinutes ? game.localPlaytimeMinutes * 60 : 0;
     const ext = entry?.externalPlaytimeSeconds ?? 0;
     const total = entry?.totalPlaytimeSeconds ?? (ls + ext);
-    const sessions = entry?.sessions?.length ?? 0;
+    const trackedSessions = entry?.sessions?.length ?? 0;
 
     // Also count via gamePlayStats (legacy)
     const gpStats = playStats[game.id];
     const gpMinutes = gpStats?.playtimeMinutes ?? 0;
     const gpSeconds = gpMinutes * 60;
+    const gpLaunches = gpStats?.launchCount ?? 0;
     const effectiveTotal = Math.max(total, gpSeconds);
 
     if (effectiveTotal > 0) {
       gamesPlayed++;
       totalSeconds += effectiveTotal;
-      totalSessions += sessions;
+      // Use tracked sessions when available; fall back to legacy launch count
+      totalSessions += trackedSessions > 0 ? trackedSessions : gpLaunches;
       if (effectiveTotal > mostPlayedSeconds) {
         mostPlayedSeconds = effectiveTotal;
         mostPlayedTitle = game.title;

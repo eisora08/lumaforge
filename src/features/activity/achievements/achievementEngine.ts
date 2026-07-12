@@ -2,6 +2,8 @@ import { ACHIEVEMENT_DEFINITIONS } from "./achievementDefinitions";
 import { isUnlocked, unlockAchievement } from "./achievementStore";
 import type { AchievementDef } from "../types";
 
+const DEBUG_ACH_ENGINE = false;
+
 type EvaluationContext = {
   librarySize: number;
   totalPlaytimeSeconds: number;
@@ -31,24 +33,37 @@ function computeEvalHash(ctx: EvaluationContext): string {
 /**
  * Evaluate all achievements against current stats.
  * Deterministic and idempotent — only awards XP once per achievement.
- * Debounced — rapid calls within 2s are coalesced.
+ * Hash-gated — identical context never re-evaluates.
  */
 export function evaluateAchievements(ctx: EvaluationContext): EvaluateResult {
   const hash = computeEvalHash(ctx);
-  if (hash === _lastEvalHash) return { newlyUnlocked: [], totalEvaluated: 0 };
+  if (hash === _lastEvalHash) {
+    if (DEBUG_ACH_ENGINE) console.log(`[LF_ACH][SKIP_DUPLICATE_HASH] hash=${hash}`);
+    return { newlyUnlocked: [], totalEvaluated: 0 };
+  }
+  const prevHash = _lastEvalHash;
   _lastEvalHash = hash;
+
+  if (DEBUG_ACH_ENGINE) console.log(`[LF_ACH][EVAL_START] prevHash=${prevHash} newHash=${hash}`);
 
   const newlyUnlocked: AchievementDef[] = [];
 
   for (const def of ACHIEVEMENT_DEFINITIONS) {
-    if (isUnlocked(def.id)) continue;
+    if (isUnlocked(def.id)) {
+      if (DEBUG_ACH_ENGINE) console.log(`[LF_ACH][SKIP_ALREADY_UNLOCKED] id=${def.id}`);
+      continue;
+    }
 
     if (checkCondition(def, ctx)) {
       const ok = unlockAchievement(def.id);
-      if (ok) newlyUnlocked.push(def);
+      if (ok) {
+        if (DEBUG_ACH_ENGINE) console.log(`[LF_ACH][UNLOCK] id=${def.id} title="${def.title}" xp=${def.xp}`);
+        newlyUnlocked.push(def);
+      }
     }
   }
 
+  if (DEBUG_ACH_ENGINE) console.log(`[LF_ACH][EVAL_DONE] unlocked=${newlyUnlocked.length} total=${ACHIEVEMENT_DEFINITIONS.length}`);
   return { newlyUnlocked, totalEvaluated: ACHIEVEMENT_DEFINITIONS.length };
 }
 

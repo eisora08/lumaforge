@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Award,
   CheckCircle2,
   Download,
   Gamepad2,
@@ -10,6 +11,7 @@ import {
   Upload,
   XCircle,
   Square,
+  Zap,
 } from "lucide-react";
 import type { GameActivityItem } from "../../types/gameActivity";
 
@@ -33,6 +35,8 @@ const KIND_ICONS: Record<string, typeof Info> = {
   "artwork-refreshed": RefreshCw,
   "dlc-detected": Package,
   "local-file-change": Info,
+  "achievement-unlocked": Award,
+  "xp-earned": Zap,
 };
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -41,6 +45,7 @@ const SOURCE_COLORS: Record<string, string> = {
   lua: "border-purple-500/20 bg-purple-500/10 text-purple-300",
   provider: "border-amber-500/20 bg-amber-500/10 text-amber-300",
   system: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
+  launcher: "border-amber-500/20 bg-amber-500/10 text-amber-300",
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -56,6 +61,7 @@ const SOURCE_LABELS: Record<string, string> = {
   lua: "Lua",
   provider: "Provider",
   system: "System",
+  launcher: "Launcher",
 };
 
 function formatTimestamp(ts: number) {
