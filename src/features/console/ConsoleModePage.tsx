@@ -54,6 +54,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [dockFocusedIndex, setDockFocusedIndex] = useState(-1);
+  const [settledFocusedRail, setSettledFocusedRail] = useState(-1);
+  const [settledFocusedIndex, setSettledFocusedIndex] = useState(-1);
+  const settledFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -464,6 +467,16 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     return null;
   }, [focusedRail, focusedIndex, rails]);
 
+  const currentSettledFocusedGame = useMemo(() => {
+    const sr = settledFocusedRail >= 0 ? settledFocusedRail : focusedRail;
+    const si = settledFocusedIndex >= 0 ? settledFocusedIndex : focusedIndex;
+    if (sr >= 0 && sr < rails.length && si >= 0) {
+      const rail = rails[sr];
+      if (si < rail.length) return rail[si];
+    }
+    return null;
+  }, [settledFocusedRail, settledFocusedIndex, focusedRail, focusedIndex, rails]);
+
   const currentFocusedGameRef = useRef(currentFocusedGame);
   currentFocusedGameRef.current = currentFocusedGame;
 
@@ -479,6 +492,23 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const gridColumnsRef = useRef(consoleSettings.gridColumns);
   const layoutModeRef = useRef(consoleSettings.layoutMode);
   layoutModeRef.current = consoleSettings.layoutMode;
+
+  /* ── Debounce settled focus for preview (avoids heavy work during held navigation) ── */
+  useEffect(() => {
+    if (focusedRail < 0 || focusedIndex < 0) {
+      setSettledFocusedRail(focusedRail);
+      setSettledFocusedIndex(focusedIndex);
+      return;
+    }
+    if (settledFocusTimerRef.current) clearTimeout(settledFocusTimerRef.current);
+    settledFocusTimerRef.current = setTimeout(() => {
+      setSettledFocusedRail(focusedRail);
+      setSettledFocusedIndex(focusedIndex);
+    }, 200);
+    return () => {
+      if (settledFocusTimerRef.current) clearTimeout(settledFocusTimerRef.current);
+    };
+  }, [focusedRail, focusedIndex]);
 
   /* ── Tracks whether the user intentionally selected an empty category ── */
   const userSelectedEmptyRef = useRef(false);
@@ -591,6 +621,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   const sharedProps = useMemo(() => ({
     focusedGame: currentFocusedGame,
+    settledFocusedGame: currentSettledFocusedGame,
     rails,
     focusedRail,
     focusedIndex,
@@ -608,7 +639,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     allGames: enrichedGames,
     gridColumnsRef,
     dockFocusedIndex,
-  }), [currentFocusedGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, gridColumnsRef, dockFocusedIndex]);
+  }), [currentFocusedGame, currentSettledFocusedGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, gridColumnsRef, dockFocusedIndex]);
 
   const layout = consoleSettings.layoutMode === "spotlight"
     ? <ConsoleSwitchSpotlightLayout {...sharedProps} />

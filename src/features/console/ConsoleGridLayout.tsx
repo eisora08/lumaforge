@@ -26,6 +26,7 @@ const DEBUG_FORCE_TEST_MP4 = false;
 
 type Props = {
   focusedGame: LibraryGame | null;
+  settledFocusedGame?: LibraryGame | null;
   rails: LibraryGame[][];
   focusedRail: number;
   focusedIndex: number;
@@ -50,7 +51,7 @@ type Props = {
 
 
 export default function ConsoleGridLayout({
-  focusedGame, rails, focusedRail, focusedIndex,
+  focusedGame, settledFocusedGame, rails, focusedRail, focusedIndex,
   onSelectGame, onOptionsGame: _onOptionsGame, onPlayGame: _onPlayGame, layoutMode, onToggleLayout,
   cardVariant: _cv = "poster", onNavigate,
   categoryCounts, activeCategory, onSelectCategory,
@@ -67,8 +68,11 @@ export default function ConsoleGridLayout({
   const gridCardVariant: "landscape" | "poster" = settings.gridCardStyle.useLandscapeCards ? "landscape" : "poster";
   const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
-  const heroSrc = getConsoleHeroBackground(focusedGame);
-  const trailerData = useMemo(() => focusedGame ? extractTrailerData(focusedGame) : null, [focusedGame]);
+
+  /* ── Preview uses settledFocusedGame (debounced) to avoid heavy work during held navigation ── */
+  const previewGame = settledFocusedGame ?? focusedGame;
+  const heroSrc = getConsoleHeroBackground(previewGame);
+  const trailerData = useMemo(() => previewGame ? extractTrailerData(previewGame) : null, [previewGame]);
 
   const [showArtworkFirst, setShowArtworkFirst] = useState(true);
   const [thumbnailAutoplaySrc, setThumbnailAutoplaySrc] = useState<string | null>(null);
@@ -78,7 +82,7 @@ export default function ConsoleGridLayout({
   const trailerDataRef = useRef(trailerData);
   trailerDataRef.current = trailerData;
 
-  const appIdStr = focusedGame?.appId ?? null;
+  const appIdStr = previewGame?.appId ?? null;
 
   const {
     effectiveUnlocked,
@@ -93,26 +97,26 @@ export default function ConsoleGridLayout({
   } = useConsoleReviews(appIdStr);
 
   const lastPlayedStr = useMemo(() => {
-    if (!focusedGame) return null;
-    const ts = focusedGame.localLastPlayedAt ?? focusedGame.steamLastPlayedAt;
+    if (!previewGame) return null;
+    const ts = previewGame.localLastPlayedAt ?? previewGame.steamLastPlayedAt;
     return ts ? formatRelativeTime(ts) : null;
-  }, [focusedGame]);
+  }, [previewGame]);
 
   const playtimeSeconds = useMemo(() => {
-    return focusedGame?.appId ? getPlaytimeSecondsForAppId(focusedGame.appId) : 0;
-  }, [focusedGame]);
+    return previewGame?.appId ? getPlaytimeSecondsForAppId(previewGame.appId) : 0;
+  }, [previewGame]);
 
   const playtimeDisplay = useMemo(() => formatPlaytime(playtimeSeconds), [playtimeSeconds]);
 
   const completionStatus = useMemo(() => {
-    if (!focusedGame) return null;
-    return getGameCompletionStatus(focusedGame, playtimeSeconds);
-  }, [focusedGame, playtimeSeconds]);
+    if (!previewGame) return null;
+    return getGameCompletionStatus(previewGame, playtimeSeconds);
+  }, [previewGame, playtimeSeconds]);
 
   const tags = useMemo(() => {
-    if (!focusedGame?.metadata?.genres) return null;
-    return focusedGame.metadata.genres.slice(0, 4);
-  }, [focusedGame]);
+    if (!previewGame?.metadata?.genres) return null;
+    return previewGame.metadata.genres.slice(0, 4);
+  }, [previewGame]);
 
   /* ── Measure actual grid column count from CSS (auto-fill may differ from settings.gridColumns) ── */
   useEffect(() => {
@@ -133,28 +137,37 @@ export default function ConsoleGridLayout({
     return () => { setScrollTarget(null); };
   }, []);
 
-  /* ── Scroll focused card into view when index changes ── */
+  /* ── Scroll focused card into view (rAF-coalesced: captures latest focusedIndex per frame) ── */
+  const _scrollRAFIndex = useRef(focusedIndex);
+  const _scrollRAFQueued = useRef(false);
   useEffect(() => {
     if (focusedIndex < 0 || !gridRef.current) return;
-    const card = gridRef.current.children[focusedIndex] as HTMLElement | undefined;
-    const container = gridScrollRef.current;
-    if (card && container) {
-      const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const containerRect = container.getBoundingClientRect();
-      const cardRect = card.getBoundingClientRect();
-      const relativeTop = cardRect.top - containerRect.top;
-      const targetPosition = containerRect.height * 0.28;
-      const lowerBound = containerRect.height * 0.12;
-      const upperBound = containerRect.height * 0.45;
-      if (relativeTop < lowerBound || relativeTop + cardRect.height > upperBound) {
-        const offset = relativeTop - targetPosition;
-        const scrollBehav = prefersReduced ? "auto" : (settings.smoothScrolling ? "smooth" : "auto");
-        container.scrollBy({ top: offset, behavior: scrollBehav });
-        if (DEBUG_CONSOLE_GRID_NAV) {
-          console.log(`[CONSOLE_GRID_NAV][SCROLL_POSITION] index=${focusedIndex} appid=${currentRail[focusedIndex]?.appId} offset=${Math.round(offset)} relativeTop=${Math.round(relativeTop)} target=${Math.round(targetPosition)}`);
+    _scrollRAFIndex.current = focusedIndex;
+    if (_scrollRAFQueued.current) return;
+    _scrollRAFQueued.current = true;
+    requestAnimationFrame(() => {
+      _scrollRAFQueued.current = false;
+      const idx = _scrollRAFIndex.current;
+      const card = gridRef.current?.children[idx] as HTMLElement | undefined;
+      const container = gridScrollRef.current;
+      if (card && container) {
+        const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const containerRect = container.getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
+        const relativeTop = cardRect.top - containerRect.top;
+        const targetPosition = containerRect.height * 0.28;
+        const lowerBound = containerRect.height * 0.12;
+        const upperBound = containerRect.height * 0.45;
+        if (relativeTop < lowerBound || relativeTop + cardRect.height > upperBound) {
+          const offset = relativeTop - targetPosition;
+          const scrollBehav = prefersReduced ? "auto" : (settings.smoothScrolling ? "smooth" : "auto");
+          container.scrollBy({ top: offset, behavior: scrollBehav });
+          if (DEBUG_CONSOLE_GRID_NAV) {
+            console.log(`[CONSOLE_GRID_NAV][SCROLL_POSITION] index=${idx} appid=${currentRail[idx]?.appId} offset=${Math.round(offset)} relativeTop=${Math.round(relativeTop)} target=${Math.round(targetPosition)}`);
+          }
         }
       }
-    }
+    });
   }, [focusedIndex, currentRail]);
 
   /* ── Delayed trailer preview: show artwork on focus, switch to trailer after 3s ──
@@ -163,7 +176,7 @@ export default function ConsoleGridLayout({
    *  - HLS → set thumbnailAutoplaySrc; ConsoleSelectedPreview handles HLS init via hls.js
    *  - DASH / no trailer → stay on artwork or show unsupported badge */
   useEffect(() => {
-    const appId = focusedGame?.appId ?? null;
+    const appId = previewGame?.appId ?? null;
     focusedAppIdRef.current = appId;
 
     setShowArtworkFirst(true);
@@ -183,7 +196,7 @@ export default function ConsoleGridLayout({
     }
 
     artworkTimerRef.current = setTimeout(() => {
-      if (focusedAppIdRef.current !== appId || focusedGame?.appId !== appId) {
+      if (focusedAppIdRef.current !== appId || previewGame?.appId !== appId) {
         if (DEBUG_CONSOLE_PREVIEW_AUTO) {
           console.log(`[CONSOLE_PREVIEW_AUTO][TIMER_CANCEL] appid=${appId} reason=focus-changed`);
         }
@@ -231,7 +244,7 @@ export default function ConsoleGridLayout({
         artworkTimerRef.current = null;
       }
     };
-  }, [focusedGame?.appId, settings.showTrailerPreview]);
+  }, [previewGame?.appId, settings.showTrailerPreview]);
 
   /* ── Clean up timer on unmount ── */
   useEffect(() => {
@@ -242,13 +255,13 @@ export default function ConsoleGridLayout({
 
   /* ── Debug log for preview mode changes ── */
   useEffect(() => {
-    if (DEBUG_CONSOLE_PREVIEW_AUTO && focusedGame?.appId) {
-      console.log(`[CONSOLE_PREVIEW_AUTO] appid=${focusedGame.appId} showArtworkFirst=${showArtworkFirst} mode=${previewMode} autoplay=${!!thumbnailAutoplaySrc}`);
+    if (DEBUG_CONSOLE_PREVIEW_AUTO && previewGame?.appId) {
+      console.log(`[CONSOLE_PREVIEW_AUTO] appid=${previewGame.appId} showArtworkFirst=${showArtworkFirst} mode=${previewMode} autoplay=${!!thumbnailAutoplaySrc}`);
     }
-    if (DEBUG_CONSOLE_PREVIEW_AUTO && thumbnailAutoplaySrc && focusedGame?.appId) {
-      console.log(`[PREVIEW_PIPE][PASS_PROP] appid=${focusedGame.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
+    if (DEBUG_CONSOLE_PREVIEW_AUTO && thumbnailAutoplaySrc && previewGame?.appId) {
+      console.log(`[PREVIEW_PIPE][PASS_PROP] appid=${previewGame.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
     }
-  }, [showArtworkFirst, previewMode, thumbnailAutoplaySrc, focusedGame?.appId]);
+  }, [showArtworkFirst, previewMode, thumbnailAutoplaySrc, previewGame?.appId]);
 
   if (DEBUG_CONSOLE_MODE) {
     if (focusedGame) {

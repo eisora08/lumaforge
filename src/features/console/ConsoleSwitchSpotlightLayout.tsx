@@ -68,6 +68,7 @@ const SECTION_LABELS: Record<string, string> = {
 
 type Props = {
   focusedGame: LibraryGame | null;
+  settledFocusedGame?: LibraryGame | null;
   rails: LibraryGame[][];
   focusedRail: number;
   focusedIndex: number;

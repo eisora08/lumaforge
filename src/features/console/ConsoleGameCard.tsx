@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Gamepad2, Heart } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -15,7 +16,7 @@ type Props = {
   cornerRadius?: number;
 };
 
-export default function ConsoleGameCard({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius }: Props) {
+function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius }: Props) {
   const { isFavorite } = useFavorites();
   const fav = game.appId ? isFavorite(game.appId) : false;
   const isSpotlight = !compact;
@@ -35,7 +36,7 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
       tabIndex={isFocused ? 0 : -1}
       aria-label={game.title}
       onClick={onClick}
-      className={`relative cursor-pointer border transition-all duration-[260ms] ease-out shrink-0 ${
+      className={`relative cursor-pointer border transition-[transform,opacity,border-color] duration-[200ms] ease-out shrink-0 ${
         compact ? "" : variant === "poster" ? "w-[200px]" : "w-[280px]"
       } ${cardWidth ? "" : "shrink-0"} ${
         isFocused
@@ -137,3 +138,6 @@ export default function ConsoleGameCard({ game, isFocused, onClick, compact, var
     </div>
   );
 }
+
+const ConsoleGameCard = memo(ConsoleGameCardRaw);
+export default ConsoleGameCard;
