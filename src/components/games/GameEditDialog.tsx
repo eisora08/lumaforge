@@ -5,10 +5,7 @@ import {
   Save,
   Image,
   Type,
-  Upload,
   Link,
-  Trash2,
-  Check,
   FileImage,
   Monitor,
   PanelTop,
@@ -23,7 +20,6 @@ import {
   Info,
   Eye,
   Globe,
-  Search as SearchIcon,
   ChevronDown,
   Download,
   ExternalLink,
@@ -42,6 +38,8 @@ import { showSuccess, showError } from "../toast/GameToast";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import GameImageSearchDialog from "./GameImageSearchDialog";
+import GameMediaRoleRow from "./GameMediaRoleRow";
+import { SourceOption } from "./GameMediaRoleRow";
 
 // ── Constants ──
 
@@ -1259,200 +1257,31 @@ export default function GameEditDialog({
 
     return (
       <div className="space-y-5">
-        {MEDIA_ROLES.map(({ role, label, icon: RoleIcon, desc }) => {
-          const path = currentPath(role);
-          const urlExpanded = expandedUrl === role;
-          const browseOpen = browseOpenFor === role;
-          const isBrowsing = browsingRole === role;
-
-          return (
-            <div
-              key={role}
-              className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4"
-            >
-              {/* Header row */}
-              <div className="flex items-start gap-4">
-                {/* Preview thumbnail */}
-                <div className="flex h-20 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/5">
-                  {getPreviewUrl(role) ? (
-                    <img
-                      src={getPreviewUrl(role)!}
-                      alt={label}
-                      className="h-full w-full object-cover"
-                      onError={(e) => {
-                        const img = e.target as HTMLImageElement;
-                        img.style.display = "none";
-                        if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][IMAGE_ERROR] role=${role} src=${getPreviewUrl(role)}`);
-                      }}
-                    />
-                  ) : (
-                    <RoleIcon className="h-8 w-8 text-(--color-muted)/40" />
-                  )}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-(--color-text)">{label}</span>
-                    {getPreviewStatus(role) === "set" ? (
-                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                        Set
-                      </span>
-                    ) : getPreviewStatus(role) === "missing" ? (
-                      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-400">
-                        Missing
-                      </span>
-                    ) : getPreviewStatus(role) === "loading" ? (
-                      <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-medium text-blue-400">
-                        Checking…
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-zinc-500/15 px-2 py-0.5 text-[10px] font-medium text-zinc-400">
-                        Unset
-                      </span>
-                    )}
-                  </div>
-                  {desc && (
-                    <p className="mt-0.5 text-[11px] text-(--color-muted)/60">{desc}</p>
-                  )}
-                  {path && (
-                    <p className="mt-0.5 truncate text-[11px] text-(--color-muted)">{path}</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Hidden file input */}
-              <input
-                ref={(el) => { fileInputRefs.current[role] = el; }}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                className="hidden"
-                onChange={() => handleFilePick(role)}
-              />
-
-              {/* Action buttons */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => fileInputRefs.current[role]?.click()}
-                  disabled={saving}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  Choose File
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setExpandedUrl(urlExpanded ? null : role)}
-                  disabled={saving}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
-                >
-                  <Link className="h-3.5 w-3.5" />
-                  Set URL
-                </button>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setBrowseOpenFor(browseOpen ? null : role)}
-                    disabled={saving || isBrowsing}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                    {isBrowsing ? "Fetching..." : "Browse"}
-                  </button>
-                  {browseOpen && (
-                    <div className="absolute left-0 top-full z-10 mt-1 w-52 rounded-xl border border-(--color-border) bg-(--color-bg) py-1 shadow-xl">
-                      <SourceOption
-                        label="Current Local"
-                        icon={FolderOpen}
-                        disabled={!path}
-                        onClick={() => handleSourcePick(role, "local")}
-                      />
-                      <SourceOption
-                        label="Steam Original Assets"
-                        icon={Globe}
-                        disabled={!sourceAvailability.steam}
-                        hint={!sourceAvailability.steam ? "No metadata" : undefined}
-                        onClick={() => handleSourcePick(role, "steam")}
-                      />
-                      <SourceOption
-                        label="SteamGridDB"
-                        icon={Image}
-                        disabled={!sourceAvailability.sgdb}
-                        hint={!sourceAvailability.sgdb ? "Not configured" : undefined}
-                        onClick={() => handleSourcePick(role, "sgdb")}
-                      />
-                      <SourceOption
-                        label="IGDB"
-                        icon={Image}
-                        disabled={!sourceAvailability.igdb}
-                        hint={!sourceAvailability.igdb ? "Configure in Settings" : undefined}
-                        onClick={() => handleSourcePick(role, "igdb")}
-                      />
-                      <SourceOption
-                        label="RAWG"
-                        icon={Image}
-                        disabled={!sourceAvailability.rawg}
-                        hint={!sourceAvailability.rawg ? "Configure in Settings" : undefined}
-                        onClick={() => handleSourcePick(role, "rawg")}
-                      />
-                      <div className="my-1 border-t border-(--color-border)" />
-                      <SourceOption
-                        label="Web Search"
-                        icon={SearchIcon}
-                        onClick={() => handleOpenImageSearch(role)}
-                      />
-                      <SourceOption
-                        label="URL"
-                        icon={Link}
-                        onClick={() => handleSourcePick(role, "url")}
-                      />
-                      <SourceOption
-                        label="Local File"
-                        icon={Upload}
-                        onClick={() => handleSourcePick(role, "file")}
-                      />
-                    </div>
-                  )}
-                </div>
-                {path && (
-                  <button
-                    type="button"
-                    onClick={() => handleRemove(role)}
-                    disabled={saving}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-400 transition hover:bg-rose-500/20 disabled:opacity-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Remove
-                  </button>
-                )}
-              </div>
-
-              {/* URL input (expandable) */}
-              {urlExpanded && (
-                <div className="mt-3 flex gap-2">
-                  <input
-                    type="text"
-                    value={urlInputs[role] ?? ""}
-                    onChange={(e) =>
-                      setUrlInputs((prev) => ({ ...prev, [role]: e.target.value }))
-                    }
-                    placeholder="https://example.com/image.jpg"
-                    className="flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleUrlDownload(role)}
-                    disabled={saving || !urlInputs[role]?.trim()}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                    Download
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {MEDIA_ROLES.map(({ role, label, icon: RoleIcon, desc }) => (
+          <GameMediaRoleRow
+            key={role}
+            label={label}
+            icon={RoleIcon}
+            desc={desc}
+            previewUrl={getPreviewUrl(role)}
+            previewStatus={getPreviewStatus(role)}
+            currentPath={currentPath(role)}
+            saving={saving}
+            urlExpanded={expandedUrl === role}
+            browseOpen={browseOpenFor === role}
+            isBrowsing={browsingRole === role}
+            urlValue={urlInputs[role] ?? ""}
+            sourceAvailability={sourceAvailability}
+            onChooseLocalFile={() => handleFilePick(role)}
+            onToggleUrl={() => setExpandedUrl(expandedUrl === role ? null : role)}
+            onUrlChange={(v) => setUrlInputs((prev) => ({ ...prev, [role]: v }))}
+            onUrlSubmit={() => handleUrlDownload(role)}
+            onToggleBrowse={() => setBrowseOpenFor(browseOpenFor === role ? null : role)}
+            onSourcePick={(sourceId) => handleSourcePick(role, sourceId as SourceId)}
+            onOpenWebSearch={() => handleOpenImageSearch(role)}
+            onRemove={() => handleRemove(role)}
+          />
+        ))}
 
         {/* ── Read-only: Screenshots ── */}
         {metadata && screenshotCount > 0 && (
@@ -1710,36 +1539,7 @@ function FieldRow({ label, value }: { label: string; value: string | null | unde
   );
 }
 
-function SourceOption({
-  label,
-  icon: Icon,
-  disabled,
-  hint,
-  onClick,
-}: {
-  label: string;
-  icon: typeof FolderOpen;
-  disabled?: boolean;
-  hint?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition ${
-        disabled
-          ? "cursor-not-allowed text-(--color-muted)/40"
-          : "cursor-pointer text-(--color-text) hover:bg-white/5"
-      }`}
-    >
-      <Icon className="h-3.5 w-3.5 shrink-0" />
-      <span className="flex-1">{label}</span>
-      {hint && <span className="text-[10px] text-(--color-muted)/50">{hint}</span>}
-    </button>
-  );
-}
+/* SourceOption is imported from GameMediaRoleRow */
 
 function formatBytes(bytes?: number): string {
   if (bytes == null) return "Unknown";

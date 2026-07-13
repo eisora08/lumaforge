@@ -1,0 +1,355 @@
+use std::fs;
+use std::path::PathBuf;
+
+use tauri::{AppHandle, Manager};
+
+// ---------------------------------------------------------------------------
+// Provider-aware media file operations.
+// Path convention: games/<provider>/<providerGameId>/media/<role>.<ext>
+// No existing Steam commands are modified. All validation + sanitization
+// is self-contained — no shell execution, no arbitrary destination writes.
+// ---------------------------------------------------------------------------
+
+const VALID_ROLES: &[&str] = &["cover", "landscape", "background", "logo", "icon"];
+const VALID_PROVIDERS: &[&str] = &[
+    "steam", "manual", "epic", "gog", "battle_net", "ubisoft", "ea", "amazon",
+];
+const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
+
+// ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
+/// Sanitize a provider ID — matches `providerMediaPaths.ts` logic.
+fn sanitize_provider(raw: &str) -> Result<String, String> {
+    if raw.is_empty() {
+        return Err("Provider ID cannot be empty".into());
+    }
+    let safe: String = raw
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    let safe = safe.trim_matches('_');
+    if safe.is_empty() {
+        return Err(format!("Invalid provider ID: {}", raw));
+    }
+    Ok(safe.to_string())
+}
+
+/// Sanitize a provider game ID — matches `providerMediaPaths.ts` logic.
+fn sanitize_provider_game_id(raw: &str) -> Result<String, String> {
+    if raw.is_empty() {
+        return Err("Provider game ID cannot be empty".into());
+    }
+    // Block path traversal
+    if raw.contains("..") || raw.contains('/') || raw.contains('\\') {
+        return Err(format!("Invalid provider game ID (path traversal): {}", raw));
+    }
+    let safe: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe = safe.trim_matches('_');
+    if safe.is_empty() {
+        return Err(format!("Invalid provider game ID: {}", raw));
+    }
+    Ok(safe.to_string())
+}
+
+/// Validate a media role name.
+fn validate_role(role: &str) -> Result<(), String> {
+    if VALID_ROLES.contains(&role) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid media role: {}. Must be one of: {:?}",
+            role, VALID_ROLES
+        ))
+    }
+}
+
+/// Get the media directory for a provider+game: games/<provider>/<id>/media/
+fn get_provider_media_dir(
+    app_handle: &AppHandle,
+    provider: &str,
+    provider_game_id: &str,
+) -> Result<PathBuf, String> {
+    let safe_provider = sanitize_provider(provider)?;
+    let safe_id = sanitize_provider_game_id(provider_game_id)?;
+
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let media_dir = app_dir
+        .join("games")
+        .join(&safe_provider)
+        .join(&safe_id)
+        .join("media");
+
+    fs::create_dir_all(&media_dir)
+        .map_err(|e| format!("Failed to create media directory: {}", e))?;
+
+    Ok(media_dir)
+}
+
+/// Infer file extension from a path's extension, with role-based defaults.
+fn infer_extension(source_path: &str, role: &str) -> String {
+    let path = std::path::Path::new(source_path);
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        let ext_lower = ext.to_lowercase();
+        match ext_lower.as_str() {
+            "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" => return ext_lower,
+            _ => {}
+        }
+    }
+    // Default extension per role
+    match role {
+        "logo" | "icon" => "png".to_string(),
+        _ => "jpg".to_string(),
+    }
+}
+
+/// Infer file extension from a Content-Type header.
+fn extension_from_content_type(ct: &str, role: &str) -> String {
+    if ct.contains("png") {
+        "png".to_string()
+    } else if ct.contains("gif") {
+        "gif".to_string()
+    } else if ct.contains("webp") {
+        "webp".to_string()
+    } else if ct.contains("bmp") {
+        "bmp".to_string()
+    } else {
+        // Default per role
+        match role {
+            "logo" | "icon" => "png".to_string(),
+            _ => "jpg".to_string(),
+        }
+    }
+}
+
+/// Build the relative path string returned to the caller.
+fn relative_media_path(
+    provider: &str,
+    provider_game_id: &str,
+    role: &str,
+    ext: &str,
+) -> Result<String, String> {
+    let safe_provider = sanitize_provider(provider)?;
+    let safe_id = sanitize_provider_game_id(provider_game_id)?;
+    Ok(format!(
+        "games/{}/{}/media/{}.{}",
+        safe_provider, safe_id, role, ext
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Command 1: save_provider_media_from_path
+// Copy a local file into the provider media directory.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn save_provider_media_from_path(
+    app_handle: AppHandle,
+    provider: String,
+    provider_game_id: String,
+    role: String,
+    source_path: String,
+) -> Result<String, String> {
+    validate_role(&role)?;
+    if !VALID_PROVIDERS.contains(&provider.as_str()) {
+        // Allow unknown providers (future-proof) but validate structure
+        sanitize_provider(&provider)?;
+    }
+
+    let ext = infer_extension(&source_path, &role);
+    let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
+    let filename = format!("{}.{}", role, ext);
+    let dest_path = media_dir.join(&filename);
+
+    // Validate source path is readable and within size limit
+    let meta = fs::metadata(&source_path)
+        .map_err(|e| format!("Cannot read source file: {}", e))?;
+    if meta.len() > MAX_FILE_SIZE {
+        return Err(format!(
+            "Source file too large ({} bytes, max {})",
+            meta.len(),
+            MAX_FILE_SIZE
+        ));
+    }
+
+    // Atomic write: copy to temp, then rename
+    let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
+    fs::copy(&source_path, &tmp_path)
+        .map_err(|e| format!("Failed to copy source file: {}", e))?;
+
+    // Remove existing final file before rename (Windows requires this)
+    if dest_path.exists() {
+        let _ = fs::remove_file(&dest_path);
+    }
+    fs::rename(&tmp_path, &dest_path)
+        .map_err(|e| format!("Failed to finalize media file: {}", e))?;
+
+    let rel = relative_media_path(&provider, &provider_game_id, &role, &ext)?;
+    println!(
+        "[PROVIDER_MEDIA][SAVED] provider={} game={} role={} path={}",
+        provider, provider_game_id, role, rel
+    );
+    Ok(rel)
+}
+
+// ---------------------------------------------------------------------------
+// Command 2: download_provider_media_from_url
+// Download a URL into the provider media directory.
+// Uses reqwest blocking client with the same safety limits as safe_download_image.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn download_provider_media_from_url(
+    app_handle: AppHandle,
+    provider: String,
+    provider_game_id: String,
+    role: String,
+    url: String,
+) -> Result<String, String> {
+    validate_role(&role)?;
+    if !VALID_PROVIDERS.contains(&provider.as_str()) {
+        sanitize_provider(&provider)?;
+    }
+
+    // Validate URL scheme
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(format!("Invalid URL scheme (must be http/https): {}", url));
+    }
+
+    let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
+
+    // Download with timeout and size limits
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .user_agent("LumaForge/0.2.0")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .map_err(|e| format!("Download failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Download failed with status: {}",
+            response.status()
+        ));
+    }
+
+    // Check content-type for extension inference
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    if bytes.len() as u64 > MAX_FILE_SIZE {
+        return Err(format!(
+            "Downloaded file too large ({} bytes, max {})",
+            bytes.len(),
+            MAX_FILE_SIZE
+        ));
+    }
+
+    let ext = if content_type.is_empty() {
+        infer_extension(&url, &role)
+    } else {
+        extension_from_content_type(&content_type, &role)
+    };
+
+    let filename = format!("{}.{}", role, ext);
+    let dest_path = media_dir.join(&filename);
+
+    // Atomic write: temp file then rename
+    let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
+    fs::write(&tmp_path, &bytes)
+        .map_err(|e| format!("Failed to write downloaded file: {}", e))?;
+
+    if dest_path.exists() {
+        let _ = fs::remove_file(&dest_path);
+    }
+    fs::rename(&tmp_path, &dest_path)
+        .map_err(|e| format!("Failed to finalize downloaded file: {}", e))?;
+
+    let rel = relative_media_path(&provider, &provider_game_id, &role, &ext)?;
+    println!(
+        "[PROVIDER_MEDIA][DOWNLOADED] provider={} game={} role={} path={} bytes={}",
+        provider,
+        provider_game_id,
+        role,
+        rel,
+        bytes.len()
+    );
+    Ok(rel)
+}
+
+// ---------------------------------------------------------------------------
+// Command 3: delete_provider_media_file
+// Delete media files for a role (any extension) in the provider media dir.
+// Succeeds silently if no file exists.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn delete_provider_media_file(
+    app_handle: AppHandle,
+    provider: String,
+    provider_game_id: String,
+    role: String,
+) -> Result<(), String> {
+    validate_role(&role)?;
+    if !VALID_PROVIDERS.contains(&provider.as_str()) {
+        sanitize_provider(&provider)?;
+    }
+
+    let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
+
+    let mut deleted = false;
+    if let Ok(entries) = fs::read_dir(&media_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if stem == role {
+                    if fs::remove_file(&path).is_ok() {
+                        println!(
+                            "[PROVIDER_MEDIA][DELETED] provider={} game={} role={} path={:?}",
+                            provider, provider_game_id, role, path
+                        );
+                        deleted = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if !deleted {
+        println!(
+            "[PROVIDER_MEDIA][DELETE_SKIP] provider={} game={} role={} reason=not-found",
+            provider, provider_game_id, role
+        );
+    }
+
+    Ok(())
+}

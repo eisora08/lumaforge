@@ -1450,6 +1450,48 @@ export async function deleteGameMediaFile(appId: string, role: string): Promise<
   return await invoke("delete_game_media_file", { appId, role });
 }
 
+// ── Provider-aware media commands (Step 7) ──
+
+export async function saveProviderMediaFromPath(
+  provider: string,
+  providerGameId: string,
+  role: string,
+  sourcePath: string,
+): Promise<string> {
+  return await invoke<string>("save_provider_media_from_path", {
+    provider,
+    providerGameId,
+    role,
+    sourcePath,
+  });
+}
+
+export async function downloadProviderMediaFromUrl(
+  provider: string,
+  providerGameId: string,
+  role: string,
+  url: string,
+): Promise<string> {
+  return await invoke<string>("download_provider_media_from_url", {
+    provider,
+    providerGameId,
+    role,
+    url,
+  });
+}
+
+export async function deleteProviderMediaFile(
+  provider: string,
+  providerGameId: string,
+  role: string,
+): Promise<void> {
+  return await invoke("delete_provider_media_file", {
+    provider,
+    providerGameId,
+    role,
+  });
+}
+
 export async function openGameMetadataFolder(appId: string): Promise<void> {
   return await invoke("open_game_metadata_folder", { appId });
 }

@@ -35,3 +35,4 @@ pub mod provider_status_cache;
 pub mod scan_state;
 pub mod steam_owned;
 pub mod profile;
+pub mod provider_media;
