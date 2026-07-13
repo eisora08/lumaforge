@@ -39,6 +39,8 @@ import {
   countLibraryReconciledDiff,
   countLibraryEmptyBlocked,
 } from "../services/perfCounters";
+import { loadManualGames, subscribeManualGames } from "../services/manualGameStore";
+import { manualGameToLibraryGame } from "../services/manualGameLibraryMapper";
 
 // ── Library runtime state machine ──
 
@@ -88,6 +90,16 @@ function cleanupOldCacheKeys() {
 }
 
 cleanupOldCacheKeys();
+
+// ── Manual game helpers ──
+
+function getManualLibraryGames(): LibraryGame[] {
+  try {
+    return loadManualGames().map(manualGameToLibraryGame);
+  } catch {
+    return [];
+  }
+}
 
 function loadStoredSelectedId(): string | null {
   try {
@@ -202,8 +214,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     options?: { allowReplace?: boolean },
   ): void {
     const current = gamesRef.current;
+    // Append manual games from manualGameStore so they appear in the Library grid.
+    // Manual games are never written to BootSnapshot, gameStore, SQLite, or appinfo.
+    const withManual = [...nextGames, ...getManualLibraryGames()];
     // Phase 2: Block empty replacement of valid data unless explicit
-    if (nextGames.length === 0 && current.length > 0 && !options?.allowReplace) {
+    if (withManual.length === 0 && current.length > 0 && !options?.allowReplace) {
       countLibraryEmptyBlocked();
       console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_BLOCKED] reason=empty source=${source} current=${current.length}`);
       return;
@@ -211,15 +226,15 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // Phase 4: Block partial background scans
     if (
       source === "background-scan" &&
-      nextGames.length > 0 &&
+      withManual.length > 0 &&
       current.length > 0 &&
-      nextGames.length < current.length * 0.5
+      withManual.length < current.length * 0.5
     ) {
-      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_BLOCKED] reason=partial source=${source} current=${current.length} incoming=${nextGames.length}`);
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_BLOCKED] reason=partial source=${source} current=${current.length} incoming=${withManual.length}`);
       return;
     }
     // Phase 4+8: Compute fingerprint of incoming games and skip if same as current
-    const incomingFp = computeLibraryFingerprint(nextGames);
+    const incomingFp = computeLibraryFingerprint(withManual);
     const currentFp = current.length > 0 ? computeLibraryFingerprint(current) : null;
     if (currentFp !== null && incomingFp === currentFp) {
       countLibrarySkipped();
@@ -242,7 +257,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     for (const g of current) {
       if (g.appId) currentById.set(g.appId, g);
     }
-    const merged = mergeGames(current, nextGames, source);
+    const merged = mergeGames(current, withManual, source);
     const deduped = dedupeLibraryGames(merged);
 
     // Phase 6: Merge Activity playtime into LibraryGame runtime objects
@@ -285,7 +300,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       countLibraryReconciledDiff();
       console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_DIFF] source=${source} added=${addedCount} removed=${removedCount} changed=${changedCount} total=${stable.length}`);
     } else {
-      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES] source=${source} previous=${current.length} incoming=${nextGames.length} merged=${merged.length} deduped=${deduped.length}`);
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES] source=${source} previous=${current.length} incoming=${withManual.length} merged=${merged.length} deduped=${deduped.length}`);
     }
     countLibraryApplied();
     setGames(stable);
@@ -612,6 +627,18 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     })();
     return () => { unsub?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Subscribe to manualGameStore changes — re-apply with fresh manual games
+  useEffect(() => {
+    return subscribeManualGames(() => {
+      const current = gamesRef.current;
+      if (current.length === 0) return; // not loaded yet
+      // Rebuild: strip old manual games, append fresh ones from store
+      const nonManual = current.filter((g) => g.source !== "manual");
+      const manual = getManualLibraryGames();
+      applyGamesSafely([...nonManual, ...manual], "manual-update");
+    });
   }, []);
 
   useEffect(() => {
