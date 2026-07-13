@@ -1037,6 +1037,54 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
               });
             }
           }
+        } else if (game.source === "manual" && game.executablePath) {
+          const exePath = game.executablePath.trim().replace(/^["']|["']$/g, "");
+          const workingDir = game.libraryPath || exePath.substring(0, exePath.lastIndexOf("\\"));
+          const args = game.launchArguments
+            ? game.launchArguments.trim().split(/\s+/).filter(Boolean)
+            : undefined;
+
+          const result = await launchExecutable(exePath, args, workingDir || undefined);
+          if (ls.cancelled || ls.token !== token) {
+            if (result.pid) {
+              try { await terminateProcess(result.pid); } catch { /* ignore */ }
+            }
+            return;
+          }
+
+          if (result.pid) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] manual process spawned", { gameKey: computedKey, pid: result.pid });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "running",
+                  pid: result.pid,
+                  softSession: false,
+                  trackingConfidence: "high",
+                  processName: extractExeName(exePath),
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+          } else {
+            await scanForProcessAfterLaunch(computedKey, game, token, 0);
+            if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing || existing.state !== "launching") return prev;
+                return {
+                  ...prev,
+                  [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                };
+              });
+            }
+          }
         } else {
           console.warn("[Launch] cannot determine launch method", { gameKey: computedKey });
           setSessions((prev) => {
@@ -1281,8 +1329,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   severity: "info",
                 });
               }
-            }
-          } else {
+          }
+        } else {
             console.debug("[Playtime] skipped end — duration below 15s", { gameKey: key, durationSeconds });
           }
         }

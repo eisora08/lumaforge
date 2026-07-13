@@ -768,8 +768,16 @@ export type ProcessInfo = {
   exe?: string;
 };
 
-export async function launchExecutable(path: string): Promise<SpawnResult> {
-  return await invoke<SpawnResult>("launch_executable", { path });
+export async function launchExecutable(
+  path: string,
+  args?: string[],
+  workingDir?: string,
+): Promise<SpawnResult> {
+  return await invoke<SpawnResult>("launch_executable", {
+    path,
+    args: args ?? null,
+    workingDir: workingDir ?? null,
+  });
 }
 
 export async function terminateProcess(pid: number): Promise<void> {

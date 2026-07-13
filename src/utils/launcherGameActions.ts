@@ -6,7 +6,11 @@ export function getLauncherGamePrimaryAction(game: LibraryGame): PrimaryAction {
   const hasLuaScripts = game.luaScripts && game.luaScripts.length > 0;
 
   let action: PrimaryAction;
-  if (game.isPlayable && game.appId) {
+  if (game.source === "manual" && game.executablePath) {
+    action = "play";
+  } else if (game.source === "manual" && !game.executablePath) {
+    action = "missing-path";
+  } else if (game.isPlayable && game.appId) {
     action = "play";
   } else if (game.isInstallable && game.appId) {
     action = "install";

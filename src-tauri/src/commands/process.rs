@@ -97,8 +97,22 @@ pub fn discover_executables(dir: String) -> Result<Vec<DiscoveredExecutable>, St
 }
 
 #[tauri::command]
-pub fn launch_executable(path: String) -> Result<SpawnResult, String> {
-  let child = Command::new(&path)
+pub fn launch_executable(
+  path: String,
+  args: Option<Vec<String>>,
+  working_dir: Option<String>,
+) -> Result<SpawnResult, String> {
+  let trimmed = path.trim().trim_matches(|c| c == '"' || c == '\'');
+  let mut cmd = Command::new(trimmed);
+  if let Some(a) = &args {
+    cmd.args(a);
+  }
+  if let Some(wd) = &working_dir {
+    if !wd.is_empty() {
+      cmd.current_dir(wd);
+    }
+  }
+  let child = cmd
     .stdout(Stdio::null())
     .stderr(Stdio::null())
     .stdin(Stdio::null())

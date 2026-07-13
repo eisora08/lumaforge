@@ -13,7 +13,7 @@ import type { ManualGameEntry } from "./manualGameStore";
  *   - providerGameId = entry.id
  *
  * State flags:
- *   - isPlayable = false  (launch not wired until Step 4)
+ *   - isPlayable = true when executablePath is set (Step 4)
  *   - isInstallable = false
  *   - steamInstalled = false
  *   - all Lua flags = false / empty
@@ -44,7 +44,7 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
       entry.backgroundPath ??
       undefined,
 
-    isPlayable: false,
+    isPlayable: !!entry.executablePath,
     isInstallable: false,
     steamInstalled: false,
 

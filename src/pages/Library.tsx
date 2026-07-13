@@ -208,7 +208,7 @@ export default function LibraryPage({ onNavigate }: Props) {
       } catch (err) {
         showError(String(err), { title: "Error" });
       }
-    } else if (game.source === "local" && game.executablePath) {
+    } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       try {
         await session.launchGame(game);
       } catch (err) {
