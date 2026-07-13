@@ -9,7 +9,7 @@ import type { GameNameResult } from "../types/gameName";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
-import type { SteamGridDbArtwork } from "../types/steamGridDb";
+import type { SteamGridDbArtwork, SteamGridDbGameSearchResult } from "../types/steamGridDb";
 import type { SteamInstalledGame } from "../types/steamInstalled";
 import type { SteamUserGameStats } from "../types/steamUserStats";
 import type { LocalDiscoveredGame } from "../types/localGame";
@@ -754,6 +754,26 @@ export async function resolveSteamGridDbArtwork(
   );
 }
 
+export async function searchSteamGridDbGames(
+  name: string,
+  apiKey: string
+): Promise<SteamGridDbGameSearchResult[]> {
+  return await invoke<SteamGridDbGameSearchResult[]>(
+    "search_steamgriddb_games",
+    { name, apiKey }
+  );
+}
+
+export async function resolveSteamGridDbArtworkByGameId(
+  sgdbGameId: number,
+  apiKey: string
+): Promise<SteamGridDbArtwork> {
+  return await invoke<SteamGridDbArtwork>(
+    "resolve_steamgriddb_artwork_by_game_id",
+    { sgdbGameId, apiKey }
+  );
+}
+
 // --- Process management ---
 
 export type SpawnResult = {
@@ -1492,12 +1512,36 @@ export async function deleteProviderMediaFile(
   });
 }
 
+export async function saveProviderMediaFromBase64(
+  provider: string,
+  providerGameId: string,
+  role: string,
+  contentBase64: string,
+  ext: string,
+): Promise<string> {
+  return await invoke<string>("save_provider_media_from_base64", {
+    provider,
+    providerGameId,
+    role,
+    contentBase64,
+    ext,
+  });
+}
+
+export async function openFolder(path: string): Promise<void> {
+  return await invoke("open_folder", { path });
+}
+
 export async function openGameMetadataFolder(appId: string): Promise<void> {
   return await invoke("open_game_metadata_folder", { appId });
 }
 
 export async function openGameMediaFolder(appId: string): Promise<void> {
   return await invoke("open_game_media_folder", { appId });
+}
+
+export async function openProviderMediaFolder(providerId: string, providerGameId: string): Promise<void> {
+  return await invoke("open_provider_media_folder", { provider: providerId, providerGameId });
 }
 
 export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | null, paths: GameMediaPaths): Promise<void> {
@@ -2026,4 +2070,64 @@ export async function powerHibernate(): Promise<void> {
 
 export async function powerRestart(): Promise<void> {
   await invoke("power_restart");
+}
+
+// ── IGDB (via Rust backend — no direct frontend fetch to api.igdb.com) ──
+
+export interface IgdbAccessToken {
+  access_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
+export interface IgdbArtworkBySteamIdResult {
+  cover_url: string | null;
+}
+
+export interface IgdbGameSearchResult {
+  igdb_id: number | null;
+  name: string | null;
+  summary: string | null;
+  release_date: string | null;
+  genres: string[] | null;
+  developers: string[] | null;
+  publishers: string[] | null;
+  cover_url: string | null;
+  screenshot_urls: string[] | null;
+}
+
+export async function igdbGetAccessToken(
+  clientId: string,
+  clientSecret: string,
+): Promise<IgdbAccessToken> {
+  return await invoke<IgdbAccessToken>("igdb_get_access_token", {
+    clientId,
+    clientSecret,
+  });
+}
+
+export async function igdbSearchBySteamAppId(
+  clientId: string,
+  accessToken: string,
+  appId: string,
+): Promise<IgdbArtworkBySteamIdResult> {
+  return await invoke<IgdbArtworkBySteamIdResult>("igdb_search_by_steam_app_id", {
+    clientId,
+    accessToken,
+    appId,
+  });
+}
+
+export async function igdbSearchGamesByName(
+  clientId: string,
+  accessToken: string,
+  name: string,
+  limit?: number,
+): Promise<IgdbGameSearchResult[]> {
+  return await invoke<IgdbGameSearchResult[]>("igdb_search_games_by_name", {
+    clientId,
+    accessToken,
+    name,
+    limit: limit ?? 3,
+  });
 }

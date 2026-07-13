@@ -24,19 +24,22 @@ import {
   Download,
   ExternalLink,
   Video,
+  Search,
 } from "lucide-react";
 import type { GameMediaPaths, GameAppInfo } from "../../services/tauri";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getGameAppInfo, resolveSteamGridDbArtwork, openGameMetadataFolder, openGameMediaFolder, resolveGameMediaPaths, deleteGameMediaFile } from "../../services/tauri";
-import { invoke } from "@tauri-apps/api/core";
-import { updateGameAppinfoMediaIfChanged, saveGameMediaFile, persistGameAppInfo, clearSessionAppInfoCache, localPathToUrl } from "../../services/gameCacheService";
+import { getGameAppInfo, resolveSteamGridDbArtwork, searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId, openGameMetadataFolder, openGameMediaFolder, openFolder, resolveSteamStoreSearch, openProviderMediaFolder } from "../../services/tauri";
+import { updateGameAppinfoMediaIfChanged, saveGameMediaFile, persistGameAppInfo, clearSessionAppInfoCache, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
+import { createMediaAdapter } from "../../services/mediaAdapter";
 import { invalidateResolvedMediaCache, refreshGameDetailsArtwork } from "../../services/gameCacheService";
 import { notifyMediaUpdated } from "../../services/startupSnapshotService";
 import { resolveGameMetadata } from "../../services/gameMetadataResolver";
-import { fetchIgdbArtworkDeduped, fetchRawgArtworkDeduped } from "../../services/storeArtworkResolver";
+import { fetchIgdbArtworkDeduped, fetchRawgArtworkDeduped, fetchIgdbMetadataByName } from "../../services/storeArtworkResolver";
 import { showSuccess, showError } from "../toast/GameToast";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
+import type { ManualGameEntry } from "../../services/manualGameStore";
+import { getManualGame, saveManualGame, updateManualGame } from "../../services/manualGameStore";
 import GameImageSearchDialog from "./GameImageSearchDialog";
 import GameMediaRoleRow from "./GameMediaRoleRow";
 import { SourceOption } from "./GameMediaRoleRow";
@@ -49,7 +52,8 @@ const SMALL_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB for icon/logo
 // ── Types ──
 
 export type GameEditDialogProps = {
-  appId: string;
+  appId?: string;
+  manualGameId?: string;
   open: boolean;
   onClose: () => void;
   initialTab?: TabId;
@@ -103,6 +107,7 @@ const ROLE_TO_PATH_KEY: Record<MediaRole, keyof GameMediaPaths> = {
 };
 
 const DEBUG_MEDIA_EDIT = false;
+const DEBUG_MANUAL_METADATA = false;
 
 type RolePreviewStatus = "set" | "missing" | "unset" | "loading";
 
@@ -142,10 +147,14 @@ function buildSteamCoverUrl(appId: string): string | null {
   return `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`;
 }
 
+// ── Debug tracing for manual cover persistence ──
+const DEBUG_MANUAL_COVER = false;
+
 // ── Component ──
 
 export default function GameEditDialog({
   appId,
+  manualGameId,
   open,
   onClose,
   initialTab = "general",
@@ -154,6 +163,11 @@ export default function GameEditDialog({
 }: GameEditDialogProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Mode detection — manual games use manualGameId, Steam games use appId
+  const isManualMode = !!manualGameId && !appId;
+  const isCreateMode = !appId && !manualGameId;
+  const effectiveId = manualGameId ?? appId ?? "";
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
@@ -167,8 +181,19 @@ export default function GameEditDialog({
   const [appInfo, setAppInfo] = useState<GameAppInfo | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Manual game state
+  const [manualEntry, setManualEntry] = useState<ManualGameEntry | null>(null);
+  const [createdManualId, setCreatedManualId] = useState<string | null>(null);
+
   // Metadata state
   const [metadata, setMetadata] = useState<SteamAppMetadata | null>(null);
+
+  // Installation field drafts (manual games only)
+  const [executablePathDraft, setExecutablePathDraft] = useState("");
+  const [workingDirectoryDraft, setWorkingDirectoryDraft] = useState("");
+  const [launchArgsDraft, setLaunchArgsDraft] = useState("");
+  const [installDirDraft, setInstallDirDraft] = useState("");
+  const exeFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ── Editable field drafts (loaded from userData on mount) ──
   const [nameDraft, setNameDraft] = useState("");
@@ -196,6 +221,9 @@ export default function GameEditDialog({
   const [regionDraft, setRegionDraft] = useState("");
   const [completionStatusDraft, setCompletionStatusDraft] = useState("");
 
+  // Linked IDs for manual games
+  const [linkedIgdbIdDraft, setLinkedIgdbIdDraft] = useState<string | undefined>(undefined);
+
   // Download Metadata menu
   const [metadataMenuOpen, setMetadataMenuOpen] = useState(false);
   const [metadataDownloading, setMetadataDownloading] = useState(false);
@@ -221,6 +249,17 @@ export default function GameEditDialog({
     if (!imageSearchOpen && lastImageSearchRoleRef.current) {
       const role = lastImageSearchRoleRef.current;
       lastImageSearchRoleRef.current = null;
+      // For manual games, re-read entry from store (image search wrote directly via updateManualGame)
+      if ((isManualMode || isCreateMode) && (manualGameId || createdManualId)) {
+        const targetId = manualGameId ?? createdManualId;
+        if (targetId) {
+          const refreshed = getManualGame(targetId);
+          if (refreshed) {
+            setManualEntry(refreshed);
+            if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][EDITOR_SET] manualId=${targetId} role=${role} savedPath=${refreshed[`${role}Path` as keyof ManualGameEntry]} entry=${JSON.stringify({ coverPath: refreshed.coverPath, landscapePath: refreshed.landscapePath, backgroundPath: refreshed.backgroundPath, logoPath: refreshed.logoPath, iconPath: refreshed.iconPath })}`);
+          }
+        }
+      }
       refreshRolePreview(role);
     }
   }, [imageSearchOpen]);
@@ -234,6 +273,17 @@ export default function GameEditDialog({
 
   // Library context for UI refresh
   const { updateGame } = useLibraryGames();
+
+  // Steam media adapter (created before early returns for hook safety)
+  const mediaAdapter = useMemo(() => {
+    if (isManualMode && manualGameId) {
+      return createMediaAdapter("manual", manualGameId);
+    }
+    if (appId) {
+      return createMediaAdapter("steam", appId);
+    }
+    return null;
+  }, [appId, manualGameId, isManualMode]);
 
   // ── Load drafts from userData ──
   function loadDraftsFromUserData(info: GameAppInfo | null) {
@@ -260,7 +310,37 @@ export default function GameEditDialog({
     setCompletionStatusDraft(typeof ud.completionStatus === "string" ? ud.completionStatus : "");
   }
 
-  // ── Load appinfo on mount ──
+  // ── Load drafts from ManualGameEntry ──
+  function loadDraftsFromManualEntry(entry: ManualGameEntry) {
+    setNameDraft(entry.name ?? "");
+    setGenresDraft(entry.genres?.join(", ") ?? "");
+    setDevelopersDraft(entry.developers?.join(", ") ?? "");
+    setPublishersDraft(entry.publishers?.join(", ") ?? "");
+    setCategoriesDraft(entry.categories?.join(", ") ?? "");
+    setFeaturesDraft(entry.features?.join(", ") ?? "");
+    setTagsDraft(entry.tags?.join(", ") ?? "");
+    setReleaseDateDraft(entry.releaseDate ?? "");
+    setDescriptionDraft(entry.description ?? "");
+    setLinkedIgdbIdDraft(entry.linkedIgdbId ?? undefined);
+    setSortingNameDraft(entry.sortingName ?? "");
+    setUserScoreDraft(entry.userScore ?? "");
+    setCriticScoreDraft(entry.criticScore ?? "");
+    setCommunityScoreDraft(entry.communityScore ?? "");
+    setReviewSummaryDraft(entry.reviewSummary ?? "");
+    setReviewCountDraft(entry.reviewCount ?? "");
+    setReviewSourceDraft(entry.reviewSource ?? "");
+    setSeriesDraft(entry.series ?? "");
+    setAgeRatingDraft(entry.ageRating ?? "");
+    setRegionDraft(entry.region ?? "");
+    setCompletionStatusDraft(entry.completionStatus ?? "");
+    // Installation fields
+    setExecutablePathDraft(entry.executablePath ?? "");
+    setWorkingDirectoryDraft(entry.workingDirectory ?? "");
+    setLaunchArgsDraft(entry.launchArguments ?? "");
+    setInstallDirDraft(entry.installDir ?? "");
+  }
+
+  // ── Load appinfo or manual entry on mount ──
 
   useEffect(() => {
     if (!open) return;
@@ -271,7 +351,34 @@ export default function GameEditDialog({
     setBrowsingRole(null);
     setHasEdits(false);
     setRolePreviews({});
-    getGameAppInfo(appId).then((info) => {
+    setManualEntry(null);
+    setCreatedManualId(null);
+    setExecutablePathDraft("");
+    setWorkingDirectoryDraft("");
+    setLaunchArgsDraft("");
+    setInstallDirDraft("");
+    setLinkedIgdbIdDraft(undefined);
+
+    // Manual edit mode — load from manualGameStore
+    if (isManualMode && manualGameId) {
+      const entry = getManualGame(manualGameId);
+      if (entry) {
+        setManualEntry(entry);
+        loadDraftsFromManualEntry(entry);
+      }
+      setLoading(false);
+      loadRolePreviews();
+      return;
+    }
+
+    // Create mode — blank form, no data to load
+    if (isCreateMode) {
+      setLoading(false);
+      return;
+    }
+
+    // Steam edit mode (existing)
+    getGameAppInfo(appId!).then((info) => {
       setAppInfo(info);
       loadDraftsFromUserData(info);
       setLoading(false);
@@ -284,7 +391,7 @@ export default function GameEditDialog({
         setLoading(false);
       }).catch(() => {});
     }
-  }, [open, appId]);
+  }, [open, appId, manualGameId]);
 
   // ── Fill drafts from metadata on Download ──
   function fillDraftsFromMetadata(meta: SteamAppMetadata, mergeName?: string) {
@@ -303,6 +410,87 @@ export default function GameEditDialog({
   // ── Download Metadata handler ──
   const handleDownloadMetadata = useCallback(async (source: MetadataSourceId) => {
     setMetadataMenuOpen(false);
+    if (!appId && !isManualMode && !isCreateMode) return;
+
+    // Manual/create: IGDB or Steam name search
+    if (isManualMode || isCreateMode) {
+      const searchName = nameDraft.trim();
+      if (!searchName) {
+        showError("Enter a game name first");
+        return;
+      }
+      setMetadataDownloading(true);
+      if (DEBUG_MANUAL_METADATA) console.log(`[MANUAL][META] source=${source} searchName="${searchName}" isManual=${isManualMode} isCreate=${isCreateMode}`);
+
+      try {
+        if (source === "igdb") {
+          if (!settings?.igdbClientId || !settings?.igdbClientSecret) {
+            showError("Configure IGDB credentials in Settings first");
+            setMetadataDownloading(false);
+            return;
+          }
+          if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] calling fetchIgdbMetadataByName...");
+          const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+          if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] IGDB result:", result);
+          if (result) {
+            if (result.igdbId) setLinkedIgdbIdDraft(String(result.igdbId));
+            if (result.name) setNameDraft(result.name);
+            if (result.genres?.length) setGenresDraft(result.genres.join(", "));
+            if (result.developers?.length) setDevelopersDraft(result.developers.join(", "));
+            if (result.publishers?.length) setPublishersDraft(result.publishers.join(", "));
+            if (result.releaseDate) setReleaseDateDraft(result.releaseDate);
+            if (result.summary) setDescriptionDraft(result.summary);
+            setHasEdits(true);
+            if (result.coverUrl) {
+              showSuccess(`Found "${result.name ?? searchName}" on IGDB — metadata filled. Use Media tab to add artwork.`);
+            } else {
+              showSuccess("Metadata filled from IGDB");
+            }
+          } else {
+            if (DEBUG_MANUAL_METADATA) console.warn("[MANUAL][META] IGDB returned null — no results or auth failure");
+            showError(`No IGDB results for "${searchName}"`);
+          }
+        } else if (source === "steam") {
+          if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] calling resolveSteamStoreSearch...");
+          const steamResults = await resolveSteamStoreSearch({ term: searchName, limit: 5 });
+          if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] Steam results:", steamResults);
+          if (!steamResults || steamResults.length === 0) {
+            showError(`No Steam results for "${searchName}"`);
+            setMetadataDownloading(false);
+            return;
+          }
+          const best = steamResults[0];
+          if (DEBUG_MANUAL_METADATA) console.log(`[MANUAL][META] best match: appId=${best.app_id} name="${best.name}"`);
+          setLinkedIgdbIdDraft(undefined);
+          if (best.name) setNameDraft(best.name);
+          if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] resolving Steam metadata for appId:", best.app_id);
+          const metaMap = await resolveGameMetadata([best.app_id]);
+          const meta = metaMap[best.app_id];
+          if (DEBUG_MANUAL_METADATA) console.log("[MANUAL][META] Steam metadata:", meta);
+          if (meta) {
+            if (meta.developer) setDevelopersDraft(meta.developer);
+            if (meta.publishers?.length) setPublishersDraft(meta.publishers.join(", "));
+            if (meta.genres?.length) setGenresDraft(meta.genres.join(", "));
+            if (meta.release_date) setReleaseDateDraft(meta.release_date);
+            if (meta.short_description || meta.about_the_game) setDescriptionDraft(meta.short_description ?? meta.about_the_game ?? "");
+            if (meta.name && meta.name !== best.name) setNameDraft(meta.name);
+            setHasEdits(true);
+            showSuccess(`Found "${meta.name ?? best.name}" on Steam — metadata filled. Use Media tab to add artwork.`);
+          } else {
+            setHasEdits(true);
+            showSuccess(`Found "${best.name}" on Steam — name filled. Metadata not available for this app.`);
+          }
+        }
+      } catch (e) {
+        if (DEBUG_MANUAL_METADATA) console.error("[MANUAL][META] error:", e);
+        showError(`Failed to search ${source === "igdb" ? "IGDB" : "Steam"}`);
+      }
+      setMetadataDownloading(false);
+      return;
+    }
+
+    // Steam games — existing flow
+    if (!appId) { setMetadataDownloading(false); return; }
     setMetadataDownloading(true);
     try {
       if (source === "steam") {
@@ -325,7 +513,7 @@ export default function GameEditDialog({
         }
         const igdbData = await fetchIgdbArtworkDeduped({
           clientId: settings.igdbClientId,
-          accessToken: settings.igdbClientSecret,
+          clientSecret: settings.igdbClientSecret,
           appId,
         });
         if (igdbData) {
@@ -354,7 +542,7 @@ export default function GameEditDialog({
       showError(`Failed to download metadata from ${source}`);
     }
     setMetadataDownloading(false);
-  }, [appId, settings]);
+  }, [appId, settings, isManualMode, isCreateMode, nameDraft]);
 
   // ── Build userData from drafts ──
   function buildUserData(): Record<string, unknown> {
@@ -385,16 +573,160 @@ export default function GameEditDialog({
 
   const handleOpenMediaFolder = useCallback(async () => {
     try {
-      await openGameMediaFolder(appId);
+      if (isManualMode && manualGameId) {
+        await openProviderMediaFolder("manual", manualGameId);
+      } else if (appId) {
+        await openGameMediaFolder(appId);
+      }
     } catch {
       showError("Could not open media folder");
     }
-  }, [appId]);
+  }, [appId, manualGameId, isManualMode]);
+
+  const handleBrowseExe = useCallback(() => {
+    exeFileInputRef.current?.click();
+  }, []);
+
+  const handleExeFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const path = (file as unknown as { path?: string }).path ?? file.name;
+    setExecutablePathDraft(path);
+    if (!workingDirectoryDraft.trim()) {
+      const parentDir = path.includes("/") || path.includes("\\")
+        ? path.replace(/[\\/][^/\\]+$/, "")
+        : "";
+      if (parentDir) setWorkingDirectoryDraft(parentDir);
+    }
+    if (!installDirDraft.trim()) {
+      const parentDir = path.includes("/") || path.includes("\\")
+        ? path.replace(/[\\/][^/\\]+$/, "")
+        : "";
+      if (parentDir) setInstallDirDraft(parentDir);
+    }
+    setHasEdits(true);
+    e.target.value = "";
+  }, [workingDirectoryDraft, installDirDraft]);
+
+  const handleOpenInstallFolder = useCallback(async () => {
+    const folder = installDirDraft.trim() || game?.installDir || "";
+    if (!folder) {
+      showError("No install folder configured");
+      return;
+    }
+    try {
+      await openFolder(folder);
+    } catch {
+      showError("Could not open install folder");
+    }
+  }, [installDirDraft, game]);
 
   // ── Save all fields ──
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
+      // ── Manual game create/edit ──
+      if (isManualMode || isCreateMode) {
+        const parseList = (s: string): string[] =>
+          s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+
+        // Read current media paths from store (NOT from stale closure manualEntry)
+        const freshMediaEntry = getManualGame(createdManualId ?? manualGameId ?? "") ?? manualEntry;
+
+        if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][BEFORE_SAVE] manualId=${createdManualId ?? manualGameId} storeEntry=${JSON.stringify(freshMediaEntry ? { coverPath: freshMediaEntry.coverPath, landscapePath: freshMediaEntry.landscapePath, backgroundPath: freshMediaEntry.backgroundPath, logoPath: freshMediaEntry.logoPath, iconPath: freshMediaEntry.iconPath } : null)} manualEntry=${JSON.stringify(manualEntry ? { coverPath: manualEntry.coverPath } : null)}`);
+
+        const patch: Partial<ManualGameEntry> = {
+          name: nameDraft || "Untitled Game",
+          genres: parseList(genresDraft),
+          developers: parseList(developersDraft),
+          publishers: parseList(publishersDraft),
+          categories: parseList(categoriesDraft),
+          features: parseList(featuresDraft),
+          tags: parseList(tagsDraft),
+          releaseDate: releaseDateDraft || undefined,
+          description: descriptionDraft || undefined,
+          sortingName: sortingNameDraft || undefined,
+          userScore: userScoreDraft || undefined,
+          criticScore: criticScoreDraft || undefined,
+          communityScore: communityScoreDraft || undefined,
+          reviewSummary: reviewSummaryDraft || undefined,
+          reviewCount: reviewCountDraft || undefined,
+          reviewSource: reviewSourceDraft || undefined,
+          series: seriesDraft || undefined,
+          ageRating: ageRatingDraft || undefined,
+          region: regionDraft || undefined,
+          completionStatus: completionStatusDraft || undefined,
+          executablePath: executablePathDraft.trim() || undefined,
+          workingDirectory: workingDirectoryDraft.trim() || undefined,
+          launchArguments: launchArgsDraft.trim() || undefined,
+          installDir: installDirDraft.trim() || undefined,
+          linkedIgdbId: linkedIgdbIdDraft || undefined,
+          coverPath: freshMediaEntry?.coverPath,
+          landscapePath: freshMediaEntry?.landscapePath,
+          backgroundPath: freshMediaEntry?.backgroundPath,
+          logoPath: freshMediaEntry?.logoPath,
+          iconPath: freshMediaEntry?.iconPath,
+        };
+
+        if (createdManualId || (manualGameId && !isCreateMode)) {
+          // Update existing manual game (either first-create-then-save-again, or edit)
+          const targetId = manualGameId && !isCreateMode ? manualGameId : createdManualId!;
+          const updated = updateManualGame(targetId, patch);
+          if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][AFTER_SAVE] manualId=${targetId} savedEntry=${JSON.stringify({ coverPath: updated.coverPath, landscapePath: updated.landscapePath, backgroundPath: updated.backgroundPath, logoPath: updated.logoPath, iconPath: updated.iconPath })}`);
+          setManualEntry(updated);
+          setCreatedManualId(targetId);
+          showSuccess("Game details saved");
+        } else {
+          // Create new manual game
+          const newId = crypto.randomUUID();
+          const newEntry: ManualGameEntry = {
+            id: newId,
+            name: patch.name ?? "Untitled Game",
+            genres: patch.genres,
+            developers: patch.developers,
+            publishers: patch.publishers,
+            categories: patch.categories,
+            features: patch.features,
+            tags: patch.tags,
+            releaseDate: patch.releaseDate,
+            description: patch.description,
+            sortingName: patch.sortingName,
+            userScore: patch.userScore,
+            criticScore: patch.criticScore,
+            communityScore: patch.communityScore,
+            reviewSummary: patch.reviewSummary,
+            reviewCount: patch.reviewCount,
+            reviewSource: patch.reviewSource,
+            series: patch.series,
+            ageRating: patch.ageRating,
+            region: patch.region,
+            completionStatus: patch.completionStatus,
+            executablePath: patch.executablePath,
+            workingDirectory: patch.workingDirectory,
+            launchArguments: patch.launchArguments,
+            installDir: patch.installDir,
+            linkedIgdbId: patch.linkedIgdbId,
+            // Preserve media paths from store (already in patch from freshMediaEntry)
+            coverPath: patch.coverPath,
+            landscapePath: patch.landscapePath,
+            backgroundPath: patch.backgroundPath,
+            logoPath: patch.logoPath,
+            iconPath: patch.iconPath,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          saveManualGame(newEntry);
+          if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][AFTER_SAVE] manualId=${newId} createdEntry=${JSON.stringify({ coverPath: newEntry.coverPath, landscapePath: newEntry.landscapePath, backgroundPath: newEntry.backgroundPath, logoPath: newEntry.logoPath, iconPath: newEntry.iconPath })}`);
+          setCreatedManualId(newId);
+          setManualEntry(newEntry);
+          showSuccess("Manual game created");
+        }
+        setHasEdits(false);
+        setSaving(false);
+        return;
+      }
+
+      // ── Steam game save (existing) ──
       const media: GameMediaPaths = {
         coverPath: appInfo?.media?.coverPath ?? null,
         landscapePath: appInfo?.media?.landscapePath ?? null,
@@ -404,7 +736,7 @@ export default function GameEditDialog({
       };
       const userData = buildUserData();
       const updatedEntry: GameAppInfo = {
-        appId,
+        appId: appId!,
         provider: appInfo?.provider ?? "steam",
         name: nameDraft || null,
         updatedAt: Math.floor(Date.now() / 1000),
@@ -413,12 +745,12 @@ export default function GameEditDialog({
         remote: appInfo?.remote ?? null,
         userData: Object.keys(userData).length > 0 ? userData : null,
       };
-      await persistGameAppInfo(appId, updatedEntry);
-      clearSessionAppInfoCache(appId);
+      await persistGameAppInfo(appId!, updatedEntry);
+      clearSessionAppInfoCache(appId!);
       if (nameDraft) {
-        updateGame(appId, { title: nameDraft });
+        updateGame(appId!, { title: nameDraft });
       }
-      notifyMediaUpdated(appId);
+      notifyMediaUpdated(appId!);
       setAppInfo(updatedEntry);
       setHasEdits(false);
       showSuccess("Game details saved");
@@ -426,12 +758,46 @@ export default function GameEditDialog({
       showError("Failed to save game details");
     }
     setSaving(false);
-  }, [appId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, updateGame]);
+  }, [appId, manualGameId, isManualMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, updateGame]);
 
   // ── Track edits ──
   useEffect(() => {
     if (!open) return;
     const u = (v: unknown) => typeof v === "string" ? v : "";
+
+    if (isManualMode || isCreateMode) {
+      // Manual mode — compare against manualEntry
+      const entry = manualEntry;
+      const hasChanges =
+        nameDraft !== (entry?.name ?? (isCreateMode ? "" : "")) ||
+        genresDraft !== (entry?.genres?.join(", ") ?? "") ||
+        developersDraft !== (entry?.developers?.join(", ") ?? "") ||
+        publishersDraft !== (entry?.publishers?.join(", ") ?? "") ||
+        categoriesDraft !== (entry?.categories?.join(", ") ?? "") ||
+        featuresDraft !== (entry?.features?.join(", ") ?? "") ||
+        tagsDraft !== (entry?.tags?.join(", ") ?? "") ||
+        releaseDateDraft !== (entry?.releaseDate ?? "") ||
+        descriptionDraft !== (entry?.description ?? "") ||
+        sortingNameDraft !== (entry?.sortingName ?? "") ||
+        userScoreDraft !== (entry?.userScore ?? "") ||
+        criticScoreDraft !== (entry?.criticScore ?? "") ||
+        communityScoreDraft !== (entry?.communityScore ?? "") ||
+        reviewSummaryDraft !== (entry?.reviewSummary ?? "") ||
+        reviewCountDraft !== (entry?.reviewCount ?? "") ||
+        reviewSourceDraft !== (entry?.reviewSource ?? "") ||
+        seriesDraft !== (entry?.series ?? "") ||
+        ageRatingDraft !== (entry?.ageRating ?? "") ||
+        regionDraft !== (entry?.region ?? "") ||
+        completionStatusDraft !== (entry?.completionStatus ?? "") ||
+        executablePathDraft !== (entry?.executablePath ?? "") ||
+        workingDirectoryDraft !== (entry?.workingDirectory ?? "") ||
+        launchArgsDraft !== (entry?.launchArguments ?? "") ||
+        installDirDraft !== (entry?.installDir ?? "");
+      setHasEdits(hasChanges || isCreateMode);
+      return;
+    }
+
+    // Steam mode (existing)
     const hasChanges =
       nameDraft !== (appInfo?.name ?? "") ||
       genresDraft !== u(appInfo?.userData?.genres) ||
@@ -454,7 +820,7 @@ export default function GameEditDialog({
       regionDraft !== u(appInfo?.userData?.region) ||
       completionStatusDraft !== u(appInfo?.userData?.completionStatus);
     setHasEdits(hasChanges);
-  }, [open, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft]);
+  }, [open, appInfo, manualEntry, isManualMode, isCreateMode, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft]);
 
   // ── Escape key ──
 
@@ -472,6 +838,20 @@ export default function GameEditDialog({
   const buildUpdatedMedia = useCallback(
     (role: MediaRole, newPath: string | null): GameMediaPaths => {
       const key = ROLE_TO_PATH_KEY[role];
+      if (isManualMode || isCreateMode) {
+        // Read from store to avoid stale closure on manualEntry
+        const targetId = manualGameId ?? createdManualId;
+        const fresh = targetId ? (getManualGame(targetId) ?? manualEntry) : manualEntry;
+        const current = fresh ?? ({} as ManualGameEntry);
+        return {
+          coverPath: current.coverPath ?? null,
+          landscapePath: current.landscapePath ?? null,
+          backgroundPath: current.backgroundPath ?? null,
+          logoPath: current.logoPath ?? null,
+          iconPath: current.iconPath ?? null,
+          [key]: newPath,
+        };
+      }
       const current = appInfo?.media ?? ({} as GameMediaPaths);
       return {
         coverPath: current.coverPath ?? null,
@@ -482,11 +862,28 @@ export default function GameEditDialog({
         [key]: newPath,
       };
     },
-    [appInfo],
+    [appInfo, manualEntry, isManualMode, isCreateMode, manualGameId, createdManualId],
   );
 
   const commitMediaUpdate = useCallback(
     async (updatedMedia: GameMediaPaths) => {
+      // ── Manual game — update ManualGameEntry ──
+      if ((isManualMode || isCreateMode) && (manualGameId || createdManualId)) {
+        const targetId = manualGameId ?? createdManualId!;
+        const patch: Partial<ManualGameEntry> = {
+          coverPath: updatedMedia.coverPath ?? undefined,
+          landscapePath: updatedMedia.landscapePath ?? undefined,
+          backgroundPath: updatedMedia.backgroundPath ?? undefined,
+          logoPath: updatedMedia.logoPath ?? undefined,
+          iconPath: updatedMedia.iconPath ?? undefined,
+        };
+        const updated = updateManualGame(targetId, patch);
+        setManualEntry(updated);
+        return;
+      }
+
+      // ── Steam game — existing path ──
+      if (!appId) return;
       await updateGameAppinfoMediaIfChanged(
         appId,
         appInfo?.name ?? null,
@@ -501,41 +898,56 @@ export default function GameEditDialog({
       // Trigger immediate React re-render across library/tiles
       updateGame(appId, {} as Partial<LibraryGame>);
     },
-    [appId, appInfo, updateGame],
+    [appId, appInfo, updateGame, isManualMode, isCreateMode, manualGameId, createdManualId],
   );
 
   // ── File pick handler ──
 
   const handleFilePick = useCallback(
-    async (role: MediaRole) => {
+    async (role: MediaRole, externalFile?: File) => {
       const input = fileInputRefs.current[role];
-      if (!input) return;
-      const file = input.files?.[0];
+      const file = externalFile ?? input?.files?.[0];
       if (!file) return;
 
       const maxBytes = role === "icon" || role === "logo" ? SMALL_FILE_SIZE_BYTES : MAX_FILE_SIZE_BYTES;
       if (file.size > maxBytes) {
         const limitMb = maxBytes / (1024 * 1024);
         showError(`File too large (max ${limitMb}MB for ${role})`);
-        input.value = "";
+        if (input) input.value = "";
         return;
       }
 
       setSaving(true);
       try {
         const { base64, ext } = await readFileAsBase64(file);
-        const relPath = await saveGameMediaFile(appId, role, base64, ext);
-        const updatedMedia = buildUpdatedMedia(role, relPath);
-        await commitMediaUpdate(updatedMedia);
-        await refreshRolePreview(role);
-        showSuccess(`${role} updated from local file`);
+
+        if ((isManualMode || isCreateMode) && mediaAdapter?.saveRoleFromBase64) {
+          // Manual game — use adapter's base64 save
+          const relPath = await mediaAdapter.saveRoleFromBase64(role, base64, ext);
+          if (relPath) {
+            const updatedMedia = buildUpdatedMedia(role, relPath);
+            if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][EDITOR_SET] manualId=${manualGameId ?? createdManualId} role=${role} savedPath=${relPath} updatedMedia=${JSON.stringify(updatedMedia)}`);
+            await commitMediaUpdate(updatedMedia);
+            await refreshRolePreview(role, relPath);
+            showSuccess(`${role} updated from local file`);
+          } else {
+            showError(`Failed to save ${role} file`);
+          }
+        } else if (appId) {
+          // Steam game — use existing base64 save
+          const relPath = await saveGameMediaFile(appId, role, base64, ext);
+          const updatedMedia = buildUpdatedMedia(role, relPath);
+          await commitMediaUpdate(updatedMedia);
+          await refreshRolePreview(role);
+          showSuccess(`${role} updated from local file`);
+        }
       } catch {
         showError(`Failed to save ${role} file`);
       }
       setSaving(false);
-      input.value = "";
+      if (input) input.value = "";
     },
-    [appId, buildUpdatedMedia, commitMediaUpdate],
+    [appId, isManualMode, isCreateMode, mediaAdapter, buildUpdatedMedia, commitMediaUpdate],
   );
 
   // ── URL download handler ──
@@ -557,19 +969,15 @@ export default function GameEditDialog({
       setBrowsingRole(role);
       try {
         if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_URL][DOWNLOAD_START] role=${role} url=${url}`);
-        const result = await invoke<string | null>("safe_download_image", {
-          url,
-          appId,
-          mediaType: role,
-          target: "",
-          forceRefresh: true,
-        });
+        const result = mediaAdapter
+          ? await mediaAdapter.saveRoleFromUrl(role, url)
+          : null;
         if (result) {
           if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_URL][DOWNLOAD_RESULT] ok=true path=${result}`);
           const updatedMedia = buildUpdatedMedia(role, result);
           await commitMediaUpdate(updatedMedia);
           if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_URL][MANIFEST_UPDATE] role=${role} path=${result}`);
-          await refreshRolePreview(role);
+          await refreshRolePreview(role, result);
           if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_URL][PREVIEW_UPDATE] role=${role} previewUrl=${getPreviewUrl(role)}`);
           showSuccess(`${role} downloaded`);
           setUrlInputs((prev) => ({ ...prev, [role]: "" }));
@@ -585,7 +993,7 @@ export default function GameEditDialog({
       setSaving(false);
       setBrowsingRole(null);
     },
-    [appId, urlInputs, buildUpdatedMedia, commitMediaUpdate],
+    [urlInputs, buildUpdatedMedia, commitMediaUpdate, mediaAdapter],
   );
 
   // ── Browse metadata source handler ──
@@ -602,6 +1010,140 @@ export default function GameEditDialog({
         return;
       }
 
+      // Manual games — source handling per role
+      if (isManualMode || isCreateMode) {
+        if (sourceId === "local" && currentPath(role)) {
+          return;
+        }
+        // IGDB: search by name, return only assets IGDB actually provides for this role
+        if (sourceId === "igdb" && settings?.igdbClientId && settings?.igdbClientSecret) {
+          const searchName = nameDraft.trim();
+          if (!searchName) {
+            showError("Enter a game name first to search IGDB");
+            return;
+          }
+          setSaving(true);
+          setBrowsingRole(role);
+          try {
+            const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+            if (!result) {
+              showError(`No IGDB results found for "${searchName}"`);
+            } else if (role === "cover" && result.coverUrl) {
+              await handleUrlDownload(role, result.coverUrl);
+            } else if ((role === "background" || role === "landscape") && result.screenshotUrls?.length) {
+              // Screenshots are wide — valid for background/landscape
+              await handleUrlDownload(role, result.screenshotUrls[0]);
+            } else {
+              showError(`No IGDB candidates available for ${role}. IGDB provides cover and screenshots only.`);
+            }
+          } catch (e) {
+            showError(typeof e === "string" ? e : "Failed to search IGDB");
+          }
+          setSaving(false);
+          setBrowsingRole(null);
+          return;
+        }
+        // SteamGridDB: by linked Steam App ID or by name search
+        if (sourceId === "sgdb" && settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled) {
+          setSaving(true);
+          setBrowsingRole(role);
+          try {
+            const steamAppId = manualEntry?.linkedSteamAppId;
+            let artwork;
+            if (steamAppId) {
+              // Fast path: search by Steam App ID
+              const artworks = await resolveSteamGridDbArtwork([Number(steamAppId)], settings.steamGridDbApiKey);
+              artwork = artworks?.find((a) => a.appId === Number(steamAppId));
+            } else {
+              // Name search path: search by game name, pick first result, fetch artwork
+              const searchName = nameDraft.trim();
+              if (!searchName) {
+                showError("Enter a game name first to search SteamGridDB");
+                setSaving(false);
+                setBrowsingRole(null);
+                return;
+              }
+              const searchResults = await searchSteamGridDbGames(searchName, settings.steamGridDbApiKey);
+              if (!searchResults?.length) {
+                showError(`No SteamGridDB results found for "${searchName}"`);
+                setSaving(false);
+                setBrowsingRole(null);
+                return;
+              }
+              const bestMatch = searchResults[0];
+              artwork = await resolveSteamGridDbArtworkByGameId(bestMatch.sgdbGameId, settings.steamGridDbApiKey);
+              // Map SGDB internal ID into artwork result (app_id is used only as identifier)
+              if (artwork) artwork = { ...artwork, appId: bestMatch.sgdbGameId };
+            }
+            if (artwork) {
+              // Strict role mapping — each role maps to its own SGDB asset type
+              let downloadUrl: string | null = null;
+              if (role === "cover") downloadUrl = artwork.gridUrl ?? null;
+              else if (role === "landscape") downloadUrl = artwork.gridHorizontalUrl ?? null;
+              else if (role === "background") downloadUrl = artwork.heroUrl ?? null;
+              else if (role === "logo") downloadUrl = artwork.logoUrl ?? null;
+              else if (role === "icon") downloadUrl = artwork.iconUrl ?? null;
+              if (downloadUrl) {
+                await handleUrlDownload(role, downloadUrl);
+              } else {
+                showError(`No SteamGridDB ${role} art available for this game`);
+              }
+            } else {
+              showError("No SteamGridDB results found");
+            }
+          } catch (e) {
+            const msg = typeof e === "string" ? e : String(e ?? "Failed to search SteamGridDB");
+            // Never show raw HTML in toast
+            if (/<html/i.test(msg)) {
+              showError("SteamGridDB search failed. Check API key or endpoint.");
+            } else {
+              showError(msg);
+            }
+          }
+          setSaving(false);
+          setBrowsingRole(null);
+          return;
+        }
+        // Steam Official: requires linked Steam App ID
+        if (sourceId === "steam") {
+          const steamAppId = manualEntry?.linkedSteamAppId;
+          if (!steamAppId) {
+            showError("Link a Steam App ID first to use Steam Official Assets");
+            return;
+          }
+          setSaving(true);
+          setBrowsingRole(role);
+          try {
+            const metaMap = await resolveGameMetadata([Number(steamAppId)]);
+            const meta = metaMap[Number(steamAppId)];
+            if (meta) {
+              const steamUrlMap: Record<MediaRole, string | null | undefined> = {
+                icon: null,
+                cover: buildSteamCoverUrl(steamAppId),
+                background: meta.library_hero_image ?? meta.hero_image ?? meta.background_image,
+                landscape: meta.library_header_image ?? meta.header_image,
+                logo: meta.library_logo_image ?? meta.logo_image,
+              };
+              const downloadUrl = steamUrlMap[role] ?? null;
+              if (downloadUrl) {
+                await handleUrlDownload(role, downloadUrl);
+              } else {
+                showError(`No Steam official ${role} art available for this game`);
+              }
+            } else {
+              showError("No Steam metadata available for this game");
+            }
+          } catch {
+            showError("Failed to fetch Steam assets");
+          }
+          setSaving(false);
+          setBrowsingRole(null);
+          return;
+        }
+        return; // All manual sources handled above
+      }
+      if (!appId) return;
+
       setSaving(true);
       setBrowsingRole(role);
       try {
@@ -617,29 +1159,22 @@ export default function GameEditDialog({
           };
           downloadUrl = steamUrlMap[role] ?? null;
         } else if (sourceId === "sgdb" && settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled) {
-          const sgdbRoleMap: Record<MediaRole, string> = {
-            cover: "grid",
-            landscape: "hero",
-            background: "hero",
-            logo: "logo",
-            icon: "icon",
-          };
           try {
             const artworks = await resolveSteamGridDbArtwork([Number(appId)], settings.steamGridDbApiKey);
             const artwork = artworks?.find((a) => a.appId === Number(appId));
             if (artwork) {
-              const sgType = sgdbRoleMap[role];
-              if (sgType === "grid") downloadUrl = artwork.gridHorizontalUrl ?? artwork.gridUrl ?? null;
-              else if (sgType === "hero") downloadUrl = artwork.heroUrl ?? null;
-              else if (sgType === "logo") downloadUrl = artwork.logoUrl ?? null;
-              else if (sgType === "icon") downloadUrl = artwork.iconUrl ?? null;
+              if (role === "cover") downloadUrl = artwork.gridUrl ?? null;
+              else if (role === "landscape") downloadUrl = artwork.gridHorizontalUrl ?? null;
+              else if (role === "background") downloadUrl = artwork.heroUrl ?? null;
+              else if (role === "logo") downloadUrl = artwork.logoUrl ?? null;
+              else if (role === "icon") downloadUrl = artwork.iconUrl ?? null;
             }
           } catch { /* SGDB failed */ }
         } else if (sourceId === "igdb" && settings?.igdbClientId && settings?.igdbClientSecret) {
           try {
             const igdbData = await fetchIgdbArtworkDeduped({
               clientId: settings.igdbClientId,
-              accessToken: settings.igdbClientSecret,
+              clientSecret: settings.igdbClientSecret,
               appId,
             });
             if (igdbData?.igdbCoverUrl && (role === "cover" || role === "landscape")) {
@@ -669,7 +1204,7 @@ export default function GameEditDialog({
       setSaving(false);
       setBrowsingRole(null);
     },
-    [appId, metadata, settings, handleUrlDownload],
+    [appId, metadata, settings, handleUrlDownload, isManualMode, isCreateMode, nameDraft, manualEntry?.linkedSteamAppId],
   );
 
   const handleOpenImageSearch = useCallback((role: MediaRole) => {
@@ -685,18 +1220,27 @@ export default function GameEditDialog({
     async (role: MediaRole) => {
       setSaving(true);
       try {
-        await deleteGameMediaFile(appId, role);
-        if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][FILE_DELETED] appid=${appId} role=${role}`);
+        if (mediaAdapter) {
+          await mediaAdapter.removeRole(role);
+        }
+        if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][FILE_DELETED] appid=${effectiveId} role=${role}`);
         const updatedMedia = buildUpdatedMedia(role, null);
+        if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][EDITOR_SET] manualId=${manualGameId ?? createdManualId} role=${role} savedPath=null (removing) updatedMedia=${JSON.stringify(updatedMedia)}`);
         await commitMediaUpdate(updatedMedia);
-        await refreshRolePreview(role);
+        // Re-read from store to ensure consistency
+        const targetId = manualGameId ?? createdManualId;
+        if (targetId) {
+          const freshEntry = getManualGame(targetId);
+          if (freshEntry) setManualEntry(freshEntry);
+        }
+        await refreshRolePreview(role, null);
         showSuccess(`${role} removed`);
       } catch {
         showError(`Failed to remove ${role}`);
       }
       setSaving(false);
     },
-    [appId, buildUpdatedMedia, commitMediaUpdate],
+    [effectiveId, buildUpdatedMedia, commitMediaUpdate, mediaAdapter, manualGameId, createdManualId],
   );
 
   // ── Backdrop click ──
@@ -709,62 +1253,82 @@ export default function GameEditDialog({
 
   async function loadRolePreviews() {
     setRolePreviews({});
-    const resolved = await resolveGameMediaPaths(appId);
-    if (!resolved) {
-      MEDIA_ROLES.forEach(({ role }) => {
-        const key = ROLE_TO_PATH_KEY[role];
-        const appPath = appInfo?.media?.[key];
-        if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][LOAD_CURRENT] appid=${appId} role=${role} path=${appPath} exists=false`);
-      });
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
+      const targetId = manualGameId ?? createdManualId!;
+      const freshEntry = getManualGame(targetId) ?? manualEntry;
+      if (!freshEntry) return;
+      const previews: Record<string, RolePreviewEntry> = {};
+      for (const { role } of MEDIA_ROLES) {
+        const key = ROLE_TO_PATH_KEY[role] as keyof ManualGameEntry;
+        const relPath = freshEntry[key] as string | undefined;
+        if (relPath) {
+          const url = await resolveProviderMediaPreviewUrl(relPath);
+          previews[role] = { url, status: url ? "set" : "missing" };
+        } else {
+          previews[role] = { url: null, status: "unset" };
+        }
+      }
+      setRolePreviews(previews);
       return;
     }
+    if (!mediaAdapter) return;
+    const states = await mediaAdapter.getAllRoleStates();
     const previews: Record<string, RolePreviewEntry> = {};
     for (const { role } of MEDIA_ROLES) {
+      const state = states[role];
       const key = ROLE_TO_PATH_KEY[role];
-      const appPath = appInfo?.media?.[key];
-      const absPath = resolved[key];
-      if (absPath && typeof absPath === "string") {
-        const url = localPathToUrl(absPath);
-        previews[role] = { url, status: "set" };
-        if (DEBUG_MEDIA_EDIT) {
-          console.log(`[GAME_EDIT_MEDIA][LOAD_CURRENT] appid=${appId} role=${role} path=${appPath} exists=true`);
-          console.log(`[GAME_EDIT_MEDIA][PREVIEW_URL] role=${role} url=${url}`);
-        }
+      if (state.hasFile && state.previewUrl) {
+        previews[role] = { url: state.previewUrl, status: "set" };
       } else {
+        const appPath = appInfo?.media?.[key];
         previews[role] = { url: null, status: appPath ? "missing" : "unset" };
-        if (DEBUG_MEDIA_EDIT && appPath) {
-          console.log(`[GAME_EDIT_MEDIA][MISSING] role=${role} path=${appPath}`);
-        }
       }
     }
     setRolePreviews(previews);
   }
 
-  async function refreshRolePreview(role: MediaRole) {
-    const resolved = await resolveGameMediaPaths(appId);
-    if (!resolved) {
-      setRolePreviews((prev) => ({
-        ...prev,
-        [role]: { url: null, status: "unset" },
-      }));
+  async function refreshRolePreview(role: MediaRole, overrideRelPath?: string | null) {
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
+      const targetId = manualGameId ?? createdManualId!;
+      const freshEntry = getManualGame(targetId) ?? manualEntry;
+      const key = ROLE_TO_PATH_KEY[role] as keyof ManualGameEntry;
+      // overrideRelPath=undefined means "read from store"; null means "force unset"
+      let relPath: string | undefined;
+      if (overrideRelPath === null) {
+        relPath = undefined;
+      } else if (overrideRelPath !== undefined) {
+        relPath = overrideRelPath;
+      } else {
+        relPath = freshEntry?.[key] as string | undefined;
+      }
+      if (relPath) {
+        const url = await resolveProviderMediaPreviewUrl(relPath);
+        setRolePreviews((prev) => ({
+          ...prev,
+          [role]: { url, status: url ? "set" : "missing" },
+        }));
+      } else {
+        setRolePreviews((prev) => ({
+          ...prev,
+          [role]: { url: null, status: "unset" },
+        }));
+      }
       return;
     }
+    if (!mediaAdapter) return;
+    const state = await mediaAdapter.getRoleState(role);
     const key = ROLE_TO_PATH_KEY[role];
-    const absPath = resolved[key];
-    if (absPath && typeof absPath === "string") {
-      const url = localPathToUrl(absPath);
+    if (state.hasFile && state.previewUrl) {
       setRolePreviews((prev) => ({
         ...prev,
-        [role]: { url, status: "set" },
+        [role]: { url: state.previewUrl ?? null, status: "set" },
       }));
-      if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][PREVIEW_URL] role=${role} url=${url}`);
     } else {
       const appPath = appInfo?.media?.[key];
       setRolePreviews((prev) => ({
         ...prev,
         [role]: { url: null, status: appPath ? "missing" : "unset" },
       }));
-      if (DEBUG_MEDIA_EDIT && appPath) console.log(`[GAME_EDIT_MEDIA][MISSING] role=${role} path=${appPath}`);
     }
   }
 
@@ -778,17 +1342,48 @@ export default function GameEditDialog({
 
   // ── Source availability checks ──
 
+  // ── Provider capabilities (manual vs Steam) ──
+  const capabilities = useMemo(() => {
+    if (isManualMode || isCreateMode) {
+      const hasSgdbKey = !!(settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled);
+      const hasLinkedSteam = !!(manualEntry?.linkedSteamAppId);
+      return {
+        canUseMetadataProviders: true,
+        canUseSteamMetadata: true,
+        canUseIgdbMetadata: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+        canUseRawgMetadata: false,
+        canUseSteamAssets: hasLinkedSteam,
+        canUseIgdbAssets: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+        canUseSgdbAssets: hasSgdbKey,
+        canUseRawgAssets: false,
+      };
+    }
+    return {
+      canUseMetadataProviders: true,
+      canUseSteamMetadata: true,
+      canUseIgdbMetadata: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+      canUseRawgMetadata: !!(settings?.rawgApiKey),
+      canUseSteamAssets: !!(metadata?.capsule_image || metadata?.header_image || metadata?.library_hero_image || metadata?.library_logo_image),
+      canUseIgdbAssets: !!(settings?.igdbClientId && settings?.igdbClientSecret),
+      canUseSgdbAssets: !!(settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled),
+      canUseRawgAssets: !!(settings?.rawgApiKey),
+    };
+  }, [settings, metadata, isManualMode, isCreateMode, manualEntry?.linkedSteamAppId]);
+
   const sourceAvailability = useMemo(() => ({
-    sgdb: !!(settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled),
-    igdb: !!(settings?.igdbClientId && settings?.igdbClientSecret),
-    rawg: !!(settings?.rawgApiKey),
-    steam: !!(metadata?.capsule_image || metadata?.header_image || metadata?.library_hero_image || metadata?.library_logo_image),
-  }), [settings, metadata]);
+    sgdb: capabilities.canUseSgdbAssets,
+    igdb: capabilities.canUseIgdbAssets,
+    rawg: capabilities.canUseRawgAssets,
+    steam: capabilities.canUseSteamAssets,
+  }), [capabilities]);
 
   if (!open) return null;
 
   const currentPath = (role: MediaRole): string | null => {
     const key = ROLE_TO_PATH_KEY[role];
+    if ((isManualMode || isCreateMode) && manualEntry) {
+      return (manualEntry[key as keyof ManualGameEntry] as string) ?? null;
+    }
     return appInfo?.media?.[key] ?? null;
   };
 
@@ -840,10 +1435,11 @@ export default function GameEditDialog({
   function renderGeneralTab() {
     return (
       <div className="space-y-6">
-        {/* Download Metadata */}
-        <div className="relative flex items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-          <Download className="h-4 w-4 text-(--color-accent)" />
-          <span className="flex-1 text-sm text-(--color-text)">Download metadata from online sources</span>
+        {/* Download Metadata — capability-driven */}
+        {capabilities.canUseMetadataProviders && (
+          <div className="relative flex items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+            <Download className="h-4 w-4 text-(--color-accent)" />
+            <span className="flex-1 text-sm text-(--color-text)">Download metadata from online sources</span>
           <div className="relative">
             <button
               type="button"
@@ -856,29 +1452,32 @@ export default function GameEditDialog({
             </button>
             {metadataMenuOpen && (
               <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-xl border border-(--color-border) bg-(--color-bg) py-1 shadow-xl">
-                <SourceOption
-                  label="Steam"
-                  icon={Globe}
-                  onClick={() => handleDownloadMetadata("steam")}
-                />
-                <SourceOption
-                  label="IGDB"
-                  icon={Image}
-                  disabled={!settings?.igdbClientId || !settings?.igdbClientSecret}
-                  hint={!settings?.igdbClientId ? "Not configured" : undefined}
-                  onClick={() => handleDownloadMetadata("igdb")}
-                />
-                <SourceOption
-                  label="RAWG"
-                  icon={Image}
-                  disabled={!settings?.rawgApiKey}
-                  hint={!settings?.rawgApiKey ? "Not configured" : undefined}
-                  onClick={() => handleDownloadMetadata("rawg")}
-                />
+                {capabilities.canUseSteamMetadata && (
+                  <SourceOption
+                    label={isManualMode || isCreateMode ? "Steam (by name)" : "Steam"}
+                    icon={isManualMode || isCreateMode ? Search : Globe}
+                    onClick={() => handleDownloadMetadata("steam")}
+                  />
+                )}
+                {capabilities.canUseIgdbMetadata && (
+                  <SourceOption
+                    label="IGDB"
+                    icon={Image}
+                    onClick={() => handleDownloadMetadata("igdb")}
+                  />
+                )}
+                {capabilities.canUseRawgMetadata && (
+                  <SourceOption
+                    label="RAWG"
+                    icon={Image}
+                    onClick={() => handleDownloadMetadata("rawg")}
+                  />
+                )}
               </div>
             )}
           </div>
         </div>
+        )}
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           {/* Left column - Identity & Credits */}
@@ -963,7 +1562,7 @@ export default function GameEditDialog({
                 placeholder="e.g. NA, EU, WW"
               />
             </div>
-            <FieldRow label="Source" value={game?.source ?? appInfo?.provider ?? (metadata ? "steam" : null)} />
+            <FieldRow label="Source" value={isManualMode || isCreateMode ? "manual" : (game?.source ?? appInfo?.provider ?? (metadata ? "steam" : null))} />
             <FieldRow label="Completion" value={completionStatusDraft || "—"} />
           </div>
         </div>
@@ -1063,6 +1662,14 @@ export default function GameEditDialog({
   }
 
   function renderLinksTab() {
+    if (isManualMode || isCreateMode) {
+      return (
+        <div className="py-8 text-center text-sm text-(--color-muted)">
+          No external links for manual games.
+        </div>
+      );
+    }
+    if (!appId) return null;
     const appIdNum = Number(appId);
     const links: { label: string; url: string; icon: typeof Globe }[] = [];
     if (!isNaN(appIdNum)) {
@@ -1098,45 +1705,230 @@ export default function GameEditDialog({
   }
 
   function renderInstallationTab() {
+    const isManual = isManualMode || isCreateMode;
+    const hasExe = !!executablePathDraft.trim();
+
     return (
       <div className="space-y-5">
-        <FieldRow label="App ID" value={appId} />
-        <FieldRow label="Source" value={game?.source ?? appInfo?.provider} />
-        <FieldRow
-          label="Installed"
-          value={game ? (game.steamInstalled ? "Yes" : "No") : "Unknown"}
+        {/* Hidden file input for Browse EXE */}
+        <input
+          ref={exeFileInputRef}
+          type="file"
+          accept=".exe,.bat,.cmd,.lnk,.msi"
+          className="hidden"
+          onChange={handleExeFileSelected}
         />
-        <FieldRow label="Install Directory" value={game?.installDir} />
-        <FieldRow label="Library Path" value={game?.libraryPath} />
-        <FieldRow
-          label="Size on Disk"
-          value={game?.sizeOnDisk ? formatBytes(game.sizeOnDisk) : null}
-        />
-        <FieldRow label="Executable Path" value={game?.executablePath} />
-        {!game && (
-          <p className="mt-2 text-xs text-(--color-muted)/60">
-            Install the game in LumaForge to see installation details.
-          </p>
+
+        {isManual ? (
+          <>
+            {/* ── Section: Game Configuration ── */}
+            <div>
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+                Game Configuration
+              </h4>
+              <div className="space-y-4">
+                {/* Executable Path */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Executable Path <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={executablePathDraft}
+                      onChange={(e) => { setExecutablePathDraft(e.target.value); setHasEdits(true); }}
+                      placeholder="C:\Path\To\Game.exe"
+                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleBrowseExe}
+                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                </div>
+
+                {/* Working Directory */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Working Directory
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={workingDirectoryDraft}
+                      onChange={(e) => { setWorkingDirectoryDraft(e.target.value); setHasEdits(true); }}
+                      placeholder="C:\Path\To\Game"
+                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-(--color-muted)/60">
+                    Auto-filled to executable parent folder if empty.
+                  </p>
+                </div>
+
+                {/* Launch Arguments */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Launch Arguments
+                  </label>
+                  <input
+                    type="text"
+                    value={launchArgsDraft}
+                    onChange={(e) => { setLaunchArgsDraft(e.target.value); setHasEdits(true); }}
+                    placeholder="-windowed -noborder"
+                    className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                  />
+                </div>
+
+                {/* Install Folder */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Install Folder
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={installDirDraft}
+                      onChange={(e) => { setInstallDirDraft(e.target.value); setHasEdits(true); }}
+                      placeholder="C:\Games\My Game"
+                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-(--color-muted)/60">
+                    Auto-filled to executable parent folder if empty.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Section: Install Info ── */}
+            <div className="border-t border-(--color-border) pt-4">
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+                Install Info
+              </h4>
+              <div className="space-y-3">
+                {/* Installed state */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Installed</span>
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${hasExe ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-500/15 text-zinc-400"}`}>
+                    {hasExe ? "Yes" : "Not configured"}
+                  </span>
+                </div>
+
+                {/* Size on Disk */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Install Size</span>
+                  <span className="text-xs text-(--color-muted)">
+                    {game?.sizeOnDisk ? formatBytes(game.sizeOnDisk) : "Calculation not available yet"}
+                  </span>
+                </div>
+
+                {/* Open Install Folder */}
+                {installDirDraft.trim() && (
+                  <button
+                    type="button"
+                    onClick={handleOpenInstallFolder}
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                  >
+                    <FolderOpen className="h-4 w-4 text-(--color-muted)" />
+                    Open Install Folder
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── Section: Additional Launch Entries (placeholder) ── */}
+            <div className="border-t border-(--color-border) pt-4">
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+                Additional Launch Entries
+              </h4>
+              <div className="rounded-xl border border-dashed border-(--surface-active-border) bg-white/[0.01] px-4 py-6 text-center">
+                <p className="text-xs text-(--color-muted)/60">
+                  Additional launch entries will be available later.
+                </p>
+              </div>
+            </div>
+
+            {isCreateMode && !hasExe && (
+              <p className="rounded-xl bg-white/[0.02] px-4 py-3 text-xs text-(--color-muted)/70">
+                Configure at least an executable path to mark this game as installed.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            {/* ── Steam game: read-only install info ── */}
+            <div className="space-y-4">
+              <FieldRow label="App ID" value={appId} />
+              <FieldRow label="Source" value={game?.source ?? appInfo?.provider ?? "steam"} />
+              <FieldRow
+                label="Installed"
+                value={game ? (game.steamInstalled ? "Yes" : "No") : "Unknown"}
+              />
+              <FieldRow label="Install Directory" value={game?.installDir} />
+              <FieldRow label="Library Path" value={game?.libraryPath} />
+              <FieldRow
+                label="Size on Disk"
+                value={game?.sizeOnDisk ? formatBytes(game.sizeOnDisk) : null}
+              />
+              <FieldRow label="Executable Path" value={game?.executablePath} />
+
+              {!game?.installDir && (
+                <p className="rounded-xl bg-white/[0.02] px-4 py-3 text-xs text-(--color-muted)/60">
+                  Install folder is not available.
+                </p>
+              )}
+
+              {game?.installDir && (
+                <button
+                  type="button"
+                  onClick={handleOpenInstallFolder}
+                  className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                >
+                  <FolderOpen className="h-4 w-4 text-(--color-muted)" />
+                  Open Install Folder
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleOpenMediaFolder}
+                disabled={!appId}
+                className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <FolderOpen className="h-4 w-4 text-(--color-muted)" />
+                Open Media Folder
+              </button>
+            </div>
+          </>
         )}
       </div>
     );
   }
 
   function renderActionsTab() {
+    const hasId = !!appId || !!effectiveId;
     const actionButtons: { label: string; icon: typeof FolderOpen; onClick: () => void; disabled?: boolean }[] = [
       {
         label: "Open Metadata Folder",
         icon: FolderOpen,
-        onClick: () => { openGameMetadataFolder(appId); onClose(); },
-        disabled: false,
+        onClick: () => { if (effectiveId) openGameMetadataFolder(effectiveId); onClose(); },
+        disabled: !hasId,
       },
       {
         label: "Open Media Folder",
         icon: FolderOpen,
-        onClick: () => { openGameMediaFolder(appId); onClose(); },
-        disabled: false,
+        onClick: () => {
+          if (isManualMode && manualGameId) { openProviderMediaFolder("manual", manualGameId); }
+          else if (effectiveId) { openGameMediaFolder(effectiveId); }
+          onClose();
+        },
+        disabled: !hasId,
       },
-      {
+      ...(!isManualMode && !isCreateMode && appId ? [{
         label: "Refresh Artwork",
         icon: RefreshCw,
         onClick: async () => {
@@ -1163,17 +1955,17 @@ export default function GameEditDialog({
           }
         },
         disabled: false,
-      },
+      }] : []),
       {
         label: "Copy App ID",
         icon: Copy,
         onClick: () => {
-          navigator.clipboard.writeText(appId).catch(() => {});
+          navigator.clipboard.writeText(effectiveId).catch(() => {});
           showSuccess("App ID copied");
         },
-        disabled: false,
+        disabled: !hasId,
       },
-      {
+      ...(!isManualMode && !isCreateMode && appId ? [{
         label: "Open Steam Page",
         icon: Globe,
         onClick: () => {
@@ -1181,7 +1973,7 @@ export default function GameEditDialog({
           onClose();
         },
         disabled: false,
-      },
+      }] : []),
     ];
 
     return (
@@ -1252,6 +2044,21 @@ export default function GameEditDialog({
   }
 
   function renderMediaTab() {
+    // Manual-create mode: show "Save first" message
+    if (isCreateMode && !createdManualId) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Image className="mb-4 h-12 w-12 text-(--color-muted)/30" />
+          <p className="text-sm text-(--color-muted)">
+            Save the game first to add artwork.
+          </p>
+          <p className="mt-1 text-xs text-(--color-muted)/60">
+            Fill in the game details on the General tab, then save.
+          </p>
+        </div>
+      );
+    }
+
     const screenshotCount = metadata?.screenshots?.length ?? 0;
     const movieCount = metadata?.movies?.length ?? 0;
 
@@ -1271,8 +2078,9 @@ export default function GameEditDialog({
             browseOpen={browseOpenFor === role}
             isBrowsing={browsingRole === role}
             urlValue={urlInputs[role] ?? ""}
+            isManual={isManualMode || isCreateMode}
             sourceAvailability={sourceAvailability}
-            onChooseLocalFile={() => handleFilePick(role)}
+            onChooseLocalFile={(file) => handleFilePick(role, file)}
             onToggleUrl={() => setExpandedUrl(expandedUrl === role ? null : role)}
             onUrlChange={(v) => setUrlInputs((prev) => ({ ...prev, [role]: v }))}
             onUrlSubmit={() => handleUrlDownload(role)}
@@ -1283,8 +2091,8 @@ export default function GameEditDialog({
           />
         ))}
 
-        {/* ── Read-only: Screenshots ── */}
-        {metadata && screenshotCount > 0 && (
+        {/* ── Read-only: Screenshots (Steam only) ── */}
+        {!isManualMode && !isCreateMode && metadata && screenshotCount > 0 && (
           <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
             <div className="flex items-center gap-2">
               <Monitor className="h-4 w-4 text-(--color-muted)" />
@@ -1321,8 +2129,8 @@ export default function GameEditDialog({
           </div>
         )}
 
-        {/* ── Read-only: Trailers ── */}
-        {metadata && movieCount > 0 && (
+        {/* ── Read-only: Trailers (Steam only) ── */}
+        {!isManualMode && !isCreateMode && metadata && movieCount > 0 && (
           <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
             <div className="flex items-center gap-2">
               <Video className="h-4 w-4 text-(--color-muted)" />
@@ -1422,10 +2230,10 @@ export default function GameEditDialog({
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-(--color-border) px-6 py-4">
           <h2 className="text-lg font-semibold text-(--color-text)">
-            Edit Game Details
-            {appInfo?.name && (
+            {isCreateMode ? "Add Manual Game" : "Edit Game Details"}
+            {(appInfo?.name ?? manualEntry?.name) && (
               <span className="ml-2 text-sm font-normal text-(--color-muted)">
-                — {appInfo.name}
+                — {appInfo?.name ?? manualEntry?.name}
               </span>
             )}
           </h2>
@@ -1508,12 +2316,13 @@ export default function GameEditDialog({
         </div>
       </div>
 
-      {imageSearchOpen && imageSearchRole && (
+      {imageSearchOpen && imageSearchRole && (appId || manualGameId) && (
         <GameImageSearchDialog
           open={imageSearchOpen}
           onClose={() => { setImageSearchOpen(false); setImageSearchRole(null); }}
           appId={appId}
-          gameTitle={appInfo?.name ?? game?.title ?? appId}
+          libraryId={manualGameId}
+          gameTitle={appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
           role={imageSearchRole}
           settings={{
             googleSearchApiKey: settings?.googleSearchApiKey,

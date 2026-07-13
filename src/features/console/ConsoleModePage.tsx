@@ -84,7 +84,10 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   }, [enrichedGames]);
 
   const favorites = useMemo(() => {
-    return enrichedGames.filter((g) => g.appId && favoriteIds.has(g.appId));
+    return enrichedGames.filter((g) => {
+      const stableId = g.appId || g.id;
+      return favoriteIds.has(stableId);
+    });
   }, [enrichedGames, favoriteIds]);
 
   const allGames = useMemo(() => {
@@ -104,14 +107,13 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       }
     }
     const scored = enrichedGames
-      .filter((g) => isSidebarInstalledGame(g) && g.appId)
+      .filter((g) => isSidebarInstalledGame(g))
       .map((g) => {
-        const appId = g.appId!;
-        const isActive = activeAppIds.has(appId);
-        const ptEntry = getPlaytimeEntryByAppId(appId);
+        const isActive = g.appId ? activeAppIds.has(g.appId) : false;
+        const ptEntry = g.appId ? getPlaytimeEntryByAppId(g.appId) : undefined;
         const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? 0;
         const lpa = ptEntry?.lastPlayedAt ?? g.steamLastPlayedAt ?? 0;
-        return { game: g, score: isActive ? Number.MAX_SAFE_INTEGER : lpa, totalSeconds, isActive };
+        return { game: g, score: isActive ? Number.MAX_SAFE_INTEGER : lpa || (g.steamLastPlayedAt ?? 0), totalSeconds, isActive };
       })
       .filter((s) => s.totalSeconds > 0 || s.score > 0 || s.isActive)
       .sort((a, b) => {
@@ -137,9 +139,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   }, [onNavigate]);
 
   const handleSelectGame = useCallback((game: LibraryGame) => {
-    if (game?.appId) {
+    if (game) {
       if (DEBUG_CONSOLE_MODE) {
-        console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId} title=${game.title}`);
+        console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId ?? "manual"} title=${game.title}`);
       }
       setDetailGame(game);
     }
@@ -178,39 +180,36 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   }, []);
 
   const handleConsolePlay = useCallback(async (game: LibraryGame) => {
-    if (!game?.appId) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=null reason=no-appId`);
-      return;
-    }
+    if (!game) return;
     const gameKey = computeGameKey(game);
     const currentState = session.getState(gameKey);
     if (currentState === "launching" || currentState === "running" || currentState === "stopping") {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} reason=session-state=${currentState}`);
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId ?? "manual"} reason=session-state=${currentState}`);
       return;
     }
     const primaryAction = getLauncherGamePrimaryAction(game);
     if (primaryAction !== "play") {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} primaryAction=${primaryAction}`);
-      showWarning(getBlockedReason(primaryAction), { id: `console-blocked-${game.appId}`, duration: 3000 });
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId ?? "manual"} primaryAction=${primaryAction}`);
+      showWarning(getBlockedReason(primaryAction), { id: `console-blocked-${game.appId ?? game.id}`, duration: 3000 });
       return;
     }
     if (!game.isPlayable) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId} reason=not-playable`);
-      showWarning("This game is not playable yet", { id: `console-blocked-${game.appId}`, duration: 3000 });
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][BLOCKED] appid=${game.appId ?? "manual"} reason=not-playable`);
+      showWarning("This game is not playable yet", { id: `console-blocked-${game.appId ?? game.id}`, duration: 3000 });
       return;
     }
-    if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][REQUEST] appid=${game.appId} title=${game.title} primaryAction=${primaryAction}`);
+    if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][REQUEST] appid=${game.appId ?? "manual"} title=${game.title} primaryAction=${primaryAction}`);
 
-    const toastId = `console-launch-${game.appId}`;
-    pendingLaunchToastRef.current.set(game.appId, toastId);
+    const toastId = `console-launch-${game.appId ?? game.id}`;
+    if (game.appId) pendingLaunchToastRef.current.set(game.appId, toastId);
     toast.loading(`Launching ${game.title}…`, { id: toastId, duration: 30000 });
 
     try {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_START] appid=${game.appId}`);
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_START] appid=${game.appId ?? "manual"}`);
       await session.launchGame(game);
     } catch (err) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAIL] appid=${game.appId} error=${err}`);
-      pendingLaunchToastRef.current.delete(game.appId);
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAIL] appid=${game.appId ?? "manual"} error=${err}`);
+      if (game.appId) pendingLaunchToastRef.current.delete(game.appId);
       toast.dismiss(toastId);
       showError(`Could not launch ${game.title}`, { title: "Launch failed" });
     }

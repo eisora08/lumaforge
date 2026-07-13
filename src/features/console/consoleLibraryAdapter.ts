@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getCachedGameMediaPaths, resolveGameMediaUrl } from "../../services/gameCacheService";
+import { getCachedGameMediaPaths, resolveGameMediaUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
 
 export type ConsoleMedia = {
   coverSrc: string | null;
@@ -58,9 +58,10 @@ export async function resolveConsoleMedia(appId: string): Promise<ConsoleMedia> 
 export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame[] {
   const [enriched, setEnriched] = useState<ConsoleLibraryGame[]>(() =>
     games.map((g) => {
-      const syncMedia = g.appId ? getSyncMedia(g.appId) : undefined;
-      const syncMeta = g.appId && _mediaCache.get(g.appId)?.ts
-        ? { resolved: true, resolvedAt: _mediaCache.get(g.appId)!.ts }
+      const key = g.appId || g.id;
+      const syncMedia = getSyncMedia(key);
+      const syncMeta = _mediaCache.get(key)?.ts
+        ? { resolved: true, resolvedAt: _mediaCache.get(key)!.ts }
         : undefined;
       const base: ConsoleLibraryGame = { ...g, _consoleMedia: syncMedia };
       if (syncMeta) base._consoleMeta = syncMeta;
@@ -79,10 +80,27 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
       const resolvedAt = Date.now();
       const results = await Promise.all(
         currentGames.map(async (g) => {
-          if (!g.appId) return { appId: "", media: undefined, meta: undefined };
-          const media = await resolveConsoleMedia(g.appId);
-          const meta: ConsoleMeta = { resolved: true, resolvedAt };
-          return { appId: g.appId, media, meta };
+          if (g.appId) {
+            const media = await resolveConsoleMedia(g.appId);
+            const meta: ConsoleMeta = { resolved: true, resolvedAt };
+            return { key: g.appId, media, meta };
+          }
+          // Manual games (no appId): resolve imageUrl to renderable URL
+          if (g.imageUrl) {
+            const resolvedUrl = await resolveProviderMediaPreviewUrl(g.imageUrl);
+            if (resolvedUrl) {
+              const media: ConsoleMedia = {
+                coverSrc: resolvedUrl,
+                landscapeSrc: resolvedUrl,
+                backgroundSrc: null,
+                logoSrc: null,
+                heroSrc: resolvedUrl,
+              };
+              const meta: ConsoleMeta = { resolved: true, resolvedAt };
+              return { key: g.id, media, meta };
+            }
+          }
+          return { key: g.id, media: undefined, meta: undefined };
         }),
       );
 
@@ -91,21 +109,20 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
       const mediaMap = new Map<string, ConsoleMedia>();
       const metaMap = new Map<string, ConsoleMeta>();
       for (const r of results) {
-        if (r.appId) {
-          if (r.media) mediaMap.set(r.appId, r.media);
-          if (r.meta) metaMap.set(r.appId, r.meta);
+        if (r.key) {
+          if (r.media) mediaMap.set(r.key, r.media);
+          if (r.meta) metaMap.set(r.key, r.meta);
         }
       }
 
       setEnriched(
         currentGames.map((g) => {
           const out: ConsoleLibraryGame = { ...g } as ConsoleLibraryGame;
-          if (g.appId) {
-            const m = mediaMap.get(g.appId);
-            if (m) out._consoleMedia = m;
-            const mt = metaMap.get(g.appId);
-            if (mt) out._consoleMeta = mt;
-          }
+          const key = g.appId || g.id;
+          const m = mediaMap.get(key);
+          if (m) out._consoleMedia = m;
+          const mt = metaMap.get(key);
+          if (mt) out._consoleMeta = mt;
           return out;
         }),
       );

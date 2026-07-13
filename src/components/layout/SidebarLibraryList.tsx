@@ -8,10 +8,14 @@ import {
   Heart,
   Loader2,
   Play,
+  Plus,
   Search,
   Settings,
   X,
   XCircle,
+  Pencil,
+  Image,
+  Trash2,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -28,6 +32,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
+import { useSettings } from "../../context/SettingsContext";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry } from "../../services/tauri";
 import AsyncImage from "../common/AsyncImage";
@@ -35,6 +40,7 @@ import { SkeletonBox } from "../common/Skeleton";
 import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../services/gameCacheService";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
+import GameEditDialog from "../games/GameEditDialog";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { showSuccess, showError, showInfo } from "../toast/GameToast";
 import type { AppPage } from "../../types/navigation";
@@ -43,6 +49,7 @@ import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
+import { removeManualGame } from "../../services/manualGameStore";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 
@@ -126,7 +133,7 @@ function getSnapshotMedia(appId: string): GameMediaPaths | null {
 
 export default function SidebarLibraryList({ onOpenGame, activePage, compact = false, collapsed = false, variant = "full", searchQuery: externalSearchQuery, onSearchChange }: Props) {
   countRender("SidebarLibraryList");
-  const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap } = useLibraryGames();
+  const { games, selectedGame, setSelectedGame, loading, initialLoading, appInfoMap, refresh } = useLibraryGames();
   const { getState, launchGame, stopSession } = useGameSession();
   const [localQuery, setLocalQuery] = useState("");
   const searchQuery = externalSearchQuery ?? localQuery;
@@ -136,7 +143,11 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [menuGame, setMenuGame] = useState<LibraryGame | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDialogInitialTab, setEditDialogInitialTab] = useState<"general" | "media">("general");
+  const [editDialogGame, setEditDialogGame] = useState<LibraryGame | null>(null);
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const canonicalLoadedAppIds = useRef<Set<string>>(new Set());
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
@@ -175,7 +186,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     const steamInstalledCount = deduped.filter((g) => g.steamInstalled === true).length;
     const luaActiveCount = deduped.filter(hasActiveInstalledLuaScript).length;
     const localInstalledCount = deduped.filter(
-      (g) => g.source === "local" && typeof g.executablePath === "string" && g.executablePath.length > 0
+      (g) => (g.source === "local" || g.source === "manual") && typeof g.executablePath === "string" && g.executablePath.length > 0
     ).length;
     const explicitInstalledCount = deduped.filter((g) =>
       (g as any).installedStatus === "active" ||
@@ -532,6 +543,21 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           );
         })
       )}
+      {/* Add Manual Game button */}
+      {!isCompactMode && !isCollapsedMode && (
+        <button
+          type="button"
+          onClick={() => {
+            setEditDialogGame(null);
+            setEditDialogInitialTab("general");
+            setEditDialogOpen(true);
+          }}
+          className="mt-1 flex w-full items-center gap-2 rounded-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
+        >
+          <Plus className="h-3 w-3" />
+          Add Manual Game
+        </button>
+      )}
     </div>
   );
 
@@ -673,6 +699,47 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 label="Manage"
                 icon={<Settings className="h-3.5 w-3.5" />}
                 children={[
+                  ...(menuGame.source === "manual"
+                    ? [
+                        {
+                          label: "Edit Game Details",
+                          icon: <Pencil className="h-3.5 w-3.5" />,
+                          onClick: () => {
+                            setMenuOpen(false);
+                            setEditDialogGame(menuGame);
+                            setEditDialogInitialTab("general");
+                            setEditDialogOpen(true);
+                          },
+                        },
+                        {
+                          label: "Manage Artwork",
+                          icon: <Image className="h-3.5 w-3.5" />,
+                          onClick: () => {
+                            setMenuOpen(false);
+                            setEditDialogGame(menuGame);
+                            setEditDialogInitialTab("media");
+                            setEditDialogOpen(true);
+                          },
+                        },
+                        {
+                          label: "Delete Manual Game",
+                          icon: <Trash2 className="h-3.5 w-3.5" />,
+                          destructive: true,
+                          onClick: () => {
+                            handleMenuClose();
+                            if (menuGame.appId) {
+                              try {
+                                removeManualGame(menuGame.appId);
+                                showSuccess(`"${menuGame.title ?? menuGame.appId}" deleted`);
+                                refresh();
+                              } catch (e) {
+                                showError(`Failed to delete: ${e}`);
+                              }
+                            }
+                          },
+                        },
+                      ]
+                    : []),
                   mPendingUninstall
                     ? {
                       label: "Cancel tracking",
@@ -734,6 +801,23 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       <div className="flex flex-col">
         {renderGameList()}
         {renderMenu()}
+        {editDialogOpen && (
+          <GameEditDialog
+            appId={editDialogGame?.source !== "manual" ? editDialogGame?.appId : undefined}
+            manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            game={editDialogGame ?? undefined}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -752,6 +836,23 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       <div className="flex flex-col">
         {renderGameList()}
         {renderMenu()}
+        {editDialogOpen && (
+          <GameEditDialog
+            appId={editDialogGame?.source !== "manual" ? editDialogGame?.appId : undefined}
+            manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            game={editDialogGame ?? undefined}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -762,6 +863,23 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       {renderHeader()}
       {renderGameList()}
       {renderMenu()}
+      {editDialogOpen && (
+        <GameEditDialog
+          appId={editDialogGame?.source !== "manual" ? editDialogGame?.appId : undefined}
+          manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+          open={editDialogOpen}
+          onClose={() => setEditDialogOpen(false)}
+          initialTab={editDialogInitialTab}
+          game={editDialogGame ?? undefined}
+          settings={{
+            rawgApiKey: appSettings?.rawgApiKey ?? "",
+            igdbClientId: appSettings?.igdbClientId ?? "",
+            igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+            steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+            steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+          }}
+        />
+      )}
     </div>
   );
 }

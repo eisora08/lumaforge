@@ -353,3 +353,90 @@ pub fn delete_provider_media_file(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Command 4: save_provider_media_from_base64
+// Save a base64-encoded image into the provider media directory.
+// Parallels save_game_media_file but for any provider.
+// ---------------------------------------------------------------------------
+
+/// Map role to default extension (matches TS ROLE_DEFAULT_EXTENSIONS).
+fn role_default_extension(role: &str) -> String {
+    match role {
+        "logo" | "icon" => "png".to_string(),
+        _ => "jpg".to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn save_provider_media_from_base64(
+    app_handle: AppHandle,
+    provider: String,
+    provider_game_id: String,
+    role: String,
+    content_base64: String,
+    ext: String,
+) -> Result<String, String> {
+    validate_role(&role)?;
+    if !VALID_PROVIDERS.contains(&provider.as_str()) {
+        sanitize_provider(&provider)?;
+    }
+
+    // Validate extension
+    let safe_ext = ext.to_lowercase();
+    let safe_ext = match safe_ext.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" => safe_ext,
+        _ => role_default_extension(&role),
+    };
+
+    // Decode base64
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(&content_base64)
+        .map_err(|e| format!("Invalid base64 data: {}", e))?;
+
+    if decoded.len() as u64 > MAX_FILE_SIZE {
+        return Err(format!(
+            "Decoded image too large ({} bytes, max {})",
+            decoded.len(),
+            MAX_FILE_SIZE
+        ));
+    }
+
+    let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
+    let filename = format!("{}.{}", role, safe_ext);
+    let dest_path = media_dir.join(&filename);
+
+    // Atomic write: temp file then rename
+    let tmp_path = dest_path.with_extension(format!("{}.tmp", safe_ext));
+    fs::write(&tmp_path, &decoded)
+        .map_err(|e| format!("Failed to write media file: {}", e))?;
+
+    if dest_path.exists() {
+        let _ = fs::remove_file(&dest_path);
+    }
+    fs::rename(&tmp_path, &dest_path)
+        .map_err(|e| format!("Failed to finalize media file: {}", e))?;
+
+    let rel = relative_media_path(&provider, &provider_game_id, &role, &safe_ext)?;
+    println!(
+        "[PROVIDER_MEDIA][SAVED_BASE64] provider={} game={} role={} path={} bytes={}",
+        provider, provider_game_id, role, rel, decoded.len()
+    );
+    Ok(rel)
+}
+
+// ---------------------------------------------------------------------------
+// Command 5: open_provider_media_folder
+// Open the provider media directory in the system file explorer.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn open_provider_media_folder(
+    app_handle: AppHandle,
+    provider: String,
+    provider_game_id: String,
+) -> Result<(), String> {
+    let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
+    open::that(&media_dir).map_err(|e| format!("Failed to open provider media folder: {}", e))
+}

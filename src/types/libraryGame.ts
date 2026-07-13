@@ -21,6 +21,7 @@ export type LibraryGame = {
   /** Optional link to an IGDB ID for metadata resolution only */
   linkedIgdbId?: string;
   executablePath?: string;
+  workingDirectory?: string;
   launchArguments?: string;
   installDir?: string;
   libraryPath?: string;

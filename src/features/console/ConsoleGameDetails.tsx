@@ -180,7 +180,27 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   useEffect(() => {
     const appId = game?.appId;
-    if (!appId) return;
+
+    // Manual games (no appId): build artwork from _consoleMedia (resolved URLs)
+    if (!appId) {
+      const cm = (game as { _consoleMedia?: { coverSrc?: string | null; landscapeSrc?: string | null; backgroundSrc?: string | null; logoSrc?: string | null; heroSrc?: string | null } } | null)?._consoleMedia;
+      if (cm && (cm.coverSrc || cm.heroSrc)) {
+        setArtwork({
+          coverSrc: cm.coverSrc ?? null,
+          landscapeSrc: cm.landscapeSrc ?? null,
+          backgroundSrc: cm.backgroundSrc ?? null,
+          logoSrc: cm.logoSrc ?? null,
+          heroSrc: cm.heroSrc ?? cm.coverSrc ?? null,
+          coverSource: "local-cached",
+          heroSource: "local-cached",
+          logoSource: cm.logoSrc ? "local-cached" : "none",
+        });
+      } else {
+        setArtwork(null);
+      }
+      return;
+    }
+
     setArtwork(null);
     _pendingArtworkRef.current = appId;
 
@@ -271,8 +291,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   /* ── Session action handlers ── */
   const handlePlay = useCallback(() => {
-    if (!game || !game.appId) return;
-    if (isRunning) {
+    if (!game) return;
+    if (isRunning && game.appId) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_STOP] appid=${game.appId}`);
       sessionCtx.stopGameByAppId(game.appId).catch(() => {});
       return;
@@ -280,8 +300,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     if (isLaunching || isStopping) return;
     const action = getLauncherGamePrimaryAction(game);
     if (action !== "play" || !game.isPlayable) {
-      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_BLOCKED] appid=${game.appId} action=${action}`);
-      showWarning(getBlockedReason(action), { id: `console-details-blocked-${game.appId}`, duration: 3000 });
+      if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][DETAILS_BLOCKED] appid=${game.appId ?? "manual"} action=${action}`);
+      showWarning(getBlockedReason(action), { id: `console-details-blocked-${game.appId ?? game.id}`, duration: 3000 });
       return;
     }
     onPlayGame?.(game);
@@ -304,7 +324,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   /* ── Shared action model — single source of truth ── */
   const actionModel = useMemo<ConsoleGameActionModel | null>(
-    () => (game?.appId ? getConsoleGameActionModel(game) : null),
+    () => (game ? getConsoleGameActionModel(game) : null),
     [game],
   );
   const actionInFlight = game?.appId ? isInFlight(game.appId) : false;
@@ -318,10 +338,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, []);
 
   const handlePrimaryAction = useCallback(() => {
-    if (!game || !game.appId || !actionModel) return;
+    if (!game || !actionModel) return;
     const action = actionModel.action;
     if (DEBUG_CONSOLE_DETAILS_ACTION) {
-      console.log(`[CONSOLE_DETAILS_ACTION][RUN] appid=${game.appId} action=${action} enabled=${actionModel.enabled}`);
+      console.log(`[CONSOLE_DETAILS_ACTION][RUN] appid=${game.appId ?? "manual"} action=${action} enabled=${actionModel.enabled}`);
     }
     if (action === "play") {
       handlePlay();
@@ -331,6 +351,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       setInstallModalOpen(true);
       return;
     }
+    if (!game.appId) return;
     handleConsolePrimaryAction(game, action, {
       settings: appSettings,
       addJob,
@@ -342,7 +363,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game, actionModel, handlePlay, appSettings, addJob, updateJob, libCtx.refresh, onPlayGame]);
 
   const handleConsoleAction = useCallback((action: ConsolePrimaryAction) => {
-    if (!game || !game.appId) return;
+    if (!game) return;
     if (action === "play") {
       handlePlay();
       return;
@@ -365,7 +386,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game, actionModel, appSettings, addJob, updateJob, libCtx.refresh, handlePlay, onPlayGame]);
 
   const handleFavoriteToggle = useCallback(() => {
-    if (game?.appId) toggleFavorite(game.appId);
+    if (game) toggleFavorite(game.appId || game.id);
   }, [game, toggleFavorite]);
 
   /* ── Sub-focus activation for left-actions zone ── */
@@ -695,7 +716,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     }
     return raw;
   }, [mediaBundle?.logo?.url, game]);
-  const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
+  const isFav = game ? favoriteIds.has(game.appId || game.id) : false;
 
   const playtimeSeconds = useMemo(
     () => (game?.appId ? getPlaytimeSecondsForAppId(game.appId) : 0),
@@ -888,7 +909,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       <div className="absolute inset-0 overflow-hidden">
         {heroSrc ? (
           <img
-            key={game.appId}
+            key={game.appId || game.id}
             src={heroSrc}
             alt=""
             className="h-full w-full object-cover"
@@ -952,7 +973,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 <div className="w-[120px] shrink-0 overflow-hidden rounded-2xl bg-(--color-surface)/60 shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
                   {coverSrc ? (
                     <img
-                      key={game.appId}
+                      key={game.appId || game.id}
                       src={coverSrc}
                       alt={game.title}
                       className="w-full object-cover"

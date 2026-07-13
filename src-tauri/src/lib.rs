@@ -59,6 +59,8 @@ pub fn run() {
             commands::store::resolve_steam_featured_categories,
             commands::store_search::resolve_steam_store_search,
             commands::steam_grid_db::resolve_steamgriddb_artwork,
+            commands::steam_grid_db::search_steamgriddb_games,
+            commands::steam_grid_db::resolve_steamgriddb_artwork_by_game_id,
             commands::artwork_cache::read_artwork_cache_index,
             commands::artwork_cache::write_artwork_cache_index,
             commands::artwork_cache::cache_remote_artwork,
@@ -177,6 +179,8 @@ pub fn run() {
             commands::provider_media::save_provider_media_from_path,
             commands::provider_media::download_provider_media_from_url,
             commands::provider_media::delete_provider_media_file,
+            commands::provider_media::save_provider_media_from_base64,
+            commands::provider_media::open_provider_media_folder,
             commands::media_cache::get_media_cache_stats,
             commands::media_cache::compact_media_cache,
             commands::startup_snapshot::read_startup_snapshot,
@@ -238,6 +242,9 @@ pub fn run() {
             commands::steam_owned::read_steam_owned_cache,
             commands::profile::save_profile_media,
             commands::profile::delete_profile_media,
+            commands::igdb::igdb_get_access_token,
+            commands::igdb::igdb_search_by_steam_app_id,
+            commands::igdb::igdb_search_games_by_name,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

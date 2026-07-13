@@ -59,6 +59,7 @@ export type GameMediaRoleRowProps = {
   browseOpen: boolean;
   isBrowsing: boolean;
   urlValue: string;
+  isManual?: boolean;
   sourceAvailability: {
     sgdb: boolean;
     igdb: boolean;
@@ -90,6 +91,7 @@ export default function GameMediaRoleRow({
   browseOpen,
   isBrowsing,
   urlValue,
+  isManual,
   sourceAvailability,
   onChooseLocalFile,
   onToggleUrl,
@@ -201,33 +203,37 @@ export default function GameMediaRoleRow({
                 onClick={() => onSourcePick("local")}
               />
               <SourceOption
-                label="Steam Original Assets"
-                icon={Globe}
-                disabled={!sourceAvailability.steam}
-                hint={!sourceAvailability.steam ? "No metadata" : undefined}
-                onClick={() => onSourcePick("steam")}
-              />
-              <SourceOption
                 label="SteamGridDB"
                 icon={Image}
                 disabled={!sourceAvailability.sgdb}
-                hint={!sourceAvailability.sgdb ? "Not configured" : undefined}
+                hint={!sourceAvailability.sgdb
+                  ? "API key not configured"
+                  : isManual && !sourceAvailability.steam
+                    ? "Search by game name"
+                    : undefined}
                 onClick={() => onSourcePick("sgdb")}
               />
               <SourceOption
-                label="IGDB"
-                icon={Image}
-                disabled={!sourceAvailability.igdb}
-                hint={!sourceAvailability.igdb ? "Configure in Settings" : undefined}
-                onClick={() => onSourcePick("igdb")}
+                label="Steam Official Assets"
+                icon={Globe}
+                disabled={!sourceAvailability.steam}
+                hint={!sourceAvailability.steam ? (isManual ? "Link a Steam App ID first" : "No metadata") : undefined}
+                onClick={() => onSourcePick("steam")}
               />
-              <SourceOption
-                label="RAWG"
-                icon={Image}
-                disabled={!sourceAvailability.rawg}
-                hint={!sourceAvailability.rawg ? "Configure in Settings" : undefined}
-                onClick={() => onSourcePick("rawg")}
-              />
+              {sourceAvailability.igdb && (
+                <SourceOption
+                  label="IGDB"
+                  icon={Image}
+                  onClick={() => onSourcePick("igdb")}
+                />
+              )}
+              {!isManual && sourceAvailability.rawg && (
+                <SourceOption
+                  label="RAWG"
+                  icon={Image}
+                  onClick={() => onSourcePick("rawg")}
+                />
+              )}
               <div className="my-1 border-t border-(--color-border)" />
               <SourceOption
                 label="Web Search"

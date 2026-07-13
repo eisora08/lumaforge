@@ -5,12 +5,14 @@ import {
   FileCode2,
   FolderSearch,
   Library,
+  Plus,
   RefreshCcw,
   Settings,
 } from "lucide-react";
 
 import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
+import GameEditDialog from "../components/games/GameEditDialog";
 import LibraryFilterPanel from "../components/library/LibraryFilterPanel";
 import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFilterPanel";
 import StoreSourceSelectorModal from "../components/store/StoreSourceSelectorModal";
@@ -32,6 +34,7 @@ import { saveProviderStatusAfterInstall, type ProviderStatusOptions } from "../s
 import { runInstalledLuaScan, getUpdateStatus, subscribeUpdateStatus } from "../services/installedLuaScanner";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
+import { isSidebarInstalledGame } from "../services/gameCacheService";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { PackageGame, PackageSource } from "../types/package";
@@ -67,6 +70,7 @@ export default function LibraryPage({ onNavigate }: Props) {
 
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
+  const [addGameOpen, setAddGameOpen] = useState(false);
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
@@ -94,7 +98,7 @@ export default function LibraryPage({ onNavigate }: Props) {
     // Status filter
     result = result.filter((g) => {
       if (filter === "lua" && !g.hasLua) return false;
-      if (filter === "installed" && !g.isPlayable && !g.steamInstalled) return false;
+      if (filter === "installed" && !isSidebarInstalledGame(g)) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;
       if (filter === "updates" && g.appId) {
         const s = getUpdateStatus(g.appId);
@@ -429,6 +433,16 @@ export default function LibraryPage({ onNavigate }: Props) {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
+                          onClick={() => setAddGameOpen(true)}
+                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-white/[0.04] px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
+                          title="Add Game"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Add Game</span>
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={handleCheckUpdates}
                           disabled={checkingUpdates || !hasLuaGames}
                           className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-white/[0.04] px-2.5 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
@@ -609,6 +623,18 @@ export default function LibraryPage({ onNavigate }: Props) {
         onOpenDetails={(_game: PackageGame) => {
           setSourceSelectorGame(null);
           if (sourceSelectorGame) setSelectedGame(sourceSelectorGame);
+        }}
+      />
+      <GameEditDialog
+        open={addGameOpen}
+        onClose={() => setAddGameOpen(false)}
+        initialTab="general"
+        settings={{
+          rawgApiKey: settings?.rawgApiKey ?? "",
+          igdbClientId: settings?.igdbClientId ?? "",
+          igdbClientSecret: settings?.igdbClientSecret ?? "",
+          steamGridDbApiKey: settings?.steamGridDbApiKey ?? "",
+          steamGridDbArtworkEnabled: settings?.steamGridDbArtworkEnabled ?? false,
         }}
       />
     </div>

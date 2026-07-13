@@ -42,7 +42,7 @@ export default function ConsoleGameOptionsOverlay({
   const isLaunching = sessionState === "launching";
   const isRunning = sessionState === "running";
   const isStopping = sessionState === "stopping";
-  const isFav = game?.appId ? favoriteIds.has(game.appId) : false;
+  const isFav = game ? favoriteIds.has(game.appId || game.id) : false;
   const hints = useMemo(() => getConsoleInputHints(inputHints), [inputHints]);
   const [focusIndex, setFocusIndex] = useState(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -65,7 +65,7 @@ export default function ConsoleGameOptionsOverlay({
   useEffect(() => {
     setFocusIndex(0);
     setToastMsg(null);
-  }, [game?.appId]);
+  }, [game?.appId || game?.id]);
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -78,12 +78,12 @@ export default function ConsoleGameOptionsOverlay({
   }, []);
 
   const handleFavToggle = useCallback(() => {
-    if (game?.appId) toggleFavorite(game.appId);
+    if (game) toggleFavorite(game.appId || game.id);
   }, [game, toggleFavorite]);
 
   /* ── Shared action model — single source of truth ── */
   const actionModel = useMemo<ConsoleGameActionModel | null>(
-    () => (game?.appId ? getConsoleGameActionModel(game) : null),
+    () => (game ? getConsoleGameActionModel(game) : null),
     [game],
   );
 
@@ -250,18 +250,26 @@ export default function ConsoleGameOptionsOverlay({
 
     list.push({
       id: "open-steam",
-      label: "Open Steam Page",
+      label: game.appId ? "Open Steam Page" : "Open Game Folder",
       icon: ExternalLink,
-      action: () => { window.open(`steam://store/${game.appId}`, "_blank"); onClose(); },
+      action: () => {
+        if (game.appId) {
+          window.open(`steam://store/${game.appId}`, "_blank");
+        } else if (game.executablePath) {
+          const path = game.executablePath.replace(/[\\\/][^\\\/]+$/, "");
+          import("@tauri-apps/plugin-opener").then(({ openPath }) => openPath(path));
+        }
+        onClose();
+      },
     });
 
     list.push({
       id: "copy-appid",
-      label: "Copy App ID",
+      label: game.appId ? "Copy App ID" : "Copy Game ID",
       icon: Copy,
       action: () => {
-        navigator.clipboard.writeText(game?.appId ?? "").catch(() => {});
-        showToast("App ID copied!");
+        navigator.clipboard.writeText(game?.appId || game?.id || "").catch(() => {});
+        showToast(game.appId ? "App ID copied!" : "Game ID copied!");
       },
     });
 
@@ -430,9 +438,10 @@ export default function ConsoleGameOptionsOverlay({
         </div>
       </div>
 
-      {game.appId && (
+      {(game.appId || game.id) && (
         <GameEditDialog
           appId={game.appId}
+          manualGameId={game.source === "manual" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab="media"

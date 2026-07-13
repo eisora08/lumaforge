@@ -16,6 +16,7 @@ import {
   XCircle,
   Edit,
   Image,
+  Trash2,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -39,6 +40,7 @@ import {
   resolveGameMediaUrl,
   resolveCanonicalDisplayTitle,
   resolveCanonicalName,
+  resolveProviderMediaPreviewUrl,
   isPendingUninstall,
   markPendingUninstall,
   clearPendingUninstall,
@@ -61,6 +63,7 @@ import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import GameEditDialog from "./GameEditDialog";
+import { removeManualGame } from "../../services/manualGameStore";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -191,9 +194,30 @@ export default function GameLauncherTile({
   );
 
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(undefined);
+  const DEBUG_MANUAL_COVER = false;
 
+  // Steam games: resolve via appId + canonical appinfo path
   useEffect(() => {
     if (!game.appId || !displayImage) {
+      // Manual games: resolve game.imageUrl (provider-relative path) directly
+      if (!game.appId && game.imageUrl) {
+        if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_INPUT] title=${game.title} source=${game.source} appId=${game.appId} imageUrl=${game.imageUrl} canonicalInfo=${!!canonicalInfo}`);
+        let cancelled = false;
+        resolveProviderMediaPreviewUrl(game.imageUrl)
+          .then((url) => {
+            if (!cancelled) {
+              if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_RESOLVED] imageUrl=${game.imageUrl} resolvedSrc=${url ?? "null"}`);
+              setResolvedSrc(url ?? undefined);
+            }
+          })
+          .catch((err) => {
+            if (!cancelled) {
+              if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_RESOLVED] imageUrl=${game.imageUrl} resolvedSrc=error error=${err instanceof Error ? err.message : String(err)}`);
+              setResolvedSrc(undefined);
+            }
+          });
+        return () => { cancelled = true; };
+      }
       setResolvedSrc(undefined);
       return;
     }
@@ -214,7 +238,7 @@ export default function GameLauncherTile({
         if (!cancelled) setResolvedSrc(undefined);
       });
     return () => { cancelled = true; };
-  }, [game.appId, displayImage, artworkMode]);
+  }, [game.appId, game.imageUrl, displayImage, artworkMode]);
 
   // Render-time diagnostics — log once on state change, not every render
   // Disabled by default to reduce log spam. Set DEBUG_MEDIA_GRID=true in dev console to enable.
@@ -785,6 +809,24 @@ export default function GameLauncherTile({
                   icon: <Image className="h-3.5 w-3.5" />,
                   onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); },
                 },
+                ...(game.source === "manual"
+                  ? [{
+                      label: "Delete Manual Game",
+                      icon: <Trash2 className="h-3.5 w-3.5" />,
+                      destructive: true as const,
+                      onClick: () => {
+                        setMenuOpen(false);
+                        if (game.appId) {
+                          try {
+                            removeManualGame(game.appId);
+                            showSuccess(`"${game.title ?? game.appId}" deleted`);
+                          } catch (e) {
+                            showError(`Failed to delete: ${e}`);
+                          }
+                        }
+                      },
+                    }]
+                  : []),
                 ...(hasPendingUninstall
                   ? [{
                     label: "Cancel tracking",
@@ -839,9 +881,10 @@ export default function GameLauncherTile({
           </CardActionMenu>
         </div>
 
-        {game.appId && (
+        {(game.appId || game.source === "manual") && (
           <GameEditDialog
             appId={game.appId}
+            manualGameId={game.source === "manual" ? game.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editInitialTab}

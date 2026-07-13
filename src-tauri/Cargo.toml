@@ -35,7 +35,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 uuid = { version = "1", features = ["v4"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 dirs = "5"
-
+urlencoding = "2.1"
 notify = { version = "6", features = [] }
 
 windows = { version = "0.57", features = [

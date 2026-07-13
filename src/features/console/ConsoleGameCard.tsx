@@ -18,7 +18,7 @@ type Props = {
 
 function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius }: Props) {
   const { isFavorite } = useFavorites();
-  const fav = game.appId ? isFavorite(game.appId) : false;
+  const fav = isFavorite(game.appId || game.id);
   const isSpotlight = !compact;
   const radius = cornerRadius ?? 16;
 
@@ -58,7 +58,7 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
       >
         {src ? (
           <img
-            key={game.appId}
+            key={game.appId || game.id}
             src={src}
             alt={game.title}
             className="h-full w-full object-cover"

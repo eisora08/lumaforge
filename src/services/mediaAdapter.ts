@@ -15,9 +15,10 @@ import {
   saveProviderMediaFromPath,
   downloadProviderMediaFromUrl,
   deleteProviderMediaFile,
+  saveProviderMediaFromBase64,
 } from "./tauri";
 import { invoke } from "@tauri-apps/api/core";
-import { localPathToUrl } from "./gameCacheService";
+import { localPathToUrl, resolveProviderMediaPreviewUrl } from "./gameCacheService";
 import type {
   MediaProviderId,
   ProviderMediaPathResult,
@@ -115,6 +116,12 @@ export type GameMediaAdapter = {
    * Returns the new relative path on success, null on failure.
    */
   saveRoleFromUrl(role: MediaRole, url: string): Promise<string | null>;
+
+  /**
+   * Save a role from base64-encoded content.
+   * Returns the new relative path on success, null on failure.
+   */
+  saveRoleFromBase64?(role: MediaRole, contentBase64: string, ext: string): Promise<string | null>;
 
   /**
    * Remove a role's media file.
@@ -344,17 +351,18 @@ export class ManualMediaAdapter implements GameMediaAdapter {
     }).relativePath;
   }
 
-  async getRolePreviewUrl(_role: MediaRole): Promise<string | null> {
-    // STUB: needs absolute path resolution for asset:// URL
-    return null;
+  async getRolePreviewUrl(role: MediaRole): Promise<string | null> {
+    const relPath = this.getRolePath(role);
+    return resolveProviderMediaPreviewUrl(relPath);
   }
 
   async getRoleState(role: MediaRole): Promise<RoleMediaState> {
-    // STUB: hasFile always false — needs disk check via Rust command
+    const relPath = this.getRolePath(role);
+    const previewUrl = await resolveProviderMediaPreviewUrl(relPath);
     return {
-      hasFile: false,
-      relativePath: this.getRolePath(role),
-      previewUrl: null,
+      hasFile: !!previewUrl,
+      relativePath: relPath,
+      previewUrl,
       extension: ROLE_DEFAULT_EXTENSIONS[role],
     };
   }
@@ -394,6 +402,22 @@ export class ManualMediaAdapter implements GameMediaAdapter {
       return relativePath;
     } catch (err) {
       console.error(`[MEDIA_ADAPTER][SAVE_URL] provider=manual game=${this.providerGameId} role=${role} error=`, err);
+      return null;
+    }
+  }
+
+  async saveRoleFromBase64(role: MediaRole, contentBase64: string, ext: string): Promise<string | null> {
+    try {
+      const relativePath = await saveProviderMediaFromBase64(
+        "manual",
+        this.providerGameId,
+        role,
+        contentBase64,
+        ext,
+      );
+      return relativePath;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][SAVE_BASE64] provider=manual game=${this.providerGameId} role=${role} error=`, err);
       return null;
     }
   }

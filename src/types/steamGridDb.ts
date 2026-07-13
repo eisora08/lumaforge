@@ -10,3 +10,11 @@ export type SteamGridDbArtwork = {
   logoUrl?: string;
   iconUrl?: string;
 };
+
+/** Result from SGDB name search — for manual games without a Steam App ID. */
+export type SteamGridDbGameSearchResult = {
+  sgdbGameId: number;
+  name?: string;
+  releaseDate?: string;
+  imageUrl?: string;
+};

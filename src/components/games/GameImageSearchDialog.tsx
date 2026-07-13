@@ -20,6 +20,8 @@ import { invalidateResolvedMediaCache } from "../../services/gameCacheService";
 import { getGameAppInfo, updateGameAppinfoMedia } from "../../services/tauri";
 import type { GameMediaPaths } from "../../services/tauri";
 import { openExternalUrl } from "../../services/externalLinks";
+import { downloadProviderMediaFromUrl } from "../../services/tauri";
+import { updateManualGame } from "../../services/manualGameStore";
 
 type MediaRole = "cover" | "landscape" | "background" | "logo" | "icon";
 
@@ -28,7 +30,8 @@ const DEBUG_MEDIA_EDIT = false;
 type Props = {
   open: boolean;
   onClose: () => void;
-  appId: string;
+  appId?: string;
+  libraryId?: string;
   gameTitle: string;
   role: MediaRole;
   settings?: {
@@ -64,6 +67,7 @@ export default function GameImageSearchDialog({
   open,
   onClose,
   appId,
+  libraryId,
   gameTitle,
   role,
   settings,
@@ -185,39 +189,58 @@ export default function GameImageSearchDialog({
 
   const applyUrl = useCallback(async (url: string, source: string) => {
     if (!url.startsWith("http://") && !url.startsWith("https://")) return;
-    console.log(`[WEB_IMAGE_SEARCH][APPLY_URL_START] role=${role} source=${source}`);
+    const isManual = !!libraryId && !appId;
+    console.log(`[WEB_IMAGE_SEARCH][APPLY_URL_START] role=${role} source=${source} manual=${isManual}`);
     setApplying(true);
     try {
-      const result = await invoke<string | null>("safe_download_image", {
-        url,
-        appId: Number(appId),
-        mediaType: role,
-      });
-      if (result) {
-        console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${result}`);
-        invalidateResolvedMediaCache(appId);
-        // Persist to appinfo so the change survives reload
-        try {
-          const currentInfo = await getGameAppInfo(appId);
+      if (isManual && libraryId) {
+        // ── Manual game — use provider media adapter ──
+        const relativePath = await downloadProviderMediaFromUrl("manual", libraryId, role, url);
+        if (relativePath) {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath} manual=${libraryId}`);
           const mediaKey = `${role}Path` as keyof GameMediaPaths;
-          const mergedMedia: GameMediaPaths = {
-            coverPath: currentInfo?.media?.coverPath ?? null,
-            landscapePath: currentInfo?.media?.landscapePath ?? null,
-            backgroundPath: currentInfo?.media?.backgroundPath ?? null,
-            logoPath: currentInfo?.media?.logoPath ?? null,
-            iconPath: currentInfo?.media?.iconPath ?? null,
-            [mediaKey]: result,
-          };
-          await updateGameAppinfoMedia(appId, currentInfo?.name ?? null, mergedMedia, currentInfo?.remote ?? null, currentInfo?.mediaSources ?? null);
-        } catch (e) {
-          if (DEBUG_MEDIA_EDIT) console.log(`[WEB_IMAGE_SEARCH][APPINFO_WRITE_FAIL] error=${e}`);
+          const patch = { [mediaKey]: relativePath };
+          updateManualGame(libraryId, patch);
+          showSuccess(`${role} downloaded`);
+          onClose();
+        } else {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result manual=${libraryId}`);
+          showError(`Failed to download ${role}`);
         }
-        notifyMediaUpdated(appId, { source: `image-search-${source}` });
-        showSuccess(`${role} downloaded`);
-        onClose();
+      } else if (appId) {
+        // ── Steam game — existing flow ──
+        const result = await invoke<string | null>("safe_download_image", {
+          url,
+          appId: Number(appId),
+          mediaType: role,
+        });
+        if (result) {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${result}`);
+          invalidateResolvedMediaCache(appId);
+          try {
+            const currentInfo = await getGameAppInfo(appId);
+            const mediaKey = `${role}Path` as keyof GameMediaPaths;
+            const mergedMedia: GameMediaPaths = {
+              coverPath: currentInfo?.media?.coverPath ?? null,
+              landscapePath: currentInfo?.media?.landscapePath ?? null,
+              backgroundPath: currentInfo?.media?.backgroundPath ?? null,
+              logoPath: currentInfo?.media?.logoPath ?? null,
+              iconPath: currentInfo?.media?.iconPath ?? null,
+              [mediaKey]: result,
+            };
+            await updateGameAppinfoMedia(appId, currentInfo?.name ?? null, mergedMedia, currentInfo?.remote ?? null, currentInfo?.mediaSources ?? null);
+          } catch (e) {
+            if (DEBUG_MEDIA_EDIT) console.log(`[WEB_IMAGE_SEARCH][APPINFO_WRITE_FAIL] error=${e}`);
+          }
+          notifyMediaUpdated(appId, { source: `image-search-${source}` });
+          showSuccess(`${role} downloaded`);
+          onClose();
+        } else {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result`);
+          showError(`Failed to download ${role}`);
+        }
       } else {
-        console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result`);
-        showError(`Failed to download ${role}`);
+        showError("No game identifier available");
       }
     } catch (err) {
       console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=${err instanceof Error ? err.message : String(err)}`);
@@ -225,7 +248,7 @@ export default function GameImageSearchDialog({
     } finally {
       setApplying(false);
     }
-  }, [appId, role, onClose]);
+  }, [appId, libraryId, role, onClose]);
 
   const handleSelect = useCallback(() => {
     if (!selectedUrl) return;

@@ -1,6 +1,8 @@
 import type { LibraryGame } from "../types/libraryGame";
 import type { ManualGameEntry } from "./manualGameStore";
 
+const DEBUG_MANUAL_COVER = false;
+
 /**
  * Pure function: converts a persisted ManualGameEntry into a LibraryGame
  * suitable for in-memory merge into the Library grid.
@@ -25,7 +27,15 @@ import type { ManualGameEntry } from "./manualGameStore";
  */
 export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
   const libraryId = `manual:${entry.id}`;
-  return {
+  const imageUrl =
+    entry.coverPath ??
+    entry.landscapePath ??
+    entry.backgroundPath ??
+    undefined;
+
+  if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][MAPPER_INPUT] id=${entry.id} coverPath=${entry.coverPath} landscapePath=${entry.landscapePath} backgroundPath=${entry.backgroundPath}`);
+
+  const game: LibraryGame = {
     id: libraryId,
     title: entry.name,
     source: "manual",
@@ -34,15 +44,12 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
     providerGameId: entry.id,
 
     executablePath: entry.executablePath,
+    workingDirectory: entry.workingDirectory,
     launchArguments: entry.launchArguments,
     installDir: entry.installDir,
     libraryPath: entry.libraryPath,
 
-    imageUrl:
-      entry.coverPath ??
-      entry.landscapePath ??
-      entry.backgroundPath ??
-      undefined,
+    imageUrl,
 
     isPlayable: !!entry.executablePath,
     isInstallable: false,
@@ -58,4 +65,8 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
     isFavorite: entry.isFavorite ?? false,
     sizeOnDisk: entry.sizeOnDisk,
   };
+
+  if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][MAPPER_OUTPUT] id=${game.id} source=${game.source} imageUrl=${game.imageUrl}`);
+
+  return game;
 }

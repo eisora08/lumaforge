@@ -61,7 +61,7 @@ export type LibrarySource =
 // Stable fingerprint based on fields that matter to Library/Sidebar rendering
 function computeLibraryFingerprint(games: LibraryGame[]): string {
   return games.slice(0, 200).map(g =>
-    `${g.appId}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}`
+    `${g.appId}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}:${g.imageUrl ?? ""}`
   ).join("|");
 }
 
@@ -93,9 +93,12 @@ cleanupOldCacheKeys();
 
 // ── Manual game helpers ──
 
+const DEBUG_MANUAL_COVER = false;
+
 function getManualLibraryGames(): LibraryGame[] {
   try {
-    return loadManualGames().map(manualGameToLibraryGame);
+    const games = loadManualGames().map(manualGameToLibraryGame);
+    return games;
   } catch {
     return [];
   }
@@ -234,9 +237,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       return;
     }
     // Phase 4+8: Compute fingerprint of incoming games and skip if same as current
+    // Manual-update always applies — user explicitly changed media/state in the dialog
     const incomingFp = computeLibraryFingerprint(withManual);
     const currentFp = current.length > 0 ? computeLibraryFingerprint(current) : null;
-    if (currentFp !== null && incomingFp === currentFp) {
+    if (currentFp !== null && incomingFp === currentFp && source !== "manual-update") {
       countLibrarySkipped();
       console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_SKIP] reason=same-fingerprint source=${source} games=${current.length}`);
       // Still set status if not yet at "ready" (e.g., reconcile producing same data as snapshot)
@@ -252,6 +256,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
       return;
     }
+    if (DEBUG_MANUAL_COVER && source === "manual-update") console.log(`[MANUAL_COVER][LIBRARY_MANUAL_UPDATE] fingerprintAfter=${incomingFp.substring(0, 80)}... skipped=false`);
     // Phase 9: Preserve object identity — reuse existing objects when appId/title/source match
     const currentById = new Map<string, LibraryGame>();
     for (const g of current) {
@@ -347,9 +352,17 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
       for (const game of incoming) {
         if (game.appId) {
+          // Steam/Lua: only add if not already present (preserve runtime state)
           if (!byAppId.has(game.appId)) byAppId.set(game.appId, game);
-        } else if (![...byAppId.values()].find((x) => x.id === game.id)) {
-          byAppId.set(`noappid-${game.id}`, game);
+        } else {
+          // Manual (no appId): always replace with fresh version from store.
+          // The store is the source of truth for manual game media/title/fields.
+          const existingKey = [...byAppId.entries()].find(([, v]) => v.id === game.id)?.[0];
+          if (existingKey) {
+            byAppId.set(existingKey, game);
+          } else {
+            byAppId.set(`noappid-${game.id}`, game);
+          }
         }
       }
       return [...byAppId.values()].sort((a, b) => a.title.localeCompare(b.title));
@@ -634,10 +647,15 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     return subscribeManualGames(() => {
       const current = gamesRef.current;
       if (current.length === 0) return; // not loaded yet
-      // Rebuild: strip old manual games, append fresh ones from store
+      // Strip manual games — applyGamesSafely re-adds fresh ones from store at line 222.
+      // This avoids stale manual objects surviving through mergeGames.
       const nonManual = current.filter((g) => g.source !== "manual");
-      const manual = getManualLibraryGames();
-      applyGamesSafely([...nonManual, ...manual], "manual-update");
+      if (DEBUG_MANUAL_COVER) {
+        const prevManual = current.filter((g) => g.source === "manual");
+        const manual = getManualLibraryGames();
+        console.log(`[MANUAL_COVER][LIBRARY_MANUAL_UPDATE] manualCount=${manual.length} prevManualCount=${prevManual.length} incomingImageUrls=${manual.map((g) => g.imageUrl).join(",")} prevImageUrls=${prevManual.map((g) => g.imageUrl).join(",")}`);
+      }
+      applyGamesSafely(nonManual, "manual-update");
     });
   }, []);
 

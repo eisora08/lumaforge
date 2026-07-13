@@ -1,4 +1,4 @@
-use crate::models::steam_grid_db_artwork::SteamGridDbArtwork;
+use crate::models::steam_grid_db_artwork::{SteamGridDbArtwork, SteamGridDbGameSearchResult};
 
 const BASE_URL: &str = "https://www.steamgriddb.com/api/v2";
 const USER_AGENT: &str = "LumaForge/0.1.0";
@@ -29,6 +29,103 @@ pub fn resolve_steamgriddb_artwork(
     }
 
     Ok(results)
+}
+
+/// Search SteamGridDB by game name — for manual games without a Steam App ID.
+/// Uses the SGDB `/search/autocomplete/{term}` endpoint (NOT `/games/search/`).
+/// Response: { "data": [{ "id": 2254, "name": "Half-Life 2", "types": ["steam"], "verified": true }] }
+#[tauri::command]
+pub fn search_steamgriddb_games(
+    name: String,
+    api_key: String,
+) -> Result<Vec<SteamGridDbGameSearchResult>, String> {
+    if name.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|error| format!("Failed to create HTTP client: {}", error))?;
+
+    let encoded_name = urlencoding::encode(&name);
+    let url = format!("{}/search/autocomplete/{}", BASE_URL, encoded_name);
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .map_err(|error| format!("SGDB search request failed: {}", error))?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().unwrap_or_default();
+        let snippet = if body.contains("<!DOCTYPE") || body.contains("<html") {
+            format!("(HTML response, status {})", status)
+        } else {
+            truncate_str(&body, 200)
+        };
+        return Err(format!("SGDB search failed ({}) {}", status, snippet));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .map_err(|error| format!("SGDB search response is not valid JSON: {}", error))?;
+
+    let data = match json.get("data").and_then(|d| d.as_array()) {
+        Some(arr) => arr,
+        None => return Ok(Vec::new()),
+    };
+
+    let results: Vec<SteamGridDbGameSearchResult> = data
+        .iter()
+        .map(|game| {
+            SteamGridDbGameSearchResult {
+                sgdb_game_id: game.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                name: game.get("name").and_then(|v| v.as_str()).map(String::from),
+                release_date: game.get("release_date").and_then(|v| v.as_str()).map(String::from),
+                image_url: game.get("image").and_then(|v| v.as_str()).map(String::from),
+            }
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Fetch artwork by SGDB internal game ID — for manual games selected via name search.
+/// Same artwork endpoints as resolve_single but skips the Steam App ID → game ID resolution.
+#[tauri::command]
+pub fn resolve_steamgriddb_artwork_by_game_id(
+    sgdb_game_id: u32,
+    api_key: String,
+) -> Result<SteamGridDbArtwork, String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|error| format!("Failed to create HTTP client: {}", error))?;
+
+    let (grid_url, grid_thumb_url) = fetch_best_vertical_grid(&client, &api_key, sgdb_game_id);
+    let (grid_horizontal_url, grid_horizontal_thumb_url) = fetch_best_horizontal_grid(&client, &api_key, sgdb_game_id);
+    let hero_url = fetch_first_hero(&client, &api_key, sgdb_game_id);
+    let logo_url = fetch_first_logo(&client, &api_key, sgdb_game_id);
+    let icon_url = fetch_first_icon(&client, &api_key, sgdb_game_id);
+
+    Ok(SteamGridDbArtwork {
+        app_id: sgdb_game_id,
+        grid_url,
+        grid_thumb_url,
+        grid_horizontal_url,
+        grid_horizontal_thumb_url,
+        hero_url,
+        logo_url,
+        icon_url,
+    })
 }
 
 fn resolve_single(
@@ -305,6 +402,14 @@ fn fetch_first_icon(
     }).or_else(|| icons.first());
 
     chosen?.get("url")?.as_str().map(|s| s.to_string())
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len])
+    }
 }
 
 #[cfg(test)]

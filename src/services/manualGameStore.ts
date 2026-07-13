@@ -4,6 +4,7 @@ export type ManualGameEntry = {
   id: string;
   name: string;
   executablePath?: string;
+  workingDirectory?: string;
   launchArguments?: string;
   installDir?: string;
   libraryPath?: string;
@@ -20,6 +21,23 @@ export type ManualGameEntry = {
   releaseDate?: string;
   description?: string;
   shortDescription?: string;
+
+  categories?: string[];
+  features?: string[];
+  tags?: string[];
+  sortingName?: string;
+
+  userScore?: string;
+  criticScore?: string;
+  communityScore?: string;
+  reviewSummary?: string;
+  reviewCount?: string;
+  reviewSource?: string;
+
+  series?: string;
+  ageRating?: string;
+  region?: string;
+  completionStatus?: string;
 
   linkedSteamAppId?: string;
   linkedIgdbId?: string;

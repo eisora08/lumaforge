@@ -43,6 +43,7 @@ import { ApiProviderUserSettings } from "../types/provider";
 import { themes, surfaceModes } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
 import { useSettings } from "../context/SettingsContext";
+import { clearIgdbTokenCache } from "../services/igdbAccessTokenService";
 
 type SettingsTab = "paths" | "game-detection" | "providers" | "behavior" | "advanced";
 
@@ -556,7 +557,7 @@ export default function Settings() {
                 </div>
 
                 <p className="text-xs text-(--color-muted)">
-                  IGDB (Internet Game Database) provides cover art and metadata enrichment. Requires a Twitch/IGDB Client ID and OAuth access token.
+                  IGDB (Internet Game Database) provides cover art and metadata enrichment. Requires a Twitch Client ID and Client Secret (OAuth credentials from dev.twitch.tv).
                 </p>
 
                 {(!settings.igdbClientId || !settings.igdbClientSecret) && (
@@ -574,7 +575,7 @@ export default function Settings() {
                   <input
                     type="text"
                     value={settings.igdbClientId}
-                    onChange={(e) => updateSetting("igdbClientId", e.target.value)}
+                    onChange={(e) => { updateSetting("igdbClientId", e.target.value); clearIgdbTokenCache(); }}
                     className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
                     placeholder="Enter your IGDB Client ID"
                   />
@@ -583,14 +584,14 @@ export default function Settings() {
                 <label className="block">
                   <div className="mb-2">
                     <p className="text-sm font-medium text-(--color-text)">
-                      Client Secret / Access Token
+                      Client Secret
                     </p>
                   </div>
                   <div className="relative">
                     <input
                       type={showIgdbSecret ? "text" : "password"}
                       value={settings.igdbClientSecret}
-                      onChange={(e) => updateSetting("igdbClientSecret", e.target.value)}
+                      onChange={(e) => { updateSetting("igdbClientSecret", e.target.value); clearIgdbTokenCache(); }}
                       className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
                       placeholder="Enter your IGDB Client Secret"
                     />

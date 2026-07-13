@@ -11,7 +11,7 @@ import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleSpotlightDock from "./ConsoleSpotlightDock";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleActionHints from "./ConsoleActionHints";
-import { deduplicateByAppId } from "../../services/gameCacheService";
+import { deduplicateByStableId } from "../../services/gameCacheService";
 import { RichEmptyState } from "./ConsoleEmptyState";
 
 const DEBUG_SWITCH_SPOTLIGHT = false;
@@ -104,12 +104,12 @@ export default function ConsoleSwitchSpotlightLayout({
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
   const logoSrc = useMemo(() => getConsoleLogoSrc(focusedGame), [focusedGame]);
-  const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
+  const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
 
   const scs = settings.spotlightCardStyle;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
-  const dedupedRail = useMemo(() => deduplicateByAppId(currentRail), [currentRail]);
+  const dedupedRail = useMemo(() => deduplicateByStableId(currentRail), [currentRail]);
 
   const useHeroMotion = settings.heroMotion;
   const railTitle = RAIL_CONFIGS[focusedRail >= 0 ? focusedRail : 0].title;
@@ -409,11 +409,11 @@ export default function ConsoleSwitchSpotlightLayout({
               dedupedRail.map((game, i) => {
                 const isFocused = focusedIndex === i;
                 const src = getConsoleCardSrc(game, spotlightVariant);
-                const isFav = game.appId ? favoriteIds.has(game.appId) : false;
+                const isFav = favoriteIds.has(game.appId || game.id);
 
                 return (
                   <div
-                    key={"switch:" + game.appId}
+                    key={"switch:" + (game.appId || game.id)}
                     role="button"
                     tabIndex={isFocused ? 0 : -1}
                     aria-label={game.title}
@@ -446,7 +446,7 @@ export default function ConsoleSwitchSpotlightLayout({
                     >
                       {src ? (
                         <img
-                          key={game.appId}
+                          key={game.appId || game.id}
                           src={src}
                           alt={game.title}
                           className="h-full w-full object-cover"

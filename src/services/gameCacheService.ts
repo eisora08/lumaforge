@@ -322,6 +322,30 @@ export function deduplicateByAppId<T extends { appId?: string | undefined | null
   return out;
 }
 
+/**
+ * Returns a stable unique identifier for any LibraryGame.
+ * Priority: libraryId > steam:appId > id.
+ * Manual games use `manual:<uuid>`, Steam games use `steam:<appId>`.
+ */
+export function getLibraryGameStableId(game: { libraryId?: string; appId?: string; id: string }): string {
+  if (game.libraryId) return game.libraryId;
+  if (game.appId) return `steam:${game.appId}`;
+  return game.id;
+}
+
+/** Deduplicate an array of LibraryGame by stable identity, keeping first occurrence. */
+export function deduplicateByStableId<T extends { libraryId?: string; appId?: string; id: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = getLibraryGameStableId(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 /** Known media filenames that map to media roles. */
 const KNOWN_MEDIA_FILENAMES = new Set([
   "cover.jpg", "cover.png",
@@ -402,7 +426,7 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
   const steamInstalled = game.steamInstalled === true;
 
   const localInstalled =
-    game.source === "local" &&
+    (game.source === "local" || game.source === "manual") &&
     typeof game.executablePath === "string" &&
     game.executablePath.length > 0;
 
@@ -443,7 +467,7 @@ export function getSidebarLabel(game: LibraryGame): string {
   const steamInstalled = game.steamInstalled === true;
 
   const localInstalled =
-    game.source === "local" &&
+    (game.source === "local" || game.source === "manual") &&
     typeof game.executablePath === "string" &&
     game.executablePath.length > 0;
 
@@ -457,7 +481,7 @@ export function getSidebarLabel(game: LibraryGame): string {
   if (steamInstalled && luaActive) return "Steam + Lua";
   if (steamInstalled) return "Steam";
   if (luaActive) return "Lua";
-  if (localInstalled) return "Local";
+  if (localInstalled) return game.source === "manual" ? "Manual" : "Local";
   if (explicitInstalledStatus) return "Installed";
 
   return "Not installed";
@@ -2158,6 +2182,33 @@ export async function resolveGameMediaUrl(
   return localPathToUrl(path);
 }
 
+/**
+ * Resolve a provider-relative media path (e.g. "games/manual/<id>/media/cover.jpg")
+ * to an asset:// URL suitable for <img src>.
+ *
+ * The input is a path relative to the app data root — it is NOT a path relative
+ * to the game directory (that's what resolveRelativeMediaPath handles).
+ *
+ * Returns null when the path is empty, already an HTTP URL, or cannot be resolved.
+ */
+export async function resolveProviderMediaPreviewUrl(
+  relativePath: string | null | undefined,
+): Promise<string | null> {
+  if (!relativePath) return null;
+  if (isHttpUrl(relativePath)) return relativePath;
+  if (relativePath.startsWith("asset://") || relativePath.startsWith("data:") || relativePath.startsWith("file://")) return relativePath;
+  // Already absolute?
+  if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) {
+    return localPathToUrl(relativePath);
+  }
+  // Relative path from app data root (e.g. "games/manual/<id>/media/cover.jpg")
+  const base = await getAppDataBase();
+  if (!base) return null;
+  const sep = base.includes("\\") ? "\\" : "/";
+  const abs = `${base}${base.endsWith(sep) ? "" : sep}${relativePath.replace(/\//g, sep)}`;
+  return localPathToUrl(abs);
+}
+
 // ---------------------------------------------------------------------------
 // Batch media resolution — loads multiple appIds at once, returns a map
 // Batching avoids repeated individual disk checks per card render.
@@ -2985,7 +3036,7 @@ export async function refreshGameDetailsArtwork(
     if (shouldCallIgdb) {
       try {
         const { fetchIgdbArtworkDeduped } = await import("./storeArtworkResolver");
-        igdbData = await fetchIgdbArtworkDeduped({ clientId: options.igdbClientId!, accessToken: options.igdbClientSecret!, appId });
+        igdbData = await fetchIgdbArtworkDeduped({ clientId: options.igdbClientId!, clientSecret: options.igdbClientSecret!, appId });
         _debugLog(appId, "IGDB", `resultBackground=${(igdbData as any)?.igdbArtworkUrl ?? "(null)"} resultCover=${(igdbData as any)?.igdbCoverUrl ?? "(null)"}`);
       } catch (e) { _debugLog(appId, "IGDB", `error=${e}`); }
     } else {

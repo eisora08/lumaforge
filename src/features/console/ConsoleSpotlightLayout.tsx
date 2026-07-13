@@ -78,7 +78,7 @@ export default function ConsoleSpotlightLayout({
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
-  const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
+  const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
 

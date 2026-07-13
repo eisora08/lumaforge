@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import type { LibraryGame, LibraryFilter } from "../../types/libraryGame";
 import type { LibraryAppInfoMap } from "../../services/tauri";
+import { isSidebarInstalledGame } from "../../services/gameCacheService";
 
 type LibraryRailProps = {
   games: LibraryGame[];
@@ -73,7 +74,7 @@ export default function LibraryRail({
       if (filter === "steam" && g.source !== "steam") return false;
       if (filter === "local" && g.source !== "local") return false;
       if (filter === "lua" && !g.hasLua) return false;
-      if (filter === "installed" && !g.isPlayable && !g.steamInstalled) return false;
+      if (filter === "installed" && !isSidebarInstalledGame(g)) return false;
       if (filter === "uninstalled" && g.isPlayable) return false;
       if (filter === "lua-ready" && !g.hasLuaSource) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;

@@ -66,7 +66,7 @@ export default function ConsoleGridLayout({
   const gridRef = useRef<HTMLDivElement>(null);
 
   const gridCardVariant: "landscape" | "poster" = settings.gridCardStyle.useLandscapeCards ? "landscape" : "poster";
-  const isFav = focusedGame?.appId ? favoriteIds.has(focusedGame.appId) : false;
+  const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
 
   /* ── Preview uses settledFocusedGame (debounced) to avoid heavy work during held navigation ── */
@@ -302,7 +302,7 @@ export default function ConsoleGridLayout({
             >
               {currentRail.map((game, i) => (
                 <ConsoleGameCard
-                  key={"grid:" + game.appId}
+                  key={"grid:" + (game.appId || game.id)}
                   game={game}
                   isFocused={focusedIndex === i}
                   onClick={() => onSelectGame(game)}

@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, useCallback } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
-import { deduplicateByAppId } from "../../services/gameCacheService";
+import { deduplicateByStableId } from "../../services/gameCacheService";
 import ConsoleGameCard from "./ConsoleGameCard";
 
 type Props = {
@@ -37,7 +37,7 @@ export default function ConsoleHomeRail({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const deduped = useMemo(() => deduplicateByAppId(games), [games]);
+  const deduped = useMemo(() => deduplicateByStableId(games), [games]);
 
   const isFocusedRail = focusedRail === railIndex;
   const focusedCardIndex = isFocusedRail ? focusedIndex : -1;
@@ -114,7 +114,7 @@ export default function ConsoleHomeRail({
           >
             {deduped.map((game, i) => (
               <ConsoleGameCard
-                key={"console:rail:" + game.appId}
+                key={"console:rail:" + (game.appId || game.id)}
                 game={game}
                 isFocused={isFocusedRail && focusedIndex === i}
                 onClick={() => onSelectGame?.(game)}
