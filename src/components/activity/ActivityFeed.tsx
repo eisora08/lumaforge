@@ -149,7 +149,7 @@ export default function ActivityFeed({ compact }: ActivityFeedProps) {
           </p>
         </div>
       ) : (
-        <div className={compact ? "space-y-4" : "space-y-10"}>
+        <div className={compact ? "max-h-[400px] overflow-y-auto space-y-4" : "space-y-10"}>
           {grouped.map(({ group, items }) => (
             <div key={group}>
               {!compact && (

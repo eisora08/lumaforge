@@ -736,8 +736,8 @@ export default function GameLauncherTile({
                 setMenuOpen(false);
 
                 try {
-                  if (!game?.appId) {
-                    showError("Game ID not available");
+                  if (!game?.appId && !game?.executablePath && !game?.installDir) {
+                    showError("Game location not available");
                     return;
                   }
 
@@ -745,7 +745,7 @@ export default function GameLauncherTile({
                     "../../services/installedGamesRegistry"
                   );
 
-                  let exePath = await getExePathFromEntry(game.appId);
+                  let exePath = game.appId ? await getExePathFromEntry(game.appId) : undefined;
 
                   if (!exePath && game.executablePath) {
                     exePath = game.executablePath;
@@ -770,7 +770,7 @@ export default function GameLauncherTile({
 
 
                       await setInstalledGameEntry({
-                        gameId: game.appId,
+                        gameId: game.appId ?? "",
                         exePath: validExe.exe_path,
                         exeName: validExe.file_name,
                         installDir: game.installDir,
@@ -844,32 +844,34 @@ export default function GameLauncherTile({
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(String(game.appId))}`);
                     },
                   }]
-                  : [{
-                    label: "Uninstall in Steam",
-                    icon: <ExternalLink className="h-3.5 w-3.5" />,
-                    disabled: !game.steamInstalled,
-                    subtitle: !game.steamInstalled ? "Not installed" : undefined,
-                    onClick: game.steamInstalled ? async () => {
-                      setMenuOpen(false);
-                      const appId = Number(game.appId);
-                      markPendingUninstall(String(appId));
-                      showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
-                      try {
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
-                        await uninstallSteamApp(appId);
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
-                      } catch (e1) {
-                        console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                  : game.source !== "manual"
+                    ? [{
+                      label: "Uninstall in Steam",
+                      icon: <ExternalLink className="h-3.5 w-3.5" />,
+                      disabled: !game.steamInstalled,
+                      subtitle: !game.steamInstalled ? "Not installed" : undefined,
+                      onClick: game.steamInstalled ? async () => {
+                        setMenuOpen(false);
+                        const appId = Number(game.appId);
+                        markPendingUninstall(String(appId));
+                        showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
                         try {
-                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
-                          await openSteamStoreApp(appId);
-                        } catch (e2) {
-                          console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
-                          await openExternalUrl(getSteamStoreUrl(appId));
+                          console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} attempt=1`);
+                          await uninstallSteamApp(appId);
+                          console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=ok attempt=1`);
+                        } catch (e1) {
+                          console.log(`[STEAM_UNINSTALL_OPEN] appid=${appId} result=error error=${e1} attempt=1`);
+                          try {
+                            console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} attempt=2`);
+                            await openSteamStoreApp(appId);
+                          } catch (e2) {
+                            console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appId} uri=${getSteamStoreUrl(appId)} attempt=3`);
+                            await openExternalUrl(getSteamStoreUrl(appId));
+                          }
                         }
-                      }
-                    } : undefined,
-                  }]),
+                      } : undefined,
+                    }]
+                    : []),
                 ...(hasLua
                   ? [{
                     label: "Delete Lua",

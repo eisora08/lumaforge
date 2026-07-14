@@ -406,7 +406,8 @@ export function saveManualGame(entry: ManualGameEntry): ManualGameEntry {
   }
   entries.push(entry);
   saveToLocalStorage(entries);
-  persistToDisk(entries).then((ok) => {
+  // Snapshot array for async write — prevents race if sync mutations occur before Rust write fires
+  persistToDisk([...entries]).then((ok) => {
     console.log(
       `[ManualGames][DISK_WRITE] op=add id=${entry.id} ok=${ok}`
     );
@@ -425,7 +426,8 @@ export function updateManualGame(
   const updated = { ...entries[idx], ...patch, id, updatedAt: Date.now() };
   entries[idx] = updated;
   saveToLocalStorage(entries);
-  persistToDisk(entries).then((ok) => {
+  // Snapshot array for async write — prevents race if sync mutations occur before Rust write fires
+  persistToDisk([...entries]).then((ok) => {
     console.log(
       `[ManualGames][DISK_WRITE] op=update id=${id} ok=${ok}`
     );
@@ -449,10 +451,8 @@ export function removeManualGame(id: string): boolean {
     `[MANUAL_REMOVE][STORE] id=${id} title="${removed.name}" remaining=${entries.length}`
   );
 
-  // Fire-and-forget JSON write — localStorage already has the correct state.
-  // The pending-write marker in localStorage ensures crash recovery trusts
-  // localStorage if this write doesn't complete before next boot.
-  persistToDisk(entries).then((ok) => {
+  // Snapshot array for async write — prevents race if sync mutations occur before Rust write fires
+  persistToDisk([...entries]).then((ok) => {
     console.log(
       `[ManualGames][DISK_WRITE] op=remove id=${id} ok=${ok} remaining=${entries.length}`
     );

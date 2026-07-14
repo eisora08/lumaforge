@@ -250,12 +250,16 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     [libraryGames],
   );
 
-  // Build a map of appId → sessionKey for all active sessions
+  // Build a map of appId/gameId → sessionKey for all active sessions
+  // For manual games (no appId), index by gameKey ("manual:<uuid>") so findHeroGame can match g.id
   const sessionKeysByAppId = useMemo(() => {
     const map: Record<string, string> = {};
     for (const [key, s] of Object.entries(sessions)) {
-      if (s.appId && (s.state === "running" || s.state === "stopping" || s.state === "launching")) {
+      if (s.state !== "running" && s.state !== "stopping" && s.state !== "launching") continue;
+      if (s.appId) {
         map[s.appId] = key;
+      } else if (s.gameKey) {
+        map[s.gameKey] = key;
       }
     }
     return map;

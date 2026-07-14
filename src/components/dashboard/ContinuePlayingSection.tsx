@@ -26,7 +26,7 @@ type Props = {
 function getContinueDisplayGames(
   snapshotGames: Array<{ appId: string; lastPlayed: number | null; playtime: number | null; installed: boolean; title: string; source: string; updatedAt?: number }>,
   manualGames: Array<{ id: string; title: string; libraryId?: string }>,
-  sessions: Record<string, { appId?: string; state: string }>,
+  sessions: Record<string, { appId?: string; gameKey?: string; state: string }>,
   excludeAppId?: string,
 ): DashboardDisplayGame[] {
   const runningAppIds = new Set(
@@ -35,11 +35,11 @@ function getContinueDisplayGames(
       .map((s) => s.appId as string),
   );
 
-  // Also check running by game.id for manual games
+  // For manual games (no appId), index by gameKey ("manual:<uuid>") so manualToDisplayGame can match g.id
   const runningGameIds = new Set(
     Object.values(sessions)
       .filter((s) => s.state === "running")
-      .map((s) => s.appId)
+      .map((s) => s.appId || s.gameKey)
       .filter((id): id is string => Boolean(id)),
   );
 
