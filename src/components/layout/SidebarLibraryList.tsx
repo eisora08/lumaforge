@@ -314,7 +314,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     if (needsRetry) setSidebarRetryKey((k) => k + 1);
   }, [canonicalInfoMap]);
 
-  // Resolve sidebar media for manual games (no appId — use game.imageUrl via provider resolver)
+  // Resolve sidebar media for manual games (no appId — use game.iconPath/game.imageUrl via provider resolver)
   const manualMediaLoading = useRef<Set<string>>(new Set());
   useEffect(() => {
     const manualGames = filtered.filter((g) => !g.appId && g.source === "manual");
@@ -330,10 +330,19 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       const results = await Promise.all(
         unloaded.map(async (g) => {
           manualMediaLoading.current.add(g.id);
-          const resolvedUrl = g.imageUrl ? await resolveProviderMediaPreviewUrl(g.imageUrl) : null;
+
+          // Sidebar priority: iconPath first (compact thumbnail), then cover
+          const iconLocal = g.iconPath ?? undefined;
+          const coverLocal = g.imageUrl ?? undefined;
+
+          const [resolvedIcon, resolvedCover] = await Promise.all([
+            iconLocal ? resolveProviderMediaPreviewUrl(iconLocal).catch(() => null) : Promise.resolve(null),
+            coverLocal ? resolveProviderMediaPreviewUrl(coverLocal).catch(() => null) : Promise.resolve(null),
+          ]);
+
           const media: ResolvedSidebarMedia = {
-            icon: { src: null, localPath: null, exists: false },
-            cover: resolvedUrl ? { src: resolvedUrl, localPath: g.imageUrl ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            icon: resolvedIcon ? { src: resolvedIcon, localPath: iconLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            cover: resolvedCover ? { src: resolvedCover, localPath: coverLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
             landscape: { src: null, localPath: null, exists: false },
             background: { src: null, localPath: null, exists: false },
             logo: { src: null, localPath: null, exists: false },

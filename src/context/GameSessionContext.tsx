@@ -110,7 +110,12 @@ export type OverlayEvent = {
   type: "launch" | "end";
   gameTitle: string;
   provider: string;
+  /** Cover-first image for backward compat (same as heroUrl for most games). */
   imageUrl?: string;
+  /** Hero/background image for the summary overlay (background-first for manual). */
+  heroUrl?: string;
+  /** Icon for the HUD chip. */
+  iconUrl?: string;
   durationSeconds?: number;
 };
 
@@ -180,6 +185,8 @@ type GameSessionContextValue = {
   overlayEvent: OverlayEvent | null;
   /** Dismiss the current overlay toast. */
   clearOverlay: () => void;
+  /** Get resolved media info (imageUrl, heroUrl, iconUrl) for a session key. Returns undefined if no media resolved yet. */
+  getSessionMedia: (gameKey: string) => { imageUrl?: string; heroUrl?: string; iconUrl?: string; title: string; provider: string } | undefined;
 };
 
 const STORAGE_KEY = "lumaforge-running-games-v1";
@@ -753,7 +760,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
   });
 
   // Stores image URL and display info per session key for overlay events
-  const sessionMediaRef = useRef<Record<string, { imageUrl?: string; title: string; provider: string }>>({});
+  const sessionMediaRef = useRef<Record<string, { imageUrl?: string; heroUrl?: string; iconUrl?: string; title: string; provider: string }>>({});
 
   // Tracks active play session IDs for playtime recording
   const activePlaySessionsRef = useRef<Record<string, string>>({});
@@ -876,20 +883,49 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       },
     }));
 
-    // Store media info for overlay events
-    // For manual games, imageUrl is a relative path like "games/manual/<uuid>/media/cover.jpg"
-    // that localPathToUrl can't handle — resolve via resolveProviderMediaPreviewUrl.
-    const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
-    let bestImageUrl: string | undefined = rawBestUrl;
-    if (rawBestUrl && !rawBestUrl.startsWith("http") && !rawBestUrl.startsWith("asset://") && !rawBestUrl.startsWith("data:")) {
-      try {
-        const { resolveProviderMediaPreviewUrl } = await import("../services/gameCacheService");
-        const resolved = await resolveProviderMediaPreviewUrl(rawBestUrl);
-        if (resolved) bestImageUrl = resolved;
-      } catch { /* non-critical — overlay will use fallback */ }
+    // Store media info for overlay events + HUD
+    const { resolveProviderMediaPreviewUrl } = await import("../services/gameCacheService");
+
+    // Helper: resolve a raw path (relative/absolute) to a full URL
+    async function resolveUrl(raw?: string | null): Promise<string | undefined> {
+      if (!raw) return undefined;
+      if (raw.startsWith("http") || raw.startsWith("asset://") || raw.startsWith("data:") || raw.startsWith("file://")) return raw;
+      try { return await resolveProviderMediaPreviewUrl(raw) ?? undefined; } catch { return undefined; }
     }
+
+    let imageUrl: string | undefined;   // cover-first (backward compat + summary cover)
+    let heroUrl: string | undefined;    // background-first (summary overlay hero)
+    let iconUrl: string | undefined;    // icon-first (HUD chip)
+
+    if (game.source === "manual" && game.providerGameId) {
+      // Manual games: resolve each role individually from ManualGameEntry
+      const { getManualGame } = await import("../services/manualGameStore");
+      const entry = getManualGame(game.providerGameId);
+
+      // Resolve all paths in parallel (4 roles, non-critical on failure)
+      const [resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
+        resolveUrl(entry?.coverPath),
+        resolveUrl(entry?.landscapePath),
+        resolveUrl(entry?.backgroundPath),
+        resolveUrl(entry?.iconPath),
+      ]);
+
+      // HUD chip: icon first (compact thumbnail)
+      iconUrl = resolvedIcon ?? resolvedCover ?? resolvedLandscape ?? resolvedBackground;
+      // Overlay hero: background first (full-width cinematic)
+      heroUrl = resolvedBackground ?? resolvedLandscape ?? resolvedCover;
+      // Summary cover / backward compat: cover first
+      imageUrl = resolvedCover ?? resolvedLandscape ?? resolvedBackground;
+    } else {
+      // Steam / Local: existing behavior — single imageUrl from game metadata
+      const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
+      imageUrl = await resolveUrl(rawBestUrl);
+      heroUrl = imageUrl;  // For Steam, the single imageUrl serves both roles
+      iconUrl = await resolveUrl(game.iconPath);
+    }
+
     const providerLabel = game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : "Unknown";
-    sessionMediaRef.current[computedKey] = { imageUrl: bestImageUrl, title: game.title, provider: providerLabel };
+    sessionMediaRef.current[computedKey] = { imageUrl, heroUrl, iconUrl, title: game.title, provider: providerLabel };
 
     // 30-second timeout guard — prevents infinite launching
     ls.guardTimer = setTimeout(() => {
@@ -1218,6 +1254,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             gameTitle: curSession.title || "Unknown Game",
             provider,
             imageUrl: mediaInfo?.imageUrl,
+            heroUrl: mediaInfo?.heroUrl,
+            iconUrl: mediaInfo?.iconUrl,
           });
 
           // Start playtime session
@@ -1289,6 +1327,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           gameTitle: prevSession.title || "Unknown Game",
           provider,
           imageUrl: mediaInfo?.imageUrl,
+          heroUrl: mediaInfo?.heroUrl,
+          iconUrl: mediaInfo?.iconUrl,
           durationSeconds: Math.max(1, durationSeconds),
         });
 
@@ -1408,6 +1448,12 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     prevSessionsRef.current = sessions;
   }, [sessions]);
 
+  // Stable getter for resolved session media (reads from ref — safe, no hooks inside)
+  const getSessionMedia = useCallback(
+    (gameKey: string) => sessionMediaRef.current[gameKey],
+    [],
+  );
+
   const value = useMemo(
     () => ({
       sessions,
@@ -1427,8 +1473,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       stopGameByAppId,
       overlayEvent,
       clearOverlay,
+      getSessionMedia,
     }),
-    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime, launchGame, cancelLaunch, findRunningSessionKey, stopGameByAppId, overlayEvent, clearOverlay]
+    [sessions, getSession, getState, startLaunching, markRunning, markStopping, clearSession, updateSessionPid, stopSession, findGameProcessForSession, recordPlaytime, launchGame, cancelLaunch, findRunningSessionKey, stopGameByAppId, overlayEvent, clearOverlay, getSessionMedia]
   );
 
   return (

@@ -36,7 +36,7 @@ type Props = {
 };
 
 export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
-  const { sessions, stopSession } = useGameSession();
+  const { sessions, stopSession, getSessionMedia } = useGameSession();
   const [hovered, setHovered] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [renderPhase, setRenderPhase] = useState<"hidden" | "visible" | "exiting">("hidden");
@@ -66,13 +66,25 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
   }, [activeSession?.gameKey]);
 
   useEffect(() => {
-    const appId = activeSession?.appId;
-    if (!appId) {
+    const sessionKey = activeSession?.gameKey;
+    if (!sessionKey) {
       setImageUrl(null);
       fetchRef.current = undefined;
       return;
     }
 
+    const appId = activeSession?.appId;
+
+    // Manual / non-Steam games: use sessionMediaRef (resolved at launch time)
+    if (!appId) {
+      const media = getSessionMedia(sessionKey);
+      // HUD priority: iconUrl first (compact chip), then imageUrl
+      setImageUrl(media?.iconUrl ?? media?.imageUrl ?? null);
+      fetchRef.current = undefined;
+      return;
+    }
+
+    // Steam games: resolve via getMediaPaths as before
     if (fetchRef.current === appId) return;
     fetchRef.current = appId;
 
@@ -86,7 +98,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
     return () => {
       fetchRef.current = undefined;
     };
-  }, [activeSession?.appId]);
+  }, [activeSession?.appId, activeSession?.gameKey, getSessionMedia]);
 
   const elapsed = useElapsedTime(activeSession?.launchedAt);
   const isLaunching = activeSession?.state === "launching";

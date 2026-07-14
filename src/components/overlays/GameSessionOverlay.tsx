@@ -16,25 +16,25 @@ export default function GameSessionOverlay({ event, onDismiss }: Props) {
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Resolve image URL — handles both already-resolved (asset://) and raw relative paths
+  // Resolve image URL — heroUrl (background-first) for overlay hero, falls back to imageUrl
   useEffect(() => {
-    if (!event?.imageUrl) { setResolvedUrl(null); return; }
-    const url = event.imageUrl;
+    const rawUrl = event?.heroUrl ?? event?.imageUrl;
+    if (!rawUrl) { setResolvedUrl(null); return; }
     // Already a full URL (http, asset, data) — use directly
-    if (url.startsWith("http") || url.startsWith("asset://") || url.startsWith("data:") || url.startsWith("file://")) {
-      setResolvedUrl(url);
+    if (rawUrl.startsWith("http") || rawUrl.startsWith("asset://") || rawUrl.startsWith("data:") || rawUrl.startsWith("file://")) {
+      setResolvedUrl(rawUrl);
       return;
     }
     // Try localPathToUrl first (handles absolute Windows paths)
-    const local = localPathToUrl(url);
+    const local = localPathToUrl(rawUrl);
     if (local) { setResolvedUrl(local); return; }
-    // Fallback: async resolution for relative paths (e.g. "games/manual/<id>/media/cover.jpg")
+    // Fallback: async resolution for relative paths (e.g. "games/manual/<id>/media/background.jpg")
     let cancelled = false;
-    resolveProviderMediaPreviewUrl(url).then((resolved) => {
+    resolveProviderMediaPreviewUrl(rawUrl).then((resolved) => {
       if (!cancelled) setResolvedUrl(resolved);
     });
     return () => { cancelled = true; };
-  }, [event?.imageUrl]);
+  }, [event?.heroUrl, event?.imageUrl]);
 
   useEffect(() => {
     if (!event) {

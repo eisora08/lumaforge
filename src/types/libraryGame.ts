@@ -26,6 +26,7 @@ export type LibraryGame = {
   installDir?: string;
   libraryPath?: string;
   imageUrl?: string;
+  iconPath?: string;
   metadata?: SteamAppMetadata;
   isPlayable: boolean;
   isInstallable: boolean;

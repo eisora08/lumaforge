@@ -97,13 +97,23 @@ function buildManualMetadata(entry: ManualGameEntry): SteamAppMetadata {
  */
 export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
   const libraryId = `manual:${entry.id}`;
+  // Library card priority: coverPath first (box art), then landscape, background, icon
   const imageUrl =
-    entry.backgroundPath ??
-    entry.landscapePath ??
     entry.coverPath ??
+    entry.landscapePath ??
+    entry.backgroundPath ??
+    entry.iconPath ??
     undefined;
 
-  if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][MAPPER_INPUT] id=${entry.id} coverPath=${entry.coverPath} landscapePath=${entry.landscapePath} backgroundPath=${entry.backgroundPath}`);
+  // Sidebar/HUD priority: iconPath first (compact thumbnail), then cover, landscape, background
+  const iconPath =
+    entry.iconPath ??
+    entry.coverPath ??
+    entry.landscapePath ??
+    entry.backgroundPath ??
+    undefined;
+
+  if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][MAPPER_INPUT] id=${entry.id} coverPath=${entry.coverPath} landscapePath=${entry.landscapePath} backgroundPath=${entry.backgroundPath} iconPath=${entry.iconPath}`);
 
   const metadata = buildManualMetadata(entry);
 
@@ -122,6 +132,7 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
     libraryPath: entry.libraryPath,
 
     imageUrl,
+    iconPath,
 
     metadata,
 
