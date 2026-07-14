@@ -242,8 +242,11 @@ export default function LibraryGameDetails({
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [heroImgError, setHeroImgError] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
-  const favorite = game.appId ? isFavorite(game.appId) : false;
+  const favoriteId = game.appId || game.id;
+  const favorite = isFavorite(favoriteId);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const isManualGame = game.source === "manual";
+  const linkedSteamAppId = isManualGame ? ((localDetailsData as any)?.linkedSteamAppId ?? null) : null;
 
   const detailTitle = resolveCanonicalDisplayTitle(
     game.appId ?? "",
@@ -406,9 +409,9 @@ export default function LibraryGameDetails({
     console.log(`[GAME_ACTION_RENDER] appid=${game.appId} location=gamedetails uninstallPending=${hasPendingUninstall} baseAction=${action} effectiveAction=${effectiveAction} renderedPrimary=${hasPendingUninstall ? "Uninstalling" : effectiveAction === "play" ? "Play" : effectiveAction === "install" ? "Install" : effectiveAction}`);
   }
 
-  const rawShort = game.metadata?.short_description;
-  const rawAbout = game.metadata?.about_the_game;
-  const rawDetailed = game.metadata?.detailed_description;
+  const rawShort = game.metadata?.short_description || (localDetailsData as any)?.shortDescription;
+  const rawAbout = game.metadata?.about_the_game || (localDetailsData as any)?.description;
+  const rawDetailed = game.metadata?.detailed_description || (localDetailsData as any)?.description;
 
   const aboutText = rawAbout ? stripHtml(rawAbout) : "";
   const detailedText = rawDetailed ? stripHtml(rawDetailed) : "";
@@ -422,12 +425,12 @@ export default function LibraryGameDetails({
     : longDescText;
 
   const genres = useMemo(
-    () => uniqueLabels(game.metadata?.genres || []),
-    [game.id, game.metadata?.genres]
+    () => uniqueLabels(game.metadata?.genres || (localDetailsData as any)?.genres || []),
+    [game.id, game.metadata?.genres, (localDetailsData as any)?.genres]
   );
   const categories = useMemo(
-    () => uniqueLabels(game.metadata?.categories || []),
-    [game.id, game.metadata?.categories]
+    () => uniqueLabels(game.metadata?.categories || (localDetailsData as any)?.categories || []),
+    [game.id, game.metadata?.categories, (localDetailsData as any)?.categories]
   );
 
   const appIdNum = game.appId ? Number(game.appId) : null;
@@ -1473,7 +1476,7 @@ export default function LibraryGameDetails({
               {/* Favorite button */}
               <button
                 type="button"
-                onClick={() => { if (game.appId) toggleFavorite(game.appId); }}
+                onClick={() => { toggleFavorite(favoriteId); }}
                 className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-(--surface-active-border) bg-white/5 px-2.5 py-2 text-xs transition hover:bg-white/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 title={favorite ? "Remove from favorites" : "Add to favorites"}
               >
@@ -1579,7 +1582,8 @@ export default function LibraryGameDetails({
                 </p>
               )}
 
-              {/* Updates — Steam news only */}
+              {/* Updates — Steam news only (hidden for manual games) */}
+              {!isManualGame && (
               <section>
                 <h2 className="mb-3 text-base font-bold text-(--color-text)">
                   <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
@@ -1652,17 +1656,40 @@ export default function LibraryGameDetails({
                   </div>
                 )}
               </section>
+              )}
 
 
             </div>
 
             {/* Right: Side panel */}
             <aside className="mt-8 lg:mt-0">
+              {(!isManualGame || linkedSteamAppId) && (
               <div className="sticky top-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
-                  Links
+                  {isManualGame ? "Steam Links" : "Links"}
                 </h3>
                 <div className="space-y-1">
+                  {isManualGame && linkedSteamAppId ? (
+                    <>
+                      <ShortcutRow
+                        icon={<ExternalLink className="h-3.5 w-3.5" />}
+                        label="Steam Store Page"
+                        enabled={!!linkedSteamAppId}
+                        onClick={() => {
+                          if (linkedSteamAppId) openExternalUrl(getSteamStoreUrl(Number(linkedSteamAppId)));
+                        }}
+                      />
+                      <ShortcutRow
+                        icon={<Database className="h-3.5 w-3.5" />}
+                        label="SteamDB"
+                        enabled={!!linkedSteamAppId}
+                        onClick={() => {
+                          if (linkedSteamAppId) openExternalUrl(getSteamDbUrl(Number(linkedSteamAppId)));
+                        }}
+                      />
+                    </>
+                  ) : (
+                    <>
                   <ShortcutRow
                     icon={<ExternalLink className="h-3.5 w-3.5" />}
                     label="Store Page"
@@ -1732,10 +1759,14 @@ export default function LibraryGameDetails({
                       else if (appIdNum) openExternalUrl(getSteamDbUrl(appIdNum));
                     }}
                   />
+                    </>
+                  )}
                 </div>
               </div>
+              )}
 
-              {/* Achievements */}
+              {/* Achievements — hidden for manual games */}
+              {!isManualGame && (
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isPerfected ? "text-amber-400/90" : "text-(--color-muted)"}`}>
                   <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
@@ -2063,6 +2094,7 @@ export default function LibraryGameDetails({
                   </div>
                 )}
               </div>
+              )}
 
               {/* Release Date */}
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
@@ -2071,7 +2103,7 @@ export default function LibraryGameDetails({
                   Release Date
                 </h3>
                 <p className="mt-1 text-sm text-(--color-text)">
-                  {game.metadata?.release_date || "Unknown"}
+                  {game.metadata?.release_date || (localDetailsData as any)?.releaseDate || "Unknown"}
                 </p>
               </div>
 
@@ -2202,9 +2234,10 @@ export default function LibraryGameDetails({
         />
       )}
 
-      {game.appId && (
+      {(game.appId || game.source === "manual") && (
         <GameEditDialog
           appId={game.appId}
+          manualGameId={game.source === "manual" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab="general"

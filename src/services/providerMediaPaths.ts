@@ -65,9 +65,13 @@ const PATH_TRAVERSAL_RE = /(\.\.[/\\]|[\/\\]\.\.|^\.)/;
  * Matches Rust `safe_filename` behavior: keeps alphanumeric, `-`, `_`,
  * replaces everything else with `_`, empty result → `"unknown"`.
  */
-export function sanitizeProviderGameId(raw: string): string {
+export function sanitizeProviderGameId(raw: string, providerId?: string): string {
   if (!raw || typeof raw !== "string") return "unknown";
-  const sanitized = raw
+  let value = raw;
+  if (providerId === "manual" && value.startsWith("manual:")) {
+    value = value.slice("manual:".length);
+  }
+  const sanitized = value
     .replace(/[^a-zA-Z0-9_-]/g, "_")
     .replace(/__+/g, "_")
     .replace(/^_|_$/g, "");
@@ -134,7 +138,7 @@ export function isSafeProviderGameId(raw: string): boolean {
  * // → { relativePath: "games/gog/123456/media/cover.jpg", ... }
  */
 export function buildProviderMediaPath(input: ProviderMediaPathInput): ProviderMediaPathResult {
-  const safeId = sanitizeProviderGameId(input.providerGameId);
+  const safeId = sanitizeProviderGameId(input.providerGameId, input.providerId);
   const ext = sanitizeExtension(input.extension);
   const role = input.role; // already typed as MediaRole
 
@@ -171,7 +175,7 @@ export function rebaseMediaPath(
   providerGameId: string,
   mediaRelativePath: string,
 ): string {
-  const safeId = sanitizeProviderGameId(providerGameId);
+  const safeId = sanitizeProviderGameId(providerGameId, providerId);
   // Extract filename from existing path (e.g. "media/cover.jpg" → "cover.jpg")
   const parts = mediaRelativePath.replace(/\\/g, "/").split("/");
   const filename = parts[parts.length - 1] || mediaRelativePath;
@@ -268,7 +272,7 @@ export function belongsToProvider(
   providerId: MediaProviderId,
   providerGameId: string,
 ): boolean {
-  const safeId = sanitizeProviderGameId(providerGameId);
+  const safeId = sanitizeProviderGameId(providerGameId, providerId);
   const prefix = `games/${providerId}/${safeId}/`;
   const normalized = relativePath.replace(/\\/g, "/");
   return normalized.startsWith(prefix);

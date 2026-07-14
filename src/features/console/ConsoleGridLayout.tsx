@@ -83,6 +83,7 @@ export default function ConsoleGridLayout({
   trailerDataRef.current = trailerData;
 
   const appIdStr = previewGame?.appId ?? null;
+  const isManualGame = focusedGame?.source === "manual";
 
   const {
     effectiveUnlocked,
@@ -363,6 +364,9 @@ export default function ConsoleGridLayout({
                   {focusedGame.hasUpdate && (
                     <span className="rounded-md bg-amber-500/80 px-2.5 py-0.5 text-xs font-medium text-black">Update</span>
                   )}
+                  {focusedGame.source === "manual" && (
+                    <span className="rounded-md bg-sky-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Manual</span>
+                  )}
                   {isFav && (
                     <span className="rounded-md bg-rose-500/80 px-2.5 py-0.5 text-xs font-medium text-white">Favorite</span>
                   )}
@@ -433,7 +437,7 @@ export default function ConsoleGridLayout({
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
                   {heroSrc && (
                     <span className="text-(--color-muted)/50">
-                      Artwork: <span className="font-medium text-(--color-muted)/70">steam-metadata</span>
+                      Artwork: <span className="font-medium text-(--color-muted)/70">{isManualGame ? "manual" : "steam-metadata"}</span>
                     </span>
                   )}
                   {focusedGame.steamInstalled && (
@@ -441,12 +445,18 @@ export default function ConsoleGridLayout({
                       Source: <span className="font-medium text-(--color-muted)/70">local</span>
                     </span>
                   )}
+                  {isManualGame && (
+                    <span className="text-(--color-muted)/50">
+                      Source: <span className="font-medium text-(--color-muted)/70">manual</span>
+                    </span>
+                  )}
                 </div>
 
                 {/* Separator */}
                 <div className="border-t border-(--color-border)" />
 
-                {/* Achievement progress bar */}
+                {/* Achievement progress bar — hidden for manual games */}
+                {!isManualGame && (
                 <div>
                   <div className="flex items-center gap-2">
                     <Trophy className="h-4 w-4 text-(--color-muted)" />
@@ -473,8 +483,10 @@ export default function ConsoleGridLayout({
                     <p className="mt-2 text-xs text-(--color-muted)">No achievement data</p>
                   )}
                 </div>
+                )}
 
-                {/* Reviews card */}
+                {/* Reviews card — hidden for manual games */}
+                {!isManualGame && (
                 <div>
                   <div className="flex items-center gap-2">
                     <Star className="h-4 w-4 text-(--color-muted)" />
@@ -496,6 +508,7 @@ export default function ConsoleGridLayout({
                     <p className="mt-2 text-xs text-(--color-muted)">No review data</p>
                   )}
                 </div>
+                )}
 
                 {/* Genre chips */}
                 {tags && (

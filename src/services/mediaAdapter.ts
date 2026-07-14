@@ -333,10 +333,10 @@ export class ManualMediaAdapter implements GameMediaAdapter {
   readonly paths: ProviderMediaPathResult;
 
   constructor(libraryId: string) {
-    this.providerGameId = libraryId;
+    this.providerGameId = libraryId.startsWith("manual:") ? libraryId.slice("manual:".length) : libraryId;
     this.paths = buildProviderMediaPath({
       providerId: "manual",
-      providerGameId: libraryId,
+      providerGameId: this.providerGameId,
       role: "cover",
       extension: ROLE_DEFAULT_EXTENSIONS.cover,
     });

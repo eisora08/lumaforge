@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { LibraryGame } from "../../types/libraryGame";
 import { getCachedGameMediaPaths, resolveGameMediaUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
+import { getManualGame } from "../../services/manualGameStore";
 
 export type ConsoleMedia = {
   coverSrc: string | null;
@@ -85,16 +86,22 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
             const meta: ConsoleMeta = { resolved: true, resolvedAt };
             return { key: g.appId, media, meta };
           }
-          // Manual games (no appId): resolve imageUrl to renderable URL
-          if (g.imageUrl) {
-            const resolvedUrl = await resolveProviderMediaPreviewUrl(g.imageUrl);
-            if (resolvedUrl) {
+          // Manual games (no appId): read ManualGameEntry for 5 separate media paths
+          if (g.source === "manual" && g.providerGameId) {
+            const entry = getManualGame(g.providerGameId);
+            if (entry) {
+              const [coverSrc, landscapeSrc, backgroundSrc, logoSrc] = await Promise.all([
+                entry.coverPath ? resolveProviderMediaPreviewUrl(entry.coverPath) : Promise.resolve(null),
+                entry.landscapePath ? resolveProviderMediaPreviewUrl(entry.landscapePath) : Promise.resolve(null),
+                entry.backgroundPath ? resolveProviderMediaPreviewUrl(entry.backgroundPath) : Promise.resolve(null),
+                entry.logoPath ? resolveProviderMediaPreviewUrl(entry.logoPath) : Promise.resolve(null),
+              ]);
               const media: ConsoleMedia = {
-                coverSrc: resolvedUrl,
-                landscapeSrc: resolvedUrl,
-                backgroundSrc: null,
-                logoSrc: null,
-                heroSrc: resolvedUrl,
+                coverSrc,
+                landscapeSrc,
+                backgroundSrc,
+                logoSrc,
+                heroSrc: backgroundSrc || landscapeSrc || coverSrc,
               };
               const meta: ConsoleMeta = { resolved: true, resolvedAt };
               return { key: g.id, media, meta };

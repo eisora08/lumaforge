@@ -26,6 +26,7 @@ import {
   dedupeLibraryGames,
   getSidebarLabel,
   hasActiveInstalledLuaScript,
+  resolveProviderMediaPreviewUrl,
 } from "../../services/gameCacheService";
 
 import { invoke } from "@tauri-apps/api/core";
@@ -312,6 +313,44 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     if (needsRetry) setSidebarRetryKey((k) => k + 1);
   }, [canonicalInfoMap]);
 
+  // Resolve sidebar media for manual games (no appId — use game.imageUrl via provider resolver)
+  const manualMediaLoading = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const manualGames = filtered.filter((g) => !g.appId && g.source === "manual");
+    if (manualGames.length === 0) return;
+    const unloaded = manualGames.filter((g) => {
+      if (manualMediaLoading.current.has(g.id)) return false;
+      return sidebarMediaMap[g.id] === undefined;
+    });
+    if (unloaded.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        unloaded.map(async (g) => {
+          manualMediaLoading.current.add(g.id);
+          const resolvedUrl = g.imageUrl ? await resolveProviderMediaPreviewUrl(g.imageUrl) : null;
+          const media: ResolvedSidebarMedia = {
+            icon: { src: null, localPath: null, exists: false },
+            cover: resolvedUrl ? { src: resolvedUrl, localPath: g.imageUrl ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            landscape: { src: null, localPath: null, exists: false },
+            background: { src: null, localPath: null, exists: false },
+            logo: { src: null, localPath: null, exists: false },
+          };
+          return [g.id, media] as const;
+        })
+      );
+      if (cancelled) return;
+      setSidebarMediaMap((prev) => {
+        const next = { ...prev };
+        for (const [id, media] of results) next[id] = media;
+        return next;
+      });
+      for (const g of unloaded) manualMediaLoading.current.delete(g.id);
+    })();
+    return () => { cancelled = true; };
+  }, [filtered]);
+
   // High-priority media repair for visible games with missing thumbnails
   // useEffect(() => {
   //   const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
@@ -427,7 +466,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         filtered.map((game) => {
           const isSelected = activePage === "library-game-detail" && selectedGame?.id === game.id;
           const appInfoEntry = game.appId ? (appInfoMap[game.appId] ?? null) : null;
-          const resolved = game.appId ? (sidebarMediaMap[game.appId] ?? null) : null;
+          const mediaKey = game.appId || game.id;
+          const resolved = sidebarMediaMap[mediaKey] ?? null;
           const resolvedThumb = pickSidebarSrc(resolved, game.appId ?? undefined);
           const sidebarFallbackPath = pickSidebarFallbackPath(resolved);
           const displayTitle = getSidebarTitle(game, appInfoEntry);

@@ -53,7 +53,7 @@ const SMALL_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB for icon/logo
 
 export type GameEditDialogProps = {
   appId?: string;
-  manualGameId?: string;
+  manualGameId?: string; // raw UUID — normalized internally
   open: boolean;
   onClose: () => void;
   initialTab?: TabId;

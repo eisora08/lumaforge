@@ -706,13 +706,17 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   /* ── Derived data ── */
   const heroSrc = mediaBundle?.background?.url ?? getConsoleHeroBackground(game);
   const coverSrc = mediaBundle?.cover?.url ?? getConsoleCardSrc(game, "poster");
+  const isManualGame = game?.source === "manual";
   const logoSrc = useMemo(() => {
     const raw = mediaBundle?.logo?.url ?? getConsoleLogoSrc(game);
-    if (!raw || !game.appId) return null;
-    const appIdMatch = raw.match(/steam\/apps\/(\d+)\//);
-    if (appIdMatch && appIdMatch[1] !== game.appId) {
-      if (DEBUG) console.log(`[LOGO_DISPLAY][REJECT] appid=${game.appId} path=${raw} reason=cross-app-steam-url urlAppid=${appIdMatch[1]}`);
-      return null;
+    if (!raw) return null;
+    // Skip cross-app Steam URL check for manual games (no Steam appIds)
+    if (game?.appId) {
+      const appIdMatch = raw.match(/steam\/apps\/(\d+)\//);
+      if (appIdMatch && appIdMatch[1] !== game.appId) {
+        if (DEBUG) console.log(`[LOGO_DISPLAY][REJECT] appid=${game.appId} path=${raw} reason=cross-app-steam-url urlAppid=${appIdMatch[1]}`);
+        return null;
+      }
     }
     return raw;
   }, [mediaBundle?.logo?.url, game]);
@@ -1344,7 +1348,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             )}
 
             {/* ── Two-column row: Achievements | Reviews (zone: info-cards) ── */}
-            {(
+            {!isManualGame && (
               settings.spotlightContent.showAchievements ||
               settings.spotlightContent.showReviews
             ) && (

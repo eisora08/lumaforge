@@ -16,7 +16,7 @@ import {
 } from "../services/libraryLocalCacheService";
 import { readMediaManifest, type GameMediaCacheEntry, type GameMediaPaths, type MediaManifest } from "../services/tauri";
 import type { GameAppInfo } from "../services/gameCacheService";
-import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle } from "../services/gameCacheService";
+import { loadGameAppInfoWithMediaFallback, resolveMediaPaths, resolveCanonicalDisplayTitle, resolveProviderMediaPreviewUrl } from "../services/gameCacheService";
 import { resolveGameMediaImageSrc } from "../services/localImageSrc";
 import { resolveGameDetailsArtwork, refreshGameDetailsArtwork, materializeResolvedGameMedia } from "../services/gameCacheService";
 
@@ -40,6 +40,7 @@ import type { AppPage } from "../types/navigation";
 import {
   showError,
   showWarning,
+  showInfo,
 } from "../components/toast/GameToast";
 
 
@@ -98,8 +99,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
       await launchGame(game);
-    } else if (game.source === "local" && game.executablePath) {
+    } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       await launchGame(game);
+    } else if (game.source === "manual") {
+      showWarning("This manual game has no executable configured. Edit game details to set one.", { title: "Not available" });
     } else {
       showWarning("This game cannot be launched yet.", { title: "Not available" });
     }
@@ -143,6 +146,66 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setFallbackBundle(null);
     setArtwork(null);
     _refreshInitiatorRef.current = null;
+
+    // ── Manual games: load from manualGameStore ──
+    if (selectedGame?.source === "manual" && selectedGame.providerGameId) {
+      let cancelled = false;
+      import("../services/manualGameStore").then(({ getManualGame }) => {
+        if (cancelled) return;
+        const entry = getManualGame(selectedGame.providerGameId!);
+        if (!entry) return;
+
+        // Resolve all manual media paths to asset:// URLs via resolveProviderMediaPreviewUrl
+        const manualId = entry.id;
+        Promise.all([
+          resolveProviderMediaPreviewUrl(entry.backgroundPath),
+          resolveProviderMediaPreviewUrl(entry.landscapePath),
+          resolveProviderMediaPreviewUrl(entry.coverPath),
+          resolveProviderMediaPreviewUrl(entry.logoPath),
+          resolveProviderMediaPreviewUrl(entry.iconPath),
+        ]).then(([bgUrl, lsUrl, cvUrl, lgUrl, icUrl]) => {
+          if (cancelled) return;
+
+          // canonicalAppInfo.media: resolved asset:// URLs (not raw relative paths)
+          setCanonicalAppInfo({
+            appId: null as any,
+            name: entry.name,
+            media: {
+              coverPath: cvUrl,
+              landscapePath: lsUrl,
+              backgroundPath: bgUrl,
+              logoPath: lgUrl,
+              iconPath: icUrl,
+            },
+          } as any);
+
+          // localDetailsData: all manual fields including linkedSteamAppId
+          setLocalDetailsData({
+            developer: entry.developers?.join(", "),
+            publisher: entry.publishers?.join(", "),
+            description: entry.description,
+            shortDescription: entry.shortDescription,
+            genres: entry.genres ?? [],
+            categories: entry.categories ?? [],
+            releaseDate: entry.releaseDate,
+            linkedSteamAppId: entry.linkedSteamAppId ?? null,
+            executablePath: entry.executablePath ?? null,
+            installDir: entry.installDir ?? null,
+            workingDirectory: entry.workingDirectory ?? null,
+          });
+
+          // fallbackBundle with resolved asset:// URLs
+          setFallbackBundle({
+            appId: manualId,
+            background: bgUrl ? { url: bgUrl, source: "local", appId: manualId, kind: "background" } : undefined,
+            landscape: lsUrl ? { url: lsUrl, source: "local", appId: manualId, kind: "landscape" } : undefined,
+            cover: cvUrl ? { url: cvUrl, source: "local", appId: manualId, kind: "cover" } : undefined,
+            logo: lgUrl ? { url: lgUrl, source: "local", appId: manualId, kind: "logo" } : undefined,
+          });
+        }).catch(() => {});
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }
 
     if (!selectedGame?.appId) return;
 
@@ -470,6 +533,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   useEffect(() => {
     const appId = selectedGame?.appId;
     if (!appId) return;
+    if (selectedGame?.source === "manual") return;
     if (!fallbackBundle) return;
     if (fallbackBundle.appId && fallbackBundle.appId !== appId) {
       console.log(`[MEDIA][MATERIALIZE_GUARD] skip appId=${appId} bundleAppId=${fallbackBundle.appId} reason=cross-app-contamination`);
@@ -489,6 +553,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   useEffect(() => {
     const appId = selectedGame?.appId;
     if (!appId) return;
+    if (selectedGame?.source === "manual") return;
 
     const unsub = subscribeToMediaQueue((event) => {
       if (event.type !== "success" && event.type !== "partial") return;
@@ -551,12 +616,17 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }, [resolvedGame?.appId, settings.steamRoot]);
 
   const handleRefreshArtwork = useCallback(async () => {
-    if (!selectedGame?.appId) {
+    const isManual = selectedGame?.source === "manual";
+    if (!selectedGame?.appId && !isManual) {
       showWarning("No App ID available for this game.", { title: "Artwork" });
       return;
     }
+    if (isManual) {
+      showInfo("Artwork refresh for manual games is managed through Edit Game Details.", { title: "Manual Game" });
+      return;
+    }
 
-    const appIdStr = selectedGame.appId;
+    const appIdStr = selectedGame!.appId!;
     _refreshInitiatorRef.current = appIdStr;
 
     // Cancel any existing jobs for this app
@@ -953,7 +1023,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   return (
     <>
       <LibraryGameDetails
-        key={"library:game-details:steam:" + displayGame.appId}
+        key={`library:game-details:${displayGame.source ?? "unknown"}:${displayGame.appId || displayGame.id}`}
         game={displayGame}
         artwork={artwork}
         appInfoEntry={appInfoEntry}

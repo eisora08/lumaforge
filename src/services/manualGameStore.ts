@@ -58,6 +58,25 @@ type ManualGameStore = {
 
 const STORAGE_KEY = "lumaforge-manual-games-v1";
 
+// ─── Manual ID normalization ────────────────────────────────────────────
+
+/**
+ * Normalize a manual game ID: strip `"manual:"` prefix if present.
+ * Safe to pass raw UUID or `"manual:<uuid>"` — always returns `<uuid>`.
+ */
+export function normalizeManualGameId(input: string): string {
+  if (!input || typeof input !== "string") return input;
+  return input.startsWith("manual:") ? input.slice("manual:".length) : input;
+}
+
+/**
+ * Extract the raw provider game ID (UUID) from a ManualGameEntry or any
+ * object with `id` field. Returns the normalized UUID.
+ */
+export function getManualProviderGameId(entry: { id: string }): string {
+  return normalizeManualGameId(entry.id);
+}
+
 // ─── Module-level cache ─────────────────────────────────────────────────
 
 let _cache: ManualGameEntry[] | null = null;
