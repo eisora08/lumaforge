@@ -12,6 +12,7 @@ const DEBUG_NAME_HERO = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showInfo, showWarning } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
+import { useSettings } from "../../context/SettingsContext";
 import AsyncImage from "../common/AsyncImage";
 import StopGameModal from "../library/StopGameModal";
 import type { AppPage } from "../../types/navigation";
@@ -59,122 +60,201 @@ function getEffectiveLastPlayedMs(game: SnapshotGame): number {
   return 0;
 }
 
-function findHeroGame(
+/** Always-present priority: running session game */
+function findRunningHero(
+  snapshotGames: SnapshotGame[],
+  sessionKeysByAppId: Record<string, string>,
+  manualGames: import("../../types/libraryGame").LibraryGame[],
+): HeroGameResult | null {
+  for (const [appId, key] of Object.entries(sessionKeysByAppId)) {
+    const matchingGame = snapshotGames.find((g) => g.appId === appId);
+    if (matchingGame) return { game: matchingGame, sessionKey: key };
+    const matchingManual = manualGames.find((g) => g.id === appId);
+    if (matchingManual) return { game: null, sessionKey: key, manualGame: matchingManual };
+  }
+  return null;
+}
+
+type HeroCandidate = { type: "snapshot" | "manual"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; sourceIndex: number };
+
+function buildManualPlaytime(manualGames: import("../../types/libraryGame").LibraryGame[]) {
+  const map = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
+  for (const mg of manualGames) {
+    const ptKey = resolvePlaytimeKey(mg);
+    const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+    if (entry) map.set(mg.id, { lastPlayedAt: entry.lastPlayedAt ?? 0, totalSeconds: entry.totalPlaytimeSeconds });
+  }
+  return map;
+}
+
+/** Build candidates from selected hero sources in source-priority order. */
+function buildHeroCandidates(
+  snapshotGames: SnapshotGame[],
+  favoriteIds: Set<string>,
+  manualGames: import("../../types/libraryGame").LibraryGame[],
+  heroSources: string[],
+): HeroCandidate[] {
+  const manualPlaytime = buildManualPlaytime(manualGames);
+  const candidates: HeroCandidate[] = [];
+
+  for (let si = 0; si < heroSources.length; si++) {
+    const sourceId = heroSources[si];
+    switch (sourceId) {
+      case "continuePlaying": {
+        const all: HeroCandidate[] = [];
+        for (const g of snapshotGames) {
+          if (g.appId && g.title) {
+            const lp = getEffectiveLastPlayedMs(g);
+            if (lp > 0) all.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const mg of manualGames) {
+          if (!mg.title) continue;
+          const mp = manualPlaytime.get(mg.id);
+          const lp = (mp?.lastPlayedAt ?? 0) * 1000;
+          if (lp > 0) all.push({ type: "manual", game: mg, sourceIndex: si });
+        }
+        all.sort((a, b) => {
+          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : ((manualPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000);
+          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : ((manualPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000);
+          return bLp - aLp;
+        });
+        candidates.push(...all);
+        break;
+      }
+      case "favorites": {
+        for (const g of snapshotGames) {
+          if (g.appId && favoriteIds.has(g.appId) && hasValidMedia(g)) {
+            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const mg of manualGames) {
+          const favKey = mg.libraryId || mg.id;
+          if (favoriteIds.has(favKey) && hasManualValidMedia(mg)) {
+            candidates.push({ type: "manual", game: mg, sourceIndex: si });
+          }
+        }
+        break;
+      }
+      case "recentlyPlayed": {
+        const all: HeroCandidate[] = [];
+        for (const g of snapshotGames) {
+          if (g.appId && g.title) {
+            const lp = getEffectiveLastPlayedMs(g);
+            if (lp > 0) all.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const mg of manualGames) {
+          if (!mg.title) continue;
+          const mp = manualPlaytime.get(mg.id);
+          const lp = (mp?.lastPlayedAt ?? 0) * 1000;
+          if (lp > 0) all.push({ type: "manual", game: mg, sourceIndex: si });
+        }
+        all.sort((a, b) => {
+          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : ((manualPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000);
+          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : ((manualPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000);
+          return bLp - aLp;
+        });
+        candidates.push(...all);
+        break;
+      }
+      case "topPlayed": {
+        const all: HeroCandidate[] = [];
+        for (const g of snapshotGames) {
+          if (g.appId && g.title) {
+            all.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        for (const mg of manualGames) {
+          if (!mg.title) continue;
+          all.push({ type: "manual", game: mg, sourceIndex: si });
+        }
+        all.sort((a, b) => {
+          const aSec = a.type === "snapshot" ? getPlaytimeSecondsForAppId((a.game as SnapshotGame).appId) : (manualPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.totalSeconds ?? 0);
+          const bSec = b.type === "snapshot" ? getPlaytimeSecondsForAppId((b.game as SnapshotGame).appId) : (manualPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.totalSeconds ?? 0);
+          return bSec - aSec;
+        });
+        candidates.push(...all);
+        break;
+      }
+      case "recommended": {
+        for (const g of snapshotGames) {
+          if (g.appId && g.title && hasValidMedia(g)) {
+            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        break;
+      }
+      case "featured": {
+        for (const g of snapshotGames) {
+          if (g.appId && g.title && hasValidMedia(g)) {
+            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        break;
+      }
+      case "newNoteworthy": {
+        for (const g of snapshotGames) {
+          if (g.appId && g.title && hasValidMedia(g)) {
+            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        break;
+      }
+      case "manualGames": {
+        for (const mg of manualGames) {
+          if (mg.title && hasManualValidMedia(mg)) {
+            candidates.push({ type: "manual", game: mg, sourceIndex: si });
+          }
+        }
+        break;
+      }
+      case "steamGames": {
+        for (const g of snapshotGames) {
+          if (g.appId && g.title) {
+            candidates.push({ type: "snapshot", game: g, sourceIndex: si });
+          }
+        }
+        break;
+      }
+      // "collections" — disabled, no candidates
+    }
+  }
+
+  return candidates;
+}
+
+function findHeroGameFromSources(
   snapshotGames: SnapshotGame[],
   sessionKeysByAppId: Record<string, string>,
   favoriteIds: Set<string>,
   manualGames: import("../../types/libraryGame").LibraryGame[],
+  heroSources: string[],
 ): HeroGameResult {
-  // Priority 1: Running session game (check both snapshot and manual)
-  for (const [appId, key] of Object.entries(sessionKeysByAppId)) {
-    const matchingGame = snapshotGames.find((g) => g.appId === appId);
-    if (matchingGame) {
-      return { game: matchingGame, sessionKey: key };
-    }
-    // Check manual games by id
-    const matchingManual = manualGames.find((g) => g.id === appId);
-    if (matchingManual) {
-      return { game: null, sessionKey: key, manualGame: matchingManual };
-    }
-  }
+  // Running session always takes priority (Part 5)
+  const running = findRunningHero(snapshotGames, sessionKeysByAppId, manualGames);
+  if (running) return running;
 
-  // Build playtime entries for manual games
-  const manualPlaytime = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
-  for (const mg of manualGames) {
-    const ptKey = resolvePlaytimeKey(mg);
-    const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
-    if (entry) {
-      manualPlaytime.set(mg.id, {
-        lastPlayedAt: entry.lastPlayedAt ?? 0,
-        totalSeconds: entry.totalPlaytimeSeconds,
-      });
-    }
-  }
-
-  // Priority 2: Most recently played game (snapshot + manual combined)
-  const allWithPlaytime: Array<{ type: "snapshot" | "manual"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; lastPlayedMs: number }> = [];
-
-  for (const g of snapshotGames) {
-    if (g.appId && g.title) {
-      const lp = getEffectiveLastPlayedMs(g);
-      if (lp > 0) allWithPlaytime.push({ type: "snapshot", game: g, lastPlayedMs: lp });
-    }
-  }
-  for (const mg of manualGames) {
-    if (!mg.title) continue;
-    const mp = manualPlaytime.get(mg.id);
-    const lp = (mp?.lastPlayedAt ?? 0) * 1000;
-    if (lp > 0) allWithPlaytime.push({ type: "manual", game: mg, lastPlayedMs: lp });
-  }
-
-  allWithPlaytime.sort((a, b) => b.lastPlayedMs - a.lastPlayedMs);
-  if (allWithPlaytime.length > 0) {
-    const top = allWithPlaytime[0];
+  // Build candidates from selected sources
+  const candidates = buildHeroCandidates(snapshotGames, favoriteIds, manualGames, heroSources);
+  if (candidates.length > 0) {
+    const top = candidates[0];
     if (top.type === "snapshot") return { game: top.game as SnapshotGame, sessionKey: null };
     return { game: null, sessionKey: null, manualGame: top.game as import("../../types/libraryGame").LibraryGame };
   }
 
-  // Priority 3: Most recent favorite with valid media (snapshot + manual)
-  const favWithMedia: Array<{ type: "snapshot" | "manual"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; updatedAt: number }> = [];
-  for (const g of snapshotGames) {
-    if (g.appId && favoriteIds.has(g.appId) && hasValidMedia(g)) {
-      favWithMedia.push({ type: "snapshot", game: g, updatedAt: g.updatedAt ?? 0 });
-    }
-  }
-  for (const mg of manualGames) {
-    const favKey = mg.libraryId || mg.id;
-    if (favoriteIds.has(favKey) && hasManualValidMedia(mg)) {
-      favWithMedia.push({ type: "manual", game: mg, updatedAt: 0 });
-    }
-  }
-  favWithMedia.sort((a, b) => b.updatedAt - a.updatedAt);
-  if (favWithMedia.length > 0) {
-    const top = favWithMedia[0];
-    if (top.type === "snapshot") return { game: top.game as SnapshotGame, sessionKey: null };
-    return { game: null, sessionKey: null, manualGame: top.game as import("../../types/libraryGame").LibraryGame };
-  }
-
-  // Priority 4: Most recent game with valid media
-  const withMedia: Array<{ type: "snapshot" | "manual"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; updatedAt: number }> = [];
-  for (const g of snapshotGames) {
-    if (g.appId && g.title && hasValidMedia(g)) {
-      withMedia.push({ type: "snapshot", game: g, updatedAt: g.updatedAt ?? 0 });
-    }
-  }
-  for (const mg of manualGames) {
-    if (mg.title && hasManualValidMedia(mg)) {
-      withMedia.push({ type: "manual", game: mg, updatedAt: 0 });
-    }
-  }
-  withMedia.sort((a, b) => b.updatedAt - a.updatedAt);
-  if (withMedia.length > 0) {
-    const top = withMedia[0];
-    if (top.type === "snapshot") return { game: top.game as SnapshotGame, sessionKey: null };
-    return { game: null, sessionKey: null, manualGame: top.game as import("../../types/libraryGame").LibraryGame };
-  }
-
-  // Priority 5: First installed game with title
+  // Fallback: first installed game with title
   const installedGame = snapshotGames.find((game) => game.installed && game.title);
-  if (installedGame) {
-    return { game: installedGame, sessionKey: null };
-  }
+  if (installedGame) return { game: installedGame, sessionKey: null };
 
-  // Manual games are always "installed"
   if (manualGames.length > 0 && manualGames[0].title) {
     return { game: null, sessionKey: null, manualGame: manualGames[0] };
   }
 
-  // Priority 6: Stable fallback — first game with a title
   const titledGame = snapshotGames.find((game) => game.title);
-  if (titledGame) {
-    return { game: titledGame, sessionKey: null };
-  }
+  if (titledGame) return { game: titledGame, sessionKey: null };
 
-  // Last resort
-  return {
-    game: snapshotGames[0] || null,
-    sessionKey: null,
-  };
+  return { game: snapshotGames[0] || null, sessionKey: null };
 }
 
 function EmptyHero({ onNavigate }: GameHeroProps) {
@@ -219,6 +299,7 @@ function EmptyHero({ onNavigate }: GameHeroProps) {
 export default function GameHero({ onNavigate }: GameHeroProps) {
   const snapshot = getCachedSnapshot();
   const [, setSnapshotWriteVersion] = useState(0);
+  const { settings } = useSettings();
 
   // Re-read snapshot after background snapshot writes (playtime/lastPlayed updates)
   useEffect(() => {
@@ -250,6 +331,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     [libraryGames],
   );
 
+  // Hero sources from settings
+  const heroSources = settings.dashboardHeroSources ?? ["continuePlaying", "favorites"];
+  const heroAutoRotate = settings.dashboardHeroAutoRotate ?? false;
+  const heroRotateSeconds = settings.dashboardHeroRotateSeconds ?? 15;
+
   // Build a map of appId/gameId → sessionKey for all active sessions
   // For manual games (no appId), index by gameKey ("manual:<uuid>") so findHeroGame can match g.id
   const sessionKeysByAppId = useMemo(() => {
@@ -265,9 +351,56 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     return map;
   }, [sessions]);
 
-  const { game: heroGame, sessionKey, manualGame: heroManualGame } = useMemo(() => {
-    return findHeroGame(snapshotGames, sessionKeysByAppId, favoriteIds, manualGames);
-  }, [snapshotGames, sessionKeysByAppId, favoriteIds, manualGames]);
+  // Build candidates from selected hero sources (for rotate + single-pick)
+  const heroCandidates = useMemo(() => {
+    return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, heroSources);
+  }, [snapshotGames, favoriteIds, manualGames, heroSources]);
+
+  // Auto-rotate state
+  const [rotateIndex, setRotateIndex] = useState(0);
+  const rotateIndexRef = useRef(0);
+
+  // Reset rotate index when sources change
+  const heroSourcesKey = heroSources.join(",");
+  useEffect(() => {
+    setRotateIndex(0);
+    rotateIndexRef.current = 0;
+  }, [heroSourcesKey]);
+
+  // Auto-rotate timer
+  useEffect(() => {
+    if (!heroAutoRotate || heroCandidates.length <= 1) return;
+    const interval = window.setInterval(() => {
+      rotateIndexRef.current = (rotateIndexRef.current + 1) % heroCandidates.length;
+      setRotateIndex(rotateIndexRef.current);
+    }, heroRotateSeconds * 1000);
+    return () => window.clearInterval(interval);
+  }, [heroAutoRotate, heroRotateSeconds, heroCandidates.length]);
+
+  // Select hero game: running session always wins, then rotate or first candidate
+  const { game: heroGame, sessionKey, manualGame: heroManualGame } = useMemo<HeroGameResult>(() => {
+    // Running session always takes priority
+    const running = findRunningHero(snapshotGames, sessionKeysByAppId, manualGames);
+    if (running) return running;
+
+    // Auto-rotate: pick from candidates by rotate index
+    if (heroAutoRotate && heroCandidates.length > 0) {
+      const idx = rotateIndex % heroCandidates.length;
+      const c = heroCandidates[idx];
+      if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
+      return { game: null, sessionKey: null, manualGame: c.game as import("../../types/libraryGame").LibraryGame };
+    }
+
+    // Single pick: first candidate from selected sources
+    if (heroCandidates.length > 0) {
+      const c = heroCandidates[0];
+      if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
+      return { game: null, sessionKey: null, manualGame: c.game as import("../../types/libraryGame").LibraryGame };
+    }
+
+    // Fallback
+    return findHeroGameFromSources(snapshotGames, sessionKeysByAppId, favoriteIds, manualGames, heroSources);
+  }, [snapshotGames, sessionKeysByAppId, favoriteIds, manualGames, heroSources, heroCandidates, heroAutoRotate, rotateIndex]);
 
   // Read session state from the single source of truth
   const heroGameState: GameSessionState = sessionKey ? getState(sessionKey) : "idle";

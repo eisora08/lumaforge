@@ -67,6 +67,8 @@ export type AppSettings = {
   dashboardHeroEnabled: boolean;
   dashboardHeroAutoRotate: boolean;
   dashboardHeroRotateSeconds: number;
+  dashboardHeroSources: string[];
+  dashboardHeroMaxSources: number;
   dashboardSectionVisibility: Record<string, boolean>;
   dashboardSectionLimits: Record<string, number>;
   dashboardDeferredRendering: boolean;

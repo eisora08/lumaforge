@@ -80,6 +80,8 @@ export const defaultSettings: AppSettings = {
   dashboardHeroEnabled: true,
   dashboardHeroAutoRotate: false,
   dashboardHeroRotateSeconds: 15,
+  dashboardHeroSources: ["continuePlaying", "favorites"],
+  dashboardHeroMaxSources: 2,
   dashboardSectionVisibility: {},
   dashboardSectionLimits: {},
   dashboardDeferredRendering: false,

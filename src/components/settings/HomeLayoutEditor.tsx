@@ -10,12 +10,48 @@ import {
   Store,
   Zap,
   Timer,
+  Clock,
+  Trophy,
+  FolderOpen,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
+  Lock,
+  Check,
 } from "lucide-react";
 import { useSettings } from "../../context/SettingsContext";
 import ToggleOption from "./ToggleOption";
 import SettingsSection from "./SettingsSection";
 
 type LayoutTab = "hero" | "sections" | "performance";
+
+/* ================================================================== */
+/*  HERO SOURCE METADATA                                               */
+/* ================================================================== */
+
+interface HeroSourceMeta {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  color: string;
+  description: string;
+  disabled?: boolean;
+}
+
+const HERO_SOURCES: HeroSourceMeta[] = [
+  { id: "continuePlaying", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action" },
+  { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorite games" },
+  { id: "recentlyPlayed", label: "Recently Played", icon: <Clock className="h-4 w-4" />, color: "text-sky-400", description: "Games you played recently" },
+  { id: "topPlayed", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time" },
+  { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from your library and catalog" },
+  { id: "featured", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog" },
+  { id: "newNoteworthy", label: "New & Noteworthy", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Recently released or highlighted games" },
+  { id: "manualGames", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, color: "text-teal-400", description: "Your manually added games" },
+  { id: "steamGames", label: "Steam Games", icon: <Trophy className="h-4 w-4" />, color: "text-indigo-400", description: "Games from your Steam library" },
+  { id: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, color: "text-gray-400", description: "Custom game collections", disabled: true },
+];
+
+const DEFAULT_HERO_SOURCES = ["continuePlaying", "favorites"];
 
 /* ================================================================== */
 /*  SECTION METADATA                                                   */
@@ -27,14 +63,15 @@ interface SectionMeta {
   icon: React.ReactNode;
   color: string;
   description: string;
+  heroSourceId?: string;
 }
 
 const DASHBOARD_SECTIONS: SectionMeta[] = [
-  { id: "continue-playing", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action" },
-  { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorited games" },
-  { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from catalog" },
-  { id: "top-played", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time" },
-  { id: "featured-picks", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog" },
+  { id: "continue-playing", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action", heroSourceId: "continuePlaying" },
+  { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorited games", heroSourceId: "favorites" },
+  { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from catalog", heroSourceId: "recommended" },
+  { id: "top-played", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time", heroSourceId: "topPlayed" },
+  { id: "featured-picks", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog", heroSourceId: "featured" },
   { id: "trending-right-now", label: "Trending Right Now", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Currently trending games (coming soon)" },
   { id: "store-highlights", label: "Store Highlights", icon: <Store className="h-4 w-4" />, color: "text-cyan-400", description: "Quick link to the store" },
 ];
@@ -64,9 +101,12 @@ const ROTATE_PRESETS = [
 export default function HomeLayoutEditor() {
   const { settings, updateSetting } = useSettings();
   const [activeTab, setActiveTab] = useState<LayoutTab>("hero");
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
 
   const sectionVisibility = settings.dashboardSectionVisibility;
   const sectionLimits = settings.dashboardSectionLimits;
+  const heroSources = settings.dashboardHeroSources ?? DEFAULT_HERO_SOURCES;
+  const heroMaxSources = settings.dashboardHeroMaxSources ?? 2;
 
   function isSectionVisible(id: string): boolean {
     if (id in sectionVisibility) return sectionVisibility[id];
@@ -89,10 +129,31 @@ export default function HomeLayoutEditor() {
     updateSetting("dashboardSectionLimits", next);
   }
 
+  function toggleHeroSource(sourceId: string) {
+    const current = heroSources;
+    const isSelected = current.includes(sourceId);
+
+    if (isSelected) {
+      // Deselect — but ensure at least 1 source when hero is enabled
+      const next = current.filter((id) => id !== sourceId);
+      if (next.length === 0 && settings.dashboardHeroEnabled) {
+        return; // block: at least 1 source required
+      }
+      updateSetting("dashboardHeroSources", next);
+    } else {
+      // Select — enforce max limit
+      if (current.length >= heroMaxSources) {
+        return; // block: max reached
+      }
+      updateSetting("dashboardHeroSources", [...current, sourceId]);
+    }
+  }
+
   function resetHero() {
     updateSetting("dashboardHeroEnabled", true);
     updateSetting("dashboardHeroAutoRotate", false);
     updateSetting("dashboardHeroRotateSeconds", 15);
+    updateSetting("dashboardHeroSources", [...DEFAULT_HERO_SOURCES]);
   }
 
   function resetSections() {
@@ -106,6 +167,11 @@ export default function HomeLayoutEditor() {
   }
 
   const visibleCount = DASHBOARD_SECTIONS.filter((s) => isSectionVisible(s.id)).length;
+
+  const selectedHeroSourceNames = heroSources
+    .map((id) => HERO_SOURCES.find((s) => s.id === id)?.label)
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <SettingsSection
@@ -147,9 +213,108 @@ export default function HomeLayoutEditor() {
 
           {settings.dashboardHeroEnabled && (
             <>
+              {/* ── Hero Sources Card ───────────────────────────── */}
+              <div className="lf-surface rounded-2xl border p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-(--color-text)">
+                      Hero Sources
+                    </p>
+                    <p className="mt-0.5 text-xs text-(--color-muted)">
+                      {heroSources.length} of {heroMaxSources} selected
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSourcesExpanded(!sourcesExpanded)}
+                    className="inline-flex items-center gap-1.5 text-xs text-(--color-muted) transition hover:text-(--color-text)"
+                  >
+                    {sourcesExpanded ? "Hide" : "Change"}
+                    {sourcesExpanded ? (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Selected source names */}
+                {!sourcesExpanded && (
+                  <p className="mt-2 text-xs text-(--color-text)">
+                    {selectedHeroSourceNames || "No sources selected"}
+                  </p>
+                )}
+
+                {/* Expanded source picker */}
+                {sourcesExpanded && (
+                  <div className="mt-3 space-y-1.5">
+                    {heroSources.length >= heroMaxSources && (
+                      <p className="mb-2 text-[11px] text-amber-400/80">
+                        Only {heroMaxSources} hero source{heroMaxSources !== 1 ? "s" : ""} can be selected. Deselect one first.
+                      </p>
+                    )}
+                    {HERO_SOURCES.map((source) => {
+                      const isSelected = heroSources.includes(source.id);
+                      const isAtMax = heroSources.length >= heroMaxSources;
+                      const isDisabled = source.disabled || (!isSelected && isAtMax);
+
+                      return (
+                        <button
+                          key={source.id}
+                          type="button"
+                          disabled={isDisabled}
+                          onClick={() => toggleHeroSource(source.id)}
+                          className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition ${
+                            isSelected
+                              ? "border-(--color-accent)/30 bg-(--color-accent)/5"
+                              : isDisabled
+                                ? "border-white/5 bg-white/[0.01] opacity-40 cursor-not-allowed"
+                                : "border-white/5 bg-white/[0.01] hover:bg-white/[0.03]"
+                          }`}
+                        >
+                          {/* Toggle indicator */}
+                          <div
+                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition ${
+                              isSelected
+                                ? "bg-(--color-accent) text-black"
+                                : "bg-white/10 text-transparent"
+                            }`}
+                          >
+                            {isSelected && <Check className="h-3.5 w-3.5" />}
+                          </div>
+
+                          {/* Icon */}
+                          <div className={`${isSelected ? source.color : "text-(--color-muted)"}`}>
+                            {source.icon}
+                          </div>
+
+                          {/* Label + description */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-(--color-text)">
+                                {source.label}
+                              </span>
+                              {source.disabled && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
+                                  <Lock className="h-2.5 w-2.5" />
+                                  Coming later
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-(--color-muted)">
+                              {source.description}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               <ToggleOption
                 label="Auto-Rotate Hero"
-                description="Cycle through recently played, favorites, and games with artwork."
+                description="Cycle through candidates from your selected hero sources."
                 enabled={settings.dashboardHeroAutoRotate}
                 onChange={(v) => updateSetting("dashboardHeroAutoRotate", v)}
               />
@@ -212,6 +377,7 @@ export default function HomeLayoutEditor() {
             {DASHBOARD_SECTIONS.map((section) => {
               const visible = isSectionVisible(section.id);
               const limit = getSectionLimit(section.id);
+              const isHeroSource = section.heroSourceId && heroSources.includes(section.heroSourceId);
 
               return (
                 <div
@@ -245,6 +411,20 @@ export default function HomeLayoutEditor() {
                         {section.label}
                       </span>
                     </div>
+
+                    {/* Hero source badge */}
+                    {isHeroSource && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-(--color-accent)/10 px-2 py-0.5 text-[10px] font-medium text-(--color-accent)">
+                        <Sparkles className="h-2.5 w-2.5" />
+                        Hero source
+                      </span>
+                    )}
+
+                    {!visible && isHeroSource && (
+                      <span className="text-[10px] text-(--color-muted)">
+                        Hidden row
+                      </span>
+                    )}
 
                     <p className="ml-auto hidden text-[11px] text-(--color-muted) sm:block">
                       {section.description}
