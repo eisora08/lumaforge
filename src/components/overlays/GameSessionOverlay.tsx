@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Gamepad2, Play, Square } from "lucide-react";
 import type { OverlayEvent } from "../../context/GameSessionContext";
 import { formatSessionDuration } from "../../utils/sessionUtils";
-import { localPathToUrl } from "../../services/gameCacheService";
+import { localPathToUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
 
 type Props = {
   event: OverlayEvent | null;
@@ -13,7 +13,28 @@ export default function GameSessionOverlay({ event, onDismiss }: Props) {
   const [visible, setVisible] = useState(false);
   const [dismissing, setDismissing] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Resolve image URL — handles both already-resolved (asset://) and raw relative paths
+  useEffect(() => {
+    if (!event?.imageUrl) { setResolvedUrl(null); return; }
+    const url = event.imageUrl;
+    // Already a full URL (http, asset, data) — use directly
+    if (url.startsWith("http") || url.startsWith("asset://") || url.startsWith("data:") || url.startsWith("file://")) {
+      setResolvedUrl(url);
+      return;
+    }
+    // Try localPathToUrl first (handles absolute Windows paths)
+    const local = localPathToUrl(url);
+    if (local) { setResolvedUrl(local); return; }
+    // Fallback: async resolution for relative paths (e.g. "games/manual/<id>/media/cover.jpg")
+    let cancelled = false;
+    resolveProviderMediaPreviewUrl(url).then((resolved) => {
+      if (!cancelled) setResolvedUrl(resolved);
+    });
+    return () => { cancelled = true; };
+  }, [event?.imageUrl]);
 
   useEffect(() => {
     if (!event) {
@@ -56,11 +77,7 @@ export default function GameSessionOverlay({ event, onDismiss }: Props) {
     ? `${event.gameTitle} (${event.provider})`
     : event.gameTitle;
 
-  const resolvedImageUrl = event.imageUrl
-    ? localPathToUrl(event.imageUrl)
-    : null;
-
-  const showImage = resolvedImageUrl && !imageFailed;
+  const showImage = resolvedUrl && !imageFailed;
 
   return (
     <div
@@ -79,7 +96,7 @@ export default function GameSessionOverlay({ event, onDismiss }: Props) {
         {showImage ? (
           <div className="relative h-32 w-full overflow-hidden bg-white/5">
             <img
-              src={resolvedImageUrl!}
+              src={resolvedUrl!}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"

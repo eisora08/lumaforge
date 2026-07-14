@@ -867,7 +867,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         gameId: game.id,
         appId: game.appId,
         title: game.title,
-        source: game.source === "steam" ? "steam" : game.source === "local" ? "local" : "unknown",
+        source: game.source === "steam" ? "steam" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : "unknown",
         state: "launching",
         executablePath: game.executablePath,
         installDir: game.installDir,
@@ -877,8 +877,18 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     }));
 
     // Store media info for overlay events
-    const bestImageUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
-    const providerLabel = game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : "Unknown";
+    // For manual games, imageUrl is a relative path like "games/manual/<uuid>/media/cover.jpg"
+    // that localPathToUrl can't handle — resolve via resolveProviderMediaPreviewUrl.
+    const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
+    let bestImageUrl: string | undefined = rawBestUrl;
+    if (rawBestUrl && !rawBestUrl.startsWith("http") && !rawBestUrl.startsWith("asset://") && !rawBestUrl.startsWith("data:")) {
+      try {
+        const { resolveProviderMediaPreviewUrl } = await import("../services/gameCacheService");
+        const resolved = await resolveProviderMediaPreviewUrl(rawBestUrl);
+        if (resolved) bestImageUrl = resolved;
+      } catch { /* non-critical — overlay will use fallback */ }
+    }
+    const providerLabel = game.source === "steam" ? "Steam" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : "Unknown";
     sessionMediaRef.current[computedKey] = { imageUrl: bestImageUrl, title: game.title, provider: providerLabel };
 
     // 30-second timeout guard — prevents infinite launching
@@ -1298,7 +1308,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             });
 
             // Persist session record to local history
-            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "local" : "system";
+            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "manual" : "system";
             const sessionRecord = createSessionRecord({
               appId: prevSession.appId || key,
               title: prevSession.title || "Unknown Game",

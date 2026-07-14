@@ -23,6 +23,7 @@ const SOURCE_FILTERS: { label: string; value: GameActivityItem["source"] | null 
   { label: "Local", value: "local" },
   { label: "Steam", value: "steam" },
   { label: "Lua", value: "lua" },
+  { label: "Manual", value: "manual" },
   { label: "Provider", value: "provider" },
   { label: "System", value: "system" },
   { label: "Launcher", value: "launcher" },

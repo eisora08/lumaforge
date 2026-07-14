@@ -1,6 +1,7 @@
 // Debug flag for achievement-related details logs (noisy per-navigation logs)
 const DEBUG_ACH_DETAILS = false;
 const DEBUG_LAUNCH_BUTTON_RENDER = false;
+const DEBUG_MANUAL_REMOVE = false;
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
@@ -265,6 +266,8 @@ export default function LibraryGameDetails({
 
   const { settings } = useSettings();
   const { sessions: gameSessions } = useGameSession();
+  const gameSessionKey = game.id;
+  const isManualRunning = game.source === "manual" && !!(gameSessions[gameSessionKey]?.state === "running" || gameSessions[gameSessionKey]?.state === "launching");
   const appIdStr = game.appId;
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
     if (!appIdStr) return null;
@@ -1466,10 +1469,14 @@ export default function LibraryGameDetails({
                         <DropdownItem
                           label="Remove from Library"
                           destructive
+                          disabled={isManualRunning}
+                          subtitle={isManualRunning ? "Stop the game first" : undefined}
                           onClick={() => {
+                            if (isManualRunning) return;
                             setShowActions(false);
                             const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
                             if (rawId && window.confirm(`Remove "${game.title}" from your library?`)) {
+                              if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][DETAILS] rawId=${rawId} title="${game.title}"`);
                               removeManualGame(rawId);
                               showInfo(`"${game.title ?? rawId}" removed from library`);
                               onBack();

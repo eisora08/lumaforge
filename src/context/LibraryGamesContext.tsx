@@ -94,6 +94,7 @@ cleanupOldCacheKeys();
 // ── Manual game helpers ──
 
 const DEBUG_MANUAL_COVER = false;
+const DEBUG_MANUAL_REMOVE = false;
 
 function getManualLibraryGames(): LibraryGame[] {
   try {
@@ -264,6 +265,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
     const merged = mergeGames(current, withManual, source);
     const deduped = dedupeLibraryGames(merged);
+    if (DEBUG_MANUAL_REMOVE && source === "manual-update") {
+      const prevManualCount = current.filter((g) => g.source === "manual").length;
+      const freshManualCount = deduped.filter((g) => g.source === "manual").length;
+      console.log(`[MANUAL_REMOVE][APPLY] prev=${current.length}(${prevManualCount} manual) → merged=${deduped.length}(${freshManualCount} manual) fpChanged=${currentFp !== incomingFp}`);
+    }
 
     // Phase 6: Merge Activity playtime into LibraryGame runtime objects
     for (const game of deduped) {
@@ -348,10 +354,13 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     ) {
       const byAppId = new Map<string, LibraryGame>();
       for (const g of current) {
-        if (g.appId) byAppId.set(g.appId, g);
-        else if (![...byAppId.values()].find((x) => x.id === g.id)) {
-          byAppId.set(`noappid-${g.id}`, g);
+        if (g.appId) {
+          byAppId.set(g.appId, g);
         }
+        // Manual games (no appId) are NOT copied from current into byAppId.
+        // They are always sourced from incoming → getManualLibraryGames() (line 222),
+        // which reads the latest manualGameStore. This prevents a removed manual
+        // game from surviving the merge via a stale gamesRef.current.
       }
       for (const game of incoming) {
         if (game.appId) {
@@ -653,10 +662,16 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       // Strip manual games — applyGamesSafely re-adds fresh ones from store at line 222.
       // This avoids stale manual objects surviving through mergeGames.
       const nonManual = current.filter((g) => g.source !== "manual");
-      if (DEBUG_MANUAL_COVER) {
+      const freshManual = getManualLibraryGames();
+      if (DEBUG_MANUAL_REMOVE) {
         const prevManual = current.filter((g) => g.source === "manual");
-        const manual = getManualLibraryGames();
-        console.log(`[MANUAL_COVER][LIBRARY_MANUAL_UPDATE] manualCount=${manual.length} prevManualCount=${prevManual.length} incomingImageUrls=${manual.map((g) => g.imageUrl).join(",")} prevImageUrls=${prevManual.map((g) => g.imageUrl).join(",")}`);
+        const removedIds = prevManual.filter((pg) => !freshManual.some((fm) => fm.id === pg.id)).map((g) => g.id);
+        if (removedIds.length > 0) {
+          console.log(`[MANUAL_REMOVE][LIBRARY_SUB] prevManual=${prevManual.length} freshManual=${freshManual.length} removed=${removedIds.join(",")}`);
+        }
+      }
+      if (DEBUG_MANUAL_COVER) {
+        console.log(`[MANUAL_COVER][LIBRARY_MANUAL_UPDATE] manualCount=${freshManual.length} prevManualCount=${current.filter((g) => g.source === "manual").length} incomingImageUrls=${freshManual.map((g) => g.imageUrl).join(",")} prevImageUrls=${current.filter((g) => g.source === "manual").map((g) => g.imageUrl).join(",")}`);
       }
       applyGamesSafely(nonManual, "manual-update");
     });

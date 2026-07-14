@@ -37,3 +37,4 @@ pub mod steam_owned;
 pub mod profile;
 pub mod provider_media;
 pub mod igdb;
+pub mod manual_games;

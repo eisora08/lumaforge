@@ -24,7 +24,7 @@ export type GameActivityItem = {
   title: string;
   description?: string;
   createdAt: number;
-  source: "local" | "steam" | "lua" | "provider" | "system" | "launcher";
+  source: "local" | "steam" | "lua" | "provider" | "system" | "launcher" | "manual";
   severity?: "info" | "success" | "warning" | "error";
 };
 

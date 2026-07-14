@@ -18,6 +18,7 @@ export type BootTaskId =
   | "load-settings"
   | "migrate-portable-paths"
   | "load-startup-snapshot"
+  | "load-manual-games"
   | "enrich-snapshot-titles"
   | "load-local-game-index"
   | "reconcile-lua-games"
@@ -242,6 +243,19 @@ export async function runBootTasks(): Promise<void> {
           if (_snapshotResolve) _snapshotResolve();
           setBootPhaseLabel("critical-done");
           logBoot("phase=critical-done");
+
+          // Stage 3.25: Load manual games from AppData JSON (migrate from localStorage if needed)
+          await track("load-manual-games", async () => {
+            logBoot("load manual games start");
+            try {
+              const { loadManualGamesFromJson } = await import("./manualGameStore");
+              const manualGames = await loadManualGamesFromJson();
+              logBoot(`manual games loaded: ${manualGames.length} entries from JSON`);
+            } catch (e) {
+              console.error("[BOOT][MANUAL_GAMES] load failed:", e);
+            }
+            logBoot("load manual games end");
+          });
 
           // Stage 3.5: Enrich snapshot game titles (resolve placeholders via metadata/store)
           await track("enrich-snapshot-titles", async () => {

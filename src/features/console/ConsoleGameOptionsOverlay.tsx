@@ -18,6 +18,7 @@ import {
 } from "./consoleGameActions";
 
 const FADE_DURATION = 180;
+const DEBUG_MANUAL_REMOVE = false;
 
 type Props = {
   game: LibraryGame;
@@ -277,7 +278,7 @@ export default function ConsoleGameOptionsOverlay({
       },
     });
 
-    if (game.source === "manual") {
+    if (game.source === "manual" && !isRunning) {
       if (confirmDelete) {
         list.push({
           id: "confirm-remove",
@@ -286,6 +287,7 @@ export default function ConsoleGameOptionsOverlay({
           action: () => {
             const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
             if (rawId) {
+              if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][CONSOLE] rawId=${rawId} title="${game.title}"`);
               removeManualGame(rawId);
               showSuccess(`"${game.title ?? rawId}" removed from library`);
             }

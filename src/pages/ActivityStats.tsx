@@ -42,6 +42,7 @@ const SOURCE_BADGE_COLORS: Record<string, string> = {
   local: "border-slate-500/20 bg-slate-500/10 text-slate-300",
   lua: "border-purple-500/20 bg-purple-500/10 text-purple-300",
   system: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
+  manual: "border-teal-500/20 bg-teal-500/10 text-teal-300",
 };
 
 const EXIT_REASON_LABELS: Record<string, string> = {
@@ -399,7 +400,7 @@ export default function ActivityStats() {
                       <span className="text-[10px] text-(--color-muted)/50">{formatTimestamp(s.startedAt)}</span>
                       {s.source && (
                         <span className={`inline-flex rounded-full border px-1.5 py-px text-[9px] font-medium ${SOURCE_BADGE_COLORS[s.source] || "border-white/10 bg-white/[0.04] text-(--color-muted)"}`}>
-                          {s.source === "steam" ? "Steam" : s.source === "local" ? "Local" : s.source === "lua" ? "Lua" : s.source}
+                          {s.source === "steam" ? "Steam" : s.source === "local" ? "Local" : s.source === "lua" ? "Lua" : s.source === "manual" ? "Manual" : s.source}
                         </span>
                       )}
                       {s.exitReason && s.exitReason !== "normal" && (

@@ -43,16 +43,17 @@ import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import GameEditDialog from "../games/GameEditDialog";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
-import { showSuccess, showError, showInfo } from "../toast/GameToast";
+import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
 import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
-import { removeManualGame } from "../../services/manualGameStore";
+import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
+const DEBUG_MANUAL_REMOVE = false;
 
 type Props = {
   onOpenGame?: () => void;
@@ -765,12 +766,19 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                           label: "Delete Manual Game",
                           icon: <Trash2 className="h-3.5 w-3.5" />,
                           destructive: true,
+                          disabled: isRunning,
                           onClick: () => {
+                            if (isRunning) {
+                              showWarning("Stop the game before removing it from Library.", { title: "Game is running" });
+                              return;
+                            }
                             handleMenuClose();
-                            if (menuGame.appId) {
+                            const rawId = normalizeManualGameId(menuGame.providerGameId || menuGame.id || "");
+                            if (rawId) {
                               try {
-                                removeManualGame(menuGame.appId);
-                                showSuccess(`"${menuGame.title ?? menuGame.appId}" deleted`);
+                                if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][SIDEBAR] rawId=${rawId} title="${menuGame.title}"`);
+                                removeManualGame(rawId);
+                                showSuccess(`"${menuGame.title ?? "Manual game"}" deleted`);
                                 refresh();
                               } catch (e) {
                                 showError(`Failed to delete: ${e}`);

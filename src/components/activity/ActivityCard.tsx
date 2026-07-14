@@ -46,6 +46,7 @@ const SOURCE_COLORS: Record<string, string> = {
   provider: "border-amber-500/20 bg-amber-500/10 text-amber-300",
   system: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
   launcher: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+  manual: "border-teal-500/20 bg-teal-500/10 text-teal-300",
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -62,6 +63,7 @@ const SOURCE_LABELS: Record<string, string> = {
   provider: "Provider",
   system: "System",
   launcher: "Launcher",
+  manual: "Manual",
 };
 
 function formatTimestamp(ts: number) {

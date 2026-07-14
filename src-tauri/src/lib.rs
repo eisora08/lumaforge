@@ -247,6 +247,9 @@ pub fn run() {
             commands::igdb::igdb_get_access_token,
             commands::igdb::igdb_search_by_steam_app_id,
             commands::igdb::igdb_search_games_by_name,
+            commands::manual_games::read_manual_games,
+            commands::manual_games::write_manual_games,
+            commands::manual_games::backup_manual_games,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

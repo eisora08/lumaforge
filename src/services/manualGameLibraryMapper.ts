@@ -98,9 +98,9 @@ function buildManualMetadata(entry: ManualGameEntry): SteamAppMetadata {
 export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
   const libraryId = `manual:${entry.id}`;
   const imageUrl =
-    entry.coverPath ??
-    entry.landscapePath ??
     entry.backgroundPath ??
+    entry.landscapePath ??
+    entry.coverPath ??
     undefined;
 
   if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][MAPPER_INPUT] id=${entry.id} coverPath=${entry.coverPath} landscapePath=${entry.landscapePath} backgroundPath=${entry.backgroundPath}`);

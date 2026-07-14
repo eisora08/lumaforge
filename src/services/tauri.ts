@@ -2147,3 +2147,63 @@ export async function igdbSearchGamesByName(
     limit: limit ?? 3,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Manual games JSON persistence
+// ---------------------------------------------------------------------------
+
+export type ManualGameEntryJson = {
+  id: string;
+  name: string;
+  executablePath?: string;
+  workingDirectory?: string;
+  launchArguments?: string;
+  installDir?: string;
+  libraryPath?: string;
+  coverPath?: string;
+  landscapePath?: string;
+  backgroundPath?: string;
+  logoPath?: string;
+  iconPath?: string;
+  genres?: string[];
+  developers?: string[];
+  publishers?: string[];
+  releaseDate?: string;
+  description?: string;
+  shortDescription?: string;
+  categories?: string[];
+  features?: string[];
+  tags?: string[];
+  sortingName?: string;
+  userScore?: string;
+  criticScore?: string;
+  communityScore?: string;
+  reviewSummary?: string;
+  reviewCount?: string;
+  reviewSource?: string;
+  series?: string;
+  ageRating?: string;
+  region?: string;
+  completionStatus?: string;
+  linkedSteamAppId?: string;
+  linkedIgdbId?: string;
+  sizeOnDisk?: number;
+  isFavorite?: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** Read all manual game entries from `games/manual/manual-games.json`. */
+export async function readManualGames(): Promise<ManualGameEntryJson[]> {
+  return await invoke<ManualGameEntryJson[]>("read_manual_games");
+}
+
+/** Atomically write the full manual games array to `games/manual/manual-games.json`. */
+export async function writeManualGames(entries: ManualGameEntryJson[]): Promise<void> {
+  return await invoke<void>("write_manual_games", { entries });
+}
+
+/** Create a timestamped backup of `manual-games.json`. Returns backup filename. */
+export async function backupManualGames(): Promise<string> {
+  return await invoke<string>("backup_manual_games");
+}

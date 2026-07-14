@@ -102,6 +102,8 @@ function getCardImage(
   );
 }
 
+const DEBUG_MANUAL_REMOVE = false;
+
 export default function GameLauncherTile({
   game,
   appInfoEntry,
@@ -819,6 +821,7 @@ export default function GameLauncherTile({
                           const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
                           if (rawId) {
                             try {
+                              if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][TILE] rawId=${rawId} title="${game.title}"`);
                               removeManualGame(rawId);
                               showSuccess(`"${game.title ?? rawId}" deleted from library`);
                             } catch (e) {
