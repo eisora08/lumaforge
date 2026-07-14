@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Heart } from "lucide-react";
-import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
+import type { StartupSnapshot } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useSettings } from "../../context/SettingsContext";
-import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
-
-const DEBUG_MEDIA_DASH = false;
-const DEBUG_NAME_DASH = false;
+import { resolveProviderMediaPreviewUrl, resolveGameMediaUrl } from "../../services/gameCacheService";
+import {
+  type DashboardDisplayGame,
+  snapshotToDisplayGame,
+  manualToDisplayGame,
+  getManualGamesForDashboard,
+} from "../../services/dashboardManualGames";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
@@ -24,19 +27,34 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
-  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
 
-  const snapshotGames = useMemo(
-    () => snapshot?.library?.games ?? [],
-    [snapshot],
-  );
+  const manualGames = useMemo(() => getManualGamesForDashboard(libraryGames), [libraryGames]);
 
   const displayGames = useMemo(() => {
     const exclude = new Set(excludeAppIds ?? []);
-    return snapshotGames
-      .filter((g) => g.appId && favoriteIds.has(g.appId) && !exclude.has(g.appId))
-      .slice(0, 10);
-  }, [snapshotGames, favoriteIds, excludeAppIds]);
+    const result: DashboardDisplayGame[] = [];
+    const seen = new Set<string>();
+
+    // Snapshot games that are favorited
+    for (const sg of (snapshot?.library?.games ?? [])) {
+      if (!sg.appId || exclude.has(sg.appId) || seen.has(sg.appId)) continue;
+      if (!favoriteIds.has(sg.appId)) continue;
+      seen.add(sg.appId);
+      result.push(snapshotToDisplayGame(sg as any, new Set()));
+    }
+
+    // Manual games that are favorited
+    for (const mg of manualGames) {
+      const favKey = mg.libraryId || mg.id;
+      if (seen.has(favKey)) continue;
+      if (!favoriteIds.has(favKey)) continue;
+      seen.add(favKey);
+      const fakeLibGame = { ...mg, source: "manual" as const, libraryId: mg.libraryId } as any;
+      result.push(manualToDisplayGame(fakeLibGame, new Set()));
+    }
+
+    return result.slice(0, 10);
+  }, [snapshot, manualGames, favoriteIds, excludeAppIds]);
 
   useEffect(() => {
     for (const game of displayGames) {
@@ -46,36 +64,29 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
     }
   }, [displayGames]);
 
-  // Stable primitive key derived from display games — avoids infinite render loops
-  // caused by unstable array references in the useMemo above.
-  const gameIdsKey = useMemo(
-    () => displayGames.map(g => g.appId).filter(Boolean).sort().join(','),
+  const displayIdsKey = useMemo(
+    () => displayGames.map(g => g.stableId).sort().join(','),
     [displayGames],
   );
 
-  // Resolve media URLs and titles
   useEffect(() => {
     let cancelled = false;
-    const ids = gameIdsKey ? gameIdsKey.split(',') : [];
-    const gameById = new Map(displayGames.map(g => [g.appId, g]));
-
     const resolve = async () => {
       const urls: Record<string, string | null> = {};
-      const titles: Record<string, string> = {};
-      // Batch-resolve canonical names for all displayed games
-      const resolvedTitles = displayGames.length > 0 ? await resolveDashboardTitles(displayGames) : {};
-      for (const appId of ids) {
+      for (const game of displayGames) {
         if (cancelled) break;
-        const game = gameById.get(appId);
-        if (!game) continue;
-        const imgPath = game.media?.landscapePath || game.media?.coverPath || game.media?.backgroundPath;
-        urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
-        titles[appId] = resolvedTitles[appId]?.title ?? game.title;
-        if (imgPath && !cancelled) {
-          const selection = game.media?.landscapePath ? "landscape" : game.media?.coverPath ? "cover" : "background";
-          if (DEBUG_MEDIA_DASH) console.log(`[MEDIA][DASH] section=Favorites appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+        if (game._snapshotGame) {
+          const m = game._snapshotGame.media;
+          const imgPath = m?.landscapePath || m?.coverPath || m?.backgroundPath;
+          urls[game.stableId] = (game.appId && imgPath)
+            ? await resolveGameMediaUrl(game.appId, imgPath)
+            : null;
+        } else if (game._libraryGame) {
+          const rawPath = game._libraryGame.imageUrl;
+          urls[game.stableId] = rawPath ? await resolveProviderMediaPreviewUrl(rawPath) : null;
+        } else {
+          urls[game.stableId] = null;
         }
-        if (DEBUG_NAME_DASH) console.log(`[NAME][DASH] section=Favorites appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setMediaUrlMap(prev => {
@@ -83,15 +94,10 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
             Object.entries(urls).every(([k, v]) => prev[k] === v)) return prev;
         return urls;
       });
-      setTitleMap(prev => {
-        if (Object.keys(prev).length === Object.keys(titles).length &&
-            Object.entries(titles).every(([k, v]) => prev[k] === v)) return prev;
-        return titles;
-      });
     };
     resolve();
     return () => { cancelled = true; };
-  }, [gameIdsKey]);
+  }, [displayIdsKey]);
 
   if (displayGames.length === 0) {
     return (
@@ -111,14 +117,22 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
     );
   }
 
-  function handleOpen(game: SnapshotGame) {
-    if (game.appId) {
+  function handleOpen(game: DashboardDisplayGame) {
+    if (game._libraryGame) {
+      setSelectedGame(game._libraryGame);
+      onNavigate?.("library-game-detail");
+    } else if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
       if (libGame) {
         setSelectedGame(libGame);
         onNavigate?.("library-game-detail");
       }
     }
+  }
+
+  function handleToggleFavorite(game: DashboardDisplayGame) {
+    const fk = game.appId || game.libraryId || game.stableId;
+    if (fk) toggleFavorite(fk);
   }
 
   return (
@@ -135,13 +149,12 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
       </div>
 
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
-        {deduplicateByAppId(displayGames).map((game) => {
-          const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
-          const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
+        {displayGames.map((game) => {
+          const imgUrl = mediaUrlMap[game.stableId] ?? null;
 
           return (
             <div
-              key={"dashboard:favorites:steam:" + game.appId}
+              key={"dashboard:favorites:" + game.stableId}
               className="shrink-0 snap-start"
               style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
             >
@@ -161,7 +174,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
                   {imgUrl ? (
                     <AsyncImage
                       src={imgUrl}
-                      alt={displayTitle}
+                      alt={game.title}
                       className="h-full w-full object-cover"
                       fallback={
                         <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -184,7 +197,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (game.appId) toggleFavorite(game.appId);
+                      handleToggleFavorite(game);
                     }}
                     className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
                     title="Remove from favorites"
@@ -195,7 +208,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
 
                 <div className="p-3">
                   <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                    {displayTitle}
+                    {game.title}
                   </h3>
                 </div>
               </div>

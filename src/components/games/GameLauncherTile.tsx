@@ -121,7 +121,8 @@ export default function GameLauncherTile({
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editInitialTab, setEditInitialTab] = useState<"general" | "media">("general");
   const { isFavorite, toggleFavorite } = useFavorites();
-  const favorite = game.appId ? isFavorite(game.appId) : false;
+  const _favKey = game.appId || (game.source === "manual" ? game.libraryId : null) || game.id;
+  const favorite = _favKey ? isFavorite(_favKey) : false;
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -707,7 +708,7 @@ export default function GameLauncherTile({
             <MenuItem
               label={favorite ? "Remove from favorites" : "Add to favorites"}
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
-              onClick={() => { if (game.appId) toggleFavorite(game.appId); setMenuOpen(false); }}
+              onClick={() => { const fk = game.appId || (game.source === "manual" ? game.libraryId : null) || game.id; if (fk) toggleFavorite(fk); setMenuOpen(false); }}
             />
             {game.appId && (
               <MenuItem

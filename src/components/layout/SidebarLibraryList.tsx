@@ -628,7 +628,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const mHasLua = menuGame.luaScripts.length > 0;
           const mPendingUninstall = menuGame.appId ? isPendingUninstall(menuGame.appId) : false;
           if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) console.log(`[SIDEBAR_ACTION_RENDER] appid=${menuGame.appId} uninstallPending=${mPendingUninstall} action=${mPendingUninstall ? "uninstalling" : mAction}`);
-          const fav = menuGame.appId ? isFavorite(menuGame.appId) : false;
+          const _sfk = menuGame.appId || (menuGame.source === "manual" ? menuGame.libraryId : null) || menuGame.id;
+          const fav = _sfk ? isFavorite(_sfk) : false;
 
           return (
             <>
@@ -680,7 +681,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 label={fav ? "Remove from favorites" : "Add to favorites"}
                 icon={<Heart className={`h-3.5 w-3.5 ${fav ? "fill-current" : ""}`} />}
                 onClick={() => {
-                  if (menuGame.appId) toggleFavorite(menuGame.appId);
+                  const fk = menuGame.appId || (menuGame.source === "manual" ? menuGame.libraryId : null) || menuGame.id;
+                  if (fk) toggleFavorite(fk);
                   handleMenuClose();
                 }}
               />

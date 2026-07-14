@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { Play, Clock } from "lucide-react";
-import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
+import type { StartupSnapshot } from "../../services/startupSnapshotService";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
-import { resolveGameMediaUrl, resolveDashboardTitles, deduplicateByAppId } from "../../services/gameCacheService";
-
-const DEBUG_MEDIA_DASH = false;
-const DEBUG_NAME_DASH = false;
-import { getCachedPlaytimeStore } from "../../services/playtimeService";
+import { resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
+import {
+  type DashboardDisplayGame,
+  snapshotToDisplayGame,
+  manualToDisplayGame,
+  getManualGamesForDashboard,
+} from "../../services/dashboardManualGames";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
+import { resolveGameMediaUrl } from "../../services/gameCacheService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
@@ -20,57 +23,57 @@ type Props = {
   excludeAppId?: string;
 };
 
-function getContinueGames(
-  snapshotGames: SnapshotGame[],
+function getContinueDisplayGames(
+  snapshotGames: Array<{ appId: string; lastPlayed: number | null; playtime: number | null; installed: boolean; title: string; source: string; updatedAt?: number }>,
+  manualGames: Array<{ id: string; title: string; libraryId?: string }>,
   sessions: Record<string, { appId?: string; state: string }>,
   excludeAppId?: string,
-): SnapshotGame[] {
+): DashboardDisplayGame[] {
   const runningAppIds = new Set(
     Object.values(sessions)
       .filter((s) => s.state === "running" && s.appId)
-      .map((s) => s.appId),
+      .map((s) => s.appId as string),
   );
 
-  const running = snapshotGames.filter((g) => g.appId && runningAppIds.has(g.appId));
+  // Also check running by game.id for manual games
+  const runningGameIds = new Set(
+    Object.values(sessions)
+      .filter((s) => s.state === "running")
+      .map((s) => s.appId)
+      .filter((id): id is string => Boolean(id)),
+  );
 
-  // Build a map of appId -> lastPlayedAt from playtime store
-  const playtimeStore = getCachedPlaytimeStore();
-  const playtimeLastPlayed: Record<string, number> = {};
-  if (playtimeStore) {
-    for (const [, entry] of Object.entries(playtimeStore.games)) {
-      if (entry.appId && entry.lastPlayedAt) {
-        playtimeLastPlayed[entry.appId] = entry.lastPlayedAt * 1000;
-      }
-    }
-  }
-
-  const recent = snapshotGames
-    .filter((g) => {
-      if (g.lastPlayed) return true;
-      if (g.appId && playtimeLastPlayed[g.appId]) return true;
-      return false;
-    })
-    .sort((a, b) => {
-      const aPlay = (a.appId ? playtimeLastPlayed[a.appId] : null) ?? (a.lastPlayed ? a.lastPlayed * 1000 : 0);
-      const bPlay = (b.appId ? playtimeLastPlayed[b.appId] : null) ?? (b.lastPlayed ? b.lastPlayed * 1000 : 0);
-      return bPlay - aPlay;
-    });
-  const installedFallback = snapshotGames
-    .filter((g) => g.installed)
-    .sort((a, b) => (b.playtime ?? 0) - (a.playtime ?? 0));
-
+  const result: DashboardDisplayGame[] = [];
   const seen = new Set<string>();
   if (excludeAppId) seen.add(excludeAppId);
-  const result: SnapshotGame[] = [];
 
-  for (const g of [...running, ...recent, ...installedFallback]) {
-    if (!g.appId || seen.has(g.appId)) continue;
-    seen.add(g.appId);
-    result.push(g);
-    if (result.length >= 10) break;
+  // Snapshot games → display games
+  for (const sg of snapshotGames) {
+    if (!sg.appId || seen.has(sg.appId)) continue;
+    seen.add(sg.appId);
+    const dg = snapshotToDisplayGame(sg as any, runningAppIds);
+    result.push(dg);
   }
 
-  return result;
+  // Manual games → display games
+  for (const mg of manualGames) {
+    const sid = mg.libraryId || mg.id;
+    if (seen.has(sid)) continue;
+    seen.add(sid);
+    const fakeLibGame = { ...mg, source: "manual" as const, libraryId: mg.libraryId } as any;
+    const dg = manualToDisplayGame(fakeLibGame, runningGameIds);
+    result.push(dg);
+  }
+
+  // Sort by lastPlayed (most recent first), then by playtime
+  result.sort((a, b) => {
+    const aLast = a.lastPlayedAt ?? 0;
+    const bLast = b.lastPlayedAt ?? 0;
+    if (bLast !== aLast) return bLast - aLast;
+    return b.totalPlaytimeSeconds - a.totalPlaytimeSeconds;
+  });
+
+  return result.slice(0, 10);
 }
 
 function formatLastPlayed(ts: number | null): string | null {
@@ -89,50 +92,52 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
-  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
 
-  const games = useMemo(
-    () => getContinueGames(snapshot?.library?.games || [], sessions, excludeAppId),
-    [snapshot, sessions, excludeAppId],
+  const manualGames = useMemo(() => getManualGamesForDashboard(libraryGames), [libraryGames]);
+
+  const displayGames = useMemo(
+    () => getContinueDisplayGames(
+      snapshot?.library?.games ?? [],
+      manualGames,
+      sessions,
+      excludeAppId,
+    ),
+    [snapshot, manualGames, sessions, excludeAppId],
   );
 
   useEffect(() => {
-    for (const game of games) {
+    for (const game of displayGames) {
       if (game.appId) {
         requestGameData(game.appId, LoadPriority.VIEWPORT);
       }
     }
-  }, [games]);
+  }, [displayGames]);
 
-  // Stable primitive key derived from games — avoids infinite render loops
-  // caused by unstable array references in the useMemo above.
-  const gameIdsKey = useMemo(
-    () => games.map(g => g.appId).filter(Boolean).sort().join(','),
-    [games],
+  // Stable key for effect dependency
+  const displayIdsKey = useMemo(
+    () => displayGames.map(g => g.stableId).sort().join(','),
+    [displayGames],
   );
 
-  // Resolve media URLs and titles
+  // Resolve image URLs for all display games
   useEffect(() => {
     let cancelled = false;
-    const ids = gameIdsKey ? gameIdsKey.split(',') : [];
-    const gameById = new Map(games.map(g => [g.appId, g]));
-
     const resolve = async () => {
       const urls: Record<string, string | null> = {};
-      const titles: Record<string, string> = {};
-      const resolvedTitles = games.length > 0 ? await resolveDashboardTitles(games) : {};
-      for (const appId of ids) {
+      for (const game of displayGames) {
         if (cancelled) break;
-        const game = gameById.get(appId);
-        if (!game) continue;
-        const imgPath = game.media?.landscapePath || game.media?.backgroundPath;
-        urls[appId] = imgPath ? await resolveGameMediaUrl(appId, imgPath) : null;
-        titles[appId] = resolvedTitles[appId]?.title ?? game.title;
-        if (imgPath && !cancelled) {
-          const selection = game.media?.landscapePath ? "landscape" : "background";
-          if (DEBUG_MEDIA_DASH) console.log(`[MEDIA][DASH] section=ContinuePlaying appid=${appId} selected=${selection} source=snapshot hasUrl=${!!urls[appId]}`);
+        if (game._snapshotGame) {
+          const m = game._snapshotGame.media;
+          const imgPath = m?.landscapePath || m?.coverPath || m?.backgroundPath;
+          urls[game.stableId] = (game.appId && imgPath)
+            ? await resolveGameMediaUrl(game.appId, imgPath)
+            : null;
+        } else if (game._libraryGame) {
+          const rawPath = game._libraryGame.imageUrl;
+          urls[game.stableId] = rawPath ? await resolveProviderMediaPreviewUrl(rawPath) : null;
+        } else {
+          urls[game.stableId] = null;
         }
-        if (DEBUG_NAME_DASH) console.log(`[NAME][DASH] section=ContinuePlaying appid=${appId} source=${resolvedTitles[appId]?.source ?? "snapshot"} title=${titles[appId]}`);
       }
       if (cancelled) return;
       setMediaUrlMap(prev => {
@@ -140,20 +145,18 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
             Object.entries(urls).every(([k, v]) => prev[k] === v)) return prev;
         return urls;
       });
-      setTitleMap(prev => {
-        if (Object.keys(prev).length === Object.keys(titles).length &&
-            Object.entries(titles).every(([k, v]) => prev[k] === v)) return prev;
-        return titles;
-      });
     };
     resolve();
     return () => { cancelled = true; };
-  }, [gameIdsKey]);
+  }, [displayIdsKey]);
 
-  if (games.length === 0) return null;
+  if (displayGames.length === 0) return null;
 
-  function handleOpen(game: SnapshotGame) {
-    if (game.appId) {
+  function handleOpen(game: DashboardDisplayGame) {
+    if (game._libraryGame) {
+      setSelectedGame(game._libraryGame);
+      onNavigate?.("library-game-detail");
+    } else if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
       if (libGame) {
         setSelectedGame(libGame);
@@ -176,17 +179,16 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
       </div>
 
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
-        {deduplicateByAppId(games).map((game) => {
-          const imgUrl = game.appId ? (mediaUrlMap[game.appId] ?? null) : null;
-          const displayTitle = game.appId ? (titleMap[game.appId] ?? game.title) : game.title;
-          const lastPlayedStr = formatLastPlayed(game.lastPlayed);
-          const isRunning = Object.values(sessions).some(
-            (s) => s.state === "running" && s.appId === game.appId,
-          );
+        {displayGames.map((game) => {
+          const imgUrl = mediaUrlMap[game.stableId] ?? null;
+          const lastPlayedStr = formatLastPlayed(game.lastPlayedAt);
+          const totalMinutes = game.totalPlaytimeSeconds > 0
+            ? Math.floor(game.totalPlaytimeSeconds / 60)
+            : null;
 
           return (
             <div
-              key={"dashboard:continue:steam:" + game.appId}
+              key={"dashboard:continue:" + game.stableId}
               className="shrink-0 snap-start"
               style={{ width: `min(80vw, ${settings.dashboardFeaturedCardSize}px)` }}
             >
@@ -195,7 +197,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                   {imgUrl ? (
                     <AsyncImage
                       src={imgUrl}
-                      alt={displayTitle}
+                      alt={game.title}
                       className="h-full w-full object-cover"
                       fallback={
                         <div className="flex h-full w-full items-center justify-center bg-white/5">
@@ -209,7 +211,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                     </div>
                   )}
                   <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100" />
-                  {isRunning && (
+                  {game.isRunning && (
                     <div className="absolute left-2 top-2 rounded-full bg-emerald-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
                       Playing
                     </div>
@@ -218,7 +220,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
 
                 <div className="p-3">
                   <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
-                    {displayTitle}
+                    {game.title}
                   </h3>
                   <div className="mt-1.5 flex items-center gap-2">
                     {lastPlayedStr && (
@@ -226,9 +228,9 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                         {lastPlayedStr}
                       </span>
                     )}
-                    {game.playtime != null && (
+                    {totalMinutes != null && totalMinutes > 0 && (
                       <span className="text-[11px] text-(--color-muted)">
-                        {game.playtime}m
+                        {totalMinutes}m
                       </span>
                     )}
                   </div>

@@ -333,6 +333,20 @@ export function getLibraryGameStableId(game: { libraryId?: string; appId?: strin
   return game.id;
 }
 
+/**
+ * Returns the stable key used by FavoritesContext for any game type.
+ * For Steam games: appId (e.g. "480").
+ * For manual games: libraryId (e.g. "manual:<uuid>").
+ * Consistent with `LibraryGameDetails.tsx` which uses `game.appId || game.id`.
+ */
+export function getFavoriteKey(game: { appId?: string | null; libraryId?: string | null; id?: string; source?: string }): string | null {
+  if (game.appId) return game.appId;
+  if (game.source === "manual" && game.libraryId) return game.libraryId;
+  if (game.libraryId) return game.libraryId;
+  if (game.id) return game.id;
+  return null;
+}
+
 /** Deduplicate an array of LibraryGame by stable identity, keeping first occurrence. */
 export function deduplicateByStableId<T extends { libraryId?: string; appId?: string; id: string }>(items: T[]): T[] {
   const seen = new Set<string>();

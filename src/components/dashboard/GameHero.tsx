@@ -5,11 +5,10 @@ import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId } from "../../services/playtimeService";
-import { resolveGameMediaUrl, resolveDashboardTitles, isPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
+import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId, resolvePlaytimeKey, getPlaytimeEntryByGameKey } from "../../services/playtimeService";
+import { resolveGameMediaUrl, resolveProviderMediaPreviewUrl, resolveDashboardTitles, isPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 
 const DEBUG_NAME_HERO = false;
-const DEBUG_MEDIA_HERO = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showInfo, showWarning } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
@@ -25,6 +24,8 @@ type GameHeroProps = {
 type HeroGameResult = {
   game: SnapshotGame | null;
   sessionKey: string | null;
+  /** When set, the hero is a manual LibraryGame (not in snapshot) */
+  manualGame?: import("../../types/libraryGame").LibraryGame;
 };
 
 function formatElapsed(startedAt: number): string {
@@ -47,6 +48,10 @@ function hasValidMedia(game: SnapshotGame): boolean {
   return !!(m.landscapePath || m.coverPath || m.backgroundPath || m.logoPath || m.iconPath);
 }
 
+function hasManualValidMedia(game: import("../../types/libraryGame").LibraryGame): boolean {
+  return !!(game.imageUrl || game.iconPath);
+}
+
 function getEffectiveLastPlayedMs(game: SnapshotGame): number {
   const entry = getPlaytimeEntryByAppId(game.appId);
   if (entry?.lastPlayedAt) return entry.lastPlayedAt * 1000;
@@ -58,46 +63,105 @@ function findHeroGame(
   snapshotGames: SnapshotGame[],
   sessionKeysByAppId: Record<string, string>,
   favoriteIds: Set<string>,
+  manualGames: import("../../types/libraryGame").LibraryGame[],
 ): HeroGameResult {
-  // Priority 1: Running session game
+  // Priority 1: Running session game (check both snapshot and manual)
   for (const [appId, key] of Object.entries(sessionKeysByAppId)) {
     const matchingGame = snapshotGames.find((g) => g.appId === appId);
     if (matchingGame) {
       return { game: matchingGame, sessionKey: key };
     }
+    // Check manual games by id
+    const matchingManual = manualGames.find((g) => g.id === appId);
+    if (matchingManual) {
+      return { game: null, sessionKey: key, manualGame: matchingManual };
+    }
   }
 
-  // Priority 2: Most recently played game
-  const withPlaytime = snapshotGames
-    .filter((g) => g.appId && g.title && getEffectiveLastPlayedMs(g) > 0)
-    .sort((a, b) => getEffectiveLastPlayedMs(b) - getEffectiveLastPlayedMs(a));
-
-  if (withPlaytime.length > 0) {
-    return { game: withPlaytime[0], sessionKey: null };
+  // Build playtime entries for manual games
+  const manualPlaytime = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
+  for (const mg of manualGames) {
+    const ptKey = resolvePlaytimeKey(mg);
+    const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+    if (entry) {
+      manualPlaytime.set(mg.id, {
+        lastPlayedAt: entry.lastPlayedAt ?? 0,
+        totalSeconds: entry.totalPlaytimeSeconds,
+      });
+    }
   }
 
-  // Priority 3: Most recent favorite with valid media
-  const favoriteWithMedia = snapshotGames
-    .filter((g) => g.appId && favoriteIds.has(g.appId) && hasValidMedia(g))
-    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  // Priority 2: Most recently played game (snapshot + manual combined)
+  const allWithPlaytime: Array<{ type: "snapshot" | "manual"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; lastPlayedMs: number }> = [];
 
-  if (favoriteWithMedia.length > 0) {
-    return { game: favoriteWithMedia[0], sessionKey: null };
+  for (const g of snapshotGames) {
+    if (g.appId && g.title) {
+      const lp = getEffectiveLastPlayedMs(g);
+      if (lp > 0) allWithPlaytime.push({ type: "snapshot", game: g, lastPlayedMs: lp });
+    }
+  }
+  for (const mg of manualGames) {
+    if (!mg.title) continue;
+    const mp = manualPlaytime.get(mg.id);
+    const lp = (mp?.lastPlayedAt ?? 0) * 1000;
+    if (lp > 0) allWithPlaytime.push({ type: "manual", game: mg, lastPlayedMs: lp });
+  }
+
+  allWithPlaytime.sort((a, b) => b.lastPlayedMs - a.lastPlayedMs);
+  if (allWithPlaytime.length > 0) {
+    const top = allWithPlaytime[0];
+    if (top.type === "snapshot") return { game: top.game as SnapshotGame, sessionKey: null };
+    return { game: null, sessionKey: null, manualGame: top.game as import("../../types/libraryGame").LibraryGame };
+  }
+
+  // Priority 3: Most recent favorite with valid media (snapshot + manual)
+  const favWithMedia: Array<{ type: "snapshot" | "manual"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; updatedAt: number }> = [];
+  for (const g of snapshotGames) {
+    if (g.appId && favoriteIds.has(g.appId) && hasValidMedia(g)) {
+      favWithMedia.push({ type: "snapshot", game: g, updatedAt: g.updatedAt ?? 0 });
+    }
+  }
+  for (const mg of manualGames) {
+    const favKey = mg.libraryId || mg.id;
+    if (favoriteIds.has(favKey) && hasManualValidMedia(mg)) {
+      favWithMedia.push({ type: "manual", game: mg, updatedAt: 0 });
+    }
+  }
+  favWithMedia.sort((a, b) => b.updatedAt - a.updatedAt);
+  if (favWithMedia.length > 0) {
+    const top = favWithMedia[0];
+    if (top.type === "snapshot") return { game: top.game as SnapshotGame, sessionKey: null };
+    return { game: null, sessionKey: null, manualGame: top.game as import("../../types/libraryGame").LibraryGame };
   }
 
   // Priority 4: Most recent game with valid media
-  const withMedia = snapshotGames
-    .filter((g) => g.appId && g.title && hasValidMedia(g))
-    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-
+  const withMedia: Array<{ type: "snapshot" | "manual"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; updatedAt: number }> = [];
+  for (const g of snapshotGames) {
+    if (g.appId && g.title && hasValidMedia(g)) {
+      withMedia.push({ type: "snapshot", game: g, updatedAt: g.updatedAt ?? 0 });
+    }
+  }
+  for (const mg of manualGames) {
+    if (mg.title && hasManualValidMedia(mg)) {
+      withMedia.push({ type: "manual", game: mg, updatedAt: 0 });
+    }
+  }
+  withMedia.sort((a, b) => b.updatedAt - a.updatedAt);
   if (withMedia.length > 0) {
-    return { game: withMedia[0], sessionKey: null };
+    const top = withMedia[0];
+    if (top.type === "snapshot") return { game: top.game as SnapshotGame, sessionKey: null };
+    return { game: null, sessionKey: null, manualGame: top.game as import("../../types/libraryGame").LibraryGame };
   }
 
-  // Priority 5: First installed game (title required)
+  // Priority 5: First installed game with title
   const installedGame = snapshotGames.find((game) => game.installed && game.title);
   if (installedGame) {
     return { game: installedGame, sessionKey: null };
+  }
+
+  // Manual games are always "installed"
+  if (manualGames.length > 0 && manualGames[0].title) {
+    return { game: null, sessionKey: null, manualGame: manualGames[0] };
   }
 
   // Priority 6: Stable fallback — first game with a title
@@ -181,6 +245,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     return snapshot?.library?.games ?? [];
   }, [snapshot]);
 
+  const manualGames = useMemo(
+    () => libraryGames.filter((g) => g.source === "manual" && g.title),
+    [libraryGames],
+  );
+
   // Build a map of appId → sessionKey for all active sessions
   const sessionKeysByAppId = useMemo(() => {
     const map: Record<string, string> = {};
@@ -192,9 +261,9 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     return map;
   }, [sessions]);
 
-  const { game: heroGame, sessionKey } = useMemo(() => {
-    return findHeroGame(snapshotGames, sessionKeysByAppId, favoriteIds);
-  }, [snapshotGames, sessionKeysByAppId, favoriteIds]);
+  const { game: heroGame, sessionKey, manualGame: heroManualGame } = useMemo(() => {
+    return findHeroGame(snapshotGames, sessionKeysByAppId, favoriteIds, manualGames);
+  }, [snapshotGames, sessionKeysByAppId, favoriteIds, manualGames]);
 
   // Read session state from the single source of truth
   const heroGameState: GameSessionState = sessionKey ? getState(sessionKey) : "idle";
@@ -219,58 +288,78 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const prevRunningRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const displayId = heroManualGame?.libraryId || heroAppId;
     const reason = sessionKey
       ? "running-session"
       : (heroGame && getEffectiveLastPlayedMs(heroGame) > 0
         ? "last-played"
-        : (heroGame && heroGame.appId && favoriteIds.has(heroGame.appId)
-          ? "favorite"
-          : (heroGame && hasValidMedia(heroGame)
-            ? "valid-media"
-            : (heroGame?.installed
-              ? "installed"
-              : (heroGame?.title
-                ? "titled-fallback"
-                : "last-resort")))));
-    if (prevHeroRef.current !== heroAppId) {
-      prevHeroRef.current = heroAppId || null;
-      console.log(`[DASH][HERO_SELECT] running=${heroAppId && sessionKey ? heroAppId : null} lastPlayed=${heroGame && getEffectiveLastPlayedMs(heroGame) > 0 ? heroAppId : null} favorite=${heroGame && heroGame.appId && favoriteIds.has(heroGame.appId) ? heroAppId : null} selected=${heroAppId || "empty"} reason=${reason}`);
+        : (heroManualGame
+          ? "manual-game"
+          : (heroGame && heroGame.appId && favoriteIds.has(heroGame.appId)
+            ? "favorite"
+            : (heroGame && hasValidMedia(heroGame)
+              ? "valid-media"
+              : (heroGame?.installed
+                ? "installed"
+                : (heroGame?.title
+                  ? "titled-fallback"
+                  : "last-resort"))))));
+    if (prevHeroRef.current !== displayId) {
+      prevHeroRef.current = displayId || null;
+      console.log(`[DASH][HERO_SELECT] running=${displayId && sessionKey ? displayId : null} selected=${displayId || "empty"} reason=${reason}`);
     }
-  }, [heroAppId, heroGame, sessionKey, favoriteIds]);
+  }, [heroAppId, heroGame, sessionKey, favoriteIds, heroManualGame]);
 
   useEffect(() => {
-    if (isRunning && heroAppId) {
-      if (prevRunningRef.current !== heroAppId) {
-        console.log(`[DASH][HERO_RUNNING] appid=${heroAppId} running=true focused=true`);
+    const displayId = heroManualGame?.libraryId || heroAppId;
+    if (isRunning && displayId) {
+      if (prevRunningRef.current !== displayId) {
+        console.log(`[DASH][HERO_RUNNING] appid=${displayId} running=true focused=true`);
       }
-      prevRunningRef.current = heroAppId;
+      prevRunningRef.current = displayId;
     }
     if (!isRunning && prevRunningRef.current != null) {
       const wasAppId = prevRunningRef.current;
       console.log(`[DASH][HERO_CLEAR_RUNNING] appid=${wasAppId} reason=process-ended`);
       prevRunningRef.current = null;
     }
-    if (!isRunning && !heroAppId) {
+    if (!isRunning && !displayId) {
       prevRunningRef.current = null;
     }
-  }, [isRunning, heroAppId]);
+  }, [isRunning, heroAppId, heroManualGame]);
 
   const libGame = useMemo(() => {
+    if (heroManualGame) return heroManualGame;
     if (!heroAppId) return undefined;
     return libraryGames.find((game) => game.appId === heroAppId);
-  }, [libraryGames, heroAppId]);
+  }, [libraryGames, heroAppId, heroManualGame]);
 
   const [bgUrl, setBgUrl] = useState<string | null>(null);
   const [heroTitle, setHeroTitle] = useState<string>("");
   useEffect(() => {
+    let cancelled = false;
+
+    if (heroManualGame) {
+      // Manual game: resolve background via provider media
+      const rawBg = heroManualGame.imageUrl;
+      if (rawBg) {
+        resolveProviderMediaPreviewUrl(rawBg).then((url) => {
+          if (!cancelled) setBgUrl(url);
+        });
+      } else {
+        setBgUrl(null);
+      }
+      setHeroTitle(heroManualGame.title);
+      return () => { cancelled = true; };
+    }
+
+    // Snapshot game
     const bgPath = heroGame?.media?.backgroundPath || heroGame?.media?.landscapePath;
     if (!bgPath || !heroAppId) { setBgUrl(null); return; }
-    let cancelled = false;
     resolveGameMediaUrl(heroAppId, bgPath).then((url) => {
       if (!cancelled) setBgUrl(url);
     });
     if (heroAppId && heroGame) {
-      // Resolve title via dashboard titles resolver (checks canonical appinfo)
       resolveDashboardTitles([heroGame]).then((r: Record<string, { title: string; source: string }>) => {
         if (!cancelled) {
           const entry = r[heroAppId!];
@@ -280,23 +369,35 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         }
       });
     }
-    const selection = heroGame?.media?.backgroundPath ? "background" : "landscape";
-    if (DEBUG_MEDIA_HERO) console.log(`[MEDIA][HERO] appid=${heroAppId} selected=${selection} bgExists=${!!bgPath} title=${heroTitle || heroGame?.title}`);
     return () => { cancelled = true; };
-  }, [heroGame, heroAppId]);
+  }, [heroGame, heroAppId, heroManualGame]);
 
   const lastPlayedStr = useMemo(() => {
+    // For manual games, look up playtime by game key
+    if (heroManualGame) {
+      const ptKey = resolvePlaytimeKey(heroManualGame);
+      const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+      if (entry?.lastPlayedAt) return formatLastPlayed(entry.lastPlayedAt);
+      return null;
+    }
     const entry = getPlaytimeEntryByAppId(heroAppId);
     if (entry?.lastPlayedAt) return formatLastPlayed(entry.lastPlayedAt);
     return formatLastPlayed(heroGame?.lastPlayed);
-  }, [heroAppId, heroGame?.lastPlayed]);
+  }, [heroAppId, heroGame?.lastPlayed, heroManualGame]);
 
   const heroPlaytimeStr = useMemo(() => {
+    if (heroManualGame) {
+      const ptKey = resolvePlaytimeKey(heroManualGame);
+      const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+      const seconds = entry?.totalPlaytimeSeconds ?? 0;
+      if (seconds > 0) return `${Math.round(seconds / 60)} min`;
+      return null;
+    }
     const seconds = getPlaytimeSecondsForAppId(heroAppId);
     if (seconds > 0) return `${Math.round(seconds / 60)} min`;
     if (heroGame?.playtime != null) return `${heroGame.playtime} min`;
     return null;
-  }, [heroAppId, heroGame?.playtime]);
+  }, [heroAppId, heroGame?.playtime, heroManualGame]);
 
   const stopModalTitle = heroSession?.title || heroGame?.title || "Unknown Game";
 
@@ -382,7 +483,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     });
   }, [sessionKey, findGameProcessForSession]);
 
-  if (!heroGame || !heroGame.appId) {
+  if (!heroGame && !heroManualGame) {
     return <EmptyHero onNavigate={onNavigate} />;
   }
 
@@ -463,7 +564,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           </div>
 
           <h1 className="text-2xl font-bold tracking-tight text-white drop-shadow-lg sm:text-3xl">
-            {heroTitle || heroGame.title}
+            {heroTitle || heroGame?.title}
           </h1>
 
           <div className="mt-5 flex flex-wrap gap-3">
@@ -539,7 +640,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                       : "Installing\u2026"}
                 </span>
               </div>
-            ) : heroGame.playable ? (
+            ) : heroGame?.playable ? (
               <>
                 <button
                   onClick={handlePrimaryAction}

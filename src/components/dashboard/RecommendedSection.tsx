@@ -17,7 +17,7 @@ import { getRecommendedWithGlobalFill } from "../../services/recommendationServi
 const DEBUG_DASH_RECOMMEND = false;
 const DEBUG_DASH_RECOMMEND_PER_GAME = false;
 import { useSettings } from "../../context/SettingsContext";
-import { localPathToUrl, deduplicateByAppId } from "../../services/gameCacheService";
+import { localPathToUrl, deduplicateByAppId, getFavoriteKey } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { isHttpUrl, isLocalPath } from "../../services/libraryLocalCacheService";
 import AsyncImage from "../common/AsyncImage";
@@ -187,8 +187,10 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
   if (displayGames.length === 0) return null;
 
   function handleOpen(game: LibraryGame) {
-    if (!game.appId) return;
-    const libGame = libraryGames.find((g) => g.appId === game.appId);
+    // Support both Steam and manual games
+    const libGame = game.appId
+      ? libraryGames.find((g) => g.appId === game.appId)
+      : libraryGames.find((g) => g.id === game.id || g.libraryId === game.libraryId);
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
@@ -258,14 +260,15 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (game.appId) toggleFavorite(game.appId);
+                      const fk = getFavoriteKey(game);
+                      if (fk) toggleFavorite(fk);
                     }}
                     className="absolute right-2 top-2 inline-flex cursor-pointer items-center justify-center rounded-full bg-black/60 px-1.5 py-1 text-rose-400/80 backdrop-blur-sm transition hover:bg-black/80 hover:text-rose-400"
-                    title={favoriteIds.has(game.appId!) ? "Remove from favorites" : "Add to favorites"}
+                    title={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? "Remove from favorites" : "Add to favorites"}
                   >
                     <Heart
                       className="h-4 w-4"
-                      fill={favoriteIds.has(game.appId!) ? "currentColor" : "none"}
+                      fill={getFavoriteKey(game) && favoriteIds.has(getFavoriteKey(game)!) ? "currentColor" : "none"}
                     />
                   </button>
                 </div>
