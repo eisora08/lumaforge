@@ -360,7 +360,6 @@ export default function LibraryPage({ onNavigate }: Props) {
 
   const showLuaSetup = !hasLuaPath;
   const hasLuaGames = games.some((g) => g.hasLua);
-  const showEmptyLua = hasLuaPath && !hasLuaGames;
 
   function handleOpenGame(game: LibraryGame) {
     setSelectedGame(game);
@@ -399,18 +398,6 @@ export default function LibraryPage({ onNavigate }: Props) {
               count={8}
             />
           </PageContainer>
-        ) : showEmptyLua ? (
-          <div className="flex flex-1 items-center justify-center p-5 lg:p-7">
-            <div className="max-w-md text-center">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-(--surface-active-border) bg-white/5">
-                <FileCode2 className="h-8 w-8 text-(--color-muted)" />
-              </div>
-              <h2 className="mt-5 text-xl font-bold text-(--color-text)">No installed Lua scripts found</h2>
-              <p className="mt-2 text-sm text-(--color-muted)">
-                Download Lua from the Store or sync a supported game.
-              </p>
-            </div>
-          </div>
         ) : (
           <>
             <PageContainer className={`flex flex-1 flex-col py-6 lg:py-8 ${settings.libraryUseFullWidth ? "!max-w-none" : ""}`}>
@@ -477,7 +464,15 @@ export default function LibraryPage({ onNavigate }: Props) {
 
                   {paginatedGames.length === 0 ? (
                     <div className="flex flex-1 items-center justify-center rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
-                      {filter === "updates" ? (
+                      {filter === "lua" ? (
+                        <>
+                          <FileCode2 className="mx-auto h-10 w-10 text-(--color-muted)" />
+                          <h2 className="mt-4 font-semibold text-(--color-text)">No installed Lua scripts found</h2>
+                          <p className="mt-1.5 text-sm text-(--color-muted)">
+                            Download Lua from the Store or sync a supported game.
+                          </p>
+                        </>
+                      ) : filter === "updates" ? (
                         <>
                           <FolderSearch className="mx-auto h-10 w-10 text-(--color-muted)" />
                           <h2 className="mt-4 font-semibold text-(--color-text)">No package updates available</h2>

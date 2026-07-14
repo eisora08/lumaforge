@@ -15,7 +15,11 @@ async function evaluateLauncherAchievements(): Promise<void> {
     const { evaluateAchievements } = await import("../features/activity/achievements/achievementEngine");
     const { buildEvalContext } = await import("../features/activity/stats/statsService");
     const { getReconciledGames } = await import("../services/gameStore");
-    const games = getReconciledGames();
+    const { getAllManualGames } = await import("../services/manualGameStore");
+    const { manualGameToLibraryGame } = await import("../services/manualGameLibraryMapper");
+    const steamGames = getReconciledGames();
+    const manualGames = getAllManualGames().map(manualGameToLibraryGame);
+    const games = [...steamGames, ...manualGames];
     if (games.length === 0) return;
     const ctx = buildEvalContext(games);
     const result = evaluateAchievements(ctx);
