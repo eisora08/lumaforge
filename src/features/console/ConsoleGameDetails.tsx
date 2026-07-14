@@ -10,7 +10,7 @@ import type { StoreMediaItem, StoreTrailerMedia } from "../../types/store";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
+import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { buildStoreMedia } from "../../services/storeMediaService";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
 import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
@@ -722,10 +722,13 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [mediaBundle?.logo?.url, game]);
   const isFav = game ? favoriteIds.has(game.appId || game.id) : false;
 
-  const playtimeSeconds = useMemo(
-    () => (game?.appId ? getPlaytimeSecondsForAppId(game.appId) : 0),
-    [game],
-  );
+  const playtimeSeconds = useMemo(() => {
+    if (!game) return 0;
+    // Try appId first (Steam), then gameKey (manual/future)
+    const byAppId = game.appId ? getPlaytimeSecondsForAppId(game.appId) : 0;
+    if (byAppId > 0) return byAppId;
+    return getPlaytimeSecondsByGameKey(resolvePlaytimeKey(game));
+  }, [game]);
   const playtimeDisplay = useMemo(() => {
     const s = formatPlaytime(playtimeSeconds);
     return s ?? "< 1h";

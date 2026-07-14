@@ -5,9 +5,9 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
+import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getConsoleHeroBackground } from "./consoleMedia";
-import { formatBytes, formatRelativeTime, formatPlaytime, getGameCompletionStatus } from "./consoleGameStats";
+import { formatBytes, formatRelativeTime, formatPlaytime, getGameCompletionStatus, getGameLastPlayedTimestamp } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
 import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
 import ConsoleGameCard from "./ConsoleGameCard";
@@ -99,12 +99,15 @@ export default function ConsoleGridLayout({
 
   const lastPlayedStr = useMemo(() => {
     if (!previewGame) return null;
-    const ts = previewGame.localLastPlayedAt ?? previewGame.steamLastPlayedAt;
+    const ts = getGameLastPlayedTimestamp(previewGame);
     return ts ? formatRelativeTime(ts) : null;
   }, [previewGame]);
 
   const playtimeSeconds = useMemo(() => {
-    return previewGame?.appId ? getPlaytimeSecondsForAppId(previewGame.appId) : 0;
+    if (!previewGame) return 0;
+    const byAppId = previewGame.appId ? getPlaytimeSecondsForAppId(previewGame.appId) : 0;
+    if (byAppId > 0) return byAppId;
+    return getPlaytimeSecondsByGameKey(resolvePlaytimeKey(previewGame));
   }, [previewGame]);
 
   const playtimeDisplay = useMemo(() => formatPlaytime(playtimeSeconds), [playtimeSeconds]);

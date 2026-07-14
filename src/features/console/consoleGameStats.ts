@@ -1,4 +1,5 @@
 import type { LibraryGame } from "../../types/libraryGame";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 
 export function formatBytes(bytes?: number): string {
   if (!bytes || bytes === 0) return "Unknown";
@@ -34,6 +35,12 @@ export function getGameDiskSize(game: LibraryGame): string {
 }
 
 export function getGameLastPlayedTimestamp(game: LibraryGame): number | null {
+  // Check playtime store first (works for manual + Steam)
+  const byAppId = game.appId ? getPlaytimeEntryByAppId(game.appId)?.lastPlayedAt : null;
+  if (byAppId) return byAppId;
+  const byKey = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game))?.lastPlayedAt;
+  if (byKey) return byKey;
+  // Fallback to game fields
   const ts = game.localLastPlayedAt ?? game.steamLastPlayedAt;
   return ts ?? null;
 }

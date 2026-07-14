@@ -120,7 +120,7 @@ export type ActiveGameState = Exclude<GameSessionState, "idle" | "error">;
 
 export type TrackingConfidence = "high" | "medium" | "low" | "none";
 
-export type GameSessionSource = "steam" | "epic" | "local" | "unknown";
+export type GameSessionSource = "steam" | "epic" | "local" | "manual" | "unknown";
 
 export type RunningGameSession = {
   gameKey: string;
@@ -1201,7 +1201,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           }
 
           const mediaInfo = sessionMediaRef.current[key];
-          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "local" ? "Local" : "Unknown";
+          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "local" ? "Local" : curSession.source === "manual" ? "Manual" : "Unknown";
           setOverlayEvent({
             id: `launch-${key}-${curSession.updatedAt}`,
             type: "launch",
@@ -1211,7 +1211,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           });
 
           // Start playtime session
-          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "local" ? "local" : "unknown";
+          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "local" ? "local" : curSession.source === "manual" ? "manual" : "unknown";
           startPlaySession({
             gameKey: key,
             appId: curSession.appId,
@@ -1272,7 +1272,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           ? Math.floor((Date.now() - prevSession.launchedAt) / 1000)
           : 0;
         const mediaInfo = sessionMediaRef.current[key];
-        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "local" ? "Local" : "Unknown";
+        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "local" ? "Local" : prevSession.source === "manual" ? "Manual" : "Unknown";
         setOverlayEvent({
           id: `end-${key}-${Date.now()}`,
           type: "end",
@@ -1298,9 +1298,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             });
 
             // Persist session record to local history
-            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "local" ? "local" : "system";
+            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "local" : "system";
             const sessionRecord = createSessionRecord({
-              appId: prevSession.appId || "",
+              appId: prevSession.appId || key,
               title: prevSession.title || "Unknown Game",
               source: activitySource,
               startedAt: prevSession.launchedAt,

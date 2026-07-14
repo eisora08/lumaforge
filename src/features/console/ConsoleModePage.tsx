@@ -19,7 +19,7 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD, setOnGamepadAction } fro
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { showSuccess, showError, showWarning } from "../../components/toast/GameToast";
-import { getPlaytimeEntryByAppId } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { useControllerDetection } from "./useControllerDetection";
 
 function getBlockedReason(action: string): string {
@@ -99,9 +99,11 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   const continuePlaying = useMemo(() => {
     const activeAppIds = new Set<string>();
+    const activeGameKeys = new Set<string>();
     for (const key of Object.keys(session.sessions)) {
       const state = session.getState(key);
       if (state === "running" || state === "launching") {
+        activeGameKeys.add(key);
         const m = key.match(/^app-(.+)$/);
         if (m) activeAppIds.add(m[1]);
       }
@@ -109,8 +111,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     const scored = enrichedGames
       .filter((g) => isSidebarInstalledGame(g))
       .map((g) => {
-        const isActive = g.appId ? activeAppIds.has(g.appId) : false;
-        const ptEntry = g.appId ? getPlaytimeEntryByAppId(g.appId) : undefined;
+        const gKey = resolvePlaytimeKey(g);
+        const isActive = (g.appId ? activeAppIds.has(g.appId) : false) || (gKey ? activeGameKeys.has(gKey) : false);
+        const ptEntry = getPlaytimeEntryByAppId(g.appId) ?? getPlaytimeEntryByGameKey(gKey);
         const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? 0;
         const lpa = ptEntry?.lastPlayedAt ?? g.steamLastPlayedAt ?? 0;
         return { game: g, score: isActive ? Number.MAX_SAFE_INTEGER : lpa || (g.steamLastPlayedAt ?? 0), totalSeconds, isActive };

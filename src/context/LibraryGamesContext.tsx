@@ -12,7 +12,7 @@ import {
   mergeLocalStatsIntoGames,
   setAchievementsSupportedFlag,
 } from "../services/gameStatsService";
-import { importExternalPlaytime, getPlaytimeEntryByAppId, getLastSessionEndForAppId } from "../services/playtimeService";
+import { importExternalPlaytime, getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../services/playtimeService";
 import { useSettings } from "./SettingsContext";
 import {
   waitForBootSnapshot,
@@ -267,18 +267,21 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
     // Phase 6: Merge Activity playtime into LibraryGame runtime objects
     for (const game of deduped) {
-      if (!game.appId) continue;
-      const ptEntry = getPlaytimeEntryByAppId(game.appId);
+      const ptEntry = game.appId
+        ? getPlaytimeEntryByAppId(game.appId)
+        : getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
       if (ptEntry) {
         const totalMinutes = Math.round(ptEntry.totalPlaytimeSeconds / 60);
         if (totalMinutes > 0) {
           game.localPlaytimeMinutes = Math.max(game.localPlaytimeMinutes ?? 0, totalMinutes);
         }
-        const sessionEnd = getLastSessionEndForAppId(game.appId);
+        const sessionEnd = ptEntry.lastPlayedAt
+          || (ptEntry.sessions.length > 0
+            ? Math.max(...ptEntry.sessions.map(s => s.endedAt ?? s.startedAt))
+            : null);
         if (sessionEnd) {
           game.localLastPlayedAt = Math.max(game.localLastPlayedAt ?? 0, sessionEnd);
         }
-        console.log(`[ACTIVITY][LIBRARY_MERGE] appid=${game.appId} totalSeconds=${ptEntry.totalPlaytimeSeconds} lastPlayedAt=${ptEntry.lastPlayedAt ?? sessionEnd ?? null}`);
       }
     }
 

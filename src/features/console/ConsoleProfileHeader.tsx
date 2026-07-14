@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
+import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { useUserProfile, resolveProfileMediaUrl } from "../profile/userProfile";
 import { getAvatarPreset, getBannerPreset } from "../profile/profilePresets";
 
@@ -21,9 +21,8 @@ export default function ConsoleProfileHeader() {
     const favorites = favoriteIds.size;
     let totalSeconds = 0;
     for (const g of games) {
-      if (g.appId) {
-        totalSeconds += getPlaytimeSecondsForAppId(g.appId);
-      }
+      const byAppId = g.appId ? getPlaytimeSecondsForAppId(g.appId) : 0;
+      totalSeconds += byAppId > 0 ? byAppId : getPlaytimeSecondsByGameKey(resolvePlaytimeKey(g));
     }
     return {
       total,

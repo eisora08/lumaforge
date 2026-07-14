@@ -176,6 +176,47 @@ export function getPlaytimeSecondsForAppId(appId: string | null | undefined): nu
   return entry ? entry.totalPlaytimeSeconds : 0;
 }
 
+// ── Game-key-based lookups (provider-aware, works for manual games) ──
+
+/** Resolve a LibraryGame to its playtime store key */
+export function resolvePlaytimeKey(game: {
+  id?: string;
+  appId?: string;
+  libraryId?: string;
+  providerId?: string;
+  providerGameId?: string;
+  source?: string;
+}): string | null {
+  if (!game) return null;
+  // Manual games: use libraryId (e.g. "manual:<uuid>")
+  if (game.source === "manual" && game.libraryId) return game.libraryId;
+  // Steam games: canonical "app-{appId}" if available
+  if (game.appId) return `app-${game.appId}`;
+  // Fallback: game.id
+  if (game.id) return game.id;
+  return null;
+}
+
+/** Look up a playtime entry by arbitrary game key */
+export function getPlaytimeEntryByGameKey(gameKey: string | null | undefined): PlaytimeEntry | null {
+  if (!gameKey) return null;
+  if (!cachedStore) return null;
+  return cachedStore.games[gameKey] ?? null;
+}
+
+/** Get total playtime seconds for a game by arbitrary key */
+export function getPlaytimeSecondsByGameKey(gameKey: string | null | undefined): number {
+  const entry = getPlaytimeEntryByGameKey(gameKey);
+  return entry ? entry.totalPlaytimeSeconds : 0;
+}
+
+/** Get last played timestamp by arbitrary game key */
+export function getLastPlayedByGameKey(gameKey: string | null | undefined): number | null {
+  const entry = getPlaytimeEntryByGameKey(gameKey);
+  if (!entry) return null;
+  return entry.lastPlayedAt ?? null;
+}
+
 /** Try to load playtime store if not already loaded. Returns true if already loaded. */
 export function isPlaytimeStoreLoaded(): boolean {
   return cachedStore !== null;

@@ -63,7 +63,7 @@ import {
 import type { ResolvedGameMediaBundle } from "../../types/gameMedia";
 import { resolveSteamGameNews } from "../../services/steamNewsResolver";
 import { useGamePlayStats } from "../../services/gamePlayStats";
-import { getPlaytimeEntryByAppId, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, getPlaytimeSourceLabel, subscribePlaytimeStore } from "../../services/playtimeService";
+import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey, formatPlaytime as formatPlaytimeSeconds, computeTotalPlaytime, getLastSessionEndForAppId, subscribePlaytimeStore } from "../../services/playtimeService";
 import type { SteamNewsItem } from "../../types/gameActivity";
 import type { GameLaunchInfo } from "../../hooks/useGameLaunchState";
 import type { GameAchievement, GameAchievementsSummary } from "../../types/gameAchievements";
@@ -451,11 +451,22 @@ export default function LibraryGameDetails({
     return unsub;
   }, []);
 
-  // Phase 1: Audit Activity playtime
-  const ptEntry = getPlaytimeEntryByAppId(game.appId);
+  // Phase 1: Audit Activity playtime (try appId first, then gameKey for manual games)
+  const ptEntry = getPlaytimeEntryByAppId(game.appId) ?? getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
   const totalSeconds = ptEntry ? computeTotalPlaytime(ptEntry) : 0;
-  const sourceLabel = getPlaytimeSourceLabel(game.appId);
-  const lastPlayedFromActivity = getLastSessionEndForAppId(game.appId);
+  const sourceLabel = ptEntry ? (ptEntry.playtimeSource ?? ptEntry.provider ?? "unknown") : "unknown";
+  const lastPlayedFromActivity = (() => {
+    // Try appId first, then gameKey
+    const byAppId = getLastSessionEndForAppId(game.appId);
+    if (byAppId) return byAppId;
+    if (!ptEntry) return null;
+    if (ptEntry.lastPlayedAt) return ptEntry.lastPlayedAt;
+    if (ptEntry.sessions.length > 0) {
+      const sorted = [...ptEntry.sessions].sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
+      return sorted[0].endedAt ?? sorted[0].startedAt;
+    }
+    return null;
+  })();
   if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][PLAYTIME_AUDIT] appid=${game.appId} activityFound=${!!ptEntry} key=${ptEntry?.gameKey ?? null} totalSeconds=${totalSeconds} lastPlayedAt=${ptEntry?.lastPlayedAt ?? null} uiPlaytime=${formatPlaytimeSeconds(totalSeconds || 0)} uiLastPlayed=${lastPlayedFromActivity ?? "Never"}`);
 
   // Phase 3: Display Activity totalPlaytimeSeconds (overrides Steam/local fallback)

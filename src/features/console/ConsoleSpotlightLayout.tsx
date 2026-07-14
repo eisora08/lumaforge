@@ -4,7 +4,7 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground } from "./consoleMedia";
-import { getPlaytimeSecondsForAppId } from "../../services/playtimeService";
+import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getGameAchievementSummary } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleHomeRail from "./ConsoleHomeRail";
@@ -87,7 +87,10 @@ export default function ConsoleSpotlightLayout({
   const sectionLabel = SECTION_LABELS[railTitle] ?? railTitle;
 
   const playtimeSeconds = useMemo(() => {
-    return focusedGame?.appId ? getPlaytimeSecondsForAppId(focusedGame.appId) : 0;
+    if (!focusedGame) return 0;
+    const byAppId = focusedGame.appId ? getPlaytimeSecondsForAppId(focusedGame.appId) : 0;
+    if (byAppId > 0) return byAppId;
+    return getPlaytimeSecondsByGameKey(resolvePlaytimeKey(focusedGame));
   }, [focusedGame]);
 
   const playtimeDisplay = useMemo(() => formatPlaytime(playtimeSeconds), [playtimeSeconds]);
