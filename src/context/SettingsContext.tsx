@@ -76,6 +76,15 @@ export const defaultSettings: AppSettings = {
   cardCornerRadius: 12,
   hideCardLabels: false,
 
+  // ── Dashboard Home Layout ──────────────────────────────────────────
+  dashboardHeroEnabled: true,
+  dashboardHeroAutoRotate: false,
+  dashboardHeroRotateSeconds: 15,
+  dashboardSectionVisibility: {},
+  dashboardSectionLimits: {},
+  dashboardDeferredRendering: false,
+  dashboardInitialVisibleSections: 0,
+
   mediaCacheProfile: "playnite-balanced",
   gameScanFolders: [],
   scanLocalGames: false,

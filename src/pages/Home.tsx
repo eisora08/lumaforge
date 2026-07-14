@@ -7,7 +7,8 @@ import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
-
+import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
+import NewNoteworthySection from "../components/dashboard/NewNoteworthySection";
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
 import { getCachedSnapshot } from "../services/startupSnapshotService";
@@ -19,6 +20,10 @@ import { subscribeCatalogState, getCatalogState, getCachedCatalog, discoverGloba
 import type { AppPage } from "../types/navigation";
 import type { CatalogStatus } from "../services/globalCatalogService";
 
+/* ================================================================== */
+/*  TYPES                                                              */
+/* ================================================================== */
+
 type Props = {
   onNavigate?: (page: AppPage) => void;
 };
@@ -29,6 +34,58 @@ type DedupedActivity = {
   count: number;
   createdAt: number;
 };
+
+/* ================================================================== */
+/*  DEFERRED SECTION WRAPPER                                           */
+/* ================================================================== */
+
+function DeferredSection({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [isVisible, setIsVisible] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  if (isVisible) return <>{children}</>;
+
+  return (
+    <div ref={sentinelRef} className="min-h-[120px]">
+      <div className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div
+            key={i}
+            className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56 animate-pulse"
+          >
+            <div className="aspect-video rounded-xl bg-white/5" />
+            <div className="mt-3 h-4 w-3/4 rounded bg-white/5" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  HELPERS                                                            */
+/* ================================================================== */
 
 function formatTimestamp(ts: number) {
   const diff = Date.now() - ts;
@@ -58,27 +115,66 @@ function deduplicateActivities(activities: { id: string; title: string; createdA
     .slice(0, 3);
 }
 
+function isSectionVisible(sectionId: string, visibility: Record<string, boolean>): boolean {
+  if (sectionId in visibility) return visibility[sectionId];
+  return true;
+}
+
+function getSectionLimit(sectionId: string, limits: Record<string, number>, fallback: number = 12): number {
+  if (sectionId in limits) return Math.max(2, limits[sectionId]);
+  return fallback;
+}
+
+/* ================================================================== */
+/*  SECTION WRAPPER                                                    */
+/* ================================================================== */
+
+/**
+ * Wraps a section with optional deferred rendering.
+ * When `deferred` is false or `eager` is true, renders immediately.
+ * Otherwise, uses IntersectionObserver to render on scroll.
+ */
+function SectionWrap({
+  deferred,
+  eager,
+  children,
+}: {
+  deferred: boolean;
+  eager: boolean;
+  children: React.ReactNode;
+}) {
+  if (!deferred || eager) return <>{children}</>;
+  return <DeferredSection>{children}</DeferredSection>;
+}
+
+/* ================================================================== */
+/*  COMPONENT                                                          */
+/* ================================================================== */
+
 export default function Home({ onNavigate }: Props) {
   countRender("Home");
   const snapshot = useMemo(() => getCachedSnapshot(), []);
   const { activities } = useGameActivity();
   const { sessions } = useGameSession();
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+  const { settings } = useSettings();
 
-  // Track catalog readiness for discovery sections
+  const heroEnabled = settings.dashboardHeroEnabled ?? true;
+  const deferredRendering = settings.dashboardDeferredRendering ?? false;
+  const initialVisibleSections = settings.dashboardInitialVisibleSections ?? 0;
+  const sectionVisibility = settings.dashboardSectionVisibility ?? {};
+  const sectionLimits = settings.dashboardSectionLimits ?? {};
+
+  // Track catalog readiness
   useEffect(() => {
-    const unsub = subscribeCatalogState((s) => {
-      setCatalogStatus(s.status);
-    });
+    const unsub = subscribeCatalogState((s) => setCatalogStatus(s.status));
     return unsub;
   }, []);
 
-  // Start loading the global catalog unconditionally — do not wait for child sections to mount
   useEffect(() => {
     discoverGlobalCatalog().catch(() => {});
   }, []);
 
-  // Log catalog source once when it transitions from loading to ready
   const sourceLogRef = useRef(false);
   useEffect(() => {
     if (sourceLogRef.current) return;
@@ -94,14 +190,11 @@ export default function Home({ onNavigate }: Props) {
 
   const dashboardDiscoveryReady = catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error";
 
-  // One-time import of snapshot playtime data into playtime store (after boot)
   useEffect(() => {
     if (snapshot?.library?.games) {
       importSnapshotPlaytime(snapshot.library.games).catch(() => {});
     }
   }, [snapshot]);
-
-  const { settings } = useSettings();
 
   const runningAppId = useMemo(() => {
     const running = Object.values(sessions).find((s) => s.state === "running");
@@ -129,26 +222,63 @@ export default function Home({ onNavigate }: Props) {
 
   const maxWidth = settings.useExpandedDashboard ? undefined : settings.dashboardContentWidth;
 
+  // Counter for tracking which sections should be eager (first N)
+  // We compute the eager set outside render to avoid side effects during render
+  const eagerSections = useMemo(() => {
+    if (!deferredRendering || initialVisibleSections <= 0) return new Set<string>();
+    const order = [
+      "continue-playing",
+      "favorites",
+      "recommended",
+      "trending-right-now",
+      "featured-picks",
+      "new-noteworthy",
+      "top-played",
+      "store-highlights",
+    ];
+    return new Set(order.slice(0, initialVisibleSections));
+  }, [deferredRendering, initialVisibleSections]);
+
   return (
     <div className="mx-auto w-full px-6 py-6 lg:px-8 xl:px-10 lf-fade-in" style={{ maxWidth: maxWidth ? `${maxWidth}px` : undefined }}>
       <div className="space-y-8">
-        <GameHero onNavigate={onNavigate} />
-        <ContinuePlayingSection
-          snapshot={snapshot}
-          onNavigate={onNavigate}
-          excludeAppId={runningAppId}
-        />
-        <FavoritesSection
-          snapshot={snapshot}
-          onNavigate={onNavigate}
-          excludeAppIds={[runningAppId].filter(Boolean) as string[]}
-        />
-        <RecommendedSection
-          onNavigate={onNavigate}
-          continuePlayingAppIds={continuePlayingAppIds}
-        />
+        {/* ── Hero ──────────────────────────────────────────────── */}
+        {heroEnabled && <GameHero onNavigate={onNavigate} />}
 
-        {/* Global discovery sections — only evaluate when catalog is ready */}
+        {/* ── Library sections ──────────────────────────────────── */}
+        {isSectionVisible("continue-playing", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("continue-playing")}>
+            <ContinuePlayingSection
+              snapshot={snapshot}
+              onNavigate={onNavigate}
+              excludeAppId={runningAppId}
+              maxItems={getSectionLimit("continue-playing", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("favorites", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("favorites")}>
+            <FavoritesSection
+              snapshot={snapshot}
+              onNavigate={onNavigate}
+              excludeAppIds={[runningAppId].filter(Boolean) as string[]}
+              maxItems={getSectionLimit("favorites", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("recommended", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("recommended")}>
+            <RecommendedSection
+              onNavigate={onNavigate}
+              continuePlayingAppIds={continuePlayingAppIds}
+              maxItems={getSectionLimit("recommended", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {/* ── Catalog discovery sections ────────────────────────── */}
         {!dashboardDiscoveryReady && (
           <section>
             <div className="mb-4 flex items-center justify-between">
@@ -175,18 +305,48 @@ export default function Home({ onNavigate }: Props) {
           </section>
         )}
 
-        {dashboardDiscoveryReady && (
-          <>
+        {dashboardDiscoveryReady && isSectionVisible("trending-right-now", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("trending-right-now")}>
             <TrendingRightNowSection onNavigate={onNavigate} />
-          </>
+          </SectionWrap>
         )}
 
-        <TopPlayedSection
-          snapshot={snapshot}
-          onNavigate={onNavigate}
-          excludeAppIds={[runningAppId].filter(Boolean) as string[]}
-        />
-        <StoreHighlightsSection onNavigate={onNavigate} />
+        {dashboardDiscoveryReady && isSectionVisible("featured-picks", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("featured-picks")}>
+            <FeaturedPicksSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("featured-picks", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {dashboardDiscoveryReady && isSectionVisible("new-noteworthy", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("new-noteworthy")}>
+            <NewNoteworthySection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("new-noteworthy", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {/* ── Bottom sections ──────────────────────────────────── */}
+        {isSectionVisible("top-played", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("top-played")}>
+            <TopPlayedSection
+              snapshot={snapshot}
+              onNavigate={onNavigate}
+              excludeAppIds={[runningAppId].filter(Boolean) as string[]}
+              maxItems={getSectionLimit("top-played", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("store-highlights", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("store-highlights")}>
+            <StoreHighlightsSection onNavigate={onNavigate} />
+          </SectionWrap>
+        )}
+
         <QuickActionsCompact onNavigate={onNavigate} />
 
         {/* Compact system strip */}

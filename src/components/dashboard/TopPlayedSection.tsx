@@ -20,12 +20,14 @@ type Props = {
   snapshot: StartupSnapshot | null;
   onNavigate?: (page: AppPage) => void;
   excludeAppIds?: string[];
+  maxItems?: number;
 };
 
 function getTopPlayedGames(
   snapshotGames: SnapshotGame[],
   manualGames: Array<{ id: string; title: string; libraryId?: string }>,
   excludeAppIds?: string[],
+  maxItems?: number,
 ): DashboardDisplayGame[] {
   const exclude = new Set(excludeAppIds ?? []);
   const result: DashboardDisplayGame[] = [];
@@ -50,7 +52,7 @@ function getTopPlayedGames(
   // Sort by total playtime descending
   result.sort((a, b) => b.totalPlaytimeSeconds - a.totalPlaytimeSeconds);
 
-  return result.slice(0, 10);
+  return result.slice(0, maxItems ?? 10);
 }
 
 function formatPlaytime(seconds: number): string {
@@ -63,7 +65,7 @@ function formatPlaytime(seconds: number): string {
   return `${hours}h ${rem}m`;
 }
 
-export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }: Props) {
+export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
@@ -76,8 +78,8 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds }
   );
 
   const displayGames = useMemo(
-    () => getTopPlayedGames(snapshotGames, manualGames, excludeAppIds),
-    [snapshotGames, manualGames, excludeAppIds],
+    () => getTopPlayedGames(snapshotGames, manualGames, excludeAppIds, maxItems),
+    [snapshotGames, manualGames, excludeAppIds, maxItems],
   );
 
   useEffect(() => {

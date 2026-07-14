@@ -20,6 +20,7 @@ import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
+  maxItems?: number;
 };
 
 const TOOL_KEYWORDS = [
@@ -40,7 +41,7 @@ function resolveBestMedia(game: NormalizedCatalogGame): string | null {
   return game.media.capsuleImageV5 || game.media.headerImage || game.media.libraryHeroImage || game.media.capsuleImage || game.media.backgroundImage || null;
 }
 
-export default function NewNoteworthySection({ onNavigate }: Props) {
+export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [entries, setEntries] = useState<NormalizedCatalogGame[]>(() => getCachedCatalog());
@@ -104,8 +105,8 @@ export default function NewNoteworthySection({ onNavigate }: Props) {
       if (b.releaseTimestamp !== a.releaseTimestamp) return b.releaseTimestamp - a.releaseTimestamp;
       return a.title.localeCompare(b.title);
     });
-    return sorted.slice(0, 10);
-  }, [dateCandidates]);
+    return sorted.slice(0, maxItems ?? 10);
+  }, [dateCandidates, maxItems]);
 
   // Diagnostic — change-only with field breakdown
   const newLogRef = useRef<string>("");

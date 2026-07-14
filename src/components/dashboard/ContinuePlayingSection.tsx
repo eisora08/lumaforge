@@ -21,6 +21,7 @@ type Props = {
   snapshot: StartupSnapshot | null;
   onNavigate?: (page: AppPage) => void;
   excludeAppId?: string;
+  maxItems?: number;
 };
 
 function getContinueDisplayGames(
@@ -28,6 +29,7 @@ function getContinueDisplayGames(
   manualGames: Array<{ id: string; title: string; libraryId?: string }>,
   sessions: Record<string, { appId?: string; gameKey?: string; state: string }>,
   excludeAppId?: string,
+  maxItems?: number,
 ): DashboardDisplayGame[] {
   const runningAppIds = new Set(
     Object.values(sessions)
@@ -73,7 +75,7 @@ function getContinueDisplayGames(
     return b.totalPlaytimeSeconds - a.totalPlaytimeSeconds;
   });
 
-  return result.slice(0, 10);
+  return result.slice(0, maxItems ?? 10);
 }
 
 function formatLastPlayed(ts: number | null): string | null {
@@ -87,7 +89,7 @@ function formatLastPlayed(ts: number | null): string | null {
   return new Date(ts * 1000).toLocaleDateString();
 }
 
-export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAppId }: Props) {
+export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAppId, maxItems }: Props) {
   const { sessions } = useGameSession();
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
@@ -101,8 +103,9 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
       manualGames,
       sessions,
       excludeAppId,
+      maxItems,
     ),
-    [snapshot, manualGames, sessions, excludeAppId],
+    [snapshot, manualGames, sessions, excludeAppId, maxItems],
   );
 
   useEffect(() => {

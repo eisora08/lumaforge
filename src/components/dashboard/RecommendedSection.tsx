@@ -27,6 +27,7 @@ import DashboardHorizontalRail from "./DashboardHorizontalRail";
 type Props = {
   onNavigate?: (page: AppPage) => void;
   continuePlayingAppIds: Set<string>;
+  maxItems?: number;
 };
 
 function resolveImageSrc(src: string | undefined): string | undefined {
@@ -36,7 +37,7 @@ function resolveImageSrc(src: string | undefined): string | undefined {
   return src;
 }
 
-export default function RecommendedSection({ onNavigate, continuePlayingAppIds }: Props) {
+export default function RecommendedSection({ onNavigate, continuePlayingAppIds, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
@@ -109,9 +110,9 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
   }, [catalogEntries, catalogLogKey]);
 
   const displayGames = useMemo(() => {
-    const result = getRecommendedWithGlobalFill(libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, 10);
+    const result = getRecommendedWithGlobalFill(libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, maxItems ?? 10);
     return result;
-  }, [libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds]);
+  }, [libraryGames, catalogEntries, favoriteIds, playtimeStore, continuePlayingAppIds, maxItems]);
 
   useEffect(() => {
     for (const game of displayGames) {

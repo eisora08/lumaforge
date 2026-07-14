@@ -20,9 +20,10 @@ type Props = {
   snapshot: StartupSnapshot | null;
   onNavigate?: (page: AppPage) => void;
   excludeAppIds?: string[];
+  maxItems?: number;
 };
 
-export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }: Props) {
+export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
@@ -53,8 +54,8 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds }
       result.push(manualToDisplayGame(fakeLibGame, new Set()));
     }
 
-    return result.slice(0, 10);
-  }, [snapshot, manualGames, favoriteIds, excludeAppIds]);
+    return result.slice(0, maxItems ?? 10);
+  }, [snapshot, manualGames, favoriteIds, excludeAppIds, maxItems]);
 
   useEffect(() => {
     for (const game of displayGames) {

@@ -20,6 +20,7 @@ import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
+  maxItems?: number;
 };
 
 const TOOL_KEYWORDS = [
@@ -40,7 +41,7 @@ function resolveBestMedia(game: NormalizedCatalogGame): string | null {
   return game.media.capsuleImageV5 || game.media.headerImage || game.media.libraryHeroImage || game.media.capsuleImage || game.media.backgroundImage || null;
 }
 
-export default function FeaturedPicksSection({ onNavigate }: Props) {
+export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [entries, setEntries] = useState<NormalizedCatalogGame[]>(() => getCachedCatalog());
@@ -98,8 +99,8 @@ export default function FeaturedPicksSection({ onNavigate }: Props) {
     const withMedia = filtered.filter((g) => resolveBestMedia(g));
     const withoutMedia = filtered.filter((g) => !resolveBestMedia(g));
     const sorted = [...withMedia, ...withoutMedia];
-    return sorted.slice(0, 10);
-  }, [entries, status, libraryAppIds]);
+    return sorted.slice(0, maxItems ?? 10);
+  }, [entries, status, libraryAppIds, maxItems]);
 
   // Change-only diagnostic
   const featLogRef = useRef<string>("");

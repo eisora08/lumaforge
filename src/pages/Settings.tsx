@@ -38,6 +38,7 @@ import ProviderSettingsCard from "../components/settings/ProviderSettingsCard";
 import HubcapProviderBadges from "../components/settings/HubcapProviderBadges";
 import SettingsSection from "../components/settings/SettingsSection";
 import CardLayoutEditor from "../components/settings/CardLayoutEditor";
+import HomeLayoutEditor from "../components/settings/HomeLayoutEditor";
 import CollectionsSection from "../components/settings/CollectionsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
@@ -350,6 +351,8 @@ export default function Settings() {
 
             {activeSection === "library" && (
               <>
+                <HomeLayoutEditor />
+
                 <CardLayoutEditor />
 
                 <SettingsSection

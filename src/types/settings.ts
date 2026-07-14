@@ -63,6 +63,15 @@ export type AppSettings = {
   cardCornerRadius: number;
   hideCardLabels: boolean;
 
+  // ── Dashboard Home Layout ──────────────────────────────────────────
+  dashboardHeroEnabled: boolean;
+  dashboardHeroAutoRotate: boolean;
+  dashboardHeroRotateSeconds: number;
+  dashboardSectionVisibility: Record<string, boolean>;
+  dashboardSectionLimits: Record<string, number>;
+  dashboardDeferredRendering: boolean;
+  dashboardInitialVisibleSections: number;
+
   mediaCacheProfile: "minimal" | "playnite-balanced" | "full";
 
   gameScanFolders: string[];
