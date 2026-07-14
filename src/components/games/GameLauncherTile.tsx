@@ -63,7 +63,7 @@ import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import GameEditDialog from "./GameEditDialog";
-import { removeManualGame } from "../../services/manualGameStore";
+import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -809,23 +809,24 @@ export default function GameLauncherTile({
                   icon: <Image className="h-3.5 w-3.5" />,
                   onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); },
                 },
-                ...(game.source === "manual"
-                  ? [{
-                      label: "Delete Manual Game",
-                      icon: <Trash2 className="h-3.5 w-3.5" />,
-                      destructive: true as const,
-                      onClick: () => {
-                        setMenuOpen(false);
-                        if (game.appId) {
-                          try {
-                            removeManualGame(game.appId);
-                            showSuccess(`"${game.title ?? game.appId}" deleted`);
-                          } catch (e) {
-                            showError(`Failed to delete: ${e}`);
+                    ...(game.source === "manual"
+                    ? [{
+                        label: "Delete Manual Game",
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        onClick: () => {
+                          setMenuOpen(false);
+                          const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+                          if (rawId) {
+                            try {
+                              removeManualGame(rawId);
+                              showSuccess(`"${game.title ?? rawId}" deleted from library`);
+                            } catch (e) {
+                              showError(`Failed to delete: ${e}`);
+                            }
                           }
-                        }
-                      },
-                    }]
+                        },
+                      }]
                   : []),
                 ...(hasPendingUninstall
                   ? [{

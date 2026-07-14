@@ -1529,6 +1529,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           onClose={() => setOptionsOpen(false)}
           onOpenSearch={() => { setOptionsOpen(false); onSearchOpen?.(); }}
           onPlayGame={(g) => { setOptionsOpen(false); onPlayGame?.(g); }}
+          onRemoveManual={() => { setOptionsOpen(false); onClose(); }}
           onAction={handleConsoleAction}
           inDetails={true}
           inputHints={settings.inputHints}

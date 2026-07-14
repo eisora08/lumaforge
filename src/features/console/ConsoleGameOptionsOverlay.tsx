@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import {
-  Play, Square, Heart, Eye, Search, Edit, RefreshCw, ExternalLink, Copy, ArrowLeft,
+  Play, Square, Heart, Eye, Search, Edit, RefreshCw, ExternalLink, Copy, ArrowLeft, Trash2,
 } from "lucide-react";
 import type { LibraryGame } from "../../types/libraryGame";
 import type { ConsoleInputHintStyle } from "./consoleSettings";
@@ -9,9 +9,10 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamep
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { focusGameWindow } from "../../services/tauri";
-import { showError } from "../../components/toast/GameToast";
+import { showError, showSuccess } from "../../components/toast/GameToast";
 import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
+import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import {
   getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel,
 } from "./consoleGameActions";
@@ -26,12 +27,13 @@ type Props = {
   onOpenSearch?: () => void;
   onPlayGame?: (game: LibraryGame) => void;
   onAction?: (action: ConsolePrimaryAction) => void;
+  onRemoveManual?: (game: LibraryGame) => void;
   inDetails: boolean;
   inputHints: ConsoleInputHintStyle;
 };
 
 export default function ConsoleGameOptionsOverlay({
-  game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, onAction, inDetails, inputHints,
+  game, open, onClose, onOpenDetails, onOpenSearch, onPlayGame, onAction, onRemoveManual, inDetails, inputHints,
 }: Props) {
   const { favoriteIds, toggleFavorite } = useFavorites();
   const sessionCtx = useGameSession();
@@ -48,6 +50,7 @@ export default function ConsoleGameOptionsOverlay({
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── Enter animation ── */
@@ -65,6 +68,7 @@ export default function ConsoleGameOptionsOverlay({
   useEffect(() => {
     setFocusIndex(0);
     setToastMsg(null);
+    setConfirmDelete(false);
   }, [game?.appId || game?.id]);
 
   const showToast = useCallback((msg: string) => {
@@ -273,6 +277,33 @@ export default function ConsoleGameOptionsOverlay({
       },
     });
 
+    if (game.source === "manual") {
+      if (confirmDelete) {
+        list.push({
+          id: "confirm-remove",
+          label: "Confirm Remove",
+          icon: Trash2,
+          action: () => {
+            const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+            if (rawId) {
+              removeManualGame(rawId);
+              showSuccess(`"${game.title ?? rawId}" removed from library`);
+            }
+            onRemoveManual?.(game);
+            onClose();
+          },
+          highlight: true,
+        });
+      } else {
+        list.push({
+          id: "remove-manual",
+          label: "Remove from Library",
+          icon: Trash2,
+          action: () => { setConfirmDelete(true); },
+        });
+      }
+    }
+
     list.push({
       id: "back",
       label: "Back",
@@ -281,7 +312,7 @@ export default function ConsoleGameOptionsOverlay({
     });
 
     return list;
-  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame, onAction, isLaunching, isRunning, isStopping, gameSession, sessionCtx, actionModel]);
+  }, [isFav, inDetails, onOpenDetails, game, handleFavToggle, showToast, onClose, onPlayGame, onAction, onRemoveManual, isLaunching, isRunning, isStopping, gameSession, sessionCtx, actionModel, confirmDelete]);
 
   /* ── Clamp focus index after rows change ── */
   useEffect(() => {

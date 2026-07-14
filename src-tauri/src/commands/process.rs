@@ -274,6 +274,42 @@ pub fn get_file_metadata(path: String) -> FileMetadata {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileFilter {
+  pub name: String,
+  pub extensions: Vec<String>,
+}
+
+#[tauri::command]
+pub fn pick_file(title: Option<String>, filters: Option<Vec<FileFilter>>) -> Result<Option<String>, String> {
+  let mut dialog = rfd::FileDialog::new();
+  if let Some(t) = title {
+    dialog = dialog.set_title(&t);
+  }
+  if let Some(f) = filters {
+    for fl in &f {
+      let exts: Vec<&str> = fl.extensions.iter().map(|s| s.as_str()).collect();
+      dialog = dialog.add_filter(&fl.name, &exts);
+    }
+  }
+  match dialog.pick_file() {
+    Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+    None => Ok(None),
+  }
+}
+
+#[tauri::command]
+pub fn pick_folder(title: Option<String>) -> Result<Option<String>, String> {
+  let mut dialog = rfd::FileDialog::new();
+  if let Some(t) = title {
+    dialog = dialog.set_title(&t);
+  }
+  match dialog.pick_folder() {
+    Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+    None => Ok(None),
+  }
+}
+
 #[tauri::command]
 pub fn focus_game_window(pid: u32) -> Result<(), String> {
     unsafe {

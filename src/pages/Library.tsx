@@ -117,9 +117,9 @@ export default function LibraryPage({ onNavigate }: Props) {
     return result;
   }, [displayGames, filter, sort, searchQuery]);
 
-  const PAGE_SIZES = [12, 24, 36, 48] as const;
+  const PAGE_SIZES = [22, 34, 44] as const;
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number>(24);
+  const [pageSize, setPageSize] = useState<number>(22);
 
   useEffect(() => {
     setCurrentPage(1);

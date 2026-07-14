@@ -5,6 +5,21 @@ import type { ManualGameEntry } from "./manualGameStore";
 const DEBUG_MANUAL_COVER = false;
 
 /**
+ * Returns true if the path looks like a full absolute path (contains a directory separator).
+ * Bare filenames like "GTAIV.exe" return false — they cannot be launched reliably.
+ */
+function isAbsolutePath(p: string | undefined): boolean {
+  if (!p) return false;
+  const t = p.trim();
+  if (!t) return false;
+  // Windows absolute: C:\..., \\server\share
+  if (/^[A-Za-z]:[\\/]/.test(t) || /^\\\\/.test(t)) return true;
+  // Unix absolute: /home/...
+  if (t.startsWith("/")) return true;
+  return false;
+}
+
+/**
  * Builds a synthetic SteamAppMetadata from ManualGameEntry fields.
  * Uses app_id=0 (invalid but non-null) so consumers can detect manual games
  * via `game.source === "manual"` while still accessing `game.metadata.*`.
@@ -110,7 +125,7 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
 
     metadata,
 
-    isPlayable: !!entry.executablePath,
+    isPlayable: isAbsolutePath(entry.executablePath),
     isInstallable: false,
     steamInstalled: false,
 

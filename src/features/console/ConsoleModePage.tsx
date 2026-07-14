@@ -201,7 +201,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][REQUEST] appid=${game.appId ?? "manual"} title=${game.title} primaryAction=${primaryAction}`);
 
     const toastId = `console-launch-${game.appId ?? game.id}`;
-    if (game.appId) pendingLaunchToastRef.current.set(game.appId, toastId);
+    pendingLaunchToastRef.current.set(gameKey, toastId);
     toast.loading(`Launching ${game.title}…`, { id: toastId, duration: 30000 });
 
     try {
@@ -209,7 +209,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       await session.launchGame(game);
     } catch (err) {
       if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAIL] appid=${game.appId ?? "manual"} error=${err}`);
-      if (game.appId) pendingLaunchToastRef.current.delete(game.appId);
+      pendingLaunchToastRef.current.delete(gameKey);
       toast.dismiss(toastId);
       showError(`Could not launch ${game.title}`, { title: "Launch failed" });
     }
@@ -219,20 +219,19 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   useEffect(() => {
     const pending = pendingLaunchToastRef.current;
     if (pending.size === 0) return;
-    for (const [appId, toastId] of pending) {
-      const gameKey = `app-${appId}`;
+    for (const [gameKey, toastId] of pending) {
       const state = session.getState(gameKey);
       if (state === "running") {
-        if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][RUNNING_DETECTED] appid=${appId}`);
+        if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][RUNNING_DETECTED] gameKey=${gameKey}`);
         const game = currentFocusedGameRef.current;
-        pending.delete(appId);
+        pending.delete(gameKey);
         toast.dismiss(toastId);
         showSuccess(`${game?.title ?? "Game"} is running`, { title: "Game launched", duration: 3500 });
       } else if (state === "idle") {
         const existingSession = session.getSession(gameKey);
-        if (!existingSession && pending.has(appId)) {
-          if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAILED] appid=${appId} reason=session-cleared`);
-          pending.delete(appId);
+        if (!existingSession && pending.has(gameKey)) {
+          if (DEBUG_CONSOLE_PLAY) console.log(`[CONSOLE_PLAY][LAUNCH_FAILED] gameKey=${gameKey} reason=session-cleared`);
+          pending.delete(gameKey);
           toast.dismiss(toastId);
           showError(`Could not launch the game`, { title: "Launch failed" });
         }
@@ -674,6 +673,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onOpenDetails={handleOverlayOpenDetails}
           onOpenSearch={() => { setOptionsGame(null); setSearchOpen(true); }}
           onPlayGame={(g) => { setOptionsGame(null); handleConsolePlay(g); }}
+          onRemoveManual={() => { setOptionsGame(null); if (detailGame) setDetailGame(null); }}
           inDetails={false}
           inputHints={consoleSettings.inputHints}
         />

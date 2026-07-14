@@ -212,6 +212,8 @@ pub fn run() {
             commands::installed_games_registry::write_installed_games_registry,
             commands::process::file_exists,
             commands::process::get_file_metadata,
+            commands::process::pick_file,
+            commands::process::pick_folder,
             commands::desktop::open_folder,
             commands::desktop::open_app_data,
             commands::desktop::open_logs,

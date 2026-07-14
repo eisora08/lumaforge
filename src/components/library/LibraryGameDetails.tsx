@@ -36,6 +36,7 @@ import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/ta
 import type { GameAppInfo } from "../../services/gameCacheService";
 import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 import { showInfo } from "../toast/GameToast";
+import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
@@ -1450,6 +1451,21 @@ export default function LibraryGameDetails({
                         />
                       )}
                       <div className="border-t border-(--surface-active-border) my-1" />
+                      {game.source === "manual" && (
+                        <DropdownItem
+                          label="Remove from Library"
+                          destructive
+                          onClick={() => {
+                            setShowActions(false);
+                            const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+                            if (rawId && window.confirm(`Remove "${game.title}" from your library?`)) {
+                              removeManualGame(rawId);
+                              showInfo(`"${game.title ?? rawId}" removed from library`);
+                              onBack();
+                            }
+                          }}
+                        />
+                      )}
                       <DropdownItem
                         label="Edit Game Details"
                         onClick={() => {
@@ -2398,11 +2414,13 @@ function DropdownItem({
   label,
   subtitle,
   disabled,
+  destructive,
   onClick,
 }: {
   label: string;
   subtitle?: string;
   disabled?: boolean;
+  destructive?: boolean;
   onClick?: () => void;
 }) {
   return (
@@ -2413,7 +2431,9 @@ function DropdownItem({
       className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
         disabled
           ? "cursor-not-allowed text-(--color-muted)/40"
-          : "cursor-pointer text-(--color-text) hover:bg-white/5"
+          : destructive
+            ? "cursor-pointer text-rose-400 hover:bg-rose-400/10"
+            : "cursor-pointer text-(--color-text) hover:bg-white/5"
       }`}
     >
       <span className="flex-1">{label}</span>

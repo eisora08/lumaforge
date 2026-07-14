@@ -1899,6 +1899,22 @@ export async function getFileMetadata(path: string): Promise<FileMetadata> {
   return await invoke<FileMetadata>("get_file_metadata", { path });
 }
 
+export interface FileFilter {
+  name: string;
+  extensions: string[];
+}
+
+export async function pickFile(
+  title?: string,
+  filters?: FileFilter[],
+): Promise<string | null> {
+  return await invoke<string | null>("pick_file", { title, filters });
+}
+
+export async function pickFolder(title?: string): Promise<string | null> {
+  return await invoke<string | null>("pick_folder", { title });
+}
+
 // --- Provider Status Cache (sidecar JSON) ---
 
 export interface ProviderStatusLocal {

@@ -37,6 +37,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 dirs = "5"
 urlencoding = "2.1"
 notify = { version = "6", features = [] }
+rfd = "0.15"
 
 windows = { version = "0.57", features = [
     "Win32_System_Com",

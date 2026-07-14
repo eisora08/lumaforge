@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import type { GameMediaPaths, GameAppInfo } from "../../services/tauri";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getGameAppInfo, resolveSteamGridDbArtwork, searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId, openGameMetadataFolder, openGameMediaFolder, openFolder, resolveSteamStoreSearch, openProviderMediaFolder } from "../../services/tauri";
+import { getGameAppInfo, resolveSteamGridDbArtwork, searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId, openGameMetadataFolder, openGameMediaFolder, openFolder, resolveSteamStoreSearch, openProviderMediaFolder, pickFile, pickFolder } from "../../services/tauri";
 import { updateGameAppinfoMediaIfChanged, saveGameMediaFile, persistGameAppInfo, clearSessionAppInfoCache, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
 import { createMediaAdapter } from "../../services/mediaAdapter";
 import { invalidateResolvedMediaCache, refreshGameDetailsArtwork } from "../../services/gameCacheService";
@@ -193,7 +193,6 @@ export default function GameEditDialog({
   const [workingDirectoryDraft, setWorkingDirectoryDraft] = useState("");
   const [launchArgsDraft, setLaunchArgsDraft] = useState("");
   const [installDirDraft, setInstallDirDraft] = useState("");
-  const exeFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ── Editable field drafts (loaded from userData on mount) ──
   const [nameDraft, setNameDraft] = useState("");
@@ -583,29 +582,25 @@ export default function GameEditDialog({
     }
   }, [appId, manualGameId, isManualMode]);
 
-  const handleBrowseExe = useCallback(() => {
-    exeFileInputRef.current?.click();
-  }, []);
-
-  const handleExeFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const path = (file as unknown as { path?: string }).path ?? file.name;
-    setExecutablePathDraft(path);
+  const handleBrowseExe = useCallback(async () => {
+    const fullPath = await pickFile("Select Executable", [
+      { name: "Executables", extensions: ["exe", "bat", "cmd", "lnk", "msi"] },
+    ]);
+    if (!fullPath) return;
+    setExecutablePathDraft(fullPath);
     if (!workingDirectoryDraft.trim()) {
-      const parentDir = path.includes("/") || path.includes("\\")
-        ? path.replace(/[\\/][^/\\]+$/, "")
+      const parentDir = fullPath.includes("/") || fullPath.includes("\\")
+        ? fullPath.replace(/[\\/][^/\\]+$/, "")
         : "";
       if (parentDir) setWorkingDirectoryDraft(parentDir);
     }
     if (!installDirDraft.trim()) {
-      const parentDir = path.includes("/") || path.includes("\\")
-        ? path.replace(/[\\/][^/\\]+$/, "")
+      const parentDir = fullPath.includes("/") || fullPath.includes("\\")
+        ? fullPath.replace(/[\\/][^/\\]+$/, "")
         : "";
       if (parentDir) setInstallDirDraft(parentDir);
     }
     setHasEdits(true);
-    e.target.value = "";
   }, [workingDirectoryDraft, installDirDraft]);
 
   const handleOpenInstallFolder = useCallback(async () => {
@@ -656,10 +651,10 @@ export default function GameEditDialog({
           ageRating: ageRatingDraft || undefined,
           region: regionDraft || undefined,
           completionStatus: completionStatusDraft || undefined,
-          executablePath: executablePathDraft.trim() || undefined,
-          workingDirectory: workingDirectoryDraft.trim() || undefined,
+          executablePath: executablePathDraft.trim().replace(/^["']|["']$/g, "") || undefined,
+          workingDirectory: workingDirectoryDraft.trim().replace(/^["']|["']$/g, "") || undefined,
           launchArguments: launchArgsDraft.trim() || undefined,
-          installDir: installDirDraft.trim() || undefined,
+          installDir: installDirDraft.trim().replace(/^["']|["']$/g, "") || undefined,
           linkedIgdbId: linkedIgdbIdDraft || undefined,
           coverPath: freshMediaEntry?.coverPath,
           landscapePath: freshMediaEntry?.landscapePath,
@@ -1710,15 +1705,6 @@ export default function GameEditDialog({
 
     return (
       <div className="space-y-5">
-        {/* Hidden file input for Browse EXE */}
-        <input
-          ref={exeFileInputRef}
-          type="file"
-          accept=".exe,.bat,.cmd,.lnk,.msi"
-          className="hidden"
-          onChange={handleExeFileSelected}
-        />
-
         {isManual ? (
           <>
             {/* ── Section: Game Configuration ── */}
@@ -1748,6 +1734,11 @@ export default function GameEditDialog({
                       Browse
                     </button>
                   </div>
+                  {executablePathDraft.trim() && !executablePathDraft.trim().includes("/") && !executablePathDraft.trim().includes("\\") && (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Warning: This looks like a bare filename. Use Browse to select the full path so the game can launch.
+                    </p>
+                  )}
                 </div>
 
                 {/* Working Directory */}
@@ -1763,6 +1754,16 @@ export default function GameEditDialog({
                       placeholder="C:\Path\To\Game"
                       className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
                     />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const folder = await pickFolder("Select Working Directory");
+                        if (folder) { setWorkingDirectoryDraft(folder); setHasEdits(true); }
+                      }}
+                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                    >
+                      Browse
+                    </button>
                   </div>
                   <p className="mt-1 text-[11px] text-(--color-muted)/60">
                     Auto-filled to executable parent folder if empty.
@@ -1796,6 +1797,16 @@ export default function GameEditDialog({
                       placeholder="C:\Games\My Game"
                       className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
                     />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const folder = await pickFolder("Select Install Folder");
+                        if (folder) { setInstallDirDraft(folder); setHasEdits(true); }
+                      }}
+                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                    >
+                      Browse
+                    </button>
                   </div>
                   <p className="mt-1 text-[11px] text-(--color-muted)/60">
                     Auto-filled to executable parent folder if empty.

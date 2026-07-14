@@ -1039,7 +1039,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           }
         } else if (game.source === "manual" && game.executablePath) {
           const exePath = game.executablePath.trim().replace(/^["']|["']$/g, "");
-          const workingDir = game.libraryPath || exePath.substring(0, exePath.lastIndexOf("\\"));
+          const workingDir = game.workingDirectory || game.libraryPath || exePath.substring(0, exePath.lastIndexOf("\\"));
           const args = game.launchArguments
             ? game.launchArguments.trim().split(/\s+/).filter(Boolean)
             : undefined;
