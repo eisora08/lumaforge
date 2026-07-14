@@ -154,6 +154,8 @@ export function computeTotalPlaytime(entry: PlaytimeEntry): number {
 }
 
 /** Look up a playtime entry by appId — tries normalized key then legacy aliases */
+const DEBUG_ACTIVITY = false;
+
 export function getPlaytimeEntryByAppId(appId: string | null | undefined): PlaytimeEntry | null {
   if (!appId) return null;
   if (!cachedStore) return null;
@@ -162,11 +164,11 @@ export function getPlaytimeEntryByAppId(appId: string | null | undefined): Playt
   if (entry) return entry;
   // Legacy aliases
   entry = cachedStore.games[`steam:${appId}`] ?? null;
-  if (entry) { console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam:${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam:${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
   entry = cachedStore.games[`steam-${appId}`] ?? null;
-  if (entry) { console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam-${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=steam-${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
   entry = cachedStore.games[appId] ?? null;
-  if (entry) { console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
+  if (entry) { if (DEBUG_ACTIVITY) console.log(`[ACTIVITY][KEY_MATCH] appid=${appId} matchedKey=${appId} totalSeconds=${entry.totalPlaytimeSeconds}`); return entry; }
   return null;
 }
 

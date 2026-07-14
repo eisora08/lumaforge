@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FolderSearch,
   Gamepad2,
@@ -34,6 +34,11 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
   const [showFilters, setShowFilters] = useState(false);
   const queuedMediaRef = useRef<Set<string>>(new Set());
   const { confirm } = useConfirm();
+
+  const handleOpenGame = useCallback((game: LibraryGame) => {
+    setSelectedGame(game);
+    onNavigate?.("library-game-detail");
+  }, [setSelectedGame, onNavigate]);
 
   async function handleDeleteScript(game: LibraryGame) {
     const script = game.luaScripts[0];
@@ -258,7 +263,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                     key={game.id}
                     game={game}
                     appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
-                    onSelect={(g) => { setSelectedGame(g); onNavigate?.("library-game-detail"); }}
+                    onSelect={handleOpenGame}
                     onPlay={handlePlay}
                     onInstall={handleInstall}
                     onDeleteScript={handleDeleteScript}

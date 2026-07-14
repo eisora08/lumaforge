@@ -84,8 +84,8 @@ export const defaultSettings: AppSettings = {
   dashboardHeroMaxSources: 2,
   dashboardSectionVisibility: {},
   dashboardSectionLimits: {},
-  dashboardDeferredRendering: false,
-  dashboardInitialVisibleSections: 0,
+  dashboardDeferredRendering: true,
+  dashboardInitialVisibleSections: 3,
 
   mediaCacheProfile: "playnite-balanced",
   gameScanFolders: [],

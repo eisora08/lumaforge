@@ -3,6 +3,7 @@ import { Sparkles } from "lucide-react";
 
 const DEBUG_DASH_GLOBAL_MEDIA = false;
 const DEBUG_DASH_FEATURED = false;
+const DEBUG_DASH_SECTION_LOGS = false;
 import type { NormalizedCatalogGame, CatalogStatus } from "../../services/globalCatalogService";
 import {
   subscribeCatalogState,
@@ -77,10 +78,6 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
     if (readyLogRef.current) return;
     if (status === "ready" || status === "unavailable" || status === "empty" || status === "error") {
       readyLogRef.current = true;
-      const state = getCatalogState();
-      console.log(
-        `[DASH][GLOBAL_CATALOG_READY] status=${status} total=${state.total} source=${state.source}`,
-      );
     }
   }, [status]);
 
@@ -122,7 +119,9 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
       if (featLogRef.current !== `skip|${key}`) {
         featLogRef.current = `skip|${key}`;
         const reason = entries.length === 0 ? "no-ready-catalog" : "all-candidates-filtered";
-        console.log(`[DASH][SECTION_SKIP] section=FeaturedPicks reason=${reason} total=${state.total}`);
+        if (DEBUG_DASH_SECTION_LOGS) {
+          console.log(`[DASH][SECTION_SKIP] section=FeaturedPicks reason=${reason} total=${state.total}`);
+        }
       }
       return;
     }
@@ -144,7 +143,9 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
     if (!game.appId) return;
     const libGame = libraryGames.find((g) => g.appId === game.appId);
     const hasMedia = !!resolveBestMedia(game);
-    console.log(`[DASH][GLOBAL_CLICK] section=FeaturedPicks appid=${game.appId} title="${game.title}" inLibrary=${!!libGame} hasMedia=${hasMedia}`);
+    if (DEBUG_DASH_SECTION_LOGS) {
+      console.log(`[DASH][GLOBAL_CLICK] section=FeaturedPicks appid=${game.appId} title="${game.title}" inLibrary=${!!libGame} hasMedia=${hasMedia}`);
+    }
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");

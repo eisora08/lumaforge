@@ -11,12 +11,13 @@ import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
 import NewNoteworthySection from "../components/dashboard/NewNoteworthySection";
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
-import { getCachedSnapshot } from "../services/startupSnapshotService";
+import { getCachedSnapshot, subscribeSnapshotUpdated } from "../services/startupSnapshotService";
+import type { StartupSnapshot } from "../services/startupSnapshotService";
 import { importSnapshotPlaytime } from "../services/playtimeService";
 import { useGameActivity } from "../context/GameActivityContext";
 import { useGameSession } from "../context/GameSessionContext";
 import { useSettings } from "../context/SettingsContext";
-import { subscribeCatalogState, getCatalogState, getCachedCatalog, discoverGlobalCatalog } from "../services/globalCatalogService";
+import { subscribeCatalogState, getCatalogState, discoverGlobalCatalog } from "../services/globalCatalogService";
 import type { AppPage } from "../types/navigation";
 import type { CatalogStatus } from "../services/globalCatalogService";
 
@@ -67,9 +68,9 @@ function DeferredSection({
   if (isVisible) return <>{children}</>;
 
   return (
-    <div ref={sentinelRef} className="min-h-[120px]">
+    <div ref={sentinelRef} className="min-h-[80px]">
       <div className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none">
-        {Array.from({ length: 3 }).map((_, i) => (
+        {Array.from({ length: 2 }).map((_, i) => (
           <div
             key={i}
             className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56 animate-pulse"
@@ -153,11 +154,22 @@ function SectionWrap({
 
 export default function Home({ onNavigate }: Props) {
   countRender("Home");
-  const snapshot = useMemo(() => getCachedSnapshot(), []);
+  const [snapshot, setSnapshot] = useState<StartupSnapshot | null>(() => getCachedSnapshot());
   const { activities } = useGameActivity();
   const { sessions } = useGameSession();
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
   const { settings } = useSettings();
+
+  // Re-read snapshot when it's written/updated (one-shot check after boot)
+  useEffect(() => {
+    return subscribeSnapshotUpdated(() => {
+      const fresh = getCachedSnapshot();
+      setSnapshot((prev) => {
+        if (fresh && (!prev || fresh.updatedAt !== prev.updatedAt)) return fresh;
+        return prev;
+      });
+    });
+  }, []);
 
   const heroEnabled = settings.dashboardHeroEnabled ?? true;
   const deferredRendering = settings.dashboardDeferredRendering ?? false;
@@ -172,7 +184,12 @@ export default function Home({ onNavigate }: Props) {
   }, []);
 
   useEffect(() => {
-    discoverGlobalCatalog().catch(() => {});
+    const idle = () => discoverGlobalCatalog().catch(() => {});
+    if ("requestIdleCallback" in window) {
+      (window as any).requestIdleCallback(idle, { timeout: 5000 });
+    } else {
+      setTimeout(idle, 0);
+    }
   }, []);
 
   const sourceLogRef = useRef(false);
@@ -180,11 +197,6 @@ export default function Home({ onNavigate }: Props) {
     if (sourceLogRef.current) return;
     if (catalogStatus !== "loading") {
       sourceLogRef.current = true;
-      const state = getCatalogState();
-      const normalized = getCachedCatalog();
-      console.log(
-        `[DASH][GLOBAL_CATALOG_SOURCE] source=steamdb.json rawTotal=${state.total} normalizedTotal=${normalized.length}`,
-      );
     }
   }, [catalogStatus]);
 
@@ -192,7 +204,13 @@ export default function Home({ onNavigate }: Props) {
 
   useEffect(() => {
     if (snapshot?.library?.games) {
-      importSnapshotPlaytime(snapshot.library.games).catch(() => {});
+      const games = snapshot.library.games;
+      const idle = () => importSnapshotPlaytime(games).catch(() => {});
+      if ("requestIdleCallback" in window) {
+        (window as any).requestIdleCallback(idle, { timeout: 5000 });
+      } else {
+        setTimeout(idle, 0);
+      }
     }
   }, [snapshot]);
 

@@ -16,6 +16,7 @@ import { getRecommendedWithGlobalFill } from "../../services/recommendationServi
 
 const DEBUG_DASH_RECOMMEND = false;
 const DEBUG_DASH_RECOMMEND_PER_GAME = false;
+const DEBUG_DASH_SECTION_LOGS = false;
 import { useSettings } from "../../context/SettingsContext";
 import { localPathToUrl, deduplicateByAppId, getFavoriteKey } from "../../services/gameCacheService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
@@ -102,11 +103,13 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds, 
     if (catalogEntries.length === 0) return;
     if (catalogLogRef.current === catalogLogKey) return;
     catalogLogRef.current = catalogLogKey;
-    const withMeta = catalogEntries.filter((e) => e.metadataJson && e.metadataJson !== "{}").length;
-    const withInstalled = catalogEntries.filter((e) => e.installed).length;
-    console.log(
-      `[DASH][GLOBAL_CATALOG] total=${catalogEntries.length} withMetadata=${withMeta} installed=${withInstalled}`,
-    );
+    if (DEBUG_DASH_SECTION_LOGS) {
+      const withMeta = catalogEntries.filter((e) => e.metadataJson && e.metadataJson !== "{}").length;
+      const withInstalled = catalogEntries.filter((e) => e.installed).length;
+      console.log(
+        `[DASH][GLOBAL_CATALOG] total=${catalogEntries.length} withMetadata=${withMeta} installed=${withInstalled}`,
+      );
+    }
   }, [catalogEntries, catalogLogKey]);
 
   const displayGames = useMemo(() => {

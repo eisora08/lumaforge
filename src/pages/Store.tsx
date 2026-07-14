@@ -177,7 +177,7 @@ type StoreBadge = {
 
 const METADATA_CONCURRENCY = 5;
 const REVIEW_CONCURRENCY = 3;
-const INITIAL_VISIBLE_COUNT = 80;
+const INITIAL_VISIBLE_COUNT = 40;
 const CATALOG_PAGE_SIZE = 40;
 
 /**
@@ -187,6 +187,8 @@ const CATALOG_PAGE_SIZE = 40;
  */
 const MORE_TO_EXPLORE_MOUNT_LIMIT = 30;
 const SECTION_RAIL_INITIAL_COUNT = 12;
+/** Max catalog entries to score in highQualityPool — avoids processing all 162K+ on every review/metadata change */
+const HIGH_QUALITY_POOL_MAX = 10000;
 const PAGE_SIZE = 30;
 
 
@@ -511,6 +513,15 @@ export default function Store() {
   const { refresh: libraryRefresh } = useLibraryGames();
   const ownershipLookup = useGameOwnershipLookup();
 
+  const pendingAppIdRef = useRef<string | null>(null);
+
+  // Defer heavy Tauri invokes (metadata batch, review batch, lua scan) until after first paint
+  const [storeFirstPaintDone, setStoreFirstPaintDone] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setStoreFirstPaintDone(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   const refreshInstalledScripts = useCallback(async () => {
     if (!settings.luaPath) {
       setInstalledScripts([]);
@@ -527,11 +538,10 @@ export default function Store() {
   }, [settings.luaPath]);
 
   useEffect(() => {
+    if (!storeFirstPaintDone) return;
     refreshInstalledScripts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.luaPath]);
-
-  const pendingAppIdRef = useRef<string | null>(null);
+  }, [settings.luaPath, storeFirstPaintDone]);
 
   // Load persisted discovery index from disk on mount
   const indexLoadedRef = useRef(false);
@@ -540,7 +550,7 @@ export default function Store() {
     indexLoadedRef.current = true;
     loadDiscoveryIndexFromDisk().then((loaded) => {
       if (loaded && !_mountedRef.current) return;
-      if (loaded) {
+      if (loaded && DEBUG_STORE_RENDER_VERBOSE) {
         console.log(`[STORE][DISCOVERY_INDEX_DISK_LOAD] version=${loaded.version} topPicks=${loaded.sections.topPicks.length} featured=${loaded.sections.featured.length}`);
       }
     }).catch(() => {});
@@ -772,7 +782,11 @@ export default function Store() {
     }
 
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] highQualityPool catalogSize=${rankedSteamCatalog.length}`);
-    return rankedSteamCatalog.map((entry) => {
+    // Cap to HIGH_QUALITY_POOL_MAX entries — scoring all 162K+ is wasteful
+    const candidates = rankedSteamCatalog.length > HIGH_QUALITY_POOL_MAX
+      ? rankedSteamCatalog.slice(0, HIGH_QUALITY_POOL_MAX)
+      : rankedSteamCatalog;
+    return candidates.map((entry) => {
       const id = String(entry.appid);
       const appIdNum = entry.appid;
       const overlay = providerOverlayByAppId[id];
@@ -1907,6 +1921,7 @@ export default function Store() {
 
   // Only reload metadata when the key actually changes
   useEffect(() => {
+    if (!storeFirstPaintDone) return;
     if (visibleAppIdsKey === appIdScopeKeyRef.current) return;
     appIdScopeKeyRef.current = visibleAppIdsKey;
 
@@ -1981,7 +1996,7 @@ export default function Store() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleAppIdsKey]);
+  }, [visibleAppIdsKey, storeFirstPaintDone]);
 
   // Persist metadata to module-level cache so it survives mount/unmount
   useEffect(() => {
@@ -1992,6 +2007,7 @@ export default function Store() {
 
   // Smart preload: proactively load metadata for upcoming items
   useEffect(() => {
+    if (!storeFirstPaintDone) return;
     const preloadIds: number[] = [];
 
     // Top scored games from high quality pool
@@ -2034,6 +2050,7 @@ export default function Store() {
   // Re-runs when metadata loads so URLs become available for cached Discover sections.
   // resolveStoreDisplayImage is idempotent — calls for already-cached entries are no-ops.
   useEffect(() => {
+    if (!storeFirstPaintDone) return;
     if (visibleAppIds.length === 0) return;
     if (!_mountedRef.current) return;
     if (isInteractionBusy()) {
@@ -2071,6 +2088,7 @@ export default function Store() {
   }, [visibleAppIdsKey, storeMetadataByAppId]);
 
   useEffect(() => {
+    if (!storeFirstPaintDone) return;
     if (visibleAppIdsKey === reviewScopeKeyRef.current) return;
     reviewScopeKeyRef.current = visibleAppIdsKey;
 
@@ -2084,7 +2102,7 @@ export default function Store() {
     async function loadReviewSummaries() {
       const appIdSet = new Set(visibleAppIds);
       const appIdList = Array.from(appIdSet);
-      console.log(`[STORE][REVIEWS_FETCH_START] appids=${JSON.stringify(appIdList)} count=${appIdList.length}`);
+      if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][REVIEWS_FETCH_START] appids=${JSON.stringify(appIdList)} count=${appIdList.length}`);
       try {
         const summaries = await batchedLoad(
           appIdList,
@@ -2094,13 +2112,15 @@ export default function Store() {
 
         if (!cancelled) {
           const resolvedCount = Object.values(summaries).filter((s: SteamReviewSummary) => s.resolved).length;
-          for (const [appId, summary] of Object.entries(summaries)) {
-            const s = summary as SteamReviewSummary;
-            console.log(`[STORE][REVIEWS_FETCH_RESULT] appid=${appId} resolved=${s.resolved} total=${s.total_reviews} score=${s.review_score} label=${s.review_score_desc} pct=${s.positive_percent}`);
+          if (DEBUG_STORE_RENDER_VERBOSE) {
+            for (const [appId, summary] of Object.entries(summaries)) {
+              const s = summary as SteamReviewSummary;
+              console.log(`[STORE][REVIEWS_FETCH_RESULT] appid=${appId} resolved=${s.resolved} total=${s.total_reviews} score=${s.review_score} label=${s.review_score_desc} pct=${s.positive_percent}`);
+            }
           }
           setReviewSummaryByAppId(summaries);
           setReviewVersion((v) => v + 1);
-          console.log(`[STORE][REVIEWS_FETCH_DONE] count=${Object.keys(summaries).length} resolved=${resolvedCount}`);
+          if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][REVIEWS_FETCH_DONE] count=${Object.keys(summaries).length} resolved=${resolvedCount}`);
         }
       } catch (error) {
         console.error(error);
@@ -2117,7 +2137,7 @@ export default function Store() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleAppIdsKey]);
+  }, [visibleAppIdsKey, storeFirstPaintDone]);
 
   // Part 8: Dedicated review fetch for the selected detail game.
   // Ensures the details page gets review data even if the main batch didn't include it yet.

@@ -9,6 +9,7 @@ import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId, resolvePlaytimeKey
 import { resolveGameMediaUrl, resolveProviderMediaPreviewUrl, resolveDashboardTitles, isPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 
 const DEBUG_NAME_HERO = false;
+const DEBUG_HERO_LOGS = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showInfo, showWarning } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
@@ -443,21 +444,25 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   : "last-resort"))))));
     if (prevHeroRef.current !== displayId) {
       prevHeroRef.current = displayId || null;
-      console.log(`[DASH][HERO_SELECT] running=${displayId && sessionKey ? displayId : null} selected=${displayId || "empty"} reason=${reason}`);
+      if (DEBUG_HERO_LOGS) {
+        console.log(`[DASH][HERO_SELECT] running=${displayId && sessionKey ? displayId : null} selected=${displayId || "empty"} reason=${reason}`);
+      }
     }
   }, [heroAppId, heroGame, sessionKey, favoriteIds, heroManualGame]);
 
   useEffect(() => {
     const displayId = heroManualGame?.libraryId || heroAppId;
     if (isRunning && displayId) {
-      if (prevRunningRef.current !== displayId) {
+      if (prevRunningRef.current !== displayId && DEBUG_HERO_LOGS) {
         console.log(`[DASH][HERO_RUNNING] appid=${displayId} running=true focused=true`);
       }
       prevRunningRef.current = displayId;
     }
     if (!isRunning && prevRunningRef.current != null) {
       const wasAppId = prevRunningRef.current;
-      console.log(`[DASH][HERO_CLEAR_RUNNING] appid=${wasAppId} reason=process-ended`);
+      if (DEBUG_HERO_LOGS) {
+        console.log(`[DASH][HERO_CLEAR_RUNNING] appid=${wasAppId} reason=process-ended`);
+      }
       prevRunningRef.current = null;
     }
     if (!isRunning && !displayId) {

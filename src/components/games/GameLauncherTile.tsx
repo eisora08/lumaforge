@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender } from "../../services/perfCounters";
 import {
   Download,
@@ -104,7 +104,22 @@ function getCardImage(
 
 const DEBUG_MANUAL_REMOVE = false;
 
-export default function GameLauncherTile({
+function areGameLauncherTilePropsEqual(prev: GameLauncherTileProps, next: GameLauncherTileProps): boolean {
+  return (
+    prev.game === next.game &&
+    prev.appInfoEntry === next.appInfoEntry &&
+    prev.onSelect === next.onSelect &&
+    prev.onPlay === next.onPlay &&
+    prev.onInstall === next.onInstall &&
+    prev.onDeleteScript === next.onDeleteScript
+  );
+}
+
+const MemoizedGameLauncherTile = React.memo(GameLauncherTileInner, areGameLauncherTilePropsEqual);
+
+export default MemoizedGameLauncherTile;
+
+function GameLauncherTileInner({
   game,
   appInfoEntry,
   onSelect,

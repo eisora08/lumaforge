@@ -3,6 +3,7 @@ import { Sparkles } from "lucide-react";
 
 const DEBUG_DASH_GLOBAL_MEDIA = false;
 const DEBUG_DASH_NEW = false;
+const DEBUG_DASH_SECTION_LOGS = false;
 import type { NormalizedCatalogGame, CatalogStatus } from "../../services/globalCatalogService";
 import {
   subscribeCatalogState,
@@ -75,7 +76,9 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
           releaseTimestamp: g.releaseTimestamp,
           isNew: g.isNew,
         }));
-        console.log("[DASH][CATALOG_NORMALIZE_SAMPLE]", JSON.stringify(sample));
+        if (DEBUG_DASH_SECTION_LOGS) {
+          console.log("[DASH][CATALOG_NORMALIZE_SAMPLE]", JSON.stringify(sample));
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -152,7 +155,9 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
     if (!game.appId) return;
     const libGame = libraryGames.find((g) => g.appId === game.appId);
     const hasMedia = !!resolveBestMedia(game);
-    console.log(`[DASH][GLOBAL_CLICK] section=NewNoteworthy appid=${game.appId} title="${game.title}" inLibrary=${!!libGame} hasMedia=${hasMedia}`);
+    if (DEBUG_DASH_SECTION_LOGS) {
+      console.log(`[DASH][GLOBAL_CLICK] section=NewNoteworthy appid=${game.appId} title="${game.title}" inLibrary=${!!libGame} hasMedia=${hasMedia}`);
+    }
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");

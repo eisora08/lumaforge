@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -361,10 +361,10 @@ export default function LibraryPage({ onNavigate }: Props) {
   const showLuaSetup = !hasLuaPath;
   const hasLuaGames = games.some((g) => g.hasLua);
 
-  function handleOpenGame(game: LibraryGame) {
+  const handleOpenGame = useCallback((game: LibraryGame) => {
     setSelectedGame(game);
     onNavigate?.("library-game-detail");
-  }
+  }, [setSelectedGame, onNavigate]);
 
   function handleResetFilters() {
     startTransition(() => {
@@ -508,7 +508,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                             key={game.id}
                             game={game}
                             appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
-                            onSelect={(g) => handleOpenGame(g)}
+                            onSelect={handleOpenGame}
                             onPlay={handlePlay}
                             onInstall={handleInstall}
                             onDeleteScript={handleDeleteScript}

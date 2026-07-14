@@ -2339,9 +2339,9 @@ export async function generateMediaManifest(
 
   // Part 2: In-flight dedup — if a write for this appId is already running, await it
   const existingInFlight = _mediaManifestWriteInFlight.get(appId);
-  if (existingInFlight) {
-    console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=in-flight`);
-    await existingInFlight;
+    if (existingInFlight) {
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=in-flight`);
+      await existingInFlight;
     return;
   }
 
@@ -2360,7 +2360,7 @@ export async function generateMediaManifest(
     const sameLogo = existing.files.logo.path === manifest.files.logo.path && existing.files.logo.exists === manifest.files.logo.exists;
     const sameIcon = existing.files.icon.path === manifest.files.icon.path && existing.files.icon.exists === manifest.files.icon.exists;
     if (sameProvider && sameCover && sameLandscape && sameBackground && sameLogo && sameIcon) {
-      console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=no-content-change`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][MANIFEST_SKIP] appid=${appId} reason=no-content-change`);
       return;
     }
   }
@@ -2497,14 +2497,14 @@ export async function hydrateMediaOnStartup(
         (k) => (normalizedMerged as any)[k] !== (existingNormalized as any)[k],
       );
       if (!hasChange) {
-        console.log(`[MEDIA_HYDRATE][SKIP] appid=${appId} reason=already-synced`);
+        if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA_HYDRATE][SKIP] appid=${appId} reason=already-synced`);
         continue;
       }
 
       const changedFields = Object.keys(normalizedMerged).filter(
         (k) => (normalizedMerged as any)[k] !== (existingNormalized as any)[k],
       ).length;
-      console.log(`[MEDIA_HYDRATE][WRITE] appid=${appId} changedFields=${changedFields}`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA_HYDRATE][WRITE] appid=${appId} changedFields=${changedFields}`);
 
       // Preserve existing name, remote, and mediaSources
       await updateGameAppinfoMediaIfChanged(
@@ -2520,8 +2520,10 @@ export async function hydrateMediaOnStartup(
       if (merged.iconPath) withIcon++;
       if (merged.logoPath) withLogo++;
       updatedAppInfos++;
-      console.log(`[MEDIA][HYDRATE] appid=${appId} found background=${!!diskPaths.backgroundPath} cover=${!!diskPaths.coverPath} icon=${!!diskPaths.iconPath} landscape=${!!diskPaths.landscapePath} logo=${!!diskPaths.logoPath}`);
-      console.log(`[MEDIA][HYDRATE] appid=${appId} updatedFields=${Object.values(merged).filter(Boolean).length}`);
+      if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
+        console.log(`[MEDIA][HYDRATE] appid=${appId} found background=${!!diskPaths.backgroundPath} cover=${!!diskPaths.coverPath} icon=${!!diskPaths.iconPath} landscape=${!!diskPaths.landscapePath} logo=${!!diskPaths.logoPath}`);
+        console.log(`[MEDIA][HYDRATE] appid=${appId} updatedFields=${Object.values(merged).filter(Boolean).length}`);
+      }
       // Update MediaIndex
       const entry = getMediaEntry(appId);
       if (entry) {

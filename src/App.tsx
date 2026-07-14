@@ -66,7 +66,7 @@ function restoreActivePage(): AppPage {
   return "home";
 }
 
-const NAV_PERF_ENABLED = true;
+const NAV_PERF_ENABLED = false;
 const DEBUG_ROUTE_RENDER = false;
 const DEBUG_ROUTE_SHELL = false;
 
@@ -136,7 +136,9 @@ function App() {
       localStorage.setItem(ACTIVE_PAGE_KEY, activePage);
     } catch { /* ignore */ }
     // Phase 1: Mount audit — confirm only the active route's page is mounted
-    console.log(`[ROUTE][MOUNT_AUDIT] active=${activePage} mountedPages=[${activePage}]`);
+    if (DEBUG_ROUTE_RENDER && import.meta.env.DEV) {
+      console.log(`[ROUTE][MOUNT_AUDIT] active=${activePage} mountedPages=[${activePage}]`);
+    }
     // Log render summary on route change
     logRenderSummary(`previousRoute=${prevPageRef.current} nextRoute=${activePage}`);
     startRenderSession();
