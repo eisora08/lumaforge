@@ -1418,3 +1418,36 @@ html[data-compact="true"] .lf-launch-bar {
   pointer-events: none;
   background: rgba(0, 0, 0, 0.06);
 }
+
+/* =========================
+   CARD RADIUS (Settings-driven)
+   Applied via --card-radius CSS variable.
+   Falls back to hardcoded Tailwind values when variable is unset.
+========================= */
+
+/* Library grid cards (GameLauncherTile) */
+.lf-game-card,
+.lf-game-card-header,
+.lf-game-card-overlay {
+  border-radius: var(--card-radius, 16px) !important;
+}
+
+/* Dashboard horizontal-scroll section cards (rounded-xl default) */
+.lf-dash-card {
+  border-radius: var(--card-radius, 12px) !important;
+}
+
+/* Store PackageCard */
+.lf-store-card {
+  border-radius: var(--card-radius, 16px) !important;
+}
+
+/* =========================
+   CARD LABELS (Settings-driven)
+   Applied via --card-label-display CSS variable.
+   Hides card title text below artwork.
+========================= */
+
+[data-card-label="hidden"] .lf-card-title {
+  display: none !important;
+}

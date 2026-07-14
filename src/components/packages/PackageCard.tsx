@@ -462,7 +462,7 @@ function PackageCardRaw({
               handleOpenDetails();
             }
           }}
-          className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
+          className="lf-store-card group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
         >
           <div className="relative w-full shrink-0 overflow-hidden">
             {displayImageUrl && !imageFailed ? (
@@ -520,7 +520,7 @@ function PackageCardRaw({
           </div>
 
           <div className="flex min-h-[60px] flex-col justify-center p-2.5">
-            <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-(--color-text)">
+            <h3 className="lf-card-title line-clamp-2 text-sm font-semibold leading-snug text-(--color-text)">
               {displayTitle}
             </h3>
 
@@ -563,7 +563,7 @@ function PackageCardRaw({
             handleOpenDetails();
           }
         }}
-        className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
+        className="lf-store-card group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
       >
         {displayImageUrl && !imageFailed ? (
           <CardImage
@@ -617,7 +617,7 @@ function PackageCardRaw({
         <div className="absolute inset-0 bg-linear-to-t from-black/85 via-black/20 to-transparent" />
 
         <div className="absolute bottom-0 left-0 right-0 z-10 p-4">
-          <h3 className="line-clamp-1 text-lg font-black text-white drop-shadow">
+          <h3 className="lf-card-title line-clamp-1 text-lg font-black text-white drop-shadow">
             {displayTitle}
           </h3>
         </div>

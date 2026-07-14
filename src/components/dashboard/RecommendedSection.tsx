@@ -236,7 +236,7 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
                     handleOpen(game);
                   }
                 }}
-                className="group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
+                className="lf-dash-card group/card cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]"
               >
                 <div className="relative aspect-video overflow-hidden">
                   {imgSrc ? (
@@ -274,7 +274,7 @@ export default function RecommendedSection({ onNavigate, continuePlayingAppIds }
                 </div>
 
                 <div className="p-3">
-                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                  <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
                   {game.metadata?.genres && game.metadata.genres.length > 0 && (

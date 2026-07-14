@@ -13,14 +13,17 @@ import {
   FolderSearch,
   Gamepad2,
   Cog,
-  LayoutDashboard,
-  Columns3,
   BookOpen,
   MonitorSmartphone,
   Download,
   Database,
   Image,
   Library,
+  Power,
+  Info,
+  ExternalLink,
+  Code,
+  FolderOpen,
 } from "lucide-react";
 
 import {
@@ -34,6 +37,8 @@ import { detectSteamPaths } from "../services/tauri";
 import ProviderSettingsCard from "../components/settings/ProviderSettingsCard";
 import HubcapProviderBadges from "../components/settings/HubcapProviderBadges";
 import SettingsSection from "../components/settings/SettingsSection";
+import CardLayoutEditor from "../components/settings/CardLayoutEditor";
+import CollectionsSection from "../components/settings/CollectionsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
 import SettingsInput from "../components/settings/SettingsInput";
@@ -49,17 +54,21 @@ import { themes, surfaceModes } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
 import { useSettings } from "../context/SettingsContext";
 import { clearIgdbTokenCache } from "../services/igdbAccessTokenService";
+import { openExternalUrl } from "../services/externalLinks";
 
 type SettingsSectionId =
   | "general"
   | "appearance"
   | "library"
+  | "collections"
   | "metadata"
   | "artwork"
   | "manual"
   | "console"
   | "packages"
-  | "advanced";
+  | "advanced"
+  | "startup"
+  | "about";
 
 const navSections: {
   key: SettingsSectionId;
@@ -70,12 +79,15 @@ const navSections: {
   { key: "general", label: "General", icon: <Cog className="h-4 w-4" />, description: "Steam paths and auto-detection" },
   { key: "appearance", label: "Appearance", icon: <Palette className="h-4 w-4" />, description: "Theme, surface and display mode" },
   { key: "library", label: "Library & Sources", icon: <Library className="h-4 w-4" />, description: "Grid, dashboard, detection and notifications" },
+  { key: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, description: "Game grouping and organization" },
   { key: "metadata", label: "Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG, Google and Bing" },
   { key: "artwork", label: "Artwork Providers", icon: <Image className="h-4 w-4" />, description: "SteamGridDB artwork configuration" },
   { key: "manual", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, description: "Manually added games info" },
   { key: "console", label: "Console Mode", icon: <MonitorSmartphone className="h-4 w-4" />, description: "Controller-friendly interface" },
   { key: "packages", label: "Downloads / Packages", icon: <Download className="h-4 w-4" />, description: "Multi-provider package sources" },
+  { key: "startup", label: "Startup & Behavior", icon: <Power className="h-4 w-4" />, description: "Launch mode and window behavior" },
   { key: "advanced", label: "Advanced", icon: <SlidersHorizontal className="h-4 w-4" />, description: "Maintenance, logs and import/export" },
+  { key: "about", label: "About", icon: <Info className="h-4 w-4" />, description: "Version, license and attributions" },
 ];
 
 export default function Settings() {
@@ -338,295 +350,7 @@ export default function Settings() {
 
             {activeSection === "library" && (
               <>
-                <SettingsSection
-                  title="Dashboard Layout"
-                  description="Adjust card sizes, spacing and width for the Home dashboard."
-                >
-                  <div className="space-y-4">
-                    <div className="mb-2 flex items-center gap-2 text-sm text-(--color-accent)">
-                      <LayoutDashboard className="h-4 w-4" />
-                      Dashboard
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Content max width
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.dashboardContentWidth}px — max width of dashboard content area
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">1200</span>
-                        <input
-                          type="range"
-                          min={1200}
-                          max={2400}
-                          step={40}
-                          value={settings.dashboardContentWidth}
-                          onChange={(e) => updateSetting("dashboardContentWidth", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">2400</span>
-                      </div>
-                    </div>
-
-                    <ToggleOption
-                      label="Expanded dashboard"
-                      description="Remove content max-width so dashboard fills the full window width."
-                      enabled={settings.useExpandedDashboard}
-                      onChange={(enabled) => updateSetting("useExpandedDashboard", enabled)}
-                    />
-
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Featured card size
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.dashboardFeaturedCardSize}px — Continue Playing cards
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">280</span>
-                        <input
-                          type="range"
-                          min={280}
-                          max={480}
-                          step={10}
-                          value={settings.dashboardFeaturedCardSize}
-                          onChange={(e) => updateSetting("dashboardFeaturedCardSize", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">480</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Standard card size
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.dashboardCardSize}px — all other dashboard section cards
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">200</span>
-                        <input
-                          type="range"
-                          min={200}
-                          max={400}
-                          step={10}
-                          value={settings.dashboardCardSize}
-                          onChange={(e) => updateSetting("dashboardCardSize", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">400</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl border border(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Card gap
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.dashboardGridGap}px — spacing between cards in scroll rows
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">8</span>
-                        <input
-                          type="range"
-                          min={8}
-                          max={48}
-                          step={4}
-                          value={settings.dashboardGridGap}
-                          onChange={(e) => updateSetting("dashboardGridGap", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">48</span>
-                      </div>
-                    </div>
-
-                    <div className="mb-2 mt-6 flex items-center gap-2 text-sm text-(--color-accent)">
-                      <Columns3 className="h-4 w-4" />
-                      Library Landscape
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Landscape card size
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.libraryLandscapeCardSize}px — used when artwork mode is Landscape
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">160</span>
-                        <input
-                          type="range"
-                          min={160}
-                          max={300}
-                          step={5}
-                          value={settings.libraryLandscapeCardSize}
-                          onChange={(e) => updateSetting("libraryLandscapeCardSize", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">300</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Landscape grid gap
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.libraryLandscapeGap}px — spacing between landscape cards
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">16</span>
-                        <input
-                          type="range"
-                          min={16}
-                          max={56}
-                          step={4}
-                          value={settings.libraryLandscapeGap}
-                          onChange={(e) => updateSetting("libraryLandscapeGap", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">56</span>
-                      </div>
-                    </div>
-
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          updateSetting("dashboardContentWidth", 1760);
-                          updateSetting("useExpandedDashboard", false);
-                          updateSetting("dashboardCardSize", 260);
-                          updateSetting("dashboardFeaturedCardSize", 340);
-                          updateSetting("dashboardGridGap", 16);
-                          updateSetting("libraryLandscapeCardSize", 200);
-                          updateSetting("libraryLandscapeGap", 28);
-                          updateSetting("maxLandscapeColumns", 0);
-                        }}
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text)"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Restore display layout defaults
-                      </button>
-                    </div>
-                  </div>
-                </SettingsSection>
-
-                <SettingsSection
-                  title="Biblioteca"
-                  description="Ajusta la visualización de la cuadrícula de juegos."
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Tamaño de tarjeta
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.libraryCardSize}px — ancho mínimo por tarjeta
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">160</span>
-                        <input
-                          type="range"
-                          min={160}
-                          max={280}
-                          step={5}
-                          value={settings.libraryCardSize}
-                          onChange={(e) => updateSetting("libraryCardSize", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">280</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Espaciado entre tarjetas
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.libraryGridGap}px
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">16</span>
-                        <input
-                          type="range"
-                          min={16}
-                          max={48}
-                          step={4}
-                          value={settings.libraryGridGap}
-                          onChange={(e) => updateSetting("libraryGridGap", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">48</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                      <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-(--color-text)">
-                          Ancho del panel de filtros
-                        </label>
-                        <p className="text-xs text-(--color-muted)">
-                          {settings.libraryFilterPanelWidth}px
-                        </p>
-                      </div>
-                      <div className="flex w-36 items-center gap-2">
-                        <span className="text-[11px] text-(--color-muted)/60">240</span>
-                        <input
-                          type="range"
-                          min={240}
-                          max={360}
-                          step={10}
-                          value={settings.libraryFilterPanelWidth}
-                          onChange={(e) => updateSetting("libraryFilterPanelWidth", Number(e.target.value))}
-                          className="w-full accent-(--color-accent)"
-                        />
-                        <span className="text-[11px] text-(--color-muted)/60">360</span>
-                      </div>
-                    </div>
-
-                    <ToggleOption
-                      label="Usar ancho completo"
-                      description="La cuadrícula ocupa todo el ancho disponible en lugar de estar centrada con límite."
-                      enabled={settings.libraryUseFullWidth}
-                      onChange={(enabled) => updateSetting("libraryUseFullWidth", enabled)}
-                    />
-
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          updateSetting("libraryCardSize", 200);
-                          updateSetting("libraryGridGap", 28);
-                          updateSetting("libraryUseFullWidth", true);
-                          updateSetting("libraryFilterPanelWidth", 280);
-                        }}
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text)"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Restaurar diseño de biblioteca
-                      </button>
-                    </div>
-                  </div>
-                </SettingsSection>
+                <CardLayoutEditor />
 
                 <SettingsSection
                   title="Game Detection"
@@ -914,6 +638,10 @@ export default function Settings() {
                   </div>
                 </SettingsSection>
               </>
+            )}
+
+            {activeSection === "collections" && (
+              <CollectionsSection />
             )}
 
             {activeSection === "metadata" && (
@@ -1383,6 +1111,278 @@ export default function Settings() {
                   description="Guarda o restaura tu configuración local de LumaForge."
                 >
                   <SettingsImportExport />
+                </SettingsSection>
+              </>
+            )}
+
+            {activeSection === "startup" && (
+              <>
+                <SettingsSection
+                  title="Startup & Window Behavior"
+                  description="Control how LumaForge starts and how the window behaves."
+                >
+                  <div className="space-y-4">
+                    <div className="mb-2 flex items-center gap-2 text-sm text-(--color-accent)">
+                      <Power className="h-4 w-4" />
+                      Launch Mode
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                      <div className="space-y-0.5">
+                        <label className="text-sm font-medium text-(--color-text)">
+                          Default launch mode
+                        </label>
+                        <p className="text-xs text-(--color-muted)">
+                          Choose which interface opens when LumaForge starts.
+                        </p>
+                      </div>
+                      <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
+                        <button
+                          type="button"
+                          onClick={() => updateSetting("launchMode", "desktop")}
+                          className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
+                            settings.launchMode === "desktop"
+                              ? "bg-(--color-accent) text-black"
+                              : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                          }`}
+                        >
+                          Desktop
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateSetting("launchMode", "console")}
+                          className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
+                            settings.launchMode === "console"
+                              ? "bg-(--color-accent) text-black"
+                              : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                          }`}
+                        >
+                          Console
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                      <div className="space-y-0.5">
+                        <label className="text-sm font-medium text-(--color-text)">
+                          Startup window mode
+                        </label>
+                        <p className="text-xs text-(--color-muted)">
+                          How the main window appears on launch.
+                        </p>
+                      </div>
+                      <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
+                        {(["windowed", "maximized", "fullscreen"] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => updateSetting("startupWindowMode", mode)}
+                            className={`cursor-pointer px-3 py-1.5 text-xs font-medium capitalize transition ${
+                              settings.startupWindowMode === mode
+                                ? "bg-(--color-accent) text-black"
+                                : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                            }`}
+                          >
+                            {mode}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </SettingsSection>
+
+                <SettingsSection
+                  title="Startup Behavior"
+                  description="Control automatic behaviors on startup and shutdown."
+                >
+                  <div className="space-y-4">
+                    <ToggleOption
+                      label="Start with Windows"
+                      description="Launch LumaForge automatically when Windows starts. (Requires OS registration — not yet implemented.)"
+                      enabled={settings.startWithWindows}
+                      onChange={(enabled) => updateSetting("startWithWindows", enabled)}
+                    />
+
+                    <ToggleOption
+                      label="Start maximized"
+                      description="Open the main window maximized on startup."
+                      enabled={settings.startMaximized}
+                      onChange={(enabled) => updateSetting("startMaximized", enabled)}
+                    />
+
+                    <ToggleOption
+                      label="Start in tray"
+                      description="Launch minimized to the system tray without showing the window."
+                      enabled={settings.startInTray}
+                      onChange={(enabled) => updateSetting("startInTray", enabled)}
+                    />
+
+                    <ToggleOption
+                      label="Close to tray"
+                      description="When closing the window, minimize to tray instead of quitting."
+                      enabled={settings.closeToTray}
+                      onChange={(enabled) => updateSetting("closeToTray", enabled)}
+                    />
+
+                    <ToggleOption
+                      label="Show Dashboard on startup"
+                      description="Open the Home dashboard instead of the last used page."
+                      enabled={settings.showDashboardOnStartup}
+                      onChange={(enabled) => updateSetting("showDashboardOnStartup", enabled)}
+                    />
+
+                    <ToggleOption
+                      label="Disable automatic updates"
+                      description="Prevent LumaForge from checking for updates on startup."
+                      enabled={settings.disableAutoUpdates}
+                      onChange={(enabled) => updateSetting("disableAutoUpdates", enabled)}
+                    />
+                  </div>
+                </SettingsSection>
+              </>
+            )}
+
+            {activeSection === "about" && (
+              <>
+                <SettingsSection
+                  title="About LumaForge"
+                  description="Application information and links."
+                >
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-5">
+                      <div className="flex items-start gap-4">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-(--color-accent)/15 text-(--color-accent)">
+                          <Cog className="h-7 w-7" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="text-lg font-bold text-(--color-text)">
+                            LumaForge
+                          </h3>
+                          <p className="text-sm text-(--color-muted)">
+                            Your Steam game library companion
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-3 text-xs text-(--color-muted)">
+                            <span>Version 0.1.0</span>
+                            <span className="text-white/20">|</span>
+                            <span>Desktop Mode</span>
+                            <span className="text-white/20">|</span>
+                            <span>Tauri + React</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => openExternalUrl("https://github.com/nicegoodthings/lumaforge")}
+                        className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
+                      >
+                        <Code className="h-4 w-4" />
+                        GitHub Repository
+                        <ExternalLink className="h-3 w-3 text-(--color-muted)" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openExternalUrl("https://github.com/nicegoodthings/lumaforge/blob/main/LICENSE")}
+                        className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        View License
+                      </button>
+                    </div>
+                  </div>
+                </SettingsSection>
+
+                <SettingsSection
+                  title="Data & Services"
+                  description="External services used by LumaForge. LumaForge is not affiliated with or endorsed by any of these services."
+                >
+                  <div className="space-y-3">
+                    {[
+                      {
+                        name: "Steam",
+                        description: "Game library metadata, Steam app IDs, store links, achievements, and playtime tracking.",
+                        url: "https://store.steampowered.com/",
+                        configured: !!settings.steamRoot,
+                      },
+                      {
+                        name: "SteamGridDB",
+                        description: "Community artwork provider for covers, heroes, logos, and icons.",
+                        url: "https://www.steamgriddb.com/",
+                        configured: settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey,
+                      },
+                      {
+                        name: "IGDB / Twitch",
+                        description: "Game metadata provider using Twitch OAuth credentials.",
+                        url: "https://www.igdb.com/",
+                        configured: !!settings.igdbClientId && !!settings.igdbClientSecret,
+                      },
+                      {
+                        name: "RAWG",
+                        description: "Optional game metadata and background artwork provider.",
+                        url: "https://rawg.io/",
+                        configured: !!settings.rawgApiKey,
+                      },
+                      {
+                        name: "Google Custom Search",
+                        description: "Optional in-app image search for manual artwork selection.",
+                        url: "https://developers.google.com/custom-search",
+                        configured: !!settings.googleSearchApiKey && !!settings.googleSearchCx,
+                      },
+                      {
+                        name: "Bing Search",
+                        description: "Optional alternative in-app image search source.",
+                        url: "https://www.microsoft.com/bing/apis/bing-web-search-api",
+                        configured: !!settings.bingSearchApiKey,
+                      },
+                      {
+                        name: "Hubcap",
+                        description: "Package and provider source for game downloads.",
+                        url: "https://hubcapmanifest.com/",
+                        configured: !!(settings.providers?.hubcapdb?.apiKey),
+                      },
+                      {
+                        name: "GitHub",
+                        description: "Project source code and issue tracking.",
+                        url: "https://github.com/nicegoodthings/lumaforge",
+                        configured: true,
+                      },
+                    ].map((service) => (
+                      <div
+                        key={service.name}
+                        className="flex items-center gap-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-(--color-text)">
+                              {service.name}
+                            </p>
+                            {service.configured ? (
+                              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                                Configured
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
+                                Optional
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-(--color-muted)">
+                            {service.description}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openExternalUrl(service.url)}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Visit
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </SettingsSection>
               </>
             )}

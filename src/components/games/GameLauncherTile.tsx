@@ -450,7 +450,7 @@ export default function GameLauncherTile({
   }
 
   return (
-    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
+    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="lf-game-card group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
       {/* Image */}
       <div
         role="button"
@@ -504,7 +504,7 @@ export default function GameLauncherTile({
                   handleCardClick();
                 }
               }}
-              className="line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
+              className="lf-card-title line-clamp-1 cursor-pointer text-xs font-medium text-(--color-text)/90 transition hover:text-(--color-accent)"
             >
               {displayTitle}
             </h3>

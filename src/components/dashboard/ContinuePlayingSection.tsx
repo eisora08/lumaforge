@@ -192,7 +192,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
               className="shrink-0 snap-start"
               style={{ width: `min(80vw, ${settings.dashboardFeaturedCardSize}px)` }}
             >
-              <div className="group/card relative cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">
+              <div className="lf-dash-card group/card relative cursor-pointer overflow-hidden rounded-xl border border-(--surface-active-border) bg-white/[0.02] transition hover:bg-white/[0.04]">
                 <div className="relative aspect-video overflow-hidden">
                   {imgUrl ? (
                     <AsyncImage
@@ -219,7 +219,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
                 </div>
 
                 <div className="p-3">
-                  <h3 className="line-clamp-1 text-sm font-medium text-(--color-text)">
+                  <h3 className="lf-card-title line-clamp-1 text-sm font-medium text-(--color-text)">
                     {game.title}
                   </h3>
                   <div className="mt-1.5 flex items-center gap-2">

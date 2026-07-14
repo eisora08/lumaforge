@@ -60,10 +60,22 @@ export type AppSettings = {
   libraryLandscapeGap: number;
   maxLandscapeColumns: number;
 
+  cardCornerRadius: number;
+  hideCardLabels: boolean;
+
   mediaCacheProfile: "minimal" | "playnite-balanced" | "full";
 
   gameScanFolders: string[];
   scanLocalGames: boolean;
+
+  launchMode: "desktop" | "console";
+  startupWindowMode: "windowed" | "maximized" | "fullscreen";
+  startWithWindows: boolean;
+  startMaximized: boolean;
+  startInTray: boolean;
+  closeToTray: boolean;
+  showDashboardOnStartup: boolean;
+  disableAutoUpdates: boolean;
 };
 
 export type AppSettingsKey = keyof AppSettings;

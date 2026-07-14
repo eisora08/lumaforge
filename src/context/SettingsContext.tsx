@@ -73,9 +73,21 @@ export const defaultSettings: AppSettings = {
   libraryLandscapeGap: 28,
   maxLandscapeColumns: 0,
 
+  cardCornerRadius: 12,
+  hideCardLabels: false,
+
   mediaCacheProfile: "playnite-balanced",
   gameScanFolders: [],
   scanLocalGames: false,
+
+  launchMode: "desktop",
+  startupWindowMode: "windowed",
+  startWithWindows: false,
+  startMaximized: false,
+  startInTray: false,
+  closeToTray: false,
+  showDashboardOnStartup: true,
+  disableAutoUpdates: false,
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -143,6 +155,16 @@ export function SettingsProvider({
   useEffect(() => {
     document.documentElement.dataset.compact = settings.compactMode ? "true" : "false";
   }, [settings.compactMode]);
+
+  // Sync card layout settings to CSS custom properties
+  useEffect(() => {
+    document.documentElement.style.setProperty("--card-radius", `${settings.cardCornerRadius}px`);
+  }, [settings.cardCornerRadius]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--card-label-display", settings.hideCardLabels ? "none" : "block");
+    document.documentElement.dataset.cardLabel = settings.hideCardLabels ? "hidden" : "visible";
+  }, [settings.hideCardLabels]);
 
   const value = useMemo(
     () => ({
