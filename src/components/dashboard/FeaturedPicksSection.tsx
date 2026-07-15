@@ -4,13 +4,8 @@ import { Sparkles } from "lucide-react";
 const DEBUG_DASH_GLOBAL_MEDIA = false;
 const DEBUG_DASH_FEATURED = false;
 const DEBUG_DASH_SECTION_LOGS = false;
-import type { NormalizedCatalogGame, CatalogStatus } from "../../services/globalCatalogService";
-import {
-  subscribeCatalogState,
-  getCachedCatalog,
-  loadNormalizedCatalog,
-  getCatalogState,
-} from "../../services/globalCatalogService";
+import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
+import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
 import { useSettings } from "../../context/SettingsContext";
 import { deduplicateByAppId } from "../../services/gameCacheService";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
@@ -18,6 +13,7 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
+import { subscribeCatalogSections, getCachedCatalogSections } from "../../services/storeCatalogOrchestrator";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -45,41 +41,13 @@ function resolveBestMedia(game: NormalizedCatalogGame): string | null {
 export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
-  const [entries, setEntries] = useState<NormalizedCatalogGame[]>(() => getCachedCatalog());
-  const [status, setStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+  const [sections, setSections] = useState(() => getCachedCatalogSections());
 
-  // Subscribe to catalog state changes
+  // Subscribe to orchestrator section updates (canonical Store catalog sections)
   useEffect(() => {
-    const unsub = subscribeCatalogState((s) => {
-      setStatus(s.status);
-    });
+    const unsub = subscribeCatalogSections((s) => setSections([...s]));
     return unsub;
   }, []);
-
-  // Load normalized entries once catalog is ready
-  useEffect(() => {
-    let cancelled = false;
-    const cached = getCachedCatalog();
-    if (cached.length > 0) {
-      setEntries(cached);
-      return;
-    }
-    (async () => {
-      const { entries: loaded } = await loadNormalizedCatalog(2000);
-      if (cancelled) return;
-      setEntries(loaded);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // One-time readiness log
-  const readyLogRef = useRef(false);
-  useEffect(() => {
-    if (readyLogRef.current) return;
-    if (status === "ready" || status === "unavailable" || status === "empty" || status === "error") {
-      readyLogRef.current = true;
-    }
-  }, [status]);
 
   const libraryAppIds = useMemo(() => {
     const set = new Set<string>();
@@ -88,29 +56,41 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
   }, [libraryGames]);
 
   const displayGames = useMemo(() => {
-    if (status !== "ready") return [];
-    const filtered = entries.filter(
+    // Find canonical featured section from orchestrator (matches Store's "Featured" section)
+    const featuredSection = sections.find(
+      (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
+    );
+    if (!featuredSection || featuredSection.games.length === 0) return [];
+
+    // Map orchestrator games to card model via shared bridge
+    const cards = featuredSection.games.map(mapStoreCatalogGameToCard);
+
+    // Filter: non-library, non-tool, has appId+title
+    const filtered = cards.filter(
       (g) => g.appId && g.title && !libraryAppIds.has(g.appId) && !isToolByTitle(g.title),
     );
     if (filtered.length === 0) return [];
+
+    // Sort: games with media first
     const withMedia = filtered.filter((g) => resolveBestMedia(g));
     const withoutMedia = filtered.filter((g) => !resolveBestMedia(g));
     const sorted = [...withMedia, ...withoutMedia];
     return sorted.slice(0, maxItems ?? 10);
-  }, [entries, status, libraryAppIds, maxItems]);
+  }, [sections, libraryAppIds, maxItems]);
 
   // Change-only diagnostic
   const featLogRef = useRef<string>("");
   useEffect(() => {
-    const state = getCatalogState();
     const rendered = displayGames.length;
-    const candidates = entries.filter((g) => g.appId && g.title && !isToolByTitle(g.title)).length;
-    const source = "catalog-order";
-    const key = `${rendered}|${candidates}|${source}`;
+    const featuredSection = sections.find(
+      (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
+    );
+    const candidates = featuredSection?.games.length ?? 0;
+    const key = `${rendered}|${candidates}|orchestrator`;
 
-    if (status !== "ready") {
-      if (featLogRef.current !== `loading|${status}`) {
-        featLogRef.current = `loading|${status}`;
+    if (sections.length === 0) {
+      if (featLogRef.current !== "loading") {
+        featLogRef.current = "loading";
       }
       return;
     }
@@ -118,9 +98,8 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
     if (candidates === 0 || rendered === 0) {
       if (featLogRef.current !== `skip|${key}`) {
         featLogRef.current = `skip|${key}`;
-        const reason = entries.length === 0 ? "no-ready-catalog" : "all-candidates-filtered";
         if (DEBUG_DASH_SECTION_LOGS) {
-          console.log(`[DASH][SECTION_SKIP] section=FeaturedPicks reason=${reason} total=${state.total}`);
+          console.log(`[DASH][SECTION_SKIP] section=FeaturedPicks reason=no-canonical-section total=${candidates}`);
         }
       }
       return;
@@ -131,13 +110,13 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
       if (DEBUG_DASH_FEATURED) {
         const withMediaCount = displayGames.filter((g) => resolveBestMedia(g)).length;
         console.log(
-          `[DASH][FEATURED] total=${state.total} candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=${source}`,
+          `[DASH][FEATURED] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=orchestrator`,
         );
       }
     }
-  }, [displayGames, entries, status]);
+  }, [displayGames, sections]);
 
-  if (status !== "ready" || displayGames.length === 0) return null;
+  if (sections.length === 0 || displayGames.length === 0) return null;
 
   function handleOpen(game: NormalizedCatalogGame) {
     if (!game.appId) return;
@@ -163,7 +142,7 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
             Featured Picks
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Curated games from the global catalog
+            Curated games from the store catalog
           </p>
         </div>
       </div>

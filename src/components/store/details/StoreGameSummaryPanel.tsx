@@ -23,6 +23,7 @@ import { SummaryLine } from "./StoreGameDetailPrimitives";
 import type { PackageGame, PackageSource } from "../../../types/package";
 import type { PackageInstallStatus } from "../../../types/packageInstall";
 import type { SourceCheckStatus } from "../../../services/sourceAvailabilityCacheService";
+import type { SourceProgress } from "../StoreGameDetailsPage";
 
 export type ProviderCheckState =
   | "update-available"
@@ -49,6 +50,7 @@ type StoreGameSummaryPanelProps = {
   selectedSource?: PackageSource | null;
   sourceStatus?: SourceCheckStatus;
   isBackgroundChecking?: boolean;
+  sourceProgress?: SourceProgress;
   onDownload?: () => void;
   onChangeSource?: () => void;
   onOpenSteam: () => void;
@@ -122,14 +124,19 @@ function getButtonConfig(
   steamOwned: boolean,
   isChecking: boolean,
   isNone: boolean,
+  isNeedsConfig: boolean,
   needsRetry: boolean,
   canDownload: boolean,
   selectedSource: PackageSource | null | undefined,
   onDownload: (() => void) | undefined,
   onCheckForUpdates: (() => void) | undefined,
+  sourceProgress: SourceProgress,
 ): ButtonConfig {
   if (isChecking) {
-    return { label: "Checking sources...", enabled: false, onClick: undefined, reason: "checking-sources" };
+    const label = sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0
+      ? `Checking ${sourceProgress.completed}/${sourceProgress.total}...`
+      : "Checking sources...";
+    return { label, enabled: false, onClick: undefined, reason: "checking-sources" };
   }
 
   // Installed games: isNone/needsRetry should not override provider status
@@ -166,6 +173,9 @@ function getButtonConfig(
   // Non-installed
   if (isNone) {
     return { label: "No Sources Available", enabled: false, onClick: undefined, reason: "no-sources" };
+  }
+  if (isNeedsConfig) {
+    return { label: "Configure Providers", enabled: false, onClick: undefined, reason: "needs-configuration" };
   }
   if (needsRetry) {
     return { label: "Source check failed", enabled: false, onClick: undefined, reason: "source-check-failed" };
@@ -220,6 +230,7 @@ export default function StoreGameSummaryPanel({
   selectedSource,
   sourceStatus = "idle",
   isBackgroundChecking = false,
+  sourceProgress = null,
   onDownload,
   onChangeSource,
   onOpenSteam,
@@ -239,6 +250,7 @@ export default function StoreGameSummaryPanel({
   const isNone = sourceStatus === "none" && availableSources === 0;
   const isError = sourceStatus === "error";
   const isTimeout = sourceStatus === "timeout";
+  const isNeedsConfig = sourceStatus === "needs-configuration";
 
   const statusBadge = getStatusBadge(isSteamInstalled, installStatus, luaInstalled, steamOwned);
   const canDownload = isReady && !!selectedSource?.available;
@@ -260,11 +272,13 @@ export default function StoreGameSummaryPanel({
     steamOwned,
     isChecking,
     isNone,
+    isNeedsConfig,
     needsRetry,
     canDownload,
     selectedSource,
     onDownload,
     onCheckForUpdates,
+    sourceProgress,
   );
 
   console.log(
@@ -378,13 +392,21 @@ export default function StoreGameSummaryPanel({
 
             {!steamOwned && isChecking && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-yellow-500/20 bg-yellow-500/15 px-2.5 py-1 text-xs font-medium text-yellow-300">
-                Checking sources...
+                {sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0
+                  ? `Checking ${sourceProgress.completed}/${sourceProgress.total}`
+                  : "Checking sources..."}
               </span>
             )}
 
             {!steamOwned && isNone && !canRetry && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300">
                 No Sources Available
+              </span>
+            )}
+
+            {!steamOwned && isNeedsConfig && canRetry && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300">
+                Provider configuration needed
               </span>
             )}
 
@@ -454,7 +476,23 @@ export default function StoreGameSummaryPanel({
               </span>
             </div>
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
-              <span>Awaiting provider response...</span>
+              {sourceProgress && sourceProgress.total > 0 && sourceProgress.completed > 0 ? (
+                <span>
+                  Checking providers {sourceProgress.completed}/{sourceProgress.total}
+                  {sourceProgress.successful > 0 && (
+                    <span className="ml-1 text-emerald-300/70">
+                      · Source found
+                    </span>
+                  )}
+                  {sourceProgress.completed < sourceProgress.total && (
+                    <span className="ml-1 text-yellow-300/70">
+                      · Checking {sourceProgress.total - sourceProgress.completed} remaining
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <span>Awaiting provider response...</span>
+              )}
             </div>
           </div>
         )}
@@ -498,6 +536,8 @@ export default function StoreGameSummaryPanel({
             <div className="mt-1 flex items-center gap-2 text-sm text-(--color-muted)">
               {isNone ? (
                 <span>None — no packages found</span>
+              ) : isNeedsConfig ? (
+                <span>Configure providers to search for sources</span>
               ) : needsRetry ? (
                 <span>Check failed — retry below</span>
               ) : canRetry ? (
@@ -567,7 +607,9 @@ export default function StoreGameSummaryPanel({
               ? "Checking sources..."
               : isReady
                 ? "Change Source"
-                : "Sources: None — Check below"}
+                : isNeedsConfig
+                  ? "Configure providers — Check below"
+                  : "Sources: None — Check below"}
           </button>
 
           {/* Check again / Retry / Checking... */}
@@ -597,12 +639,12 @@ export default function StoreGameSummaryPanel({
             <button
               type="button"
               onClick={() => {
-                console.log(`[STORE][SOURCE_RETRY_CLICK] appid=${game.appId} reason=${needsRetry || isNone ? "retry-failed" : "initial-check"}`);
+                console.log(`[STORE][SOURCE_RETRY_CLICK] appid=${game.appId} reason=${needsRetry || isNone ? "retry-failed" : isNeedsConfig ? "configure-providers" : "initial-check"}`);
                 onRefreshSources?.();
               }}
               className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-4 py-2 text-sm font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
             >
-              {needsRetry || isNone ? "Retry Sources" : "Check sources"}
+              {isNeedsConfig ? "Configure & Check" : needsRetry || isNone ? "Retry Sources" : "Check sources"}
             </button>
           )}
 
@@ -650,13 +692,15 @@ export default function StoreGameSummaryPanel({
                     ? `${availableSources}/${totalSources} · scanning...`
                     : isReady
                       ? `${availableSources}/${totalSources} available`
-                      : isNone
-                        ? "None found"
-                        : needsRetry
-                          ? "Check failed"
-                          : canRetry
-                            ? "Check pending"
-                            : "None"
+                      : isNeedsConfig
+                        ? "Configure providers"
+                        : isNone
+                          ? "None found"
+                          : needsRetry
+                            ? "Check failed"
+                            : canRetry
+                              ? "Check pending"
+                              : "None"
             }
           />
           <SummaryLine label="Developer" value={developer} />

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, AlertCircle, Info, CheckCircle } from "lucide-react";
+import { isConsoleMode, isGamepadDetected, getConsoleInputHints } from "../../features/console/consoleInputHints";
 
 export type ConfirmVariant = "danger" | "warning" | "info" | "success";
 
@@ -262,13 +263,20 @@ export default function ConfirmModal({
           </div>
         </div>
 
-        <div className="mt-4 flex items-center justify-center gap-1 text-xs text-(--color-muted)/50">
-          <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">A</kbd>
-          <span>Select</span>
-          <span className="mx-1">·</span>
-          <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">B</kbd>
-          <span>Back</span>
-        </div>
+        {isConsoleMode() && isGamepadDetected() && (() => {
+          const hints = getConsoleInputHints();
+          const selectKey = hints.select.match(/\[(.+?)\]/)?.[1] ?? "A";
+          const backKey = hints.back.match(/\[(.+?)\]/)?.[1] ?? "B";
+          return (
+            <div className="mt-4 flex items-center justify-center gap-1 text-xs text-(--color-muted)/50">
+              <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">{selectKey}</kbd>
+              <span>Select</span>
+              <span className="mx-1">·</span>
+              <kbd className="rounded border border-(--color-border)/30 px-1.5 py-0.5 font-mono text-[10px]">{backKey}</kbd>
+              <span>Back</span>
+            </div>
+          );
+        })()}
       </div>
     </div>,
     document.body

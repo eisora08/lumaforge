@@ -7,6 +7,18 @@ import type { PackageGame, PackageSource } from "../../types/package";
 import type { DownloadJob } from "../../types/download";
 import type { SourceAvailabilityGameEntry } from "../../services/sourceAvailabilityCacheService";
 
+/* Toast dedup: one completed job → one success toast */
+const _toastShownJobIds = new Set<string>();
+function shouldShowToast(jobId: string): boolean {
+  if (_toastShownJobIds.has(jobId)) return false;
+  _toastShownJobIds.add(jobId);
+  if (_toastShownJobIds.size > 200) {
+    const first = _toastShownJobIds.values().next().value;
+    if (first) _toastShownJobIds.delete(first);
+  }
+  return true;
+}
+
 export type DownloadFromSourceDeps = {
   settings: AppSettings;
   addJob: (input: {
@@ -40,7 +52,7 @@ export async function downloadFromSource(
   game: PackageGame,
   source: PackageSource,
   deps: DownloadFromSourceDeps,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; jobId?: string }> {
   const { settings, addJob, updateJob, libraryRefresh, refreshInstalledScripts, mountedRef, updateSourceAvailability } = deps;
 
   if (!mountedRef.current) return { success: false, error: "unmounted" };
@@ -121,9 +133,12 @@ export async function downloadFromSource(
       totalBytes: result.total_bytes,
     });
 
-    showSuccess(result.message, {
-      title: "Paquete instalado",
-    });
+    if (shouldShowToast(job.id)) {
+      showSuccess(result.message, {
+        title: "Paquete instalado",
+        id: `pkg-installed-${job.id}`,
+      });
+    }
 
     // Refresh local installed-scripts state (Store.tsx owns this; GameDetails.tsx skips)
     if (refreshInstalledScripts) {
@@ -152,7 +167,7 @@ export async function downloadFromSource(
       console.warn(`[LIBRARY][GAME_UPSERT] appid=${game.appId} error="${msg}"`);
     });
 
-    return { success: true };
+    return { success: true, jobId: job.id };
   } catch (error) {
     if (!mountedRef.current) {
       console.log(`[STORE][ASYNC_CANCELLED] appid=${game.appId} stage=error`);

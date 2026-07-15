@@ -16,7 +16,7 @@ export function getBestAvailableSource(
 
   if (available.length > 0) return available[0];
 
-  return game.sources[0];
+  return undefined;
 }
 
 export function getSourceKey(source: PackageSource) {

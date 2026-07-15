@@ -957,6 +957,14 @@ export async function writeStoreDiscoveryIndex(data: unknown): Promise<void> {
   return await invoke<void>("write_store_discovery_index", { data });
 }
 
+export async function readStoreCatalogSectionsCache(): Promise<unknown | null> {
+  return await invoke<unknown | null>("read_store_catalog_sections_cache");
+}
+
+export async function writeStoreCatalogSectionsCache(data: unknown): Promise<void> {
+  return await invoke<void>("write_store_catalog_sections_cache", { data });
+}
+
 // --- Library cache ---
 
 export type LibraryAppInfoEntry = {
@@ -2145,6 +2153,37 @@ export async function igdbSearchGamesByName(
     accessToken,
     name,
     limit: limit ?? 3,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// IGDB Catalog Query
+// ---------------------------------------------------------------------------
+
+export interface IgdbCatalogGame {
+  igdb_id: number;
+  name: string | null;
+  summary: string | null;
+  first_release_date: string | null;
+  genres: string[] | null;
+  rating: number | null;
+  popularity: number | null;
+  cover_url: string | null;
+  screenshot_urls: string[] | null;
+  developers: string[] | null;
+  publishers: string[] | null;
+  steam_app_id: string | null;
+}
+
+export async function igdbQueryCatalog(
+  clientId: string,
+  accessToken: string,
+  query: string,
+): Promise<IgdbCatalogGame[]> {
+  return await invoke<IgdbCatalogGame[]>("igdb_query_catalog", {
+    clientId,
+    accessToken,
+    query,
   });
 }
 

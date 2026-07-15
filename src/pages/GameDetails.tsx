@@ -268,9 +268,9 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
   };
 
   // Download handler — delegates to shared Store-canonical downloadFromSource helper
-  const handleDownloadSource = useCallback(async (source: PackageSource) => {
+  const handleDownloadSource = useCallback(async (source: PackageSource): Promise<{ success: boolean; jobId?: string }> => {
     const game = gameWithSources ?? displayGame;
-    if (!game) return;
+    if (!game) return { success: false };
 
     const deps: DownloadFromSourceDeps = {
       settings,
@@ -293,6 +293,7 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
         // localLuaInstalled stays as-is
       }
     }
+    return result;
   }, [gameWithSources, displayGame, settings, addJob, updateJob, libraryRefresh, currentAppId]);
 
   // Open another game from "More Like This" section

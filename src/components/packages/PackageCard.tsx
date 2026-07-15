@@ -341,6 +341,7 @@ function PackageCardRaw({
 
       showSuccess(result.message, {
         title: "Paquete instalado",
+        id: `pkg-installed-${job.id}`,
       });
 
       const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)

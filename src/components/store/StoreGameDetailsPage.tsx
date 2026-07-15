@@ -39,6 +39,7 @@ import { fetchHubcapAppStatus, checkHubcapAppUpdate, setLocalPackageMetadata, re
 import type { ProviderCheckState } from "./details/StoreGameSummaryPanel";
 
 import { showError } from "../toast/GameToast";
+import PackageInstallSuccessModal from "../common/PackageInstallSuccessModal";
 
 import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
 import StoreGameOverviewSection from "./details/StoreGameOverviewSection";
@@ -53,6 +54,15 @@ import type { StoreMoreLikeThisGame } from "./StoreMoreLikeThisSection";
 
 import { SkeletonBox, SkeletonHero } from "../common/Skeleton";
 
+export type SourceProgress = {
+  completed: number;
+  total: number;
+  successful: number;
+  failed: number;
+  sourceCount: number;
+  requestId: number;
+} | null;
+
 type StoreGameDetailsPageProps = {
   game: PackageGame;
   metadata?: SteamAppMetadata;
@@ -65,8 +75,10 @@ type StoreGameDetailsPageProps = {
   selectedSource?: PackageSource | null;
   sourceStatus?: SourceCheckStatus;
   isBackgroundChecking?: boolean;
+  sourceProgress?: SourceProgress;
   onBack: () => void;
-  onDownloadSource?: (source: PackageSource) => Promise<void>;
+  onDownloadSource?: (source: PackageSource) => Promise<{ success: boolean; jobId?: string }>;
+  onViewInLibrary?: (appId: string, title: string) => void;
   onOpenGame?: (game: PackageGame) => void;
   onSelectSourceKey?: (sourceKey: string) => void;
   onRefreshSources?: () => void;
@@ -183,9 +195,11 @@ export default function StoreGameDetailsPage({
   selectedSource,
   sourceStatus,
   isBackgroundChecking = false,
+  sourceProgress = null,
   steamOwned = false,
   onBack,
   onDownloadSource,
+  onViewInLibrary,
   onOpenGame,
   onSelectSourceKey,
   onRefreshSources,
@@ -197,6 +211,11 @@ export default function StoreGameDetailsPage({
   const [refinedDrmInfo, setRefinedDrmInfo] = useState<StoreDrmInfo | null>(null);
   const _drmResolveReqRef = useRef(0);
   const _mediaEnrichReqRef = useRef(0);
+
+  // Success modal state — shown after package download completes
+  const [successModalOpen, setSuccessModalOpen] = useState(false);
+  const [completedGameTitle, setCompletedGameTitle] = useState("");
+  const [completedJobId, setCompletedJobId] = useState<string | undefined>();
 
   console.log(
     `[STORE][DETAILS_PROPS_RECEIVED] appid=${game.appId} installStatus=${installStatus} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} steamOwned=${steamOwned}`,
@@ -309,15 +328,14 @@ export default function StoreGameDetailsPage({
         console.log(`[STORE][SOURCE_RETRY_RESULT] appid=${appId} total=${totalProviders} successes=${successes} timedOut=${timedOut} selectedProvider=${savedProvider}`);
         if (!savedProvider || savedProvider === "none") {
           console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
-          console.log(`[STORE][SOURCE_RETRY_FAILED] appid=${appId} retryable=true reason=no-provider`);
-          setInternalSourceStatus("timeout");
+          console.log(`[STORE][SOURCE_RETRY_FAILED] appid=${appId} retryable=true reason=no-provider status=${entry.status}`);
+          setInternalSourceStatus(entry.status);
           const existing = getSourceAvailability(appId);
           if (existing && existing.availableSources.length > 0) {
             sourceLog("preserve", { appId, previousSources: existing.availableSources.length });
-            updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
           } else if (existing) {
-            // Transition "checking" cache to "timeout" so UI doesn't stay stuck
-            updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
           }
           return;
         }
@@ -395,7 +413,7 @@ export default function StoreGameDetailsPage({
           }
           return;
         }
-        if (cached.status === "none" || cached.status === "error" || cached.status === "timeout" || cached.status === "checking") {
+        if (cached.status === "none" || cached.status === "error" || cached.status === "timeout" || cached.status === "needs-configuration" || cached.status === "checking") {
           // Step 2: Stale cache (including stuck "checking") but saved provider exists — try to rebuild from cache sources
           if (savedProvider && cached.availableSources.length > 0) {
             const matchingSource = cached.availableSources.find(
@@ -458,15 +476,14 @@ export default function StoreGameDetailsPage({
           console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
           if (!cancelled) {
             setInternalSources([]);
-            setInternalSourceStatus("timeout");
+            setInternalSourceStatus(entry.status);
           }
           const existing = getSourceAvailability(appId);
           if (existing && existing.availableSources.length > 0) {
             sourceLog("preserve", { appId, previousSources: existing.availableSources.length });
-            await updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) });
+            await updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) });
           } else if (existing) {
-            // Transition "checking" cache to "timeout" so UI doesn't stay stuck
-            await updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) });
+            await updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) });
           }
           return;
         }
@@ -841,8 +858,16 @@ export default function StoreGameDetailsPage({
   async function handleDownload() {
     const source = effectiveSelectedSource?.available ? effectiveSelectedSource : bestSource;
     if (source) {
-      await onDownloadSource?.(source);
+      const result = await onDownloadSource?.(source);
       await reloadProviderStatus();
+
+      // Show success modal if download succeeded
+      if (result?.success) {
+        setCompletedGameTitle(title);
+        setCompletedJobId(result.jobId);
+        setSuccessModalOpen(true);
+        console.log(`[PACKAGE][SUCCESS_MODAL] appid=${game.appId} title="${title}" jobId=${result.jobId}`);
+      }
 
       // Refresh Hubcap badge usage/status after download/update
       const hubcapSettings = settings.providers?.hubcapdb;
@@ -855,8 +880,16 @@ export default function StoreGameDetailsPage({
   }
 
   async function handleDownloadFromSource(source: PackageSource) {
-    await onDownloadSource?.(source);
+    const result = await onDownloadSource?.(source);
     await reloadProviderStatus();
+
+    // Show success modal if download succeeded
+    if (result?.success) {
+      setCompletedGameTitle(title);
+      setCompletedJobId(result.jobId);
+      setSuccessModalOpen(true);
+      console.log(`[PACKAGE][SUCCESS_MODAL] appid=${game.appId} title="${title}" source-selector jobId=${result.jobId}`);
+    }
   }
 
   async function handleCheckForUpdates() {
@@ -1053,6 +1086,7 @@ export default function StoreGameDetailsPage({
               selectedSource={effectiveSelectedSource ?? bestSource}
               sourceStatus={effectiveSourceStatus}
               isBackgroundChecking={isBackgroundChecking}
+              sourceProgress={sourceProgress}
               onDownload={handleDownload}
               onChangeSource={() => setSourceSelectorOpen(true)}
               onOpenSteam={handleOpenSteam}
@@ -1090,6 +1124,22 @@ export default function StoreGameDetailsPage({
         onSelectSource={onSelectSourceKey}
         onDownloadSource={handleDownloadFromSource}
         onOpenDetails={onOpenGame}
+      />
+
+      <PackageInstallSuccessModal
+        open={successModalOpen}
+        gameTitle={completedGameTitle}
+        appId={game.appId}
+        jobId={completedJobId}
+        imageUrl={imageUrl}
+        providerName={effectiveSelectedSource?.providerName}
+        onViewInLibrary={() => {
+          setSuccessModalOpen(false);
+          onViewInLibrary?.(game.appId, completedGameTitle);
+        }}
+        onContinueBrowsing={() => {
+          setSuccessModalOpen(false);
+        }}
       />
     </div>
   );

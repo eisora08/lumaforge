@@ -4,13 +4,8 @@ import { Sparkles } from "lucide-react";
 const DEBUG_DASH_GLOBAL_MEDIA = false;
 const DEBUG_DASH_NEW = false;
 const DEBUG_DASH_SECTION_LOGS = false;
-import type { NormalizedCatalogGame, CatalogStatus } from "../../services/globalCatalogService";
-import {
-  subscribeCatalogState,
-  getCachedCatalog,
-  getCatalogState,
-  loadNormalizedCatalog,
-} from "../../services/globalCatalogService";
+import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
+import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
 import { useSettings } from "../../context/SettingsContext";
 import { deduplicateByAppId } from "../../services/gameCacheService";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
@@ -18,6 +13,7 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
+import { subscribeCatalogSections, getCachedCatalogSections } from "../../services/storeCatalogOrchestrator";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -45,43 +41,12 @@ function resolveBestMedia(game: NormalizedCatalogGame): string | null {
 export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
-  const [entries, setEntries] = useState<NormalizedCatalogGame[]>(() => getCachedCatalog());
-  const [status, setStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+  const [sections, setSections] = useState(() => getCachedCatalogSections());
 
+  // Subscribe to orchestrator section updates (canonical Store catalog sections)
   useEffect(() => {
-    const unsub = subscribeCatalogState((s) => {
-      setStatus(s.status);
-    });
+    const unsub = subscribeCatalogSections((s) => setSections([...s]));
     return unsub;
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const cached = getCachedCatalog();
-    if (cached.length > 0) {
-      setEntries(cached);
-      return;
-    }
-    (async () => {
-      const { entries: loaded } = await loadNormalizedCatalog(2000);
-      if (cancelled) return;
-      setEntries(loaded);
-
-      // Log sample of first 5 entries with date field inspection
-      if (loaded.length > 0) {
-        const sample = loaded.slice(0, 5).map((g) => ({
-          title: g.title,
-          appId: g.appId,
-          releaseDate: g.releaseDate,
-          releaseTimestamp: g.releaseTimestamp,
-          isNew: g.isNew,
-        }));
-        if (DEBUG_DASH_SECTION_LOGS) {
-          console.log("[DASH][CATALOG_NORMALIZE_SAMPLE]", JSON.stringify(sample));
-        }
-      }
-    })();
-    return () => { cancelled = true; };
   }, []);
 
   const libraryAppIds = useMemo(() => {
@@ -90,9 +55,16 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
     return set;
   }, [libraryGames]);
 
-  const dateCandidates = useMemo(() => {
-    if (status !== "ready") return [];
-    return entries.filter(
+  const displayGames = useMemo(() => {
+    // Find canonical new-noteworthy section from orchestrator
+    const nnSection = sections.find((s) => s.sectionId === "new-noteworthy");
+    if (!nnSection || nnSection.games.length === 0) return [];
+
+    // Map orchestrator games to card model via shared bridge
+    const cards = nnSection.games.map(mapStoreCatalogGameToCard);
+
+    // Filter: non-library, non-tool, has appId+title, has release date or isNew
+    const dateCandidates = cards.filter(
       (g) =>
         g.appId &&
         g.title &&
@@ -100,39 +72,43 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
         !isToolByTitle(g.title) &&
         (g.releaseTimestamp > 0 || g.isNew),
     );
-  }, [entries, status, libraryAppIds]);
+    if (dateCandidates.length === 0) {
+      // Fallback: show all games from the section even without dates
+      const allFiltered = cards.filter(
+        (g) => g.appId && g.title && !libraryAppIds.has(g.appId) && !isToolByTitle(g.title),
+      );
+      return allFiltered.slice(0, maxItems ?? 10);
+    }
 
-  const displayGames = useMemo(() => {
-    if (dateCandidates.length === 0) return [];
+    // Sort by releaseTimestamp descending (newest first), then alphabetically
     const sorted = [...dateCandidates].sort((a, b) => {
       if (b.releaseTimestamp !== a.releaseTimestamp) return b.releaseTimestamp - a.releaseTimestamp;
       return a.title.localeCompare(b.title);
     });
     return sorted.slice(0, maxItems ?? 10);
-  }, [dateCandidates, maxItems]);
+  }, [sections, libraryAppIds, maxItems]);
 
   // Diagnostic — change-only with field breakdown
   const newLogRef = useRef<string>("");
   useEffect(() => {
-    if (status !== "ready") return;
-
-    const state = getCatalogState();
-    const candidates = entries.filter((g) => g.appId && g.title && !isToolByTitle(g.title)).length;
-    const withReleaseDate = entries.filter((g) => g.releaseTimestamp > 0).length;
-    const withNewFlag = entries.filter((g) => g.isNew).length;
     const rendered = displayGames.length;
+    const nnSection = sections.find((s) => s.sectionId === "new-noteworthy");
+    const candidates = nnSection?.games.length ?? 0;
+    const key = `${rendered}|${candidates}|orchestrator`;
 
-    const key = `${rendered}|${withReleaseDate}|${withNewFlag}`;
+    if (sections.length === 0) {
+      if (newLogRef.current !== "loading") {
+        newLogRef.current = "loading";
+      }
+      return;
+    }
 
-    if (withReleaseDate === 0 && withNewFlag === 0) {
+    if (candidates === 0 || rendered === 0) {
       if (newLogRef.current !== `skip|${key}`) {
         newLogRef.current = `skip|${key}`;
         if (DEBUG_DASH_NEW) {
           console.log(
-            `[DASH][SECTION_SKIP] section=NewNoteworthy reason=no-date-or-new-fields total=${state.total}`,
-          );
-          console.log(
-            `[DASH][NEW] catalogTotal=${state.total} candidates=${candidates} withReleaseDate=${withReleaseDate} withCatalogDate=0 withNewFlag=${withNewFlag} rendered=${rendered}`,
+            `[DASH][SECTION_SKIP] section=NewNoteworthy reason=no-canonical-section total=${candidates}`,
           );
         }
       }
@@ -143,13 +119,13 @@ export default function NewNoteworthySection({ onNavigate, maxItems }: Props) {
       newLogRef.current = key;
       if (DEBUG_DASH_NEW) {
         console.log(
-          `[DASH][NEW] catalogTotal=${state.total} candidates=${candidates} withReleaseDate=${withReleaseDate} withCatalogDate=0 withNewFlag=${withNewFlag} rendered=${rendered}`,
+          `[DASH][NEW] candidates=${candidates} rendered=${rendered} source=orchestrator`,
         );
       }
     }
-  }, [displayGames, entries, status]);
+  }, [displayGames, sections]);
 
-  if (status !== "ready" || displayGames.length === 0) return null;
+  if (sections.length === 0 || displayGames.length === 0) return null;
 
   function handleOpen(game: NormalizedCatalogGame) {
     if (!game.appId) return;

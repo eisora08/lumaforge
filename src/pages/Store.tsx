@@ -51,6 +51,7 @@ import {
 } from "../services/sourceAvailabilityCacheService";
 import { getEnabledProviderIds } from "../services/providerSearch";
 import { consumePendingStoreDetailAppId, consumePendingStoreDetailAppTitle } from "../services/storeNavigationService";
+import { setPendingLibraryFocus } from "../services/libraryNavigationService";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import type { ProviderProgressCallback } from "../types/providerSearch";
 import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
@@ -72,6 +73,9 @@ import {
 } from "../services/storeDiscoverCache";
 import type { CacheEntry as StoreDiscoverCacheEntry, StoreDiscoveryIndex } from "../services/storeDiscoverCache";
 import type { StoreDiscoverSection, StoreGame } from "../services/storeDiscoverCache";
+import type { StoreCatalogSection } from "../services/storeCatalogProvider";
+import { mergeEnrichedSections } from "../services/storeCatalogOrchestrator";
+import { buildCuratedCatalogSections } from "../services/storeCuratedCatalog";
 import {
   compileDiscoveryIndex,
   getCachedDiscoveryIndex,
@@ -105,9 +109,30 @@ const DEBUG_STORE_RENDER_VERBOSE = false;
 const DEBUG_STORE_BADGE_DECISIONS = false;
 const DEBUG_STORE_DISCOVERY = false;
 
-// Module-level flag: prevents auto-open of pending detail from re-firing
-// when the user navigates back to Store later in the same session.
-let _sessionAutoOpenDone = false;
+/** Tracks how many providers have completed during concurrent resolution. */
+type SourceProgress = {
+  completed: number;
+  total: number;
+  successful: number;
+  failed: number;
+  sourceCount: number;
+  requestId: number;
+} | null;
+
+/** Deterministic integer hash for shuffling (same input → same output). */
+function simpleHash(n: number): number {
+  let h = n | 0;
+  h = ((h >> 16) ^ h) * 0x45d9f3b;
+  h = ((h >> 16) ^ h) * 0x45d9f3b;
+  h = (h >> 16) ^ h;
+  return h;
+}
+
+  // Module-level flag: prevents auto-open of pending detail from re-firing
+  // when the user navigates back to Store later in the same session.
+  let _sessionAutoOpenDone = false;
+  let _catalogSourceLogged = false;
+  let _discoveryIndexStatusLogged = false;
 
 // ── Render cause counters (Phase 2 audit) ──
 const _renderCauseCount: Record<string, number> = {};
@@ -142,6 +167,16 @@ function computeExcludeFingerprint(games: { appId: string }[], sections: { games
   return ids.slice(0, 500).join(",");
 }
 
+// Curated catalog baseline — computed once at module level.
+// Provides immediate high-quality first paint before steamdb.json + metadata/reviews arrive.
+const _curatedBaseline = buildCuratedCatalogSections();
+
+function inferCuratedSectionType(id: string): "hero" | "featured" | "rail" | "genre" | "more" {
+  if (id.startsWith("genre-")) return "genre";
+  if (id === "featured" || id === "top-picks") return "featured";
+  return "rail";
+}
+
 function log(origin: string, ...args: unknown[]) {
   if (ENABLE_VERBOSE_SOURCE_LOGS) {
     console.log(`[SourceResolve][${origin}]`, ...args);
@@ -156,9 +191,11 @@ import type { InstalledLuaScript } from "../types/installedLua";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
+import type { AppPage } from "../types/navigation";
 import { SkeletonBox, SkeletonHero, GridSkeleton } from "../components/common/Skeleton";
 
 type StoreTab = "discover" | "browse" | "lua-ready" | "news";
+type StoreProps = { onNavigate?: (page: AppPage) => void };
 
 const VIRTUAL_CARD_STYLE: React.CSSProperties = { contentVisibility: "auto", containIntrinsicSize: "280px" };
 const STORE_TABS: { id: StoreTab; label: string }[] = [
@@ -294,7 +331,7 @@ function batchedLoad<T>(
   });
 }
 
-export default function Store() {
+export default function Store({ onNavigate }: StoreProps = {}) {
   countRender("Store");
   const {
     selectedProvider,
@@ -374,6 +411,9 @@ export default function Store() {
   >({});
   const [backgroundCheckingByAppId, setBackgroundCheckingByAppId] = useState<
     Record<string, boolean>
+  >({});
+  const [sourceProgressByAppId, setSourceProgressByAppId] = useState<
+    Record<string, SourceProgress>
   >({});
 
   const [steamCatalog, setSteamCatalog] = useState<{ appid: number; name: string }[]>(() => {
@@ -521,6 +561,60 @@ export default function Store() {
     const id = requestAnimationFrame(() => setStoreFirstPaintDone(true));
     return () => cancelAnimationFrame(id);
   }, []);
+
+  // ── Store Catalog Orchestrator (RAWG enriched sections, cache-first) ──
+  const [enrichedCatalogSections, setEnrichedCatalogSections] = useState<StoreCatalogSection[]>([]);
+  const enrichedVersionRef = useRef(0);
+  // Flicker prevention: track quality fingerprint of current enriched data
+  const enrichedQualityRef = useRef<{ totalGames: number; sectionCount: number; curatedCount: number }>({ totalGames: 0, sectionCount: 0, curatedCount: 0 });
+
+  // Init orchestrator after first paint — loads disk cache, optionally triggers background refresh
+  useEffect(() => {
+    if (!storeFirstPaintDone) return;
+    let cancelled = false;
+    (async () => {
+      const { initCatalogOrchestrator, subscribeCatalogSections } = await import("../services/storeCatalogOrchestrator");
+      await initCatalogOrchestrator({
+        rawgApiKey: settings.rawgApiKey,
+        igdbClientId: settings.igdbClientId,
+        igdbClientSecret: settings.igdbClientSecret,
+      });
+      const unsub = subscribeCatalogSections((sections) => {
+        if (cancelled) return;
+
+        // Flicker prevention: only update if new quality >= current quality
+        const newTotalGames = sections.reduce((sum, s) => sum + s.games.length, 0);
+        const newCuratedCount = sections.filter((s) => s.provider === "curated").reduce((sum, s) => sum + s.games.length, 0);
+        const newQuality = { totalGames: newTotalGames, sectionCount: sections.length, curatedCount: newCuratedCount };
+        const cur = enrichedQualityRef.current;
+
+        // Allow update if: more total games, OR same games but more sections, OR first load
+        const isFirstLoad = cur.totalGames === 0 && cur.sectionCount === 0;
+        const isQualityUpgrade = newQuality.totalGames >= cur.totalGames &&
+          newQuality.sectionCount >= cur.sectionCount &&
+          newQuality.curatedCount <= cur.curatedCount; // fewer curated = provider took over (good)
+
+        if (!isFirstLoad && !isQualityUpgrade) {
+          // New data is lower quality — skip update to prevent flicker
+          console.log(`[STORE_CATALOG][FLICKER_GUARD] skipped update: newGames=${newTotalGames} newSections=${sections.length} curGames=${cur.totalGames} curSections=${cur.sectionCount}`);
+          return;
+        }
+
+        enrichedQualityRef.current = newQuality;
+        enrichedVersionRef.current++;
+        setEnrichedCatalogSections([...sections]);
+        // One-shot source chain diagnostic
+        if (!_catalogSourceLogged) {
+          _catalogSourceLogged = true;
+          const providerSections = sections.filter((s) => s.provider !== "curated");
+          const totalGames = sections.reduce((sum, s) => sum + s.games.length, 0);
+          console.log(`[STORE_CATALOG][CACHE_STATUS] catalogCacheSections=${sections.length} catalogCacheTotalGames=${totalGames} catalogCacheValid=${sections.length > 0} source=${providerSections.length > 0 ? "provider" : "curated"}`);
+        }
+      });
+      return unsub;
+    })();
+    return () => { cancelled = true; };
+  }, [storeFirstPaintDone, settings.rawgApiKey, settings.igdbClientId, settings.igdbClientSecret]);
 
   const refreshInstalledScripts = useCallback(async () => {
     if (!settings.luaPath) {
@@ -723,8 +817,14 @@ export default function Store() {
 
     console.log(`[STORE][DISCOVER_BUILD_START] catalogSize=${steamCatalog.length}`);
 
+    // Deterministic hash-shuffle so old games don't always appear first.
+    // Same input → same output every time (no randomness).
     const sorted = [...steamCatalog];
-    sorted.sort((a, b) => a.appid - b.appid);
+    sorted.sort((a, b) => {
+      const ha = simpleHash(a.appid);
+      const hb = simpleHash(b.appid);
+      return ha - hb;
+    });
 
     return sorted;
   }, [steamCatalog, catalogFingerprint, deferredBuildKey]);
@@ -796,7 +896,7 @@ export default function Store() {
 
       const metaScore = (meta?.header_image || meta?.capsule_image_v5) ? 1 : (meta ? 0.5 : 0);
       const provScore = (overlay && overlay.sources.some((s) => s.available)) ? 1 : 0;
-      const recScore = Math.min(1, appIdNum / 400000);
+      const recScore = 0;
 
       const totalReviews = review?.total_reviews ?? 0;
       const positivePct = review?.positive_percent ?? 0;
@@ -853,6 +953,15 @@ export default function Store() {
 
     setCachedDiscoveryIndex(index);
     logDiscoveryIndexValidation(index);
+    // One-shot discovery index status
+    if (!_discoveryIndexStatusLogged) {
+      _discoveryIndexStatusLogged = true;
+      const hasFeatured = (index.sections.featured?.length ?? 0) > 0;
+      const hasTopPicks = (index.sections.topPicks?.length ?? 0) > 0;
+      const genreCount = Object.keys(index.sections.genres ?? {}).length;
+      const hasReviews = (index.stats.withReviews ?? 0) > 0;
+      console.log(`[STORE_CATALOG][DISCOVERY_INDEX_STATUS] featured=${hasFeatured} topPicks=${hasTopPicks} genres=${genreCount} withReviews=${index.stats.withReviews} qualityAvailable=${hasReviews || hasFeatured || hasTopPicks}`);
+    }
     return index;
   }, [highQualityPool, storeMetadataByAppId, reviewSummaryByAppId, genreConfidence, interactionScoreByAppId, catalogFingerprint, steamCatalog.length]);
 
@@ -1044,15 +1153,46 @@ export default function Store() {
   }, [results, installedStatusByAppId]);
 
   const featuredGames = useMemo(() => {
+    // Prefer provider/cache featured sections when available
+    if (enrichedCatalogSections.length > 0) {
+      const featured = enrichedCatalogSections.find(
+        (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
+      );
+      if (featured && featured.games.length > 0) {
+        return featured.games.map((game) => ({
+          appId: game.steamAppId ?? String(game.igdbId ?? game.rawgId ?? ""),
+          title: game.title,
+          imageUrl: game.imageUrl ?? game.backgroundImageUrl,
+          platforms: [] as string[],
+          sources: [] as PackageSource[],
+        }));
+      }
+    }
+
+    // Fallback: cache hit
     const cached = getCachedStoreDiscover();
-    if (cached && cached.catalogFingerprint === catalogFingerprint) {
+    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.featuredGames.length > 0) {
       return cached.featuredGames;
     }
 
+    // Fallback: curated featured (immediate, no network needed)
+    const curatedFeatured = _curatedBaseline.find(
+      (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
+    );
+    if (curatedFeatured && curatedFeatured.games.length > 0) {
+      return curatedFeatured.games.map((g) => ({
+        appId: g.steamAppId ?? g.id,
+        title: g.title,
+        imageUrl: undefined,
+        platforms: [] as string[],
+        sources: [] as PackageSource[],
+      }));
+    }
+
+    // Fallback: steamdb highQualityPool day rotation
     const pool = highQualityPool.slice(0, 60);
     if (pool.length === 0) return [];
 
-    // Day rotation within the top-scored pool for variety
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 0);
     const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
@@ -1067,7 +1207,7 @@ export default function Store() {
       platforms: [] as string[],
       sources: [] as PackageSource[],
     }));
-  }, [highQualityPool, catalogFingerprint]);
+  }, [highQualityPool, catalogFingerprint, enrichedCatalogSections]);
 
   // ── Genre name normalization ──
   function normalizeGenreName(raw: string): string | null {
@@ -1105,12 +1245,15 @@ export default function Store() {
 
   // ── Rich Discover sections (new model) ──
   const discoverSections = useMemo(() => {
+    // Skip stale cache when enriched provider data is available — always recompute
+    const hasEnrichedData = enrichedCatalogSections.length > 0;
     const cached = getCachedStoreDiscover();
     const hasReviewsLoaded = Object.keys(reviewSummaryByAppId).length > 0;
     // Bypass partial/incomplete cache — rebuild sections when metadata or reviews become available.
     // Only return cached data when no reviews have been loaded yet (cold cache from prior session).
     // Once reviews arrive, rebuild to apply review-based quality gates.
-    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache && !hasReviewsLoaded) {
+    // Also skip cache when enriched data exists — merge must run to produce provider-first sections.
+    if (!hasEnrichedData && cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache && !hasReviewsLoaded) {
       return cached.discoverSections;
     }
 
@@ -1130,7 +1273,32 @@ export default function Store() {
     }
 
     const sections: StoreDiscoverSection[] = [];
-    const topHQ = highQualityPool.slice(0, 500);
+
+    // ── Curated baseline (immediate, no network, no metadata required) ──
+    // Provides high-quality games on first paint — enriched catalog replaces where quality is better
+    for (const cs of _curatedBaseline) {
+      sections.push({
+        id: cs.sectionId,
+        title: cs.title,
+        type: inferCuratedSectionType(cs.sectionId),
+        items: cs.games.map((g) => ({
+          appId: g.steamAppId ?? g.id,
+          title: g.title,
+          imageUrl: undefined,
+          platforms: [] as string[],
+          sources: [] as PackageSource[],
+        })),
+        source: "curated" as const,
+      });
+      // Mark curated games as used — steamdb sections won't duplicate them
+      cs.games.forEach((g) => {
+        const id = g.steamAppId ?? g.id;
+        if (id) usedIds.add(id);
+      });
+    }
+
+    // Filter to score>0 only — blocks completely un-scored games from premium sections
+    const topHQ = highQualityPool.filter((s) => s.score > 0);
 
     const topGames: StoreGame[] = topHQ.map((s) => ({
       appId: s.appId,
@@ -1237,7 +1405,7 @@ export default function Store() {
       if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Top Picks reason=no-qualified-candidates`);
     }
 
-    // --- New and Noteworthy (by release date) ---
+    // --- New & Noteworthy (by release date) ---
     const datedGames = topGames
       .map((g) => {
         const meta = storeMetadataByAppId[Number(g.appId)];
@@ -1249,7 +1417,7 @@ export default function Store() {
     if (datedGames.length >= 4) {
       const newest = takeUnique(datedGames.map((x) => x.game), 20);
       if (newest.length > 0) {
-        sections.push({ id: "new-noteworthy", title: "New and Noteworthy", type: "rail", items: newest, source: "catalog" });
+        sections.push({ id: "new-noteworthy", title: "New & Noteworthy", type: "rail", items: newest, source: "catalog" });
       }
     }
 
@@ -1356,8 +1524,30 @@ export default function Store() {
       _lastSectionBuildLog = { sections: sections.length, genreReady, more: highQualityPool.length };
       console.log(`[STORE][DISCOVER_SECTIONS_BUILD] sections=${sections.length} genres=${genreReady} more=${highQualityPool.length}`);
     }
-    return sections;
-  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, reviewVersion, catalogFingerprint, compiledDiscoveryIndex]);
+
+    // ── Dedupe sections by ID (curated takes priority — appears first in array) ──
+    const dedupedSections: StoreDiscoverSection[] = [];
+    const seenSectionIds = new Set<string>();
+    for (const sec of sections) {
+      if (seenSectionIds.has(sec.id)) continue;
+      seenSectionIds.add(sec.id);
+      dedupedSections.push(sec);
+    }
+
+    // ── Merge enriched catalog sections (provider-first: IGDB/RAWG/curated) ──
+    // Curated sections are in dedupedSections as baseline; enriched can replace where quality is better
+    if (enrichedCatalogSections.length > 0) {
+      const merged = mergeEnrichedSections(dedupedSections, enrichedCatalogSections);
+      const summary = merged.map((s) => `${s.id}:${s.items.length}:${s.source ?? "?"}`).join(" | ");
+      console.log(`[STORE_CATALOG][FINAL_SECTION] curated+provider=true sections=${merged.length} ${summary}`);
+      return merged;
+    }
+
+    // ── Curated IS the baseline — always available, no network needed ──
+    const curatedCount = dedupedSections.filter((s) => s.source === "curated").reduce((sum, s) => sum + s.items.length, 0);
+    console.log(`[STORE_CATALOG][FINAL_SECTION] curated=true sections=${dedupedSections.length} curatedGames=${curatedCount}`);
+    return dedupedSections;
+  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, reviewVersion, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections]);
 
   // Backward-compat StoreSectionModel[] for consumers that still need it
   const sectionModels = useMemo<StoreSectionModel[]>(
@@ -2046,6 +2236,48 @@ export default function Store() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highQualityPool, featuredGames, allStoreSections, steamCatalog.length]);
 
+  // Curated metadata preload — ensures images are available for curated games on first paint
+  const curatedPreloadedRef = useRef(false);
+  useEffect(() => {
+    if (!storeFirstPaintDone) return;
+    if (curatedPreloadedRef.current) return;
+    curatedPreloadedRef.current = true;
+
+    const curatedAppIds: number[] = [];
+    for (const section of _curatedBaseline) {
+      for (const game of section.games) {
+        const id = Number(game.steamAppId);
+        if (Number.isFinite(id)) curatedAppIds.push(id);
+      }
+    }
+    const uniqueIds = [...new Set(curatedAppIds)];
+    if (uniqueIds.length === 0) return;
+
+    const unloaded = uniqueIds.filter((id) => !storeMetadataByAppId[id]);
+    if (unloaded.length === 0) return;
+
+    let cancelled = false;
+    batchedLoad(unloaded, resolveGameMetadata, METADATA_CONCURRENCY)
+      .then((metadata) => {
+        if (cancelled || !_mountedRef.current) return;
+        const count = Object.keys(metadata).length;
+        if (count > 0) {
+          setStoreMetadataByAppId((prev) => {
+            const merged = { ...prev };
+            for (const [key, value] of Object.entries(metadata)) {
+              if (!merged[Number(key)]) merged[Number(key)] = value;
+            }
+            return merged;
+          });
+          console.log(`[STORE][CURATED_PRELOAD] loaded=${count} games from ${unloaded.length} curated`);
+        }
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeFirstPaintDone]);
+
   // Pre-populate Store image cache for visible app IDs (display-only, no local media index)
   // Re-runs when metadata loads so URLs become available for cached Discover sections.
   // resolveStoreDisplayImage is idempotent — calls for already-cached entries are no-ops.
@@ -2447,6 +2679,20 @@ export default function Store() {
       tryLoadOverlayCache(appId);
       return;
     }
+
+    // Part 7: Set loading synchronously before deferring — prevents false "No Sources" flash
+    if (!cached || cached.status === "idle" || cached.status === "checking" || cached.status === "error" || cached.status === "timeout" || cached.status === "needs-configuration") {
+      setSourcesLoadingByAppId((current) => ({
+        ...current,
+        [appId]: true,
+      }));
+      setSourceProgressByAppId((current) => ({
+        ...current,
+        [appId]: { completed: 0, total: 0, successful: 0, failed: 0, sourceCount: 0, requestId: 0 },
+      }));
+    }
+
+    // Only skip source resolution when confirmed "none" (all queryable providers returned empty)
     if (cached?.status === "none") {
       return;
     }
@@ -2478,10 +2724,13 @@ export default function Store() {
       log("store-search", `start { appId: "${appId}", title: "${title}" }`);
       log("store-search", `cache miss { appId: "${appId}" }`);
 
+      // Part 7: Loading already set synchronously in openDetailsForGame.
+      // Only set here as a safety fallback (e.g. when called from handleSelectSearchItem).
       setSourcesLoadingByAppId((current) => ({
         ...current,
         [appId]: true,
       }));
+
       updateSourceAvailability(appId, {
         appId,
         title,
@@ -2499,6 +2748,16 @@ export default function Store() {
 
         console.log(`[STORE][PROVIDER_DISCOVERY_EARLY_RESULT] appid=${result.appId} provider=${result.providerName} available=${result.source.available}`);
 
+        // Part 11: Update source progress counter
+        setSourceProgressByAppId((current) => {
+          const prev = current[appId];
+          if (!prev || prev.requestId !== requestId) {
+            return { ...current, [appId]: { completed: 1, total: result.totalEnabled, successful: result.source.available ? 1 : 0, failed: result.source.available ? 0 : 1, sourceCount: result.allSources.length, requestId } };
+          }
+          const nextCompleted = prev.completed + 1;
+          return { ...current, [appId]: { completed: nextCompleted, total: result.totalEnabled, successful: prev.successful + (result.source.available ? 1 : 0), failed: prev.failed + (result.source.available ? 0 : 1), sourceCount: result.allSources.length, requestId } };
+        });
+
         setProviderOverlayByAppId((current) => ({
           ...current,
           [appId]: {
@@ -2508,9 +2767,9 @@ export default function Store() {
         }));
 
         const entry = buildSourceAvailabilityFromProviders(appId, title, result.allSources, result.totalEnabled);
-        // Only save partial results when at least one source is available or pending
-        // Prevents onEarlyResult from overwriting "checking" with "none" before all providers finish
-        if (entry.status !== "none") {
+        // Only save partial results when at least one source is available, or status is meaningful
+        // Prevents onEarlyResult from overwriting "checking" with transient empty results
+        if (entry.status === "ready" || entry.status === "needs-configuration" || entry.status === "error" || entry.status === "timeout") {
           updateSourceAvailability(appId, entry).catch(() => {});
         } else {
           log("store-search", `early-skip-empty { appId: "${appId}", provider: "${result.providerName}", availability: ${result.source.available} }`);
@@ -2570,16 +2829,11 @@ export default function Store() {
           const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
           if (!savedProvider || savedProvider === "none") {
             console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
-            console.log(`[STORE][SOURCE_NO_PROVIDER_TRANSITION] appid=${appId} nextState=retryable`);
+            console.log(`[STORE][SOURCE_NO_PROVIDER_TRANSITION] appid=${appId} nextState=retryable status=${entry.status}`);
             console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
-            const existing = getSourceAvailability(appId);
-            if (existing && existing.availableSources.length > 0) {
-              log("store-search", `preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
-              updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
-            } else if (existing) {
-              // Transition "checking" cache to "timeout" so UI doesn't stay stuck on "checking" state
-              updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
-            }
+
+            // Part 8: Use classifyProviderOutcomes result instead of hardcoded "none"
+            updateSourceAvailability(appId, entry).catch(() => {});
             return;
           }
           console.log(`[STORE][SOURCE_SAVE] appid=${appId} provider=${savedProvider} hasPreview=${hasPreview}`);
@@ -2617,7 +2871,8 @@ export default function Store() {
           }).catch(() => {});
         })
         .finally(() => {
-          if (requestId !== sourceResolveReqRef.current) return;
+          // Part 10: Always clean up — regardless of requestId.
+          // Bookkeeping (loading/progress state) must be cleared even when result publication is skipped.
           setSourcesLoadingByAppId((current) => ({
             ...current,
             [appId]: false,
@@ -2625,6 +2880,10 @@ export default function Store() {
           setBackgroundCheckingByAppId((prev) => ({
             ...prev,
             [appId]: false,
+          }));
+          setSourceProgressByAppId((current) => ({
+            ...current,
+            [appId]: null,
           }));
         });
     }, 0);
@@ -2669,8 +2928,8 @@ export default function Store() {
     setActiveSectionId(null);
   }
 
-  async function downloadFromSource(game: PackageGame, source: PackageSource) {
-    await sharedDownloadFromSource(game, source, {
+  async function downloadFromSource(game: PackageGame, source: PackageSource): Promise<{ success: boolean; jobId?: string }> {
+    return await sharedDownloadFromSource(game, source, {
       settings,
       addJob,
       updateJob,
@@ -2681,14 +2940,14 @@ export default function Store() {
     });
   }
 
-  async function handleDownloadSource(source: PackageSource) {
+  async function handleDownloadSource(source: PackageSource): Promise<{ success: boolean; jobId?: string }> {
     const game = selectedDetailGameWithOverlay;
 
     if (!game) {
-      return;
+      return { success: false };
     }
 
-    await downloadFromSource(game, source);
+    return await downloadFromSource(game, source);
   }
 
   async function handleDownloadSourceForGame(
@@ -2811,6 +3070,8 @@ export default function Store() {
     selectedAppId ? sourcesLoadingByAppId[selectedAppId] ?? false : false;
   const isBackgroundChecking =
     selectedAppId ? backgroundCheckingByAppId[selectedAppId] ?? false : false;
+  const sourceProgress: SourceProgress =
+    selectedAppId ? sourceProgressByAppId[selectedAppId] ?? null : null;
   const cachedEntry: SourceAvailabilityGameEntry | undefined =
     selectedAppId ? getSourceAvailability(selectedAppId) : undefined;
 
@@ -2822,7 +3083,7 @@ export default function Store() {
         : selectedDetailGameWithOverlay &&
             selectedDetailGameWithOverlay.sources.some((s) => s.available)
           ? "ready"
-          : "none";
+          : "idle";
 
   if (selectedAppId) {
     log("store-search", `final status { appId: "${selectedAppId}", status: "${sourceStatus}", backgroundChecking: ${isBackgroundChecking}, sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
@@ -2890,9 +3151,14 @@ export default function Store() {
           selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
           sourceStatus={sourceStatus}
           isBackgroundChecking={isBackgroundChecking}
+          sourceProgress={sourceProgress}
           moreLikeThisGames={selectedDetailRelatedGames}
           onBack={handleBackFromDetails}
           onDownloadSource={handleDownloadSource}
+          onViewInLibrary={(appId, gameTitle) => {
+            setPendingLibraryFocus(appId, gameTitle);
+            onNavigate?.("library");
+          }}
           onOpenGame={openDetailsForGame}
           onSelectSourceKey={(sourceKey) => {
             const appId = selectedDetailGameWithOverlay.appId;
@@ -2916,6 +3182,10 @@ export default function Store() {
               ...current,
               [appId]: true,
             }));
+            setSourceProgressByAppId((current) => ({
+              ...current,
+              [appId]: { completed: 0, total: 0, successful: 0, failed: 0, sourceCount: 0, requestId },
+            }));
             updateSourceAvailability(appId, {
               appId,
               title: game.title,
@@ -2936,6 +3206,16 @@ export default function Store() {
 
               console.log(`[STORE][PROVIDER_DISCOVERY_EARLY_RESULT] appid=${result.appId} provider=${result.providerName} available=${result.source.available}`);
 
+              // Part 11: Update source progress counter
+              setSourceProgressByAppId((current) => {
+                const prev = current[appId];
+                if (!prev || prev.requestId !== requestId) {
+                  return { ...current, [appId]: { completed: 1, total: result.totalEnabled, successful: result.source.available ? 1 : 0, failed: result.source.available ? 0 : 1, sourceCount: result.allSources.length, requestId } };
+                }
+                const nextCompleted = prev.completed + 1;
+                return { ...current, [appId]: { completed: nextCompleted, total: result.totalEnabled, successful: prev.successful + (result.source.available ? 1 : 0), failed: prev.failed + (result.source.available ? 0 : 1), sourceCount: result.allSources.length, requestId } };
+              });
+
               setProviderOverlayByAppId((current) => ({
                 ...current,
                 [appId]: {
@@ -2945,7 +3225,7 @@ export default function Store() {
               }));
 
               const retryEntry = buildSourceAvailabilityFromProviders(appId, game.title, result.allSources, result.totalEnabled);
-              if (retryEntry.status !== "none") {
+              if (retryEntry.status === "ready" || retryEntry.status === "needs-configuration" || retryEntry.status === "error" || retryEntry.status === "timeout") {
                 updateSourceAvailability(appId, retryEntry).catch(() => {});
               } else {
                 log("store-search", `retry-early-skip-empty { appId: "${appId}", provider: "${result.providerName}", availability: ${result.source.available} }`);
@@ -3000,13 +3280,11 @@ export default function Store() {
                 const savedProvider = resolvedGame.sources.find(s => s.available)?.providerName || "none";
                 if (!savedProvider || savedProvider === "none") {
                   console.warn("[STORE][SOURCE_SAVE_SKIP]", { appid: appId, reason: "no-provider" });
-                  console.log(`[STORE][SOURCE_NO_PROVIDER_TRANSITION] appid=${appId} nextState=retryable`);
+                  console.log(`[STORE][SOURCE_NO_PROVIDER_TRANSITION] appid=${appId} nextState=retryable status=${entry.status}`);
                   console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
-                  const existing = getSourceAvailability(appId);
-                  if (existing && existing.availableSources.length > 0) {
-                    log("store-search", `preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
-                    updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
-                  }
+
+                  // Part 8: Use classifyProviderOutcomes result instead of hardcoded "none"
+                  updateSourceAvailability(appId, entry).catch(() => {});
                   return;
                 }
                 updateSourceAvailability(appId, entry).catch(() => {});
@@ -3038,7 +3316,7 @@ export default function Store() {
                 }).catch(() => {});
               })
               .finally(() => {
-                if (requestId !== sourceResolveReqRef.current) return;
+                // Part 10: Always clean up — regardless of requestId
                 setSourcesLoadingByAppId((current) => ({
                   ...current,
                   [appId]: false,
@@ -3046,6 +3324,10 @@ export default function Store() {
                 setBackgroundCheckingByAppId((prev) => ({
                   ...prev,
                   [appId]: false,
+                }));
+                setSourceProgressByAppId((current) => ({
+                  ...current,
+                  [appId]: null,
                 }));
               });
           }}

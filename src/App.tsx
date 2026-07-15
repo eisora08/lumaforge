@@ -39,6 +39,8 @@ import AppRouteTransition from "./components/common/AppRouteTransition";
 import { ConfirmProvider } from "./services/confirmService";
 import { pauseBackgroundFill, resumeBackgroundFill } from "./services/backgroundValidator";
 import { setAppFullscreen, toggleAppFullscreen } from "./services/windowModeService";
+import { useSettings } from "./context/SettingsContext";
+import { setConsoleMode } from "./features/console/consoleInputHints";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -119,6 +121,7 @@ function App() {
   const modeSwitchKeyRef = useRef(0);
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
+  const { settings } = useSettings();
 
   // Start boot coordinator once on mount
   useEffect(() => {
@@ -127,7 +130,20 @@ function App() {
     runBootTasks();
   }, [bootStarted]);
 
+  // Init catalog orchestrator at app level — loads disk cache, provides canonical sections to Home and Store
   useEffect(() => {
+    (async () => {
+      const { initCatalogOrchestrator } = await import("./services/storeCatalogOrchestrator");
+      await initCatalogOrchestrator({
+        rawgApiKey: settings.rawgApiKey,
+        igdbClientId: settings.igdbClientId,
+        igdbClientSecret: settings.igdbClientSecret,
+      });
+    })();
+  }, [settings.rawgApiKey, settings.igdbClientId, settings.igdbClientSecret]);
+
+  useEffect(() => {
+    setConsoleMode(activePage === "console");
     if (initialRender.current) {
       initialRender.current = false;
       return;
@@ -219,7 +235,7 @@ function App() {
         pageComponent = <Games />;
         break;
       case "store":
-        pageComponent = <Store />;
+        pageComponent = <Store onNavigate={handleNavigate} />;
         break;
       case "global-search":
         pageComponent = <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;

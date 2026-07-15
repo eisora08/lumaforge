@@ -109,6 +109,10 @@ fn get_discovery_index_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_store_dir(app_handle)?.join("discovery-index.json"))
 }
 
+fn get_catalog_sections_cache_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    Ok(get_store_dir(app_handle)?.join("catalog-sections-cache.json"))
+}
+
 fn get_details_path(app_handle: &AppHandle, app_id: u32) -> Result<PathBuf, String> {
     Ok(get_details_dir(app_handle)?.join(format!("{}.json", app_id)))
 }
@@ -508,6 +512,55 @@ pub fn write_store_discovery_index(app_handle: AppHandle, data: serde_json::Valu
         .map_err(|e| format!("Failed to write discovery index: {}", e))?;
 
     log_store(&format!("discovery index saved ({} bytes)", content.len()));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Catalog sections cache  —  app_data/store/catalog-sections-cache.json
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn read_store_catalog_sections_cache(app_handle: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let path = get_catalog_sections_cache_path(&app_handle)?;
+
+    if !path.exists() {
+        log_store("catalog sections cache loaded (none on disk)");
+        return Ok(None);
+    }
+
+    match fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(value) => {
+                log_store("catalog sections cache loaded");
+                Ok(Some(value))
+            }
+            Err(_) => {
+                log_store("catalog sections cache corrupt — ignoring");
+                Ok(None)
+            }
+        },
+        Err(e) => {
+            log_store(&format!("catalog sections cache read error: {}", e));
+            Ok(None)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn write_store_catalog_sections_cache(app_handle: AppHandle, data: serde_json::Value) -> Result<(), String> {
+    let path = get_catalog_sections_cache_path(&app_handle)?;
+
+    let content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("Failed to serialize catalog sections cache: {}", e))?;
+
+    // Atomic write via temp file + rename
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, &content)
+        .map_err(|e| format!("Failed to write catalog sections cache: {}", e))?;
+    fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("Failed to rename catalog sections cache: {}", e))?;
+
+    log_store(&format!("catalog sections cache saved ({} bytes)", content.len()));
     Ok(())
 }
 

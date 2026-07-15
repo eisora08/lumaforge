@@ -18,8 +18,11 @@ import { useGameActivity } from "../context/GameActivityContext";
 import { useGameSession } from "../context/GameSessionContext";
 import { useSettings } from "../context/SettingsContext";
 import { subscribeCatalogState, getCatalogState, discoverGlobalCatalog } from "../services/globalCatalogService";
+import { subscribeCatalogSections, getCachedCatalogSections } from "../services/storeCatalogOrchestrator";
 import type { AppPage } from "../types/navigation";
 import type { CatalogStatus } from "../services/globalCatalogService";
+
+const DEBUG_HOME_CATALOG = false;
 
 /* ================================================================== */
 /*  TYPES                                                              */
@@ -158,6 +161,7 @@ export default function Home({ onNavigate }: Props) {
   const { activities } = useGameActivity();
   const { sessions } = useGameSession();
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
+  const [orchestratorHasData, setOrchestratorHasData] = useState(() => getCachedCatalogSections().length > 0);
   const { settings } = useSettings();
 
   // Re-read snapshot when it's written/updated (one-shot check after boot)
@@ -183,6 +187,29 @@ export default function Home({ onNavigate }: Props) {
     return unsub;
   }, []);
 
+  // Track orchestrator readiness (canonical Store catalog sections)
+  const orchLogRef = useRef<string>("");
+  useEffect(() => {
+    if (DEBUG_HOME_CATALOG && !orchLogRef.current) {
+      const cached = getCachedCatalogSections();
+      console.log(`[HOME][CATALOG] mount orchestratorCached=${cached.length > 0} cachedSections=${cached.length} catalogStatus=${catalogStatus}`);
+    }
+    const unsub = subscribeCatalogSections((sections) => {
+      const hasData = sections.length > 0;
+      setOrchestratorHasData(hasData);
+      if (DEBUG_HOME_CATALOG) {
+        const sectionIds = sections.map((s) => s.sectionId).join(",");
+        const totalGames = sections.reduce((n, s) => n + s.games.length, 0);
+        const key = `${hasData}|${sectionIds}|${totalGames}`;
+        if (orchLogRef.current !== key) {
+          orchLogRef.current = key;
+          console.log(`[HOME][CATALOG] orchestratorReady=${hasData} sections=${sectionIds} totalGames=${totalGames} catalogStatus=${catalogStatus} discoveryReady=${catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error" || hasData}`);
+        }
+      }
+    });
+    return unsub;
+  }, [catalogStatus]);
+
   useEffect(() => {
     const idle = () => discoverGlobalCatalog().catch(() => {});
     if ("requestIdleCallback" in window) {
@@ -200,7 +227,17 @@ export default function Home({ onNavigate }: Props) {
     }
   }, [catalogStatus]);
 
-  const dashboardDiscoveryReady = catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error";
+  const dashboardDiscoveryReady = catalogStatus === "ready" || catalogStatus === "unavailable" || catalogStatus === "empty" || catalogStatus === "error" || orchestratorHasData;
+
+  const discoveryLogRef = useRef(false);
+  useEffect(() => {
+    if (dashboardDiscoveryReady && !discoveryLogRef.current) {
+      discoveryLogRef.current = true;
+      if (DEBUG_HOME_CATALOG) {
+        console.log(`[HOME][CATALOG] discoveryReady=true catalogStatus=${catalogStatus} orchestratorHasData=${orchestratorHasData}`);
+      }
+    }
+  }, [dashboardDiscoveryReady, catalogStatus, orchestratorHasData]);
 
   useEffect(() => {
     if (snapshot?.library?.games) {

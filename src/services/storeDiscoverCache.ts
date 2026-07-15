@@ -4,14 +4,14 @@
 // ---------------------------------------------------------------------------
 
 /** Increment when scoring/filtering logic changes to force cache rebuild. */
-export const DISCOVER_SCORING_VERSION = 4;
+export const DISCOVER_SCORING_VERSION = 5;
 
 /**
  * Increment when Discovery Index format or scoring changes.
  * Must stay aligned with DISCOVER_SCORING_VERSION so the index is always
  * rebuilt when scoring logic changes.
  */
-export const DISCOVERY_INDEX_VERSION = 4;
+export const DISCOVERY_INDEX_VERSION = 5;
 
 /** Steam genre ID → display name mapping. Used by discovery index for normalization. */
 export const STEAM_GENRE_IDS: Record<string, string> = {
@@ -142,7 +142,7 @@ export type StoreDiscoveryIndex = {
 };
 
 /** Section source tag for honest labeling. */
-export type SectionSource = "catalog" | "personalized" | "genre" | "lua" | "fallback";
+export type SectionSource = "catalog" | "personalized" | "genre" | "lua" | "fallback" | "curated";
 
 /** New model for a single Discover section rail. */
 export type StoreDiscoverSection = {

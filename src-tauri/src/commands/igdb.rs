@@ -403,6 +403,168 @@ pub fn igdb_search_games_by_name(
     Ok(results)
 }
 
+// ── IGDB Catalog Query ──
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IgdbCatalogGame {
+    pub igdb_id: u64,
+    pub name: Option<String>,
+    pub summary: Option<String>,
+    pub first_release_date: Option<String>,
+    pub genres: Option<Vec<String>>,
+    pub rating: Option<f64>,
+    pub popularity: Option<f64>,
+    pub cover_url: Option<String>,
+    pub screenshot_urls: Option<Vec<String>>,
+    pub developers: Option<Vec<String>>,
+    pub publishers: Option<Vec<String>>,
+    pub steam_app_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IgdbCatalogRaw {
+    id: Option<u64>,
+    name: Option<String>,
+    summary: Option<String>,
+    first_release_date: Option<u64>,
+    genres: Option<Vec<IgdbNamedRef>>,
+    rating: Option<f64>,
+    popularity: Option<f64>,
+    cover: Option<IgdbImageRef>,
+    screenshots: Option<Vec<IgdbImageRef>>,
+    involved_companies: Option<Vec<IgdbInvolvedCompany>>,
+    external_games: Option<Vec<IgdbExternalGame>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IgdbExternalGame {
+    category: Option<u64>,
+    url: Option<String>,
+    uid: Option<String>,
+}
+
+/// Query IGDB for catalog sections (popular games, new releases, genre-filtered).
+/// `query` is an IGDB query string (e.g., "sort popularity desc; limit 20;").
+#[tauri::command]
+pub fn igdb_query_catalog(
+    client_id: String,
+    access_token: String,
+    query: String,
+) -> Result<Vec<IgdbCatalogGame>, String> {
+    if client_id.is_empty() || access_token.is_empty() {
+        return Err("[IGDB][CATALOG] Missing credentials".to_string());
+    }
+
+    let client = build_client()?;
+    let headers = build_headers(&client_id, &access_token)?;
+
+    let response = client
+        .post(format!("{}/games", IGDB_BASE_URL))
+        .headers(headers)
+        .body(query)
+        .send()
+        .map_err(|e| format!("[IGDB][CATALOG] Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().unwrap_or_default();
+        return Err(format!(
+            "[IGDB][CATALOG] HTTP {}: {}",
+            status,
+            truncate(&body, 200)
+        ));
+    }
+
+    let games: Vec<IgdbCatalogRaw> = response
+        .json()
+        .map_err(|e| format!("[IGDB][CATALOG] Failed to parse response: {}", e))?;
+
+    let results: Vec<IgdbCatalogGame> = games
+        .into_iter()
+        .filter_map(|g| {
+            let id = g.id?;
+            let developers = g.involved_companies.as_ref().map(|ics| {
+                ics.iter()
+                    .filter_map(|ic| {
+                        if ic.developer.unwrap_or(false) {
+                            ic.company.as_ref().and_then(|c| c.name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            });
+            let publishers = g.involved_companies.as_ref().map(|ics| {
+                ics.iter()
+                    .filter_map(|ic| {
+                        if ic.publisher.unwrap_or(false) {
+                            ic.company.as_ref().and_then(|c| c.name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            });
+            let genres = g.genres.as_ref().map(|gs| {
+                gs.iter()
+                    .filter_map(|g| g.name.clone())
+                    .collect()
+            });
+            let cover_url = g.cover.as_ref().and_then(|c| c.url.as_deref()).map(|url| {
+                format!("https:{}", url)
+            });
+            let screenshot_urls = g.screenshots.as_ref().map(|ss| {
+                ss.iter()
+                    .filter_map(|s| s.url.as_deref().map(|url| format!("https:{}", url)))
+                    .collect()
+            });
+            let release_date = g.first_release_date.map(|ts| timestamp_to_date(ts));
+
+            // Extract Steam app ID from external_games (category 1 = Steam)
+            let steam_app_id = g.external_games.as_ref().and_then(|egs| {
+                egs.iter().find_map(|eg| {
+                    let is_steam = eg.category == Some(1);
+                    if !is_steam {
+                        return None;
+                    }
+                    // Try uid first (clean numeric ID), fall back to URL parsing
+                    if let Some(ref uid) = eg.uid {
+                        if !uid.is_empty() {
+                            return Some(uid.clone());
+                        }
+                    }
+                    if let Some(ref url) = eg.url {
+                        // Extract app ID from URL: https://store.steampowered.com/app/12345
+                        if let Some(app_id) = url.rsplit('/').next() {
+                            if !app_id.is_empty() && app_id.chars().all(|c| c.is_ascii_digit()) {
+                                return Some(app_id.to_string());
+                            }
+                        }
+                    }
+                    None
+                })
+            });
+
+            Some(IgdbCatalogGame {
+                igdb_id: id,
+                name: g.name,
+                summary: g.summary,
+                first_release_date: release_date,
+                genres,
+                rating: g.rating,
+                popularity: g.popularity,
+                cover_url,
+                screenshot_urls,
+                developers,
+                publishers,
+                steam_app_id,
+            })
+        })
+        .collect();
+
+    Ok(results)
+}
+
 fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()

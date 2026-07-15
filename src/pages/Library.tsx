@@ -8,6 +8,8 @@ import {
   Plus,
   RefreshCcw,
   Settings,
+  X,
+  Search,
 } from "lucide-react";
 
 import PageContainer from "../components/layout/PageContainer";
@@ -35,6 +37,7 @@ import { runInstalledLuaScan, getUpdateStatus, subscribeUpdateStatus } from "../
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 import { isSidebarInstalledGame } from "../services/gameCacheService";
+import { consumePendingLibraryFocus } from "../services/libraryNavigationService";
 
 import type { LibraryGame } from "../types/libraryGame";
 import type { PackageGame, PackageSource } from "../types/package";
@@ -49,6 +52,63 @@ import {
 import { useConfirm } from "../services/confirmService";
 
 
+
+// ─── Compact pagination token generator ──────────────────────────────────────
+type PaginationToken =
+  | { type: "page"; value: number }
+  | { type: "ellipsis"; key: string };
+
+const DEBUG_LIBRARY_PAGINATION = false;
+
+function getPaginationTokens(
+  currentPage: number,
+  totalPages: number,
+  siblingCount = 1,
+): PaginationToken[] {
+  // Compact pagination for 5+ pages; show all for fewer
+  if (totalPages < 5) {
+    return Array.from({ length: totalPages }, (_, i) => ({
+      type: "page" as const,
+      value: i + 1,
+    }));
+  }
+
+  // Base sibling window around current page, clamped to inner pages (page 1 and last are always shown separately)
+  let rangeStart = Math.max(2, currentPage - siblingCount);
+  let rangeEnd = Math.min(totalPages - 1, currentPage + siblingCount);
+
+  // Ensure at least 2 visible pages in the numeric range (expands right at beginning, left at end)
+  if (rangeEnd - rangeStart + 1 < 2) {
+    rangeEnd = Math.min(totalPages - 1, rangeStart + 1);
+  }
+
+  const tokens: PaginationToken[] = [];
+
+  // Page 1 is always visible
+  tokens.push({ type: "page", value: 1 });
+
+  // Left ellipsis when there's a gap between page 1 and the range
+  if (rangeStart > 2) {
+    tokens.push({ type: "ellipsis", key: "left" });
+  }
+
+  // Visible sibling range
+  for (let i = rangeStart; i <= rangeEnd; i++) {
+    tokens.push({ type: "page", value: i });
+  }
+
+  // Right ellipsis when there's a gap between the range and last page
+  if (rangeEnd < totalPages - 1) {
+    tokens.push({ type: "ellipsis", key: "right" });
+  }
+
+  // Last page is always visible
+  if (totalPages > 1) {
+    tokens.push({ type: "page", value: totalPages });
+  }
+
+  return tokens;
+}
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -77,12 +137,36 @@ export default function LibraryPage({ onNavigate }: Props) {
   const queuedMediaRef = useRef<Set<string>>(new Set());
   const { confirm } = useConfirm();
 
+  // Library focus mode — when navigating from Store after package download
+  const [focusAppId, setFocusAppId] = useState<string | null>(null);
+  const [focusTitle, setFocusTitle] = useState<string | null>(null);
+
+  // Consume pending library focus on mount (set by Store after package download)
+  useEffect(() => {
+    const pending = consumePendingLibraryFocus();
+    if (pending) {
+      setFocusAppId(pending.appId);
+      setFocusTitle(pending.title);
+      // Reset filters so the focus game is visible regardless of prior filter state
+      setFilter("all");
+      setSort("name");
+      setSearchQuery("");
+      setCurrentPage(1);
+      console.log(`[LIBRARY_FOCUS][MOUNT] appid=${pending.appId} title="${pending.title || ""}"`);
+    }
+  }, []);
+
   // displayGames comes directly from context — no separate luaGames list.
   // Games from LibraryGamesContext already have hasLua flag merged via
   // libraryGameResolver.ts, which uses Lua as an overlay, not a source.
   const displayGames = useMemo(() => {
-    return [...games].sort((a, b) => a.title.localeCompare(b.title));
-  }, [games]);
+    const sorted = [...games].sort((a, b) => a.title.localeCompare(b.title));
+    // Focus mode: show only the target game
+    if (focusAppId) {
+      return sorted.filter((g) => g.appId === focusAppId);
+    }
+    return sorted;
+  }, [games, focusAppId]);
 
   const filteredGames = useMemo(() => {
     let result = displayGames;
@@ -460,6 +544,50 @@ export default function LibraryPage({ onNavigate }: Props) {
                         </ul>
                       </div>
                     )}
+
+                    {focusAppId && (
+                      <div className="mb-5 flex items-center gap-3 rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/5 px-4 py-3">
+                        <Search className="h-4 w-4 shrink-0 text-(--color-accent)" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-(--color-text)">
+                            Showing: {focusTitle || `Game ${focusAppId}`}
+                          </p>
+                          <p className="mt-0.5 text-xs text-(--color-muted)">
+                            {displayGames.length > 0
+                              ? "Game found in your library."
+                              : "Game not yet in library — try refreshing or installing."}
+                          </p>
+                        </div>
+                        {displayGames.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFocusAppId(null);
+                              setFocusTitle(null);
+                              console.log(`[LIBRARY_FOCUS][CLEAR] reason=user-dismiss`);
+                            }}
+                            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            Show all games
+                          </button>
+                        )}
+                        {displayGames.length === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              refresh();
+                              console.log(`[LIBRARY_FOCUS][REFRESH] appid=${focusAppId}`);
+                            }}
+                            disabled={loading}
+                            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent)/10 px-2.5 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                            Refresh library
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {paginatedGames.length === 0 ? (
@@ -556,38 +684,61 @@ export default function LibraryPage({ onNavigate }: Props) {
                   </div>
 
                   {totalPages > 1 && (
-                    <div className="flex items-center gap-2">
+                    <nav className="flex items-center gap-1.5" aria-label="Library pagination">
+                      {DEBUG_LIBRARY_PAGINATION && (() => {
+                        const tokens = getPaginationTokens(currentPage, totalPages);
+                        console.log("[LIBRARY_PAGINATION][TOKENS]", { file: "Library.tsx", currentPage, totalPages, compactMode: totalPages >= 5, tokens: tokens.map((t) => t.type === "ellipsis" ? "..." : t.value) });
+                        return null;
+                      })()}
                       <button
                         type="button"
                         disabled={currentPage <= 1}
+                        aria-label="Previous page"
                         onClick={() => startTransition(() => setCurrentPage((p) => Math.max(1, p - 1)))}
                         className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-sm text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
                       >
                         <ChevronLeft className="h-4 w-4" />
                       </button>
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                        <button
-                          key={page}
-                          type="button"
-                          onClick={() => startTransition(() => setCurrentPage(page))}
-                          className={`inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-sm font-medium transition ${
-                            page === currentPage
-                              ? "bg-(--color-accent)/20 text-(--color-accent)"
-                              : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
-                          }`}
-                        >
-                          {page}
-                        </button>
-                      ))}
+                      {getPaginationTokens(currentPage, totalPages).map((token) =>
+                        token.type === "ellipsis" ? (
+                          <span
+                            key={token.key}
+                            className="inline-flex h-8 w-8 items-center justify-center text-sm font-medium text-(--color-muted)/50"
+                            aria-hidden="true"
+                          >
+                            ...
+                          </span>
+                        ) : (
+                          <button
+                            key={token.value}
+                            type="button"
+                            aria-label={`Go to page ${token.value}`}
+                            aria-current={token.value === currentPage ? "page" : undefined}
+                            onClick={() => {
+                              if (token.value !== currentPage) {
+                                startTransition(() => setCurrentPage(token.value));
+                              }
+                            }}
+                            className={`inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-sm font-medium transition ${
+                              token.value === currentPage
+                                ? "bg-(--color-accent)/20 text-(--color-accent)"
+                                : "text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+                            }`}
+                          >
+                            {token.value}
+                          </button>
+                        ),
+                      )}
                       <button
                         type="button"
                         disabled={currentPage >= totalPages}
+                        aria-label="Next page"
                         onClick={() => startTransition(() => setCurrentPage((p) => Math.min(totalPages, p + 1)))}
                         className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-sm text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30"
                       >
                         <ChevronRight className="h-4 w-4" />
                       </button>
-                    </div>
+                    </nav>
                   )}
 
                   <div className="text-xs text-(--color-muted)/60">
