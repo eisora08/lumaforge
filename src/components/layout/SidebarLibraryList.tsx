@@ -47,13 +47,15 @@ import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToas
 import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
-import { uninstallSteamApp, openSteamStoreApp } from "../../services/tauri";
+import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts } from "../../services/tauri";
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { useConfirm } from "../../services/confirmService";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
 const DEBUG_MANUAL_REMOVE = false;
+const DEBUG_LUA_DELETE = false;
 
 type Props = {
   onOpenGame?: () => void;
@@ -155,6 +157,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const sidebarMediaLoading = useRef<Set<string>>(new Set());
   const [startupBatchDelayPassed, setStartupBatchDelayPassed] = useState(false);
   const { jobs } = useDownloadQueueContext();
+  const { confirm } = useConfirm();
 
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
@@ -392,6 +395,40 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     setContextMenuPos({ x: e.clientX, y: e.clientY });
     setMenuGame(game);
     setMenuOpen(true);
+  }
+
+  async function handleDeleteScript(game: LibraryGame) {
+    const script = game.luaScripts[0];
+    if (!script) {
+      showWarning("No Lua script to delete.", { title: "No script" });
+      return;
+    }
+    if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${appSettings.luaPath}"`);
+    const result = await confirm({
+      title: "Delete Lua script?",
+      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
+      confirmLabel: "Delete Lua",
+      variant: "danger",
+    });
+    if (!result.confirmed) return;
+    try {
+      await deleteLuaScript({ luaPath: appSettings.luaPath, fileName: script.file_name });
+      // Verify file is actually gone from disk
+      const remaining = await scanInstalledLuaScripts(appSettings.luaPath);
+      const stillPresent = remaining.some((s) => s.file_name === script.file_name);
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
+      if (stillPresent) {
+        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        return;
+      }
+      // Force refresh library state (bypass TTL) to reflect deletion
+      await refresh({ force: true });
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
+      showSuccess("Lua script deleted.", { title: "Deleted" });
+    } catch (err) {
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
+      showError(String(err), { title: "Error" });
+    }
   }
 
   function handleMenuClose() {
@@ -844,7 +881,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                       label: "Delete Lua",
                       icon: <X className="h-3.5 w-3.5" />,
                       destructive: true as const,
-                      disabled: true,
+                      onClick: () => { handleMenuClose(); handleDeleteScript(menuGame); },
                     }]
                     : []),
                 ]}

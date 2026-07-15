@@ -3,6 +3,8 @@ import { countRender } from "../services/perfCounters";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
   installSteamApp,
+  deleteLuaScript,
+  scanInstalledLuaScripts,
 } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
 import { openExternalUrl } from "../services/externalLinks";
@@ -34,14 +36,17 @@ import { importExternalPlaytime } from "../services/playtimeService";
 import type { LibraryGame } from "../types/libraryGame";
 const DEBUG_MEDIA_CACHE = false;
 const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = DEBUG_MEDIA_CACHE;
+const DEBUG_LUA_DELETE = false;
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import type { AppPage } from "../types/navigation";
 
 import {
   showError,
+  showSuccess,
   showWarning,
   showInfo,
 } from "../components/toast/GameToast";
+import { useConfirm } from "../services/confirmService";
 
 
 type Props = {
@@ -51,7 +56,7 @@ type Props = {
 
 export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   countRender("LibraryGameDetailPage");
-  const { selectedGame, setSelectedGame, appInfoMap } = useLibraryGames();
+  const { selectedGame, setSelectedGame, appInfoMap, refresh } = useLibraryGames();
   const { settings } = useSettings();
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
@@ -72,6 +77,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const { addActivity } = useGameActivity();
   const { recordSessionEnd } = useGamePlayStats(selectedGame?.id || "");
   const [showStopModal, setShowStopModal] = useState(false);
+  const { confirm } = useConfirm();
 
   // Playtime tracking: when session transitions from running to idle/cleared
   useEffect(() => {
@@ -120,6 +126,40 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
   function handleOpenStopModal() {
     setShowStopModal(true);
+  }
+
+  async function handleDeleteScript(game: LibraryGame) {
+    const script = game.luaScripts[0];
+    if (!script) {
+      showWarning("No Lua script to delete.", { title: "No script" });
+      return;
+    }
+    if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${settings.luaPath}"`);
+    const result = await confirm({
+      title: "Delete Lua script?",
+      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
+      confirmLabel: "Delete Lua",
+      variant: "danger",
+    });
+    if (!result.confirmed) return;
+    try {
+      await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
+      // Verify file is actually gone from disk
+      const remaining = await scanInstalledLuaScripts(settings.luaPath);
+      const stillPresent = remaining.some((s) => s.file_name === script.file_name);
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
+      if (stillPresent) {
+        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        return;
+      }
+      // Force refresh library state (bypass TTL) to reflect deletion
+      await refresh({ force: true });
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
+      showSuccess("Lua script deleted.", { title: "Deleted" });
+    } catch (err) {
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
+      showError(String(err), { title: "Error" });
+    }
   }
 
   async function handleFindProcess() {
@@ -1039,6 +1079,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         onOpenSteamDb={handleOpenSteamDb}
         onBack={handleBack}
         onRefreshArtwork={handleRefreshArtwork}
+        onDeleteScript={handleDeleteScript}
         onNavigate={onNavigate}
         launchInfo={launchInfo}
         onCancelLaunch={cancelLaunch}

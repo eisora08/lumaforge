@@ -13,7 +13,7 @@ import { GridSkeleton } from "../components/common/Skeleton";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession } from "../context/GameSessionContext";
-import { installSteamApp, deleteLuaScript } from "../services/tauri";
+import { installSteamApp, deleteLuaScript, scanInstalledLuaScripts } from "../services/tauri";
 import { installTrackerService } from "../services/installTrackingService";
 
 import type { LibraryGame } from "../types/libraryGame";
@@ -23,6 +23,8 @@ import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownload
 
 import { showError, showSuccess, showWarning } from "../components/toast/GameToast";
 import { useConfirm } from "../services/confirmService";
+
+const DEBUG_LUA_DELETE = false;
 
 
 export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
@@ -46,18 +48,30 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
       showWarning("No Lua script to delete.", { title: "No script" });
       return;
     }
+    if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][REQUEST] appid=${game.appId} title="${game.title}" file="${script.file_name}" path="${script.path}" luaPath="${settings.luaPath}"`);
     const result = await confirm({
       title: "Delete Lua script?",
-      description: `This will delete "${script.file_name}" for ${game.title}. This action cannot be undone.`,
+      description: `This will permanently delete "${script.file_name}" for ${game.title} from the configured Lua folder. This action cannot be undone.`,
       confirmLabel: "Delete Lua",
       variant: "danger",
     });
     if (!result.confirmed) return;
     try {
       await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
+      // Verify file is actually gone from disk
+      const remaining = await scanInstalledLuaScripts(settings.luaPath);
+      const stillPresent = remaining.some((s) => s.file_name === script.file_name);
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
+      if (stillPresent) {
+        showError("File still exists on disk after deletion attempt.", { title: "Deletion failed" });
+        return;
+      }
+      // Force refresh library state (bypass TTL) to reflect deletion
+      await refresh({ force: true });
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" success=true`);
       showSuccess("Lua script deleted.", { title: "Deleted" });
-      await refresh();
     } catch (err) {
+      if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][UI_RESULT] appid=${game.appId} file="${script.file_name}" error="${String(err)}"`);
       showError(String(err), { title: "Error" });
     }
   }
@@ -198,7 +212,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={refresh}
+                  onClick={() => refresh()}
                   disabled={loading}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-2.5 py-2 text-xs font-medium text-(--color-accent) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   title="Scan"

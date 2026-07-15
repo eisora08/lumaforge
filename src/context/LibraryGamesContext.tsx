@@ -132,7 +132,7 @@ type LibraryGamesState = {
   setSelectedId: (id: string | null) => void;
   selectedGame: LibraryGame | null;
   setSelectedGame: (game: LibraryGame | null) => void;
-  refresh: () => Promise<void>;
+  refresh: (options?: { force?: boolean }) => Promise<void>;
   updateGame: (appId: string, updates: Partial<LibraryGame>) => void;
   checkGameProviderStatus: (appId: string, force?: boolean) => Promise<{ steamInstalled: boolean } | null>;
   appInfoMap: LibraryAppInfoMap;
@@ -298,7 +298,15 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     for (const game of deduped) {
       if (game.appId && currentById.has(game.appId)) {
         const existing = currentById.get(game.appId)!;
-        if (existing.title === game.title && existing.source === game.source && existing.steamInstalled === game.steamInstalled && !!existing.isPlayable === !!game.isPlayable && !!existing.isFavorite === !!game.isFavorite) {
+        if (
+          existing.title === game.title &&
+          existing.source === game.source &&
+          existing.steamInstalled === game.steamInstalled &&
+          !!existing.isPlayable === !!game.isPlayable &&
+          !!existing.isFavorite === !!game.isFavorite &&
+          !!existing.hasLua === !!game.hasLua &&
+          existing.luaScripts.length === game.luaScripts.length
+        ) {
           stable.push(existing);
         } else {
           stable.push(game);
@@ -364,8 +372,30 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
       for (const game of incoming) {
         if (game.appId) {
-          // Steam/Lua: only add if not already present (preserve runtime state)
-          if (!byAppId.has(game.appId)) byAppId.set(game.appId, game);
+          const existing = byAppId.get(game.appId);
+          if (existing) {
+            // Game already present — propagate Lua state changes from incoming scan.
+            // Skip for reconciled sources (reconciled-update/reconciled-fallback) because
+            // SQLite doesn't track Lua state — incoming would have hasLua=false, luaScripts=[]
+            // which would incorrectly clear valid Lua state from the in-memory games.
+            const isReconciledSource = source === "reconciled-update" || source === "reconciled-fallback";
+            if (!isReconciledSource && (existing.hasLua !== game.hasLua || existing.luaScripts.length !== game.luaScripts.length)) {
+              console.log(`[LIBRARY][MERGE_LUA_DIFF] appid=${game.appId} source=${source} oldHasLua=${existing.hasLua} oldScripts=${existing.luaScripts.length} newHasLua=${game.hasLua} newScripts=${game.luaScripts.length}`);
+              existing.luaScripts = game.luaScripts;
+              existing.hasLua = game.hasLua;
+              existing.isLuaActive = game.isLuaActive;
+              existing.isLuaDisabled = game.isLuaDisabled;
+              existing.hasLuaSource = game.hasLuaSource;
+              // If game was Lua-only and lost its last script, remove it
+              if (!game.hasLua && game.luaScripts.length === 0 && existing.source === "lua" && !existing.steamInstalled) {
+                // Don't add to byAppId — game is effectively removed
+                continue;
+              }
+            }
+          } else {
+            // New game not in current list
+            byAppId.set(game.appId, game);
+          }
         } else {
           // Manual (no appId): always replace with fresh version from store.
           // The store is the source of truth for manual game media/title/fields.
@@ -711,11 +741,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }, [games, appInfoMap]);
 
   // Step 8: Manual refresh must not wipe on failure
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: { force?: boolean }) => {
     const s = settingsRef.current;
     setLoading(true);
     try {
       const result = await resolveLibraryGames(s, {
+        ...(options?.force ? { force: true } : {}),
         onProgress(source, phase, extra) {
           reportLibraryProgress({
             source,
@@ -763,21 +794,38 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             );
           } catch { /* name resolution is optional */ }
 
-          // Phase 1: Update existing games that now have Lua scripts
+          // Phase 1: Update existing games with Lua state from fresh scan
           let updatedCount = 0;
+          let clearedCount = 0;
           const updatedGames = currentGames.map((g) => {
             if (!g.appId) return g;
             const appScripts = luaByAppId.get(Number(g.appId));
-            if (!appScripts) return g;
-            updatedCount++;
-            console.log(`[LIBRARY][UPSERT_FROM_LUA] appid=${g.appId} inserted=false updated=true luaActive=${appScripts.some(s => !s.is_disabled)}`);
-            return {
-              ...g,
-              luaScripts: appScripts,
-              hasLua: true,
-              isLuaActive: appScripts.some((s) => !s.is_disabled),
-              isLuaDisabled: appScripts.every((s) => s.is_disabled),
-            };
+            if (appScripts) {
+              updatedCount++;
+              console.log(`[LIBRARY][UPSERT_FROM_LUA] appid=${g.appId} inserted=false updated=true luaActive=${appScripts.some(s => !s.is_disabled)}`);
+              return {
+                ...g,
+                luaScripts: appScripts,
+                hasLua: true,
+                isLuaActive: appScripts.some((s) => !s.is_disabled),
+                isLuaDisabled: appScripts.every((s) => s.is_disabled),
+              };
+            }
+            // No scripts found for this appId — clear stale Lua state if it existed
+            if (g.hasLua || g.luaScripts.length > 0) {
+              clearedCount++;
+              console.log(`[LIBRARY][LUA_CLEAR_STALE] appid=${g.appId} title="${g.title}" hadScripts=${g.luaScripts.length}`);
+              return {
+                ...g,
+                luaScripts: [],
+                hasLua: false,
+                isLuaActive: false,
+                isLuaDisabled: false,
+                // If game was Lua-only with no Steam install, remove it entirely
+                source: g.source === "lua" && !g.steamInstalled ? "lua" : g.source,
+              };
+            }
+            return g;
           });
 
           // Phase 2: Insert brand-new Lua-only games
@@ -807,11 +855,13 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           }
 
           const inserted = newLuaGames.length;
-          if (updatedCount > 0 || newLuaGames.length > 0) {
-            enriched = [...updatedGames, ...newLuaGames].sort((a, b) =>
+          if (updatedCount > 0 || newLuaGames.length > 0 || clearedCount > 0) {
+            // Remove Lua-only games that lost their last script
+            const finalGames = updatedGames.filter((g) => !(g.source === "lua" && !g.steamInstalled && g.luaScripts.length === 0));
+            enriched = [...finalGames, ...newLuaGames].sort((a, b) =>
               (a.title || "").localeCompare(b.title || ""),
             );
-            console.log(`[LIBRARY][REFRESH_LUA_FALLBACK] current=${currentGames.length} inserted=${inserted} updated=${updatedCount} total=${enriched.length}`);
+            console.log(`[LIBRARY][REFRESH_LUA_FALLBACK] current=${currentGames.length} inserted=${inserted} updated=${updatedCount} cleared=${clearedCount} removedLuaOnly=${updatedGames.length - finalGames.length} total=${enriched.length}`);
             // Persist to reconciled store for crash recovery (same pattern as install/uninstall handlers)
             try {
               const { setReconciledGames } = await import("../services/gameStore");

@@ -11,6 +11,8 @@ import { getStoreDetailsState } from "../services/storeDetailsSourceState";
 import { downloadFromSource, type DownloadFromSourceDeps } from "../features/download/downloadFromSource";
 import { scanInstalledLuaScripts } from "../services/tauri";
 import { getSourceKey } from "../utils/sourceHelpers";
+import { setPendingLibraryFocus } from "../services/libraryNavigationService";
+import { useSearch } from "../context/SearchContext";
 
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
 import { SkeletonHero, SkeletonBox } from "../components/common/Skeleton";
@@ -19,6 +21,7 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
 import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
+import type { AppPage } from "../types/navigation";
 
 function DetailsShell({ onBack }: { onBack: () => void }) {
   return (
@@ -44,10 +47,11 @@ function DetailsShell({ onBack }: { onBack: () => void }) {
   );
 }
 
-export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
+export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => void; onNavigate?: (page: AppPage) => void }) {
   const { selectedGame, selectGame, clearSelection } = useGameDetails();
   const { refresh: libraryRefresh } = useLibraryGames();
   const { settings } = useSettings();
+  const { setQuery } = useSearch();
   const { addJob, updateJob } = useDownloadQueue();
   const ownershipLookup = useGameOwnershipLookup();
   const _mountedRef = useRef(true);
@@ -308,6 +312,14 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
     setSelectedSourceKey(sourceKey);
   }, [displayGame?.appId, selectedSourceKey]);
 
+  // View in Library handler — called from install success modal
+  const handleViewInLibrary = useCallback((appId: string, title: string) => {
+    console.log(`[GAME_DETAILS][VIEW_IN_LIBRARY] appid=${appId} title="${title}"`);
+    setQuery("");
+    setPendingLibraryFocus(appId, title);
+    onNavigate?.("library");
+  }, [onNavigate, setQuery]);
+
   // Find the selected source by key for the effectiveSelectedSource prop
   const effectiveSelectedSource: PackageSource | undefined = useMemo(() => {
     if (!selectedSourceKey || !gameWithSources) return undefined;
@@ -343,6 +355,7 @@ export default function GameDetailsPage({ onBack }: { onBack: () => void }) {
         onDownloadSource={handleDownloadSource}
         onOpenGame={handleOpenGame}
         onSelectSourceKey={handleSelectSourceKey}
+        onViewInLibrary={handleViewInLibrary}
       />
     </div>
   );

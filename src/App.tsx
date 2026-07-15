@@ -262,7 +262,7 @@ function App() {
         pageComponent = <Settings />;
         break;
       case "game-details":
-        pageComponent = <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} />;
+        pageComponent = <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} onNavigate={handleNavigate} />;
         break;
       case "library-game-detail":
         pageComponent = <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;

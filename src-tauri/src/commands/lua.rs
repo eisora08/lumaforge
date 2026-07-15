@@ -140,11 +140,20 @@ pub fn delete_lua_script(
     let target_path = lua_dir.join(&file_name);
 
     if !target_path.exists() {
-        return Err("El archivo Lua no existe.".to_string());
+        // File already absent — treat as success (state reconciliation handles the rest)
+        return Ok(LuaActionResult {
+            success: true,
+            message: "El script Lua ya no existía. Estado reconciliado.".to_string(),
+        });
     }
 
     fs::remove_file(&target_path)
         .map_err(|error| format!("No se pudo eliminar el Lua: {}", error))?;
+
+    // Verify file is actually gone after deletion
+    if target_path.exists() {
+        return Err("El archivo Lua aún existe después del intento de eliminación.".to_string());
+    }
 
     Ok(LuaActionResult {
         success: true,

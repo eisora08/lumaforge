@@ -8,7 +8,7 @@ type TauriWindow = {
   toggleMaximize: () => Promise<void>;
   close: () => Promise<void>;
   isMaximized: () => Promise<boolean>;
-  onResized: (handler: (event: { payload: unknown }) => void) => (() => void);
+  onResized: (handler: (event: { payload: unknown }) => void) => Promise<() => void>;
 };
 
 export default function AppTitleBar() {
@@ -44,16 +44,17 @@ export default function AppTitleBar() {
 
   useEffect(() => {
     let cleanupResize: (() => void) | undefined;
+    let disposed = false;
 
     async function init() {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow() as unknown as TauriWindow;
-        if (!mountedRef.current) return;
+        if (disposed) return;
         winRef.current = win;
 
         const maximized = await win.isMaximized();
-        if (!mountedRef.current) return;
+        if (disposed) return;
         isMaximizedRef.current = maximized;
         setIsMaximized(maximized);
 
@@ -61,7 +62,7 @@ export default function AppTitleBar() {
           console.log(`[WINDOW_CONTROLS][STATE] isMaximized=${maximized} updateReason=mount`);
         }
 
-        cleanupResize = win.onResized(() => {
+        cleanupResize = await win.onResized(() => {
           syncIsMaximized("resized");
         });
       } catch {
@@ -72,6 +73,7 @@ export default function AppTitleBar() {
     init();
 
     return () => {
+      disposed = true;
       cleanupResize?.();
     };
   }, []);
