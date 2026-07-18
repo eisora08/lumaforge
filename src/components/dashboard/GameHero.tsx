@@ -4,12 +4,10 @@ import { getCachedSnapshot, subscribeSnapshotUpdated } from "../../services/star
 import type { SnapshotGame } from "../../services/startupSnapshotService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useGameSession } from "../../context/GameSessionContext";
+import type { GameSessionState, RunningGameSession } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId, resolvePlaytimeKey, getPlaytimeEntryByGameKey } from "../../services/playtimeService";
 import { resolveDashboardTitles, resolveGameMediaUrl, isPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
-
-const DEBUG_NAME_HERO = false;
-const DEBUG_HERO_LOGS = false;
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showInfo, showWarning } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
@@ -17,7 +15,7 @@ import { useSettings } from "../../context/SettingsContext";
 import AsyncImage from "../common/AsyncImage";
 import StopGameModal from "../library/StopGameModal";
 import type { AppPage } from "../../types/navigation";
-import type { GameSessionState } from "../../context/GameSessionContext";
+import type { LibraryGame } from "../../types/libraryGame";
 
 type GameHeroProps = {
   onNavigate?: (page: AppPage) => void;
@@ -27,16 +25,15 @@ type HeroGameResult = {
   game: SnapshotGame | null;
   sessionKey: string | null;
   /** When set, the hero is a manual LibraryGame (not in snapshot) */
-  manualGame?: import("../../types/libraryGame").LibraryGame;
+  manualGame?: LibraryGame;
   /** When set, the hero is an Epic LibraryGame */
-  epicGame?: import("../../types/libraryGame").LibraryGame;
+  epicGame?: LibraryGame;
 };
 
 function formatElapsed(startedAt: number): string {
   const diff = Date.now() - startedAt;
   const hours = Math.floor(diff / 3600000);
   const mins = Math.floor((diff % 3600000) / 60000);
-
   if (hours > 0) return `${hours}h ${mins}m`;
   return `${mins}m`;
 }
@@ -52,7 +49,7 @@ function hasValidMedia(game: SnapshotGame): boolean {
   return !!(m.landscapePath || m.coverPath || m.backgroundPath || m.logoPath || m.iconPath);
 }
 
-function hasManualValidMedia(game: import("../../types/libraryGame").LibraryGame): boolean {
+function hasManualValidMedia(game: LibraryGame): boolean {
   return !!(game.imageUrl || game.iconPath || game.coverPath || game.landscapePath || game.backgroundPath);
 }
 
@@ -63,27 +60,62 @@ function getEffectiveLastPlayedMs(game: SnapshotGame): number {
   return 0;
 }
 
-/** Always-present priority: running session game */
-function findRunningHero(
-  snapshotGames: SnapshotGame[],
-  sessionKeysByAppId: Record<string, string>,
-  manualGames: import("../../types/libraryGame").LibraryGame[],
-  epicGames: import("../../types/libraryGame").LibraryGame[],
-): HeroGameResult | null {
-  for (const [appId, key] of Object.entries(sessionKeysByAppId)) {
-    const matchingGame = snapshotGames.find((g) => g.appId === appId);
-    if (matchingGame) return { game: matchingGame, sessionKey: key };
-    const matchingManual = manualGames.find((g) => g.id === appId);
-    if (matchingManual) return { game: null, sessionKey: key, manualGame: matchingManual };
-    const matchingEpic = epicGames.find((g) => g.id === appId || g.providerGameId === appId);
-    if (matchingEpic) return { game: null, sessionKey: key, epicGame: matchingEpic };
+// ─── FIX 2+3: Provider-neutral session + canonical game resolution ──────────
+
+type ActiveSessionInfo = { sessionMapKey: string; gameKey: string; state: ActiveGameState };
+
+type ActiveGameState = GameSessionState;
+
+/** Find the highest-priority active session. Returns sessionMapKey (for getState/getSession) + gameKey. */
+function findActiveSession(
+  sessions: Record<string, RunningGameSession>,
+): ActiveSessionInfo | null {
+  const priority: ActiveGameState[] = ["running", "launching", "stopping"];
+  for (const targetState of priority) {
+    for (const [sessionMapKey, s] of Object.entries(sessions)) {
+      if (s.state === targetState) {
+        return { sessionMapKey, gameKey: s.gameKey, state: s.state };
+      }
+    }
   }
   return null;
 }
 
-type HeroCandidate = { type: "snapshot" | "manual" | "epic"; game: SnapshotGame | import("../../types/libraryGame").LibraryGame; sourceIndex: number };
+/** Resolve a session's gameKey to a canonical LibraryGame from the full libraryGames collection. */
+function resolveRunningLibraryGame(
+  gameKey: string,
+  libraryGames: LibraryGame[],
+): LibraryGame | null {
+  // Priority 1: libraryId
+  const byLibraryId = libraryGames.find((g) => g.libraryId === gameKey);
+  if (byLibraryId) return byLibraryId;
 
-function buildManualPlaytime(manualGames: import("../../types/libraryGame").LibraryGame[]) {
+  // Priority 2: id
+  const byId = libraryGames.find((g) => g.id === gameKey);
+  if (byId) return byId;
+
+  // Priority 3: providerId:providerGameId
+  const byProvider = libraryGames.find(
+    (g) => g.providerId && g.providerGameId && `${g.providerId}:${g.providerGameId}` === gameKey,
+  );
+  if (byProvider) return byProvider;
+
+  // Priority 4: legacy Steam — app-${appId}
+  const bySteamKey = libraryGames.find((g) => g.appId && `app-${g.appId}` === gameKey);
+  if (bySteamKey) return bySteamKey;
+
+  // Priority 5: raw Steam appId
+  const byAppId = libraryGames.find((g) => g.appId === gameKey);
+  if (byAppId) return byAppId;
+
+  return null;
+}
+
+// ─── Non-running hero selection (kept for favorites, continue playing, etc.) ─
+
+type HeroCandidate = { type: "snapshot" | "manual" | "epic"; game: SnapshotGame | LibraryGame; sourceIndex: number };
+
+function buildManualPlaytime(manualGames: LibraryGame[]) {
   const map = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
   for (const mg of manualGames) {
     const ptKey = resolvePlaytimeKey(mg);
@@ -93,7 +125,7 @@ function buildManualPlaytime(manualGames: import("../../types/libraryGame").Libr
   return map;
 }
 
-function buildEpicPlaytime(epicGames: import("../../types/libraryGame").LibraryGame[]) {
+function buildEpicPlaytime(epicGames: LibraryGame[]) {
   const map = new Map<string, { lastPlayedAt: number; totalSeconds: number }>();
   for (const eg of epicGames) {
     const ptKey = resolvePlaytimeKey(eg);
@@ -107,8 +139,8 @@ function buildEpicPlaytime(epicGames: import("../../types/libraryGame").LibraryG
 function buildHeroCandidates(
   snapshotGames: SnapshotGame[],
   favoriteIds: Set<string>,
-  manualGames: import("../../types/libraryGame").LibraryGame[],
-  epicGames: import("../../types/libraryGame").LibraryGame[],
+  manualGames: LibraryGame[],
+  epicGames: LibraryGame[],
   heroSources: string[],
 ): HeroCandidate[] {
   const manualPlaytime = buildManualPlaytime(manualGames);
@@ -139,8 +171,8 @@ function buildHeroCandidates(
           if (lp > 0) all.push({ type: "epic", game: eg, sourceIndex: si });
         }
         all.sort((a, b) => {
-          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : (a.type === "epic" ? ((epicPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
-          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
+          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : (a.type === "epic" ? ((epicPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
+          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
           return bLp - aLp;
         });
         candidates.push(...all);
@@ -187,8 +219,8 @@ function buildHeroCandidates(
           if (lp > 0) all.push({ type: "epic", game: eg, sourceIndex: si });
         }
         all.sort((a, b) => {
-          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : (a.type === "epic" ? ((epicPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
-          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
+          const aLp = a.type === "snapshot" ? getEffectiveLastPlayedMs(a.game as SnapshotGame) : (a.type === "epic" ? ((epicPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((a.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
+          const bLp = b.type === "snapshot" ? getEffectiveLastPlayedMs(b.game as SnapshotGame) : (b.type === "epic" ? ((epicPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000) : ((manualPlaytime.get((b.game as LibraryGame).id)?.lastPlayedAt ?? 0) * 1000));
           return bLp - aLp;
         });
         candidates.push(...all);
@@ -210,8 +242,8 @@ function buildHeroCandidates(
           all.push({ type: "epic", game: eg, sourceIndex: si });
         }
         all.sort((a, b) => {
-          const aSec = a.type === "snapshot" ? getPlaytimeSecondsForAppId((a.game as SnapshotGame).appId) : (a.type === "epic" ? (epicPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.totalSeconds ?? 0) : (manualPlaytime.get((a.game as import("../../types/libraryGame").LibraryGame).id)?.totalSeconds ?? 0));
-          const bSec = b.type === "snapshot" ? getPlaytimeSecondsForAppId((b.game as SnapshotGame).appId) : (b.type === "epic" ? (epicPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.totalSeconds ?? 0) : (manualPlaytime.get((b.game as import("../../types/libraryGame").LibraryGame).id)?.totalSeconds ?? 0));
+          const aSec = a.type === "snapshot" ? getPlaytimeSecondsForAppId((a.game as SnapshotGame).appId) : (a.type === "epic" ? (epicPlaytime.get((a.game as LibraryGame).id)?.totalSeconds ?? 0) : (manualPlaytime.get((a.game as LibraryGame).id)?.totalSeconds ?? 0));
+          const bSec = b.type === "snapshot" ? getPlaytimeSecondsForAppId((b.game as SnapshotGame).appId) : (b.type === "epic" ? (epicPlaytime.get((b.game as LibraryGame).id)?.totalSeconds ?? 0) : (manualPlaytime.get((b.game as LibraryGame).id)?.totalSeconds ?? 0));
           return bSec - aSec;
         });
         candidates.push(...all);
@@ -269,25 +301,31 @@ function buildHeroCandidates(
   return candidates;
 }
 
-function findHeroGameFromSources(
+function pickNonRunningHero(
   snapshotGames: SnapshotGame[],
-  sessionKeysByAppId: Record<string, string>,
-  favoriteIds: Set<string>,
-  manualGames: import("../../types/libraryGame").LibraryGame[],
-  epicGames: import("../../types/libraryGame").LibraryGame[],
-  heroSources: string[],
+  _favoriteIds: Set<string>,
+  manualGames: LibraryGame[],
+  epicGames: LibraryGame[],
+  _heroSources: string[],
+  heroAutoRotate: boolean,
+  rotateIndex: number,
+  heroCandidates: HeroCandidate[],
 ): HeroGameResult {
-  // Running session always takes priority (Part 5)
-  const running = findRunningHero(snapshotGames, sessionKeysByAppId, manualGames, epicGames);
-  if (running) return running;
+  // Auto-rotate: pick from candidates by rotate index
+  if (heroAutoRotate && heroCandidates.length > 0) {
+    const idx = rotateIndex % heroCandidates.length;
+    const c = heroCandidates[idx];
+    if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
+    if (c.type === "epic") return { game: null, sessionKey: null, epicGame: c.game as LibraryGame };
+    return { game: null, sessionKey: null, manualGame: c.game as LibraryGame };
+  }
 
-  // Build candidates from selected sources
-  const candidates = buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, heroSources);
-  if (candidates.length > 0) {
-    const top = candidates[0];
-    if (top.type === "snapshot") return { game: top.game as SnapshotGame, sessionKey: null };
-    if (top.type === "epic") return { game: null, sessionKey: null, epicGame: top.game as import("../../types/libraryGame").LibraryGame };
-    return { game: null, sessionKey: null, manualGame: top.game as import("../../types/libraryGame").LibraryGame };
+  // Single pick: first candidate from selected sources
+  if (heroCandidates.length > 0) {
+    const c = heroCandidates[0];
+    if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
+    if (c.type === "epic") return { game: null, sessionKey: null, epicGame: c.game as LibraryGame };
+    return { game: null, sessionKey: null, manualGame: c.game as LibraryGame };
   }
 
   // Fallback: first installed game with title
@@ -392,22 +430,16 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   const heroAutoRotate = settings.dashboardHeroAutoRotate ?? false;
   const heroRotateSeconds = settings.dashboardHeroRotateSeconds ?? 15;
 
-  // Build a map of appId/gameId → sessionKey for all active sessions
-  // For manual games (no appId), index by gameKey ("manual:<uuid>") so findHeroGame can match g.id
-  const sessionKeysByAppId = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const [key, s] of Object.entries(sessions)) {
-      if (s.state !== "running" && s.state !== "stopping" && s.state !== "launching") continue;
-      if (s.appId) {
-        map[s.appId] = key;
-      } else if (s.gameKey) {
-        map[s.gameKey] = key;
-      }
-    }
-    return map;
-  }, [sessions]);
+  // ─── FIX 2: Active session lookup — searches sessions by state priority ──
+  const activeSession = useMemo(() => findActiveSession(sessions), [sessions]);
 
-  // Build candidates from selected hero sources (for rotate + single-pick)
+  // ─── FIX 2: Resolve running game from full libraryGames via gameKey ──────
+  const runningLibGame = useMemo(
+    () => activeSession?.gameKey ? resolveRunningLibraryGame(activeSession.gameKey, libraryGames) : null,
+    [activeSession, libraryGames],
+  );
+
+  // Build candidates from selected hero sources (for non-running rotate + single-pick)
   const heroCandidates = useMemo(() => {
     return buildHeroCandidates(snapshotGames, favoriteIds, manualGames, epicGames, heroSources);
   }, [snapshotGames, favoriteIds, manualGames, epicGames, heroSources]);
@@ -433,32 +465,13 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     return () => window.clearInterval(interval);
   }, [heroAutoRotate, heroRotateSeconds, heroCandidates.length]);
 
-  // Select hero game: running session always wins, then rotate or first candidate
-  const { game: heroGame, sessionKey, manualGame: heroManualGame, epicGame: heroEpicGame } = useMemo<HeroGameResult>(() => {
-    // Running session always takes priority
-    const running = findRunningHero(snapshotGames, sessionKeysByAppId, manualGames, epicGames);
-    if (running) return running;
+  // Non-running hero selection (favorites, continue playing, etc.)
+  const { game: heroGame, manualGame: heroManualGame, epicGame: heroEpicGame } = useMemo<HeroGameResult>(() => {
+    return pickNonRunningHero(snapshotGames, favoriteIds, manualGames, epicGames, heroSources, heroAutoRotate, rotateIndex, heroCandidates);
+  }, [snapshotGames, favoriteIds, manualGames, epicGames, heroSources, heroCandidates, heroAutoRotate, rotateIndex]);
 
-    // Auto-rotate: pick from candidates by rotate index
-    if (heroAutoRotate && heroCandidates.length > 0) {
-      const idx = rotateIndex % heroCandidates.length;
-      const c = heroCandidates[idx];
-      if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
-      if (c.type === "epic") return { game: null, sessionKey: null, epicGame: c.game as import("../../types/libraryGame").LibraryGame };
-      return { game: null, sessionKey: null, manualGame: c.game as import("../../types/libraryGame").LibraryGame };
-    }
-
-    // Single pick: first candidate from selected sources
-    if (heroCandidates.length > 0) {
-      const c = heroCandidates[0];
-      if (c.type === "snapshot") return { game: c.game as SnapshotGame, sessionKey: null };
-      if (c.type === "epic") return { game: null, sessionKey: null, epicGame: c.game as import("../../types/libraryGame").LibraryGame };
-      return { game: null, sessionKey: null, manualGame: c.game as import("../../types/libraryGame").LibraryGame };
-    }
-
-    // Fallback
-    return findHeroGameFromSources(snapshotGames, sessionKeysByAppId, favoriteIds, manualGames, epicGames, heroSources);
-  }, [snapshotGames, sessionKeysByAppId, favoriteIds, manualGames, epicGames, heroSources, heroCandidates, heroAutoRotate, rotateIndex]);
+  // ─── FIX 3: Unified sessionKey — running session always wins ────────────
+  const sessionKey = activeSession?.sessionMapKey ?? null;
 
   // Read session state from the single source of truth
   const heroGameState: GameSessionState = sessionKey ? getState(sessionKey) : "idle";
@@ -478,83 +491,96 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const heroPendingUninstall = heroAppId ? isPendingUninstall(heroAppId) : false;
 
-  // Diagnostic logs — once per selection change
-  const prevHeroRef = useRef<string | null>(null);
-  const prevRunningRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const displayId = heroManualGame?.libraryId || heroEpicGame?.libraryId || heroAppId;
-    const reason = sessionKey
-      ? "running-session"
-      : (heroGame && getEffectiveLastPlayedMs(heroGame) > 0
-        ? "last-played"
-        : (heroManualGame
-          ? "manual-game"
-          : (heroEpicGame
-            ? "epic-game"
-            : (heroGame && heroGame.appId && favoriteIds.has(heroGame.appId)
-              ? "favorite"
-              : (heroGame && hasValidMedia(heroGame)
-                ? "valid-media"
-                : (heroGame?.installed
-                  ? "installed"
-                  : (heroGame?.title
-                    ? "titled-fallback"
-                    : "last-resort")))))));
-    if (prevHeroRef.current !== displayId) {
-      prevHeroRef.current = displayId || null;
-      if (DEBUG_HERO_LOGS) {
-        console.log(`[DASH][HERO_SELECT] running=${displayId && sessionKey ? displayId : null} selected=${displayId || "empty"} reason=${reason}`);
-      }
-    }
-  }, [heroAppId, heroGame, sessionKey, favoriteIds, heroManualGame, heroEpicGame]);
-
-  useEffect(() => {
-    const displayId = heroManualGame?.libraryId || heroEpicGame?.libraryId || heroAppId;
-    if (isRunning && displayId) {
-      if (prevRunningRef.current !== displayId && DEBUG_HERO_LOGS) {
-        console.log(`[DASH][HERO_RUNNING] appid=${displayId} running=true focused=true`);
-      }
-      prevRunningRef.current = displayId;
-    }
-    if (!isRunning && prevRunningRef.current != null) {
-      const wasAppId = prevRunningRef.current;
-      if (DEBUG_HERO_LOGS) {
-        console.log(`[DASH][HERO_CLEAR_RUNNING] appid=${wasAppId} reason=process-ended`);
-      }
-      prevRunningRef.current = null;
-    }
-    if (!isRunning && !displayId) {
-      prevRunningRef.current = null;
-    }
-  }, [isRunning, heroAppId, heroManualGame, heroEpicGame]);
-
+  // ─── FIX 4: libGame — running takes absolute priority ──────────────────
   const libGame = useMemo(() => {
+    if (runningLibGame) return runningLibGame;
     if (heroManualGame) return heroManualGame;
     if (heroEpicGame) return heroEpicGame;
-    if (!heroAppId) return undefined;
-    return libraryGames.find((game) => game.appId === heroAppId);
-  }, [libraryGames, heroAppId, heroManualGame, heroEpicGame]);
+    if (heroGame?.appId) return libraryGames.find((game) => game.appId === heroGame.appId);
+    return undefined;
+  }, [runningLibGame, heroManualGame, heroEpicGame, heroGame, libraryGames]);
 
-  // Hero background resolution — provider-neutral.
-  // For snapshot games: resolve media path via appId.
-  // For manual/Epic games: resolve relative provider path directly.
+  // ─── FIX 6: [RUNNING_HERO_SELECT] diagnostic log ──────────────────────
+  useEffect(() => {
+    const activeCount = Object.values(sessions).filter(
+      (s) => s.state === "running" || s.state === "launching" || s.state === "stopping",
+    ).length;
+    console.log(
+      `[RUNNING_HERO_SELECT] activeSessions=${activeCount}` +
+      (activeSession
+        ? ` selectedState=${activeSession.state} sessionGameKey=${activeSession.gameKey}`
+        : " activeSession=none") +
+      ` libraryGames=${libraryGames.length}` +
+      (runningLibGame
+        ? ` canonicalFound=true libraryId=${runningLibGame.libraryId} source=${runningLibGame.source} appId=${runningLibGame.appId ?? "none"}`
+        : activeSession
+          ? " canonicalFound=false"
+          : ""),
+    );
+  }, [sessions, activeSession, libraryGames, runningLibGame]);
+
+  // ─── FIX 5: Hero background resolution — running game first, then non-running ──
   const [bgUrl, setBgUrl] = useState<string | null>(null);
+  const bgUrlGenerationRef = useRef(0);
   useEffect(() => {
     let cancelled = false;
+    const generation = ++bgUrlGenerationRef.current;
 
     async function resolveHeroBg() {
-      // Manual/Epic game — resolve relative provider media path
+      // ── FIX 5: Running game — resolve from libGame directly ──
+      if (runningLibGame) {
+        const bgPath = runningLibGame.backgroundPath ?? runningLibGame.landscapePath ?? runningLibGame.coverPath ?? runningLibGame.imageUrl ?? null;
+        const role = bgPath === runningLibGame.backgroundPath ? "background"
+          : bgPath === runningLibGame.landscapePath ? "landscape"
+          : bgPath === runningLibGame.coverPath ? "cover"
+          : "imageUrl";
+        console.log(`[RUNNING_HERO_MEDIA] role=${role} raw=${bgPath}`);
+
+        if (!bgPath) {
+          if (!cancelled) setBgUrl(null);
+          return;
+        }
+
+        try {
+          let url: string | null = null;
+          if (runningLibGame.appId) {
+            // Steam game — resolve via appId
+            url = await resolveGameMediaUrl(runningLibGame.appId, bgPath);
+          } else {
+            // Epic/manual — resolve provider media path
+            const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+            url = await resolveProviderMediaPreviewUrl(bgPath);
+          }
+          console.log(`[RUNNING_HERO_MEDIA] resolvedUrl=${url}`);
+          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(url);
+        } catch {
+          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(null);
+        }
+        return;
+      }
+
+      // Non-running: Manual/Epic game — resolve relative provider media path
       const nonSnapshot = heroManualGame ?? heroEpicGame;
       if (nonSnapshot) {
-        const rawPath = nonSnapshot.backgroundPath ?? nonSnapshot.landscapePath ?? nonSnapshot.coverPath ?? null;
-        if (!rawPath) { setBgUrl(null); return; }
+        const candidates = [
+          { role: "backgroundPath", value: nonSnapshot.backgroundPath },
+          { role: "landscapePath", value: nonSnapshot.landscapePath },
+          { role: "coverPath", value: nonSnapshot.coverPath },
+          { role: "imageUrl", value: nonSnapshot.imageUrl },
+        ];
+        const selected = candidates.find((c) => c.value) ?? null;
+        const rawPath = selected?.value ?? null;
+
+        if (!rawPath) {
+          if (!cancelled) setBgUrl(null);
+          return;
+        }
         try {
           const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
           const url = await resolveProviderMediaPreviewUrl(rawPath);
-          if (!cancelled) setBgUrl(url);
+          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(url);
         } catch {
-          if (!cancelled) setBgUrl(null);
+          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(null);
         }
         return;
       }
@@ -563,26 +589,35 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       if (heroAppId && heroGame) {
         const m = heroGame.media;
         const imgPath = m?.backgroundPath ?? m?.landscapePath ?? m?.coverPath ?? null;
-        if (!imgPath) { setBgUrl(null); return; }
+        if (!imgPath) {
+          if (!cancelled) setBgUrl(null);
+          return;
+        }
         try {
           const url = await resolveGameMediaUrl(heroAppId, imgPath);
-          if (!cancelled) setBgUrl(url);
+          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(url);
         } catch {
-          if (!cancelled) setBgUrl(null);
+          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(null);
         }
         return;
       }
 
-      setBgUrl(null);
+      if (!cancelled) setBgUrl(null);
     }
 
     resolveHeroBg();
     return () => { cancelled = true; };
-  }, [heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame]);
 
   const [heroTitle, setHeroTitle] = useState<string>("");
   useEffect(() => {
     let cancelled = false;
+
+    // Running game — use libGame title directly
+    if (runningLibGame) {
+      setHeroTitle(runningLibGame.title);
+      return () => { cancelled = true; };
+    }
 
     const activeNonSnapshot = heroManualGame ?? heroEpicGame;
     if (activeNonSnapshot) {
@@ -597,15 +632,21 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           const entry = r[heroAppId!];
           const resolved = entry?.title;
           setHeroTitle(resolved ?? heroGame!.title);
-          if (DEBUG_NAME_HERO) console.log(`[NAME][HERO] appid=${heroAppId} source=${entry?.source ?? "snapshot"} title=${resolved ?? heroGame!.title}`);
         }
       });
     }
     return () => { cancelled = true; };
-  }, [heroGame, heroAppId, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroGame, heroAppId, heroManualGame, heroEpicGame]);
 
   const lastPlayedStr = useMemo(() => {
-    // For manual/Epic games, look up playtime by game key
+    // Running game — use libGame playtime
+    if (runningLibGame) {
+      const ptKey = resolvePlaytimeKey(runningLibGame);
+      const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+      if (entry?.lastPlayedAt) return formatLastPlayed(entry.lastPlayedAt);
+      return null;
+    }
+
     const activeNonSnapshot = heroManualGame ?? heroEpicGame;
     if (activeNonSnapshot) {
       const ptKey = resolvePlaytimeKey(activeNonSnapshot);
@@ -616,9 +657,18 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     const entry = getPlaytimeEntryByAppId(heroAppId);
     if (entry?.lastPlayedAt) return formatLastPlayed(entry.lastPlayedAt);
     return formatLastPlayed(heroGame?.lastPlayed);
-  }, [heroAppId, heroGame?.lastPlayed, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroAppId, heroGame?.lastPlayed, heroManualGame, heroEpicGame]);
 
   const heroPlaytimeStr = useMemo(() => {
+    // Running game — use libGame playtime
+    if (runningLibGame) {
+      const ptKey = resolvePlaytimeKey(runningLibGame);
+      const entry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+      const seconds = entry?.totalPlaytimeSeconds ?? 0;
+      if (seconds > 0) return `${Math.round(seconds / 60)} min`;
+      return null;
+    }
+
     const activeNonSnapshot = heroManualGame ?? heroEpicGame;
     if (activeNonSnapshot) {
       const ptKey = resolvePlaytimeKey(activeNonSnapshot);
@@ -631,9 +681,9 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (seconds > 0) return `${Math.round(seconds / 60)} min`;
     if (heroGame?.playtime != null) return `${heroGame.playtime} min`;
     return null;
-  }, [heroAppId, heroGame?.playtime, heroManualGame, heroEpicGame]);
+  }, [runningLibGame, heroAppId, heroGame?.playtime, heroManualGame, heroEpicGame]);
 
-  const stopModalTitle = heroSession?.title || heroGame?.title || heroEpicGame?.title || heroManualGame?.title || "Unknown Game";
+  const stopModalTitle = heroSession?.title || libGame?.title || heroGame?.title || heroEpicGame?.title || heroManualGame?.title || "Unknown Game";
 
   // Elapsed timer (only when session is running)
   useEffect(() => {
@@ -655,14 +705,13 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   // HERO priority: load game data at highest priority immediately
   useEffect(() => {
-    if (heroAppId) {
-      void requestGameData(heroAppId, LoadPriority.HERO);
+    const appId = runningLibGame?.appId ?? heroAppId;
+    if (appId) {
+      void requestGameData(appId, LoadPriority.HERO);
     }
-  }, [heroAppId]);
+  }, [runningLibGame?.appId, heroAppId]);
 
   const handlePrimaryAction = useCallback(() => {
-    if (!heroGame) return;
-
     if (isRunning && libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
@@ -675,7 +724,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
       return;
     }
 
-    if (heroGame.appId) {
+    if (heroGame?.appId) {
       onNavigate?.("store");
     }
   }, [heroGame, isRunning, libGame, setSelectedGame, onNavigate]);
@@ -717,15 +766,20 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     });
   }, [sessionKey, findGameProcessForSession]);
 
-  if (!heroGame && !heroManualGame && !heroEpicGame) {
+  // MUST be declared BEFORE the early return to keep hook count stable across renders.
+  const heroSectionRef = useCallback((_node: HTMLElement | null) => {}, []);
+
+  // ─── FIX 4: Never return EmptyHero when an active session exists ──────
+  if (!libGame && !activeSession) {
     return <EmptyHero onNavigate={onNavigate} />;
   }
 
   return (
-    <section className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[340px]">
+    <section ref={heroSectionRef} className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[340px]">
       {bgUrl ? (
-        <div className="absolute inset-0">
+        <div data-hero-bg-layer="true" className="absolute inset-0">
           <AsyncImage
+            key={bgUrl}
             src={bgUrl}
             alt=""
             className="h-full w-full"
@@ -762,27 +816,8 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   </span>
                 )}
               </>
-            // ) : isStopping ? (
-            //   <>
-            //     <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-3 py-1 text-xs font-medium text-amber-300 backdrop-blur-sm">
-            //       <Loader2 className="h-3 w-3 animate-spin" />
-            //       Stopping...
-            //     </span>
-            //   </>
-            // ) : isLaunching ? (
-            //   <>
-            //     <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-300 backdrop-blur-sm">
-            //       <Loader2 className="h-3 w-3 animate-spin" />
-            //       Launching...
-            //     </span>
-            //   </>
             ) : (
               <>
-                {/* {heroGame.installed && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-medium text-emerald-300 backdrop-blur-sm">
-                    Installed
-                  </span>
-                )} */}
                 {lastPlayedStr && (
                   <span className="text-xs text-white/60">
                     Last played: {lastPlayedStr}
@@ -798,7 +833,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
           </div>
 
           <h1 className="text-2xl font-bold tracking-tight text-white drop-shadow-lg sm:text-3xl">
-            {heroTitle || heroGame?.title || heroEpicGame?.title}
+            {heroTitle || libGame?.title || heroGame?.title || heroEpicGame?.title}
           </h1>
 
           <div className="mt-5 flex flex-wrap gap-3">
@@ -852,10 +887,8 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                 <button
                   onClick={() => {
                     if (!heroAppId) return;
-                    console.log(`[UNINSTALL_PENDING] appid=${heroAppId} phase=manual-cancel before=${isPendingUninstall(heroAppId)}`);
                     clearPendingUninstall(heroAppId);
                     showInfo(`"${heroTitle || heroGame?.title || heroAppId}" uninstall tracking cancelled.`);
-                    console.log(`[UNINSTALL_PENDING] appid=${heroAppId} phase=manual-cancel after=${isPendingUninstall(heroAppId)}`);
                   }}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/5"
                 >
@@ -874,7 +907,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                       : "Installing\u2026"}
                 </span>
               </div>
-            ) : heroGame?.playable ? (
+            ) : (heroGame?.playable || libGame?.isPlayable) ? (
               <>
                 <button
                   onClick={handlePrimaryAction}
