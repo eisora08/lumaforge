@@ -28,23 +28,23 @@ import { scoreAndSortGames, averageDiscoverScore, SECTION_REPLACE_MIN_AVG, type 
 import type { StoreDiscoverSection } from "./storeDiscoverCache";
 
 const DEBUG_CATALOG_ORCHESTRATOR = false;
-const DEBUG_SECTION_DECISION = true; // Enable for no-downgrade diagnostic logging
+const DEBUG_SECTION_DECISION = false; // Phase 13: was true, gated to reduce log spam
 const DEBUG_STORE_CATALOG = false;
 
 // ── Section-specific caps (max games per section in Discover) ──
 const SECTION_CAPS: Record<string, number> = {
   "featured": 8,
-  "top-picks": 12,
-  "new-noteworthy": 12,
-  "genre-action": 12,
-  "genre-rpg": 12,
-  "genre-indie": 12,
-  "genre-adventure": 12,
-  "genre-shooter": 12,
-  "genre-racing": 12,
-  "genre-strategy": 12,
-  "genre-simulation": 12,
-  "lua-ready-picks": 12,
+  "top-picks": 8,
+  "new-noteworthy": 8,
+  "genre-action": 8,
+  "genre-rpg": 8,
+  "genre-indie": 8,
+  "genre-adventure": 8,
+  "genre-shooter": 8,
+  "genre-racing": 8,
+  "genre-strategy": 8,
+  "genre-simulation": 8,
+  "lua-ready-picks": 8,
   "popular-genres": 20,
 };
 
