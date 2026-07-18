@@ -222,8 +222,8 @@ const CATALOG_PAGE_SIZE = 40;
  * Logical visible count can be higher, but only this many are actually rendered.
  * Keeps React reconciliation fast when scrolling through hundreds of catalog items.
  */
-const MORE_TO_EXPLORE_MOUNT_LIMIT = 30;
-const SECTION_RAIL_INITIAL_COUNT = 12;
+const MORE_TO_EXPLORE_MOUNT_LIMIT = 20;
+const SECTION_RAIL_INITIAL_COUNT = 8;
 /** Max catalog entries to score in highQualityPool — avoids processing all 162K+ on every review/metadata change */
 const HIGH_QUALITY_POOL_MAX = 10000;
 const PAGE_SIZE = 30;
@@ -1158,26 +1158,30 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   }, [results, installedStatusByAppId]);
 
   const featuredGames = useMemo(() => {
+    const HERO_MAX = 5;
+    let games: StoreGame[];
+
     // Prefer provider/cache featured sections when available
     if (enrichedCatalogSections.length > 0) {
       const featured = enrichedCatalogSections.find(
         (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
       );
       if (featured && featured.games.length > 0) {
-        return featured.games.map((game) => ({
+        games = featured.games.map((game) => ({
           appId: game.steamAppId ?? String(game.igdbId ?? game.rawgId ?? ""),
           title: game.title,
           imageUrl: game.imageUrl ?? game.backgroundImageUrl,
           platforms: [] as string[],
           sources: [] as PackageSource[],
         }));
+        return games.slice(0, HERO_MAX);
       }
     }
 
     // Fallback: cache hit
     const cached = getCachedStoreDiscover();
     if (cached && cached.catalogFingerprint === catalogFingerprint && cached.featuredGames.length > 0) {
-      return cached.featuredGames;
+      return cached.featuredGames.slice(0, HERO_MAX);
     }
 
     // Fallback: curated featured (immediate, no network needed)
@@ -1191,7 +1195,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         imageUrl: undefined,
         platforms: [] as string[],
         sources: [] as PackageSource[],
-      }));
+      })).slice(0, HERO_MAX);
     }
 
     // Fallback: steamdb highQualityPool day rotation
@@ -1201,7 +1205,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 0);
     const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
-    const count = Math.min(pool.length, 8);
+    const count = Math.min(pool.length, HERO_MAX);
     const start = dayOfYear % Math.max(1, pool.length - count + 1);
     const slice = pool.slice(start, start + count);
 
@@ -2069,7 +2073,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   const reviewScopeKeyRef = useRef("");
 
   // Visible appIds for metadata loading - does NOT depend on storeMetadataByAppId
-  // Window includes: INITIAL_VISIBLE_COUNT base + current browse page window when on browse tab
+  // Phase 8: Reduced cap from 200→80. Detail game has its own dedicated effect below.
   const visibleAppIds = useMemo(() => {
     const appIds = new Set<number>();
 
@@ -2123,25 +2127,18 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }
     });
 
-    // Only add selected detail game's appId (not DLC - DLC is loaded in the detail page)
-    if (selectedDetailGame) {
-      const appId = Number(selectedDetailGame.appId);
-      if (Number.isFinite(appId)) {
-        appIds.add(appId);
-      }
-    }
+    // NOTE: selectedDetailGame excluded — it has its own dedicated metadata effect below
 
     const ids = Array.from(appIds);
-    // Phase 7: Cap metadata fetch scope — prevent loading metadata for 500+ games per batch.
-    // Detail game is always included (added last in the Set). Section games beyond the cap
-    // are lower priority and will be loaded when the user scrolls into them.
-    const METADATA_WINDOW_MAX = 200;
+    // Phase 8: Cap metadata fetch scope — 80 covers hero + sections (8×8=64) + browse page.
+    // Detail game gets its own effect; section games beyond the cap load on scroll.
+    const METADATA_WINDOW_MAX = 80;
     const capped = ids.length > METADATA_WINDOW_MAX ? ids.slice(0, METADATA_WINDOW_MAX) : ids;
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][METADATA_WINDOW_LOAD] requested=${ids.length} capped=${capped.length}`);
     return capped;
     // NOTE: storeMetadataByAppId intentionally NOT in deps to avoid render loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalogGames, results, allStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame, activeStoreTab, browsePage]);
+  }, [catalogGames, results, allStoreSections, steamSearchItems, steamSubmittedSearchGames, activeStoreTab, browsePage]);
 
   const visibleAppIdsKey = visibleAppIds.join(",");
 
@@ -2236,8 +2233,8 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (!storeFirstPaintDone) return;
     const preloadIds: number[] = [];
 
-    // Top scored games from high quality pool
-    for (const entry of highQualityPool.slice(0, 30)) {
+    // Top scored games from high quality pool — Phase 8: reduced from 30→12 (covers hero + top of first sections)
+    for (const entry of highQualityPool.slice(0, 12)) {
       const id = Number(entry.appId);
       if (Number.isFinite(id)) preloadIds.push(id);
     }
@@ -2305,7 +2302,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             }
             return merged;
           });
-          console.log(`[STORE][CURATED_PRELOAD] loaded=${count} games from ${unloaded.length} curated`);
+          if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][CURATED_PRELOAD] loaded=${count} games from ${unloaded.length} curated`);
         }
       })
       .catch(() => {});
