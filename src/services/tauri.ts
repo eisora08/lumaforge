@@ -953,6 +953,10 @@ export async function writeStoreCatalogSectionsCache(data: unknown): Promise<voi
 
 // --- Store catalog (versioned local index) ---
 
+/**
+ * Result from `get_catalog_meta` — indicates whether a catalog has been
+ * imported into SQLite and its version/checksum for freshness checks.
+ */
 export type CatalogMetaResult = {
   schemaVersion: number;
   catalogVersion: number;
@@ -963,6 +967,10 @@ export type CatalogMetaResult = {
   hasCatalog: boolean;
 };
 
+/**
+ * Single catalog game record returned by all query commands.
+ * Maps 1:1 to the Rust `CatalogGameResult` struct (camelCase serialization).
+ */
 export type CatalogGameResult = {
   appId: number;
   name: string;
@@ -980,10 +988,12 @@ export type CatalogGameResult = {
   publishers: string[];
 };
 
+/** Read catalog metadata (schema version, game count, checksum). */
 export async function getCatalogMeta(): Promise<CatalogMetaResult> {
   return await invoke<CatalogMetaResult>("get_catalog_meta");
 }
 
+/** Import a catalog artifact JSON blob into SQLite. Returns number of records inserted. */
 export async function importSteamCatalog(
   artifactJson: string,
   checksum: string,
@@ -991,6 +1001,7 @@ export async function importSteamCatalog(
   return await invoke<number>("import_steam_catalog", { artifactJson, checksum });
 }
 
+/** Query catalog games by genre, ordered by review score descending. */
 export async function queryCatalogByGenre(
   genre: string,
   limit: number,
@@ -999,6 +1010,7 @@ export async function queryCatalogByGenre(
   return await invoke<CatalogGameResult[]>("query_catalog_by_genre", { genre, limit, offset });
 }
 
+/** Search catalog games by name (case-insensitive LIKE match). */
 export async function queryCatalogSearch(
   query: string,
   limit: number,
@@ -1006,18 +1018,21 @@ export async function queryCatalogSearch(
   return await invoke<CatalogGameResult[]>("query_catalog_search", { query, limit });
 }
 
+/** Get a single catalog game by Steam app ID. Returns null if not found. */
 export async function queryCatalogGame(
   appId: number,
 ): Promise<CatalogGameResult | null> {
   return await invoke<CatalogGameResult | null>("query_catalog_game", { appId });
 }
 
+/** Query featured games (high review percent + minimum review count + has image). */
 export async function queryCatalogFeatured(
   limit: number,
 ): Promise<CatalogGameResult[]> {
   return await invoke<CatalogGameResult[]>("query_catalog_featured", { limit });
 }
 
+/** Query new & noteworthy games (released within 180 days, not coming soon). */
 export async function queryCatalogNewNoteworthy(
   limit: number,
 ): Promise<CatalogGameResult[]> {

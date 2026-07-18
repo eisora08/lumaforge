@@ -32,9 +32,12 @@ const RESUME = args.includes("--resume");
 const concurrency = Number(args.find((a) => a.startsWith("--concurrency="))?.split("=")[1] || 5);
 const delayMs = Number(args.find((a) => a.startsWith("--delay="))?.split("=")[1] || 250);
 const limit = Number(args.find((a) => a.startsWith("--limit="))?.split("=")[1] || 5000);
+const inputArg = args.find((a) => a.startsWith("--input="))?.split("=")[1];
+const outputArg = args.find((a) => a.startsWith("--output="))?.split("=")[1];
+const checkpointArg = args.find((a) => a.startsWith("--checkpoint="))?.split("=")[1];
 
-const CHECKPOINT_PATH = join(__dirname, "checkpoint.json");
-const OUTPUT_DIR = join(__dirname, "output");
+const CHECKPOINT_PATH = checkpointArg || join(__dirname, "checkpoint.json");
+const OUTPUT_DIR = outputArg || join(__dirname, "output");
 const ARTIFACT_PATH = join(OUTPUT_DIR, `steam-catalog-v${CATALOG_VERSION}.json`);
 const COMPRESSED_PATH = join(OUTPUT_DIR, `steam-catalog-v${CATALOG_VERSION}.json.gz`);
 const MANIFEST_PATH = join(OUTPUT_DIR, `steam-catalog-v${CATALOG_VERSION}.manifest.json`);
@@ -247,7 +250,7 @@ async function build(): Promise<void> {
   console.log(`╚══════════════════════════════════════════════════╝\n`);
 
   // 1. Load steamdb.json
-  const steamdbPath = join(ROOT, "public", "data", "steamdb.json");
+  const steamdbPath = inputArg || join(ROOT, "public", "data", "steamdb.json");
   if (!existsSync(steamdbPath)) {
     console.error(`ERROR: ${steamdbPath} not found`);
     process.exit(1);

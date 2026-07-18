@@ -104,10 +104,15 @@ import {
 } from "../services/storeImageCache";
 import { downloadFromSource as sharedDownloadFromSource } from "../features/download/downloadFromSource";
 import {
+  ensureCatalogImported,
   preFetchGenreGroups,
   getLocalGenreGroups,
   isLocalCatalogReady,
+  queryFeaturedGames,
+  queryNewNoteworthyGames,
+  queryByGenre,
 } from "../services/steamCatalogService";
+import type { CatalogGameResult } from "../services/tauri";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 const DEBUG_STORE_RENDER_VERBOSE = false;
@@ -131,6 +136,17 @@ function simpleHash(n: number): number {
   h = ((h >> 16) ^ h) * 0x45d9f3b;
   h = (h >> 16) ^ h;
   return h;
+}
+
+/** Convert a local catalog game to a StoreGame for section rendering. */
+function catalogGameToStoreGame(g: CatalogGameResult): StoreGame {
+  return {
+    appId: String(g.appId),
+    title: g.name,
+    imageUrl: g.headerImage || g.capsuleImage || undefined,
+    platforms: [],
+    sources: [],
+  };
 }
 
   // Module-level flag: prevents auto-open of pending detail from re-firing
@@ -229,6 +245,8 @@ const CATALOG_PAGE_SIZE = 40;
  */
 const MORE_TO_EXPLORE_MOUNT_LIMIT = 20;
 const SECTION_RAIL_INITIAL_COUNT = 8;
+
+const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter", "RPG", "Adventure"];
 /** Max catalog entries to score in highQualityPool — avoids processing all 162K+ on every review/metadata change */
 const HIGH_QUALITY_POOL_MAX = 10000;
 const PAGE_SIZE = 30;
@@ -541,10 +559,22 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (sourceCacheLoadedRef.current) return;
     sourceCacheLoadedRef.current = true;
     loadSourceAvailabilityIndex().catch(() => {});
-    // Pre-fetch local catalog genre groups for Discover sections
+    // Auto-import bundled catalog if not in SQLite, then pre-fetch genre groups + featured/new&noteworthy
     if (!isLocalCatalogReady()) {
-      const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter", "RPG", "Adventure"];
-      preFetchGenreGroups(DISPLAY_GENRES, 20).catch(() => {});
+      ensureCatalogImported()
+        .then(async () => {
+          await preFetchGenreGroups(DISPLAY_GENRES, 20);
+          // Pre-fetch Featured + New & Noteworthy from local catalog
+          try {
+            const [featured, newNoteworthy] = await Promise.all([
+              queryFeaturedGames(8),
+              queryNewNoteworthyGames(8),
+            ]);
+            if (featured.games.length > 0) setCatalogFeaturedGames(featured.games);
+            if (newNoteworthy.games.length > 0) setCatalogNewNoteworthyGames(newNoteworthy.games);
+          } catch { /* non-critical */ }
+        })
+        .catch(() => {});
     }
   }, []);
 
@@ -577,6 +607,17 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   const enrichedVersionRef = useRef(0);
   // Flicker prevention: track quality fingerprint of current enriched data
   const enrichedQualityRef = useRef<{ totalGames: number; sectionCount: number; curatedCount: number }>({ totalGames: 0, sectionCount: 0, curatedCount: 0 });
+
+  // ── Local catalog async sections (Featured, New & Noteworthy) ──
+  const [catalogFeaturedGames, setCatalogFeaturedGames] = useState<CatalogGameResult[]>([]);
+  const [catalogNewNoteworthyGames, setCatalogNewNoteworthyGames] = useState<CatalogGameResult[]>([]);
+
+  // ── View All paginated state ──
+  const [viewAllGames, setViewAllGames] = useState<CatalogGameResult[]>([]);
+  const [viewAllLoading, setViewAllLoading] = useState(false);
+  const [viewAllPage, setViewAllPage] = useState(1);
+  const [viewAllHasMore, setViewAllHasMore] = useState(true);
+  const viewAllPageRef = useRef(1);
 
   // Init orchestrator after first paint — loads disk cache, optionally triggers background refresh
   useEffect(() => {
@@ -1398,7 +1439,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       console.log(`[STORE][GENRE_INDEX_READY] source=metadata games=${metaCount} topGamesWithGenres=${gamesWithMetaCount}`);
     }
 
-    const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter", "RPG", "Adventure"];
     const rawGenreCountsStr = DISPLAY_GENRES.map((g) => `${g}=${rawGenreGroups.get(g)?.length ?? 0}`).join(" ");
     const genreGroupsFingerprint = `${rawGenreGroups.size}:${rawGenreCountsStr}`;
     if (genreGroupsFingerprint !== _lastGenreGroupsLog) {
@@ -1469,18 +1509,28 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }
 
     // --- New & Noteworthy (by release date) ---
-    const datedGames = topGames
-      .map((g) => {
-        const meta = storeMetadataByAppId[Number(g.appId)];
-        const ts = meta?.release_date ? parseReleaseDate(meta.release_date) : 0;
-        return { game: g, ts };
-      })
-      .filter((x) => x.ts > 0)
-      .sort((a, b) => b.ts - a.ts);
-    if (datedGames.length >= 4) {
-      const newest = takeUnique(datedGames.map((x) => x.game), 20);
+    // Local catalog query is primary (pre-filtered by 180-day window, sorted by release_timestamp).
+    // Runtime metadata enrichment is fallback when catalog unavailable.
+    if (catalogNewNoteworthyGames.length > 0) {
+      const newest = takeUnique(catalogNewNoteworthyGames.map(catalogGameToStoreGame), 20);
       if (newest.length > 0) {
         sections.push({ id: "new-noteworthy", title: "New & Noteworthy", type: "rail", items: newest, source: "catalog" });
+      }
+    } else {
+      // Fallback: runtime metadata enrichment
+      const datedGames = topGames
+        .map((g) => {
+          const meta = storeMetadataByAppId[Number(g.appId)];
+          const ts = meta?.release_date ? parseReleaseDate(meta.release_date) : 0;
+          return { game: g, ts };
+        })
+        .filter((x) => x.ts > 0)
+        .sort((a, b) => b.ts - a.ts);
+      if (datedGames.length >= 4) {
+        const newest = takeUnique(datedGames.map((x) => x.game), 20);
+        if (newest.length > 0) {
+          sections.push({ id: "new-noteworthy", title: "New & Noteworthy", type: "rail", items: newest, source: "catalog" });
+        }
       }
     }
 
@@ -1547,23 +1597,33 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }
 
     // --- Featured (high quality with media, requires review/rating data) ---
-    // No fallback garbage — if index has no featured candidates after reviews loaded, hide section.
-    const featuredAppIds = compiledDiscoveryIndex ? queryIndexFeatured(compiledDiscoveryIndex, 20) : [];
-    if (featuredAppIds.length > 0) {
-      const items = takeUnique(
-        featuredAppIds
-          .map((appId) => topGames.find((g) => g.appId === appId))
-          .filter((g): g is StoreGame => g !== undefined),
-        20,
-      );
+    // Local catalog query is primary (instant, pre-filtered by review_count>=100, review_percent>=75).
+    // Runtime discovery index is fallback when catalog unavailable.
+    if (catalogFeaturedGames.length > 0) {
+      const items = takeUnique(catalogFeaturedGames.map(catalogGameToStoreGame), 20);
       if (items.length > 0) {
         sections.push({ id: "featured", title: "Featured", type: "featured", items, source: "catalog" });
-        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_SECTION] name=Featured count=${items.length} appids=${JSON.stringify(items.map((i) => i.appId))} names=${JSON.stringify(items.map((i) => i.title))}`);
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_SECTION] name=Featured count=${items.length} source=local-catalog`);
       }
-    } else if (!compiledDiscoveryIndex && !hasResolvedReviews) {
-      if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=waiting-for-reviews`);
     } else {
-      if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=no-qualified-candidates`);
+      // Fallback: runtime discovery index (requires reviews loaded)
+      const featuredAppIds = compiledDiscoveryIndex ? queryIndexFeatured(compiledDiscoveryIndex, 20) : [];
+      if (featuredAppIds.length > 0) {
+        const items = takeUnique(
+          featuredAppIds
+            .map((appId) => topGames.find((g) => g.appId === appId))
+            .filter((g): g is StoreGame => g !== undefined),
+          20,
+        );
+        if (items.length > 0) {
+          sections.push({ id: "featured", title: "Featured", type: "featured", items, source: "catalog" });
+          if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_SECTION] name=Featured count=${items.length} source=discovery-index`);
+        }
+      } else if (!compiledDiscoveryIndex && !hasResolvedReviews) {
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=waiting-for-reviews`);
+      } else {
+        if (DEBUG_STORE_DISCOVERY) console.log(`[STORE][DISCOVERY_NO_SECTION] section=Featured reason=no-qualified-candidates`);
+      }
     }
 
     // --- Lua Ready Picks (catalog games with available download sources) ---
@@ -1614,7 +1674,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (DEBUG_STORE_DISCOVERY) console.log(`[STORE_CATALOG][FINAL_SECTION] curated=true sections=${dedupedSections.length} curatedGames=${curatedCount}`);
     _sectionBuildFpRef.current = { fp: inputFp, sections: dedupedSections };
     return dedupedSections;
-  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, reviewVersion, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections]);
+  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, reviewVersion, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections, catalogFeaturedGames, catalogNewNoteworthyGames]);
 
   // Backward-compat StoreSectionModel[] for consumers that still need it
   const sectionModels = useMemo<StoreSectionModel[]>(
@@ -2095,6 +2155,65 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   const activeSection = activeSectionId
     ? allStoreSections.find((section) => section.id === activeSectionId)
     : undefined;
+
+  // ── View All: Load paginated catalog data when a section is opened ──
+  const viewAllPageSize = 24;
+  const viewAllInitializedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeSectionId) {
+      viewAllInitializedRef.current = null;
+      return;
+    }
+    // Deduplicate: don't re-init for the same section
+    if (viewAllInitializedRef.current === activeSectionId) return;
+    viewAllInitializedRef.current = activeSectionId;
+
+    // Reset pagination state
+    setViewAllGames([]);
+    setViewAllPage(1);
+    viewAllPageRef.current = 1;
+    setViewAllHasMore(true);
+
+    // Determine genre from section ID (e.g., "genre-action" → "Action")
+    const genreMatch = activeSectionId.match(/^genre-(.+)$/);
+    if (!genreMatch) return; // Non-genre sections use static section items
+
+    const genre = DISPLAY_GENRES.find((g) => g.toLowerCase() === genreMatch[1]) ?? genreMatch[1];
+
+    setViewAllLoading(true);
+    queryByGenre(genre, viewAllPageSize, 0)
+      .then(({ games }) => {
+        setViewAllGames(games);
+        setViewAllHasMore(games.length >= viewAllPageSize);
+      })
+      .catch(() => setViewAllHasMore(false))
+      .finally(() => setViewAllLoading(false));
+  }, [activeSectionId]);
+
+  // Load more page for View All
+  const loadMoreViewAll = useCallback(async () => {
+    const genreMatch = activeSectionId?.match(/^genre-(.+)$/);
+    if (!genreMatch || viewAllLoading || !viewAllHasMore) return;
+
+    const genre = DISPLAY_GENRES.find((g) => g.toLowerCase() === genreMatch[1]) ?? genreMatch[1];
+    const nextPage = viewAllPage + 1;
+    const offset = (nextPage - 1) * viewAllPageSize;
+
+    setViewAllLoading(true);
+    try {
+      const { games } = await queryByGenre(genre, viewAllPageSize, offset);
+      if (games.length > 0) {
+        setViewAllGames((prev) => [...prev, ...games]);
+        setViewAllPage(nextPage);
+        viewAllPageRef.current = nextPage;
+        setViewAllHasMore(games.length >= viewAllPageSize);
+      } else {
+        setViewAllHasMore(false);
+      }
+    } finally {
+      setViewAllLoading(false);
+    }
+  }, [activeSectionId, viewAllLoading, viewAllHasMore, viewAllPage]);
 
   const selectedDetailGameWithOverlay = selectedDetailGame
     ? providerOverlayByAppId[selectedDetailGame.appId] ?? selectedDetailGame
@@ -3400,32 +3519,61 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       ) : loading ? (
         <StoreLoadingState />
       ) : activeSection ? (
-        <section className="space-y-5">
-          <button
-            type="button"
-            onClick={() => setActiveSectionId(null)}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Volver al Store
-          </button>
+        (() => {
+          const isGenreView = activeSectionId?.startsWith("genre-");
+          const displayGames = isGenreView && viewAllGames.length > 0
+            ? viewAllGames.map(catalogGameToStoreGame)
+            : activeSection.games;
 
-          <div>
-            <h2 className="text-2xl font-bold text-(--color-text)">
-              {activeSection.title}
-            </h2>
+          return (
+            <section className="space-y-5">
+              <button
+                type="button"
+                onClick={() => setActiveSectionId(null)}
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Volver al Store
+              </button>
 
-            <p className="mt-1 text-sm text-(--color-muted)">
-              {activeSection.description}
-            </p>
-          </div>
+              <div>
+                <h2 className="text-2xl font-bold text-(--color-text)">
+                  {activeSection.title}
+                </h2>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
-            {activeSection.games.map((game) => (
-              <div key={"store:section:" + game.appId}>{renderStoreCard(game)}</div>
-            ))}
-          </div>
-        </section>
+                <p className="mt-1 text-sm text-(--color-muted)">
+                  {isGenreView && viewAllGames.length > 0
+                    ? `${viewAllGames.length} games from local catalog`
+                    : activeSection.description}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 lf-card-stagger">
+                {displayGames.map((game) => (
+                  <div key={"store:section:" + game.appId}>{renderStoreCard(game)}</div>
+                ))}
+              </div>
+
+              {viewAllLoading && (
+                <div className="flex justify-center py-4">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-accent) border-t-transparent" />
+                </div>
+              )}
+
+              {isGenreView && viewAllHasMore && !viewAllLoading && (
+                <div className="flex justify-center pb-4">
+                  <button
+                    type="button"
+                    onClick={loadMoreViewAll}
+                    className="cursor-pointer rounded-full border border-(--surface-active-border) bg-white/5 px-6 py-2 text-sm text-(--color-muted) transition hover:border-(--color-accent) hover:text-(--color-accent)"
+                  >
+                    Load More
+                  </button>
+                </div>
+              )}
+            </section>
+          );
+        })()
       ) : isSearchResultsView ? (
         (() => {
           const steamGames = steamSubmittedSearchGames.map(

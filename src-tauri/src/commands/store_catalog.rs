@@ -522,3 +522,351 @@ fn chrono_now_ts() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+
+// ── Tests ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        create_catalog_tables(&conn).unwrap();
+        conn
+    }
+
+    fn make_record(app_id: u32, name: &str, genres: &[&str]) -> SteamCatalogRecord {
+        SteamCatalogRecord {
+            app_id,
+            name: name.to_string(),
+            r#type: "game".to_string(),
+            genres: genres.iter().map(|g| g.to_string()).collect(),
+            original_genres: genres.iter().map(|g| g.to_uppercase()).collect(),
+            categories: vec![],
+            category_ids: vec![],
+            release_timestamp: 1700000000,
+            coming_soon: false,
+            is_free: false,
+            review_percent: 85,
+            review_count: 500,
+            header_image: format!("https://example.com/header_{}.jpg", app_id),
+            capsule_image: format!("https://example.com/capsule_{}.jpg", app_id),
+            developers: vec!["Dev".to_string()],
+            publishers: vec!["Pub".to_string()],
+            last_enriched_at: 1700000000,
+        }
+    }
+
+    fn make_artifact(records: Vec<SteamCatalogRecord>) -> SteamCatalogArtifact {
+        SteamCatalogArtifact {
+            schema_version: 1,
+            catalog_version: 1,
+            generated_at: "2025-01-01T00:00:00Z".to_string(),
+            records,
+        }
+    }
+
+    fn build_test_artifact() -> SteamCatalogArtifact {
+        let records = vec![
+            make_record(10, "Action Alpha", &["Action", "Shooter"]),
+            make_record(20, "Indie Indie", &["Indie"]),
+            make_record(30, "Racing Racer", &["Racing"]),
+            make_record(40, "RPG Quest", &["RPG"]),
+            make_record(50, "Adventure Explorer", &["Adventure"]),
+            make_record(60, "Shooter Blaster", &["Shooter", "Action"]),
+            make_record(70, "Strategy Commander", &["Strategy"]),
+            make_record(80, "Simulator Builder", &["Simulation"]),
+            make_record(90, "Adventure Wanderer", &["Adventure", "Indie"]),
+            make_record(100, "Action Fighter", &["Action"]),
+        ];
+        make_artifact(records)
+    }
+
+    // ── Import tests ──
+
+    #[test]
+    fn test_import_valid_artifact() {
+        let conn = test_conn();
+        let artifact = build_test_artifact();
+        let checksum = "abc123".to_string();
+        let count = import_catalog_inner(&conn, &artifact, &checksum).unwrap();
+        assert_eq!(count, 10);
+        let meta = get_meta(&conn).unwrap().unwrap();
+        assert!(meta.has_catalog);
+        assert_eq!(meta.record_count, 10);
+        assert_eq!(meta.game_count, 10);
+        assert_eq!(meta.schema_version, 1);
+        assert_eq!(meta.catalog_version, 1);
+        assert_eq!(meta.checksum, "abc123");
+    }
+
+    #[test]
+    fn test_import_rejects_no_records() {
+        let conn = test_conn();
+        let artifact = make_artifact(vec![]);
+        let count = import_catalog_inner(&conn, &artifact, "empty").unwrap();
+        assert_eq!(count, 0);
+        let meta = get_meta(&conn).unwrap().unwrap();
+        assert!(meta.has_catalog);
+        assert_eq!(meta.record_count, 0);
+    }
+
+    #[test]
+    fn test_import_replaces_previous_catalog() {
+        let conn = test_conn();
+        let first = make_artifact(vec![make_record(1, "Game One", &["Action"])]);
+        import_catalog_inner(&conn, &first, "v1").unwrap();
+        let meta1 = get_meta(&conn).unwrap().unwrap();
+        assert_eq!(meta1.record_count, 1);
+        assert_eq!(meta1.checksum, "v1");
+
+        let second = make_artifact(vec![
+            make_record(2, "Game Two", &["Indie"]),
+            make_record(3, "Game Three", &["RPG"]),
+        ]);
+        import_catalog_inner(&conn, &second, "v2").unwrap();
+        let meta2 = get_meta(&conn).unwrap().unwrap();
+        assert_eq!(meta2.record_count, 2);
+        assert_eq!(meta2.checksum, "v2");
+        let game = query_by_app_id(&conn, 1).unwrap();
+        assert!(game.is_none(), "old game should be gone after replace");
+    }
+
+    // ── Query by appId ──
+
+    #[test]
+    fn test_query_by_app_id_found() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let game = query_by_app_id(&conn, 50).unwrap().unwrap();
+        assert_eq!(game.app_id, 50);
+        assert_eq!(game.name, "Adventure Explorer");
+        // Single-game queries don't populate genres (they live in the junction table).
+        // Verify the genre association via a genre query.
+        let adventure = query_by_genre(&conn, "Adventure", 24, 0).unwrap();
+        assert!(adventure.iter().any(|g| g.app_id == 50));
+    }
+
+    #[test]
+    fn test_query_by_app_id_not_found() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let game = query_by_app_id(&conn, 99999).unwrap();
+        assert!(game.is_none());
+    }
+
+    // ── Query by genre ──
+
+    #[test]
+    fn test_query_by_genre_action() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let games = query_by_genre(&conn, "Action", 24, 0).unwrap();
+        assert!(games.len() >= 3, "should find Action Alpha, Shooter Blaster, Action Fighter, got {}", games.len());
+        for g in &games {
+            assert_eq!(g.genres, vec!["Action".to_string()]);
+        }
+    }
+
+    #[test]
+    fn test_query_by_genre_pagination() {
+        let conn = test_conn();
+        let records: Vec<SteamCatalogRecord> = (1..=50)
+            .map(|i| make_record(i, &format!("Game {}", i), &["Racing"]))
+            .collect();
+        import_catalog_inner(&conn, &make_artifact(records), "x").unwrap();
+
+        let page1 = query_by_genre(&conn, "Racing", 24, 0).unwrap();
+        assert_eq!(page1.len(), 24, "page 1 should have 24 items");
+
+        let page2 = query_by_genre(&conn, "Racing", 24, 24).unwrap();
+        assert_eq!(page2.len(), 24, "page 2 should have 24 items");
+
+        let page3 = query_by_genre(&conn, "Racing", 24, 48).unwrap();
+        assert_eq!(page3.len(), 2, "page 3 should have 2 items (50-48)");
+
+        let ids1: Vec<u32> = page1.iter().map(|g| g.app_id).collect();
+        let ids2: Vec<u32> = page2.iter().map(|g| g.app_id).collect();
+        let ids3: Vec<u32> = page3.iter().map(|g| g.app_id).collect();
+        let mut all_ids = ids1;
+        all_ids.extend(ids2);
+        all_ids.extend(ids3);
+        all_ids.sort();
+        all_ids.dedup();
+        assert_eq!(all_ids.len(), 50, "no duplicates across pages");
+    }
+
+    #[test]
+    fn test_no_duplicate_appids_across_genre_query() {
+        let conn = test_conn();
+        let records = vec![
+            make_record(1, "Multi Genre", &["Action", "Indie"]),
+        ];
+        import_catalog_inner(&conn, &make_artifact(records), "x").unwrap();
+
+        let action_games = query_by_genre(&conn, "Action", 24, 0).unwrap();
+        let indie_games = query_by_genre(&conn, "Indie", 24, 0).unwrap();
+        assert_eq!(action_games.len(), 1);
+        assert_eq!(indie_games.len(), 1);
+        assert_eq!(action_games[0].app_id, indie_games[0].app_id);
+    }
+
+    // ── Search ──
+
+    #[test]
+    fn test_query_search_exact() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_search(&conn, "adventure explorer", 24).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].app_id, 50);
+    }
+
+    #[test]
+    fn test_query_search_partial() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_search(&conn, "adv", 24).unwrap();
+        assert!(results.len() >= 2, "should match Adventure Explorer and Adventure Wanderer");
+    }
+
+    #[test]
+    fn test_query_search_no_results() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_search(&conn, "zzz_nonexistent", 24).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_query_search_ordered_by_review_count() {
+        let conn = test_conn();
+        let records = vec![
+            make_record(1, "Alpha Test", &["Action"]),
+            make_record(2, "Alpha Test Two", &["Action"]),
+        ];
+        let mut r1 = records[0].clone();
+        r1.review_count = 100;
+        let mut r2 = records[1].clone();
+        r2.review_count = 5000;
+        let artifact = make_artifact(vec![r1, r2]);
+        import_catalog_inner(&conn, &artifact, "x").unwrap();
+        let results = query_search(&conn, "alpha", 24).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].app_id, 2, "higher review count first");
+        assert_eq!(results[1].app_id, 1);
+    }
+
+    // ── Featured ──
+
+    #[test]
+    fn test_query_featured_filters_low_reviews() {
+        let conn = test_conn();
+        let mut high_review = make_record(1, "High Review", &["Action"]);
+        high_review.review_count = 5000;
+        high_review.review_percent = 95;
+        let mut low_review = make_record(2, "Low Review", &["Action"]);
+        low_review.review_count = 5;
+        low_review.review_percent = 99;
+        import_catalog_inner(&conn, &make_artifact(vec![high_review, low_review]), "x").unwrap();
+        let featured = query_featured(&conn, 24).unwrap();
+        assert_eq!(featured.len(), 1);
+        assert_eq!(featured[0].app_id, 1);
+    }
+
+    #[test]
+    fn test_query_featured_requires_image() {
+        let conn = test_conn();
+        let mut with_image = make_record(1, "Has Image", &["Indie"]);
+        with_image.review_count = 1000;
+        with_image.review_percent = 90;
+        with_image.header_image = "https://example.com/header.jpg".to_string();
+        let mut no_image = make_record(2, "No Image", &["Indie"]);
+        no_image.review_count = 1000;
+        no_image.review_percent = 90;
+        no_image.header_image = String::new();
+        import_catalog_inner(&conn, &make_artifact(vec![with_image, no_image]), "x").unwrap();
+        let featured = query_featured(&conn, 24).unwrap();
+        assert_eq!(featured.len(), 1);
+        assert_eq!(featured[0].app_id, 1);
+    }
+
+    // ── New & Noteworthy ──
+
+    #[test]
+    fn test_query_new_noteworthy_recent_games() {
+        let conn = test_conn();
+        let now_secs = chrono_now_ts() / 1000;
+        let mut recent = make_record(1, "Recent Game", &["Indie"]);
+        recent.release_timestamp = now_secs as i64 - 30 * 24 * 3600;
+        recent.coming_soon = false;
+        let mut old = make_record(2, "Old Game", &["Indie"]);
+        old.release_timestamp = now_secs as i64 - 400 * 24 * 3600;
+        old.coming_soon = false;
+        import_catalog_inner(&conn, &make_artifact(vec![recent, old]), "x").unwrap();
+        let results = query_new_noteworthy(&conn, 24).unwrap();
+        assert!(results.iter().any(|g| g.app_id == 1));
+        assert!(!results.iter().any(|g| g.app_id == 2), "old game should not appear");
+    }
+
+    #[test]
+    fn test_query_new_noteworthy_excludes_coming_soon() {
+        let conn = test_conn();
+        let now_secs = chrono_now_ts() / 1000;
+        let mut released = make_record(1, "Released", &["Action"]);
+        released.release_timestamp = now_secs as i64 - 100;
+        released.coming_soon = false;
+        let mut upcoming = make_record(2, "Upcoming", &["Action"]);
+        upcoming.release_timestamp = now_secs as i64 + 100000;
+        upcoming.coming_soon = true;
+        import_catalog_inner(&conn, &make_artifact(vec![released, upcoming]), "x").unwrap();
+        let results = query_new_noteworthy(&conn, 24).unwrap();
+        assert!(results.iter().any(|g| g.app_id == 1));
+        assert!(!results.iter().any(|g| g.app_id == 2));
+    }
+
+    // ── Genre isolation ──
+
+    #[test]
+    fn test_categories_cannot_satisfy_genre_filter() {
+        let conn = test_conn();
+        let mut record = make_record(1, "Shooter Only", &[]);
+        record.categories = vec!["Action".to_string()];
+        import_catalog_inner(&conn, &make_artifact(vec![record]), "x").unwrap();
+        let action_games = query_by_genre(&conn, "Action", 24, 0).unwrap();
+        assert_eq!(action_games.len(), 0, "categories should not match genre filter");
+    }
+
+    #[test]
+    fn test_empty_genre_query_returns_nothing() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_by_genre(&conn, "NonExistentGenre", 24, 0).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    // ── Meta before import ──
+
+    #[test]
+    fn test_meta_before_import() {
+        let conn = test_conn();
+        let meta = get_meta(&conn).unwrap().unwrap();
+        assert!(!meta.has_catalog);
+        assert_eq!(meta.record_count, 0);
+        assert_eq!(meta.game_count, 0);
+        assert_eq!(meta.schema_version, 0);
+        assert_eq!(meta.catalog_version, 0);
+    }
+
+    // ── Checksum stored correctly ──
+
+    #[test]
+    fn test_checksum_preserved() {
+        let conn = test_conn();
+        import_catalog_inner(&conn, &build_test_artifact(), "my_checksum_42").unwrap();
+        let meta = get_meta(&conn).unwrap().unwrap();
+        assert_eq!(meta.checksum, "my_checksum_42");
+    }
+}

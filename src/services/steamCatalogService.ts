@@ -18,6 +18,9 @@ import {
   type CatalogGameResult,
 } from "./tauri";
 
+const BUNDLED_CATALOG_PATH = "/data/catalog/steam-catalog-v1.json";
+const BUNDLED_CATALOG_CHECKSUM_PATH = "/data/catalog/steam-catalog-v1.manifest.json";
+
 // ── Types ──
 
 export type LocalCatalogStatus = {
@@ -39,6 +42,7 @@ const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
 const _genreCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
 const _searchCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
 const _featuredCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
+const _newNoteworthyCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
 const _metaCache = new Map<string, { ts: number; meta: CatalogMetaResult }>();
 
 function isCacheFresh(entry: { ts: number } | undefined): entry is { ts: number } {
@@ -89,11 +93,7 @@ export async function importCatalogArtifact(
   checksum: string,
 ): Promise<number> {
   const count = await importSteamCatalog(artifactJson, checksum);
-  // Invalidate all caches
-  _genreCache.clear();
-  _searchCache.clear();
-  _featuredCache.clear();
-  _metaCache.clear();
+  clearCatalogCaches();
   return count;
 }
 
@@ -192,14 +192,14 @@ export async function queryNewNoteworthyGames(
   limit: number,
 ): Promise<CatalogQueryResult> {
   const cacheKey = `newnoteworthy:${limit}`;
-  const cached = _featuredCache.get(cacheKey);
+  const cached = _newNoteworthyCache.get(cacheKey);
   if (isCacheFresh(cached)) {
     return { games: cached.games, fromLocalCatalog: true };
   }
 
   try {
     const games = await queryCatalogNewNoteworthy(limit);
-    _featuredCache.set(cacheKey, { ts: Date.now(), games });
+    _newNoteworthyCache.set(cacheKey, { ts: Date.now(), games });
     return { games, fromLocalCatalog: true };
   } catch (err) {
     console.error("[CATALOG][NEW_NOTEWORTHY] Query failed:", err);
@@ -210,16 +210,66 @@ export async function queryNewNoteworthyGames(
 /**
  * Clear all caches — called on catalog re-import or app restart.
  */
-export function clearCatalogCaches(): void {
+function clearCatalogCaches(): void {
   _genreCache.clear();
   _searchCache.clear();
   _featuredCache.clear();
+  _newNoteworthyCache.clear();
   _metaCache.clear();
   _localGenreGroups.clear();
   _localCatalogReady = false;
 }
 
 // ── Pre-fetched genre groups for Store Discover ──
+
+let _importInFlight: Promise<boolean> | null = null;
+
+/**
+ * Ensure the bundled catalog artifact is imported into SQLite.
+ * Checks if catalog exists; if not, fetches bundled JSON and imports.
+ * Returns true if catalog is available after this call.
+ * Deduplicates concurrent callers via a shared promise.
+ */
+export async function ensureCatalogImported(): Promise<boolean> {
+  const status = await getLocalCatalogStatus();
+  if (status.available) return true;
+  if (_importInFlight) return _importInFlight;
+
+  _importInFlight = (async () => {
+    try {
+      console.log("[CATALOG][AUTO_IMPORT] No catalog found, loading bundled artifact...");
+      const [artifactRes, manifestRes] = await Promise.all([
+        fetch(BUNDLED_CATALOG_PATH),
+        fetch(BUNDLED_CATALOG_CHECKSUM_PATH),
+      ]);
+
+      if (!artifactRes.ok) {
+        console.warn("[CATALOG][AUTO_IMPORT] Bundled artifact not found:", artifactRes.status);
+        return false;
+      }
+
+      const artifactJson = await artifactRes.text();
+      let checksum = "";
+      if (manifestRes.ok) {
+        try {
+          const manifest = await manifestRes.json();
+          checksum = manifest.checksum || "";
+        } catch {}
+      }
+
+      const count = await importCatalogArtifact(artifactJson, checksum);
+      console.log(`[CATALOG][AUTO_IMPORT] Imported ${count} records`);
+      return count > 0;
+    } catch (err) {
+      console.error("[CATALOG][AUTO_IMPORT] Failed:", err);
+      return false;
+    } finally {
+      _importInFlight = null;
+    }
+  })();
+
+  return _importInFlight;
+}
 
 /**
  * Module-level cache of genre → games[] populated by preFetchGenreGroups().
