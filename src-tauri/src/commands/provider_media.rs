@@ -440,3 +440,116 @@ pub fn open_provider_media_folder(
     let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
     open::that(&media_dir).map_err(|e| format!("Failed to open provider media folder: {}", e))
 }
+
+// ---------------------------------------------------------------------------
+// Command 6: list_provider_media_files
+// List all media files in a provider+game media directory.
+// Returns filename, role, extension, relative path, size, and modification time.
+// Read-only — no writes or deletes.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct ProviderMediaFileEntry {
+    pub filename: String,
+    pub role: String,
+    pub extension: String,
+    pub relative_path: String,
+    pub size_bytes: u64,
+    pub modified_at: Option<u64>,
+}
+
+#[tauri::command]
+pub fn list_provider_media_files(
+    app_handle: AppHandle,
+    provider: String,
+    provider_game_id: String,
+) -> Result<Vec<ProviderMediaFileEntry>, String> {
+    let safe_provider = sanitize_provider(&provider)?;
+    let safe_id = sanitize_provider_game_id(&provider_game_id)?;
+
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let media_dir = app_dir
+        .join("games")
+        .join(&safe_provider)
+        .join(&safe_id)
+        .join("media");
+
+    let mut results: Vec<ProviderMediaFileEntry> = Vec::new();
+
+    if !media_dir.exists() {
+        return Ok(results);
+    }
+
+    if let Ok(entries) = fs::read_dir(&media_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let filename = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+
+            // Skip temp files
+            if filename.ends_with(".tmp") {
+                continue;
+            }
+
+            let dot_idx = filename.rfind('.');
+            let (role, extension) = if let Some(idx) = dot_idx {
+                let stem = &filename[..idx];
+                let ext = &filename[idx + 1..];
+                (stem.to_string(), ext.to_lowercase())
+            } else {
+                (filename.clone(), String::new())
+            };
+
+            // Only include files with recognized image extensions or no extension
+            if !extension.is_empty()
+                && extension != "png"
+                && extension != "jpg"
+                && extension != "jpeg"
+                && extension != "webp"
+                && extension != "gif"
+                && extension != "bmp"
+            {
+                continue;
+            }
+
+            let relative_path = format!(
+                "games/{}/{}/media/{}",
+                safe_provider, safe_id, filename
+            );
+
+            let size_bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
+
+            let modified_at = path
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+
+            results.push(ProviderMediaFileEntry {
+                filename,
+                role,
+                extension,
+                relative_path,
+                size_bytes,
+                modified_at,
+            });
+        }
+    }
+
+    println!(
+        "[PROVIDER_MEDIA][LIST] provider={} game={} files={}",
+        safe_provider, safe_id, results.len()
+    );
+    Ok(results)
+}

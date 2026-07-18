@@ -1,4 +1,5 @@
 import type { LibraryGame } from "../types/libraryGame";
+import { EPIC_LAUNCH_ENABLED, EPIC_LIBRARY_ENABLED } from "../services/epicFeatureFlag";
 
 const DEBUG_LUA_ACTIONS = false;
 
@@ -6,12 +7,15 @@ export type PrimaryAction = "play" | "install" | "uninstalling" | "missing-path"
 
 export function getLauncherGamePrimaryAction(game: LibraryGame): PrimaryAction {
   const hasLuaScripts = game.luaScripts && game.luaScripts.length > 0;
+  const isEpicLaunchable = game.source === "epic" && EPIC_LAUNCH_ENABLED && EPIC_LIBRARY_ENABLED;
 
   let action: PrimaryAction;
   if (game.source === "manual" && game.executablePath) {
     action = "play";
   } else if (game.source === "manual" && !game.executablePath) {
     action = "missing-path";
+  } else if (isEpicLaunchable && game.isPlayable) {
+    action = "play";
   } else if (game.isPlayable && game.appId) {
     action = "play";
   } else if (game.isInstallable && game.appId) {

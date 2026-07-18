@@ -3221,3 +3221,190 @@ localStorage is unreliable for app data (WebView storage clear, different browse
 - `tsc --noEmit` ✅ (0 errors)
 - `vite build` ✅ (0 errors, only pre-existing chunk warnings)
 - `cargo check` ✅ (0 errors)
+
+## Session — Epic Games Store Phase 1B: Library Provider Integration
+
+### Goal
+Integrate Epic Games local scanner results into the Library grid via a memory-first provider store, pure mapper, and isolated merge boundary in LibraryGamesContext. No launch, auth, owned/uninstalled, achievements, GOG, Console Mode, or cross-provider dedup.
+
+### Parts Implemented
+
+#### Part 1: LibraryGame type — provider-neutral `isInstalled` field
+- Added `isInstalled?: boolean` to `LibraryGame` type in `src/types/libraryGame.ts`
+- Provider-neutral: true when game exists on disk from any provider
+- Distinct from `steamInstalled` (Steam-specific), `isPlayable` (launch-ready), `isInstallable` (can be installed via LumaForge)
+
+#### Part 2: Feature flag (`src/services/epicFeatureFlag.ts`) — **new**
+- `EPIC_LIBRARY_ENABLED = false` — master gate, defaults OFF for production
+- `DEBUG_EPIC_LIBRARY = false` — verbose console diagnostics gate
+
+#### Part 3: Pure mapper (`src/services/epicGameLibraryMapper.ts`) — **new**
+- `epicGameToLibraryGame(game: EpicInstalledGame) → LibraryGame` — pure, no side effects
+- `buildProviderGameId(game)` — canonical identity: `{namespace}:{catalogItemId}` → `{namespace}:{appName}` → `{appName}`
+- `isEpicEntryEligible(game)` — strict filter: baseGame + manifestValid + installed + !incomplete + non-empty providerGameId + non-empty displayName
+- `computeEpicFingerprint(games)` — deterministic fingerprint for change detection
+- `isPlayable = false` (no launch adapter), `isInstalled = true` (on disk), `steamInstalled = false`, `isInstallable = false`
+
+#### Part 4: Memory-first provider store (`src/services/epicGameStore.ts`) — **new**
+- Module-level state: `_epicGames: LibraryGame[]`, `_epicFingerprint: string`, `_scanWarning: string | null`, `_scanState`
+- `refreshEpicGames()` — runs Rust scanner, filters eligible, maps to LibraryGame, replaces state, notifies on fingerprint change
+- `getAllEpicGames()`, `getEpicGame()`, `getEpicFingerprint()`, `getEpicScanState()`, `getEpicScanWarning()`
+- `subscribeEpicGames(listener)` — returns cleanup function, no duplicate listeners
+- `resetEpicGameCache()` — clears state + notifies
+- Scanner failure: retains previous valid entries, sets warning, notifies once
+- Successful empty scan: replaces with empty (stale entries removed)
+
+#### Part 5: Steam-only action gating
+- `GameLauncherTile.tsx` — "Uninstall in Steam" hidden when `game.source === "epic"`
+- `SidebarLibraryList.tsx` — "Uninstall in Steam" hidden when `menuGame.source === "epic"`
+- "Open in Steam" already safe (driven by `getLauncherGamePrimaryAction()` which returns "details" for Epic)
+
+#### Part 6: Fingerprint safety for appId-less entries
+- `LibraryGamesContext.tsx` — `computeLibraryFingerprint` and `computeGamesFingerprint` use `g.appId || g.libraryId || g.id` instead of raw `g.appId`
+- Prevents `undefined:` prefix in fingerprint strings for Epic/GOG entries
+
+#### Part 7: LibraryGamesContext Epic merge boundary
+- `getEpicLibraryGames()` helper — sync read from in-memory Epic store
+- `applyGamesSafely` appends Epic games alongside manual games: `[...nextGames, ...getManualLibraryGames(), ...getEpicLibraryGames()]`
+- Epic subscription effect (follows manual subscription pattern):
+  1. Calls `refreshEpicGames()` on mount (fire-and-forget)
+  2. Subscribes to Epic store changes
+  3. On change: strips Epic from current, calls `applyGamesSafely(nonEpic, "epic-update")`
+  4. Epic games survive manual-update (not stripped, present in `getEpicLibraryGames()`)
+  5. Manual games survive epic-update (not stripped, present in `getManualLibraryGames()`)
+- Feature-flag gated: subscription effect returns immediately when `EPIC_LIBRARY_ENABLED = false`
+
+#### Part 8: mergeGames compatibility (no changes needed)
+- `mergeGames()` first branch (cached/reconciled/snapshot): Epic entries have `appId=undefined` → NOT copied into `byAppId` from current → incoming Epic entries added fresh via `noappid-${game.id}` path
+- `mergeGames()` second branch (dedupe): `dedupeLibraryGames` dedupes by appId, doesn't affect appId-less Epic entries
+- Replacement, not stale merge: on successful scan, all previous Epic entries replaced
+
+### What was NOT changed (Phase 1B boundary)
+- No launch adapter — `isPlayable = false` for all Epic entries
+- No auth, no owned/uninstalled games, no Epic store integration
+- No achievements, cloud, install/uninstall, cross-provider dedup
+- No Console Mode Epic exposure
+- No metadata API, no artwork resolution
+- No changes to: libraryGameResolver, startupSnapshotService, gameStore, manualGameStore, manualGameLibraryMapper, GameSessionContext, FavoritesContext, Home, Sidebar layout, GameDetails, GameEditDialog, Store, Console Mode, Steam launch, manual launch, Hubcap
+
+### Scenario Coverage
+- **A — Feature disabled**: `EPIC_LIBRARY_ENABLED = false` → subscription returns early, `getEpicLibraryGames()` returns `[]`, no behavior change
+- **B — Normal scan**: `refreshEpicGames()` → eligible entries mapped → fingerprint change → `applyGamesSafely(nonEpic, "epic-update")` → Epic games appear in Library
+- **C — Empty scan**: replace with empty → stale Epic entries removed
+- **D — Scanner failure**: retain previous entries, set warning, notify once
+- **E — Rapid Epic refresh**: fingerprint change detection prevents duplicate notifications
+- **F — Manual refresh**: `refresh()` calls `applyGamesSafely(enriched, "manual-refresh")` → Epic games appended from store via `getEpicLibraryGames()`
+- **G — Steam actions**: "Uninstall in Steam" hidden for Epic; "Open in Steam" already safe via `getLauncherGamePrimaryAction()`
+
+### Key Files Changed
+- `src/types/libraryGame.ts` — added `isInstalled?: boolean` field
+- `src/services/epicFeatureFlag.ts` — **new** — feature flag + debug flag
+- `src/services/epicGameLibraryMapper.ts` — **new** — pure mapper + eligibility filter + fingerprint
+- `src/services/epicGameStore.ts` — **new** — memory-first provider store with subscription
+- `src/context/LibraryGamesContext.tsx` — Epic imports, `getEpicLibraryGames()`, `applyGamesSafely` Epic append, Epic subscription effect, fingerprint fixes
+- `src/components/games/GameLauncherTile.tsx` — "Uninstall in Steam" gated for Epic
+- `src/components/layout/SidebarLibraryList.tsx` — "Uninstall in Steam" gated for Epic
+
+### Build
+- `cargo check` ✅ (0 errors)
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (0 errors, only pre-existing chunk warnings)
+
+## Session — Epic Games Phase 2A: Provider-Native Launch + Play Activation
+
+### Goal
+Enable playing Epic Games from LumaForge's Library via the Epic Games Launcher protocol, with full session tracking, process detection, and playtime recording — identical to the Steam launch experience.
+
+### Architecture
+- **Dual-mode launch**: Protocol URI first (`com.epicgames.launcher:/apps/<appName>?action=launch`), direct executable fallback
+- **Provider launch adapter**: `dispatchProviderLaunch()` in `src/utils/providerLaunchAdapter.ts` — provider-neutral dispatch boundary called from GameSessionContext
+- **Feature-flag gated**: `EPIC_LAUNCH_ENABLED` (off by default), requires `EPIC_LIBRARY_ENABLED` also enabled
+- **Launch metadata retention**: `epicGameStore.ts` retains per-game `EpicLaunchMetadata` (appName, executablePath, launchArguments, processNames) from scanner results
+- **Session tracking**: Same process-detection retry pattern as Steam (2s → 3s → 5s scan, soft-session fallback)
+
+### Parts Implemented
+
+#### Part 1: Rust `launch_epic_game` command
+- `src-tauri/src/commands/epic.rs` — new `launch_epic_game` Tauri command
+- `EpicLaunchResult` struct: `{ success, method: "protocol"|"direct-executable", error? }`
+- Protocol attempt: `open::that_detached("com.epicgames.launcher:/apps/{appName}?action=launch")`
+- Direct executable fallback: `Command::new(exe).args(args).spawn()` with detached child
+- Registered in `src-tauri/src/lib.rs`
+
+#### Part 2: TS binding
+- `src/services/tauri.ts` — `launchEpicGame(appName, executablePath?, launchArguments?)` binding + `EpicLaunchResult` type
+
+#### Part 3: Feature flags
+- `src/services/epicFeatureFlag.ts` — added `EPIC_LAUNCH_ENABLED = false` and `DEBUG_EPIC_LAUNCH = false`
+
+#### Part 4: Launch metadata retention
+- `src/services/epicGameStore.ts` — `_launchMetadataByProviderGameId` Map retains `{ appName, executablePath, launchArguments, processNames, installLocation, manifestPath }` per eligible game
+- `getEpicLaunchMetadata(providerGameId)` public getter
+- Metadata populated during `refreshEpicGames()` scan, cleared on `resetEpicGameCache()`
+
+#### Part 5: Provider launch adapter
+- `src/utils/providerLaunchAdapter.ts` — **new** — `dispatchProviderLaunch(game)` returns `{ dispatched, method, error }`
+- Dynamic imports of `getEpicLaunchMetadata` and `launchEpicGame` to avoid circular deps
+- Returns `{ dispatched: false }` for non-Epic or disabled cases
+
+#### Part 6: GameSessionContext Epic dispatch
+- `src/context/GameSessionContext.tsx`:
+  - Import `dispatchProviderLaunch`
+  - Source mapping: `"epic"` added to session creation
+  - Dispatch delay: Epic uses 1500ms (same as Steam)
+  - New `else if (game.source === "epic")` branch: calls `dispatchProviderLaunch`, then scans for process with 2s/3s/5s retry
+  - On dispatch failure: session cleaned up immediately
+  - Provider labels: `"Epic"` in overlay events (launch/end)
+  - Playtime provider: `"epic"` for start/end sessions
+  - Activity source: `"epic"` for session history records
+  - Hydrate: Epic soft sessions already handled (`s.source === "epic"` at line 265)
+
+#### Part 7: `isPlayable` derivation
+- `src/services/epicGameLibraryMapper.ts` — `isPlayable = EPIC_LAUNCH_ENABLED && EPIC_LIBRARY_ENABLED && (appName || executablePath)`
+- When flags are OFF: `isPlayable = false` (Phase 1B behavior preserved)
+
+#### Part 8: Primary action
+- `src/utils/launcherGameActions.ts` — Epic launchable games return `"play"` as primary action (before Steam appId check)
+
+#### Part 9: Steam-only action gating
+- `src/components/games/GameLauncherTile.tsx` — "Open in Steam" hidden for `game.source === "epic"`
+
+#### Part 10: Activity source type
+- `src/types/gameActivity.ts` — added `"epic"` to `GameActivityItem.source` union
+
+### What was NOT changed (Phase 2A boundary)
+- No achievements for Epic games
+- No cloud saves, DLC detection, or ownership tracking
+- No Console Mode Epic exposure
+- No metadata API, no artwork resolution for Epic
+- No install/uninstall via LumaForge
+- No cross-provider dedup between Steam and Epic
+- No changes to: startupSnapshotService, gameStore, FavoritesContext, Home, Settings, Store
+
+### Scenario Coverage
+- **A — Feature disabled**: Both flags OFF → `isPlayable = false`, Play button never shown, no launch dispatch
+- **B — Protocol launch**: `dispatchProviderLaunch` → `launchEpicGame(appName)` → `open::that_detached` → process detected → running session
+- **C — Direct executable fallback**: Protocol fails → `Command::new(exe).spawn()` → process spawned → running session
+- **D — Both methods fail**: Error returned → session cleaned up → user sees no running state
+- **E — Process detection timeout**: No process found after 10s → soft session (same as Steam)
+- **F — Steam-only actions hidden**: "Open in Steam" hidden for Epic games
+- **G — Play button**: Appears when `EPIC_LAUNCH_ENABLED && EPIC_LIBRARY_ENABLED` and game has `appName` or `executablePath`
+- **H — Activity history**: Session records use `"epic"` source, overlay shows `"Epic"` provider
+
+### Key Files Changed
+- `src-tauri/src/commands/epic.rs` — `launch_epic_game` command, `EpicLaunchResult` type
+- `src-tauri/src/lib.rs` — registered `launch_epic_game`
+- `src/services/tauri.ts` — `launchEpicGame` binding, `EpicLaunchResult` type
+- `src/services/epicFeatureFlag.ts` — `EPIC_LAUNCH_ENABLED`, `DEBUG_EPIC_LAUNCH`
+- `src/services/epicGameStore.ts` — `_launchMetadataByProviderGameId`, `getEpicLaunchMetadata()`, metadata retention in scan
+- `src/services/epicGameLibraryMapper.ts` — `isPlayable` derivation from feature flags + manifest
+- `src/utils/providerLaunchAdapter.ts` — **new** — `dispatchProviderLaunch()` adapter
+- `src/utils/launcherGameActions.ts` — Epic primary action "play"
+- `src/context/GameSessionContext.tsx` — Epic dispatch branch, provider labels, playtime/activity source
+- `src/components/games/GameLauncherTile.tsx` — "Open in Steam" gated for Epic
+- `src/types/gameActivity.ts` — `"epic"` added to source union
+
+### Build
+- `cargo check` ✅ (0 errors)
+- `tsc --noEmit` ✅ (0 errors)
+- `vite build` ✅ (0 errors, only pre-existing chunk warnings)

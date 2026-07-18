@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Heart } from "lucide-react";
 import type { StartupSnapshot } from "../../services/startupSnapshotService";
+import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useSettings } from "../../context/SettingsContext";
@@ -8,13 +9,17 @@ import { resolveProviderMediaPreviewUrl, resolveGameMediaUrl } from "../../servi
 import {
   type DashboardDisplayGame,
   snapshotToDisplayGame,
-  manualToDisplayGame,
-  getManualGamesForDashboard,
+  getCardImageCandidate,
+  getIconCandidate,
+  resolveCanonicalGameIdentity,
 } from "../../services/dashboardManualGames";
+import { resolvePlaytimeKey, getPlaytimeEntryByGameKey } from "../../services/playtimeService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
+
+const DEBUG_DASHBOARD_MEDIA = false;
 
 type Props = {
   snapshot: StartupSnapshot | null;
@@ -29,33 +34,76 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
 
-  const manualGames = useMemo(() => getManualGamesForDashboard(libraryGames), [libraryGames]);
+  // Build a DashboardDisplayGame directly from a canonical LibraryGame.
+  // Replaces manualToDisplayGame for Epic/manual favorites — no intermediary needed.
+  function buildFavoriteDisplayGame(game: LibraryGame): DashboardDisplayGame {
+    const ptKey = resolvePlaytimeKey(game);
+    const ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+    return {
+      stableId: game.libraryId || game.id,
+      libraryId: game.libraryId,
+      source: game.source ?? "manual",
+      title: game.title,
+      imageUrl: null, // resolved async by media effect below
+      iconUrl: getIconCandidate(game),
+      totalPlaytimeSeconds: ptEntry?.totalPlaytimeSeconds ?? 0,
+      lastPlayedAt: ptEntry?.lastPlayedAt ?? null,
+      isRunning: false,
+      installed: game.isInstalled ?? true,
+      playable: game.isPlayable,
+      updatedAt: 0,
+      _libraryGame: game,
+      _rolePaths: {
+        backgroundPath: game.backgroundPath ?? null,
+        landscapePath: game.landscapePath ?? null,
+        coverPath: game.coverPath ?? null,
+        logoPath: game.logoPath ?? null,
+        iconPath: game.iconPath ?? null,
+      },
+    };
+  }
 
   const displayGames = useMemo(() => {
     const exclude = new Set(excludeAppIds ?? []);
     const result: DashboardDisplayGame[] = [];
     const seen = new Set<string>();
 
-    // Snapshot games that are favorited
-    for (const sg of (snapshot?.library?.games ?? [])) {
-      if (!sg.appId || exclude.has(sg.appId) || seen.has(sg.appId)) continue;
-      if (!favoriteIds.has(sg.appId)) continue;
-      seen.add(sg.appId);
-      result.push(snapshotToDisplayGame(sg as any, new Set()));
+    // Build canonical identity → LibraryGame lookup from ALL libraryGames.
+    // Multiple keys per game ensure any favoriteId format resolves correctly:
+    //   Steam:  "268910"       (appId)
+    //   Epic:   "epic:AppName" (libraryId)
+    //   Manual: "manual:uuid"  (libraryId)
+    const identityMap = new Map<string, LibraryGame>();
+    for (const g of libraryGames) {
+      const canonical = resolveCanonicalGameIdentity(g);
+      if (canonical) identityMap.set(canonical, g);
+      if (g.appId) identityMap.set(g.appId, g);
+      if (g.libraryId) identityMap.set(g.libraryId, g);
     }
 
-    // Manual games that are favorited
-    for (const mg of manualGames) {
-      const favKey = mg.libraryId || mg.id;
-      if (seen.has(favKey)) continue;
-      if (!favoriteIds.has(favKey)) continue;
-      seen.add(favKey);
-      const fakeLibGame = { ...mg, source: "manual" as const, libraryId: mg.libraryId } as any;
-      result.push(manualToDisplayGame(fakeLibGame, new Set()));
+    // Resolve each favoriteId against the canonical identity map
+    for (const favId of favoriteIds) {
+      if (seen.has(favId)) continue;
+      const libGame = identityMap.get(favId);
+      if (!libGame) continue;
+      if (exclude.has(libGame.appId || "")) continue;
+      if (!libGame.title) continue;
+      seen.add(favId);
+
+      // Check if this game also exists in the snapshot (Steam games)
+      const snapshotGame = libGame.appId
+        ? (snapshot?.library?.games ?? []).find((sg) => sg.appId === libGame.appId)
+        : undefined;
+
+      if (snapshotGame) {
+        result.push(snapshotToDisplayGame(snapshotGame as any, new Set()));
+      } else {
+        result.push(buildFavoriteDisplayGame(libGame));
+      }
     }
 
     return result.slice(0, maxItems ?? 10);
-  }, [snapshot, manualGames, favoriteIds, excludeAppIds, maxItems]);
+  }, [snapshot, libraryGames, favoriteIds, excludeAppIds, maxItems]);
 
   useEffect(() => {
     for (const game of displayGames) {
@@ -65,27 +113,33 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
     }
   }, [displayGames]);
 
-  const displayIdsKey = useMemo(
-    () => displayGames.map(g => g.stableId).sort().join(','),
-    [displayGames],
-  );
-
+  // Depend on displayGames directly — when libraryGames state changes (e.g. Epic
+  // scan populates coverPath/landscapePath), identityMap recomputes →
+  // displayGames gets new reference → this effect re-runs with fresh _libraryGame paths.
   useEffect(() => {
     let cancelled = false;
     const resolve = async () => {
       const urls: Record<string, string | null> = {};
       for (const game of displayGames) {
         if (cancelled) break;
-        if (game._snapshotGame) {
-          const m = game._snapshotGame.media;
-          const imgPath = m?.landscapePath || m?.coverPath || m?.backgroundPath;
-          urls[game.stableId] = (game.appId && imgPath)
-            ? await resolveGameMediaUrl(game.appId, imgPath)
-            : null;
-        } else if (game._libraryGame) {
-          const rawPath = game._libraryGame.imageUrl;
-          urls[game.stableId] = rawPath ? await resolveProviderMediaPreviewUrl(rawPath) : null;
-        } else {
+        try {
+          if (game._snapshotGame) {
+            const m = game._snapshotGame.media;
+            const imgPath = m?.landscapePath || m?.backgroundPath || m?.coverPath;
+            urls[game.stableId] = (game.appId && imgPath)
+              ? await resolveGameMediaUrl(game.appId, imgPath)
+              : null;
+          } else if (game._libraryGame) {
+            const rawPath = getCardImageCandidate(game._libraryGame);
+            const resolved = rawPath ? await resolveProviderMediaPreviewUrl(rawPath) : null;
+            urls[game.stableId] = resolved;
+            if (DEBUG_DASHBOARD_MEDIA) {
+              console.log(`[DASHBOARD_MEDIA][FAVORITE_CARD] stableId=${game.stableId} source=${game.source} rolePaths=${JSON.stringify(game._rolePaths ?? {})} rawPath=${rawPath} resolvedUrl=${!!resolved}`);
+            }
+          } else {
+            urls[game.stableId] = null;
+          }
+        } catch {
           urls[game.stableId] = null;
         }
       }
@@ -98,7 +152,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
     };
     resolve();
     return () => { cancelled = true; };
-  }, [displayIdsKey]);
+  }, [displayGames]);
 
   if (displayGames.length === 0) {
     return (
@@ -119,14 +173,38 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
   }
 
   function handleOpen(game: DashboardDisplayGame) {
+    // 1. Direct LibraryGame reference (Epic, Manual, or from context) — always works
     if (game._libraryGame) {
+      if (DEBUG_DASHBOARD_MEDIA) {
+        console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=direct-libraryGame`);
+      }
       setSelectedGame(game._libraryGame);
       onNavigate?.("library-game-detail");
-    } else if (game.appId) {
+      return;
+    }
+    // 2. Steam snapshot: find by appId in current library games
+    if (game.appId) {
       const libGame = libraryGames.find((g) => g.appId === game.appId);
       if (libGame) {
+        if (DEBUG_DASHBOARD_MEDIA) {
+          console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=app-id-lookup appId=${game.appId}`);
+        }
         setSelectedGame(libGame);
         onNavigate?.("library-game-detail");
+        return;
+      }
+    }
+    // 3. Fallback: find any game by stableId (covers edge cases)
+    if (game.stableId) {
+      const found = libraryGames.find((g) => (g.libraryId || g.id) === game.stableId);
+      if (found) {
+        if (DEBUG_DASHBOARD_MEDIA) {
+          console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=stableId-lookup`);
+        }
+        setSelectedGame(found);
+        onNavigate?.("library-game-detail");
+      } else if (DEBUG_DASHBOARD_MEDIA) {
+        console.log(`[DASH][FAVORITE_CLICK] stableId=${game.stableId} source=${game.source} method=NONE game-not-found-in-library`);
       }
     }
   }

@@ -1552,6 +1552,39 @@ export async function openProviderMediaFolder(providerId: string, providerGameId
   return await invoke("open_provider_media_folder", { provider: providerId, providerGameId });
 }
 
+// ── Provider media directory listing ──
+
+export type ProviderMediaFileEntry = {
+  filename: string;
+  role: string;
+  extension: string;
+  relativePath: string;
+  sizeBytes: number;
+  modifiedAt: number | null;
+};
+
+export async function listProviderMediaFiles(
+  provider: string,
+  providerGameId: string,
+): Promise<ProviderMediaFileEntry[]> {
+  const raw = await invoke<Array<{
+    filename: string;
+    role: string;
+    extension: string;
+    relative_path: string;
+    size_bytes: number;
+    modified_at: number | null;
+  }>>("list_provider_media_files", { provider, providerGameId });
+  return raw.map((e) => ({
+    filename: e.filename,
+    role: e.role,
+    extension: e.extension,
+    relativePath: e.relative_path,
+    sizeBytes: e.size_bytes,
+    modifiedAt: e.modified_at,
+  }));
+}
+
 export async function updateGameArtwork(appId: string, sgdb: SteamGridDbRef | null, paths: GameMediaPaths): Promise<void> {
   return await invoke("update_game_artwork", { appId, sgdb, paths });
 }
@@ -2245,4 +2278,98 @@ export async function writeManualGames(entries: ManualGameEntryJson[]): Promise<
 /** Create a timestamped backup of `manual-games.json`. Returns backup filename. */
 export async function backupManualGames(): Promise<string> {
   return await invoke<string>("backup_manual_games");
+}
+
+// ─── Epic Games Store Scanner (Phase 1A) ─────────────────────────────────
+
+export type EpicInstallClassification = "baseGame" | "dlc" | "addon" | "tool" | "unknown";
+
+export type EpicInstallSourceKind = "native" | "thirdPartyManaged";
+
+/** A single normalized Epic installation record (provider-level only, no LibraryGame UI state). */
+export type EpicInstalledGame = {
+  providerId: "epic";
+  /** Canonical Epic identity: `{namespace}:{catalogItemId}` or fallback. */
+  providerGameId: string;
+  namespace?: string;
+  catalogItemId?: string;
+  appName?: string;
+  displayName?: string;
+  installLocation?: string;
+  launchExecutable?: string;
+  executablePath?: string;
+  launchArguments?: string;
+  releaseVersion?: string;
+  installSize?: number;
+  manifestPath?: string;
+  processNames: string[];
+  mainGameAppName?: string;
+  mainGameCatalogItemId?: string;
+  mainGameCatalogNamespace?: string;
+  installed: boolean;
+  executableExists: boolean;
+  manifestValid: boolean;
+  incompleteInstall: boolean;
+  canRunOffline: boolean;
+  classification: EpicInstallClassification;
+  sourceKind: EpicInstallSourceKind;
+  warnings: string[];
+};
+
+/** The complete scan result envelope from the Epic local scanner. */
+export type EpicInstalledGamesScanResult = {
+  games: EpicInstalledGame[];
+  manifestDirectory: string;
+  directoryExists: boolean;
+  scannedFileCount: number;
+  validManifestCount: number;
+  invalidManifestCount: number;
+  staleManifestCount: number;
+  incompleteInstallCount: number;
+  duplicateCount: number;
+  warnings: string[];
+  scannedAt: string;
+};
+
+/**
+ * Scan for locally installed Epic Games Store games.
+ *
+ * Reads `.item` manifest files from the Epic Games Launcher data directory.
+ * No authentication, no network calls, no manifest modification.
+ *
+ * @param manifestDir Optional override for the manifest directory path.
+ *   Uses `%ProgramData%/Epic/EpicGamesLauncher/Data/Manifests` when omitted.
+ */
+export async function scanEpicInstalledGames(
+  manifestDir?: string,
+): Promise<EpicInstalledGamesScanResult> {
+  return await invoke<EpicInstalledGamesScanResult>("scan_epic_installed_games", {
+    manifestDir: manifestDir ?? null,
+  });
+}
+
+// ── Epic launch ──
+
+export type EpicLaunchResult = {
+  success: boolean;
+  method: string;
+  error?: string;
+};
+
+export async function launchEpicGame(
+  appName: string,
+  executablePath?: string,
+  launchArguments?: string,
+  directLaunchEnabled?: boolean,
+  namespace?: string,
+  catalogItemId?: string,
+): Promise<EpicLaunchResult> {
+  return await invoke<EpicLaunchResult>("launch_epic_game", {
+    appName,
+    executablePath: executablePath ?? null,
+    launchArguments: launchArguments ?? null,
+    directLaunchEnabled: directLaunchEnabled ?? false,
+    namespace: namespace ?? null,
+    catalogItemId: catalogItemId ?? null,
+  });
 }

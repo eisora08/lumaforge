@@ -186,6 +186,7 @@ export default function LibraryPage({ onNavigate }: Props) {
       if (filter === "lua" && !g.hasLua) return false;
       if (filter === "installed" && !isSidebarInstalledGame(g)) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;
+      if (filter === "epic" && g.source !== "epic") return false;
       if (filter === "updates" && g.appId) {
         const s = getUpdateStatus(g.appId);
         if (s !== "update-available") return false;
@@ -298,6 +299,14 @@ export default function LibraryPage({ onNavigate }: Props) {
       } catch (err) {
         showError(String(err), { title: "Error" });
       }
+    } else if (game.source === "epic" && game.isPlayable) {
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: "Error" });
+      }
+    } else if (game.source === "epic" && !game.isPlayable) {
+      showWarning("Epic launch is not enabled for this game.", { title: "Not available" });
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       try {
         await session.launchGame(game);

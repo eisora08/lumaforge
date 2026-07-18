@@ -183,6 +183,7 @@ pub fn run() {
             commands::provider_media::delete_provider_media_file,
             commands::provider_media::save_provider_media_from_base64,
             commands::provider_media::open_provider_media_folder,
+            commands::provider_media::list_provider_media_files,
             commands::media_cache::get_media_cache_stats,
             commands::media_cache::compact_media_cache,
             commands::startup_snapshot::read_startup_snapshot,
@@ -253,6 +254,8 @@ pub fn run() {
             commands::manual_games::read_manual_games,
             commands::manual_games::write_manual_games,
             commands::manual_games::backup_manual_games,
+            commands::epic::scan_epic_installed_games,
+            commands::epic::launch_epic_game,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

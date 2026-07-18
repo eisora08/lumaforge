@@ -150,6 +150,9 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.capsule_image
     || game.metadata?.capsule_image_v5;
   if (metaSecondary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataSecondary`); return metaSecondary; }
+  if (game.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.backgroundPath path=${game.backgroundPath}`); return game.backgroundPath; }
+  if (game.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.landscapePath path=${game.landscapePath}`); return game.landscapePath; }
+  if (game.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.coverPath path=${game.coverPath}`); return game.coverPath; }
   if (game.imageUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=imageUrl`); return game.imageUrl; }
   if (mediaEntry?.cover_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.cover_path`); return mediaEntry.cover_path; }
   if (canonicalDiskFallback) { logDetailsCanonical(game.appId ?? "", `heroSelected=canonicalDiskFallback`); return canonicalDiskFallback; }
@@ -242,12 +245,14 @@ export default function LibraryGameDetails({
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDialogTab, setEditDialogTab] = useState<"general" | "media">("general");
   const [heroImgError, setHeroImgError] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const favoriteId = game.appId || game.id;
   const favorite = isFavorite(favoriteId);
   const actionsRef = useRef<HTMLDivElement>(null);
   const isManualGame = game.source === "manual";
+  const isEpicGame = game.source === "epic";
   const linkedSteamAppId = isManualGame ? ((localDetailsData as any)?.linkedSteamAppId ?? null) : null;
 
   const detailTitle = resolveCanonicalDisplayTitle(
@@ -340,6 +345,9 @@ export default function LibraryGameDetails({
       if (rawImageUrl.startsWith("media/") || rawImageUrl.startsWith("img/")) {
         const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
         resolved = await resolveRelativeMediaPath(game.appId ?? "", rawImageUrl).catch(() => rawImageUrl);
+      } else if (rawImageUrl.startsWith("games/")) {
+        const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+        resolved = await resolveProviderMediaPreviewUrl(rawImageUrl).catch(() => rawImageUrl) ?? rawImageUrl;
       }
       // Block cross-appid paths
       if (isLocalPath(resolved) && game.appId) {
@@ -389,9 +397,27 @@ export default function LibraryGameDetails({
     }
     return rawLogoUrl;
   })();
-  const logoUrl = _validatedLogoSrc && isLocalPath(_validatedLogoSrc)
-    ? (localPathToUrl(_validatedLogoSrc) ?? undefined)
-    : _validatedLogoSrc;
+  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!_validatedLogoSrc) { setResolvedLogoUrl(undefined); return; }
+    if (_validatedLogoSrc.startsWith("games/") || _validatedLogoSrc.startsWith("media/") || _validatedLogoSrc.startsWith("img/")) {
+      const resolveLogo = async () => {
+        let resolved: string | null = _validatedLogoSrc;
+        if (_validatedLogoSrc.startsWith("games/")) {
+          const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+          resolved = await resolveProviderMediaPreviewUrl(_validatedLogoSrc).catch(() => _validatedLogoSrc);
+        } else {
+          const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
+          resolved = await resolveRelativeMediaPath(game.appId ?? "", _validatedLogoSrc).catch(() => _validatedLogoSrc);
+        }
+        setResolvedLogoUrl(resolved ?? undefined);
+      };
+      resolveLogo();
+    } else {
+      setResolvedLogoUrl(isLocalPath(_validatedLogoSrc) ? (localPathToUrl(_validatedLogoSrc) ?? undefined) : _validatedLogoSrc);
+    }
+  }, [_validatedLogoSrc, game.appId]);
+  const logoUrl = resolvedLogoUrl;
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
   const { installState, dismiss } = useInstallTracker(game.appId);
@@ -1421,7 +1447,7 @@ export default function LibraryGameDetails({
                             console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
                           }}
                         />
-                      ) : game.steamInstalled ? (
+                      ) : game.steamInstalled && game.source !== "epic" ? (
                         <DropdownItem
                           label="Uninstall in Steam"
                           onClick={async () => {
@@ -1488,14 +1514,20 @@ export default function LibraryGameDetails({
                         label="Edit Game Details"
                         onClick={() => {
                           setShowActions(false);
+                          setEditDialogTab("general");
                           setEditDialogOpen(true);
                         }}
                       />
                       <DropdownItem
-                        label="Refresh Artwork"
+                        label={game.source === "epic" || game.source === "manual" ? "Manage Artwork" : "Refresh Artwork"}
                         onClick={() => {
                           setShowActions(false);
-                          onRefreshArtwork?.();
+                          if (game.source === "epic") {
+                            setEditDialogTab("media");
+                            setEditDialogOpen(true);
+                          } else {
+                            onRefreshArtwork?.();
+                          }
                         }}
                       />
                       <DropdownItem
@@ -1616,8 +1648,8 @@ export default function LibraryGameDetails({
                 </p>
               )}
 
-              {/* Updates — Steam news only (hidden for manual games) */}
-              {!isManualGame && (
+              {/* Updates — Steam news only (hidden for manual and epic games) */}
+              {!isManualGame && !isEpicGame && (
               <section>
                 <h2 className="mb-3 text-base font-bold text-(--color-text)">
                   <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
@@ -1697,7 +1729,7 @@ export default function LibraryGameDetails({
 
             {/* Right: Side panel */}
             <aside className="mt-8 lg:mt-0">
-              {(!isManualGame || linkedSteamAppId) && (
+              {(!isManualGame || linkedSteamAppId) && (!isEpicGame || linkedSteamAppId) && (
               <div className="sticky top-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                   {isManualGame ? "Steam Links" : "Links"}
@@ -1799,8 +1831,8 @@ export default function LibraryGameDetails({
               </div>
               )}
 
-              {/* Achievements — hidden for manual games */}
-              {!isManualGame && (
+              {/* Achievements — hidden for manual and epic games */}
+              {!isManualGame && !isEpicGame && (
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isPerfected ? "text-amber-400/90" : "text-(--color-muted)"}`}>
                   <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
@@ -2268,13 +2300,14 @@ export default function LibraryGameDetails({
         />
       )}
 
-      {(game.appId || game.source === "manual") && (
+      {(game.appId || game.source === "manual" || game.source === "epic") && (
         <GameEditDialog
           appId={game.appId}
           manualGameId={game.source === "manual" ? game.providerGameId : undefined}
+          epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
-          initialTab="general"
+          initialTab={editDialogTab}
           game={game}
           settings={{
             rawgApiKey: settings.rawgApiKey,

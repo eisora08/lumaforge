@@ -1330,6 +1330,64 @@ export async function buildStartupSnapshotFromCurrentState(
     }
   }
 
+  // Phase 2: Add Epic/GOG games (appId-less, using game.id as synthetic key).
+  // These games have no canonical appinfo or Steam media paths, so media is null
+  // until the user adds artwork via GameEditDialog.
+  for (const game of games) {
+    if (game.appId) continue; // already processed in main Steam loop
+
+    const syntheticId = game.id;
+    const title = game.title || "Unknown Game";
+
+    // Try to read media paths from Epic override store
+    let media: SnapshotGameMedia = { landscapePath: null, coverPath: null, backgroundPath: null, logoPath: null, iconPath: null };
+    try {
+      if (game.source === "epic") {
+        const { readEpicOverrides } = await import("./epicOverrideStore");
+        const overrides = readEpicOverrides(syntheticId);
+        if (overrides) {
+          // Override store doesn't store media paths directly — they're managed by the media adapter.
+          // For now, media stays null until provider media resolution is wired.
+        }
+      }
+    } catch {
+      // override store not available — leave media null
+    }
+
+    const playtimeSeconds = getPlaytimeSecondsForAppId(syntheticId);
+
+    snapshotGames.push({
+      appId: syntheticId,
+      provider: game.source,
+      title,
+      installed: game.isInstalled ?? false,
+      playable: game.isPlayable ?? false,
+      favorite: game.isFavorite ?? false,
+      hidden: false,
+      source: game.source,
+      installPath: null,
+      media,
+      lastPlayed: game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null,
+      playtime: playtimeSeconds > 0 ? Math.round(playtimeSeconds / 60) : game.steamPlaytimeMinutes ?? null,
+      cloudStatus: null,
+      mediaStatus: null,
+      missingMedia: [],
+      achievementSummary: null,
+      lastMediaCheckAt: now,
+      updatedAt: now,
+    });
+
+    // Sidebar: include installed Epic/GOG games
+    if (isSidebarInstalledGame(game)) {
+      sidebarItems.push({
+        appId: syntheticId,
+        title,
+        provider: game.source,
+        media: { landscapePath: null, coverPath: null },
+      });
+    }
+  }
+
   if (ENABLE_VERBOSE_STARTUP_SNAPSHOT_LOGS) {
     console.log(`[BootSnapshot][SIDEBAR_FILTER] library=${games.length} sidebarAfter=${sidebarItems.length} installedOnly=true`);
   }

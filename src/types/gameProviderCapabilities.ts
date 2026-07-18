@@ -22,6 +22,28 @@ export type GameProviderCapabilities = {
   canCheckForUpdates: boolean;
 };
 
+/**
+ * Conservative capability profile for unknown/unsupported providers.
+ * Never defaults to Steam capabilities — unknown sources get no Steam features.
+ */
+const UNKNOWN_CAPABILITIES: GameProviderCapabilities = {
+  canUseSteamAppInfo: false,
+  canUseSteamCloud: false,
+  canUseSteamAchievements: false,
+  canUseSteamUpdates: false,
+  canUseSteamInstall: false,
+  canUseSteamOwned: false,
+  canLaunchExecutable: false,
+  canEditLaunchPaths: false,
+  canEditMetadata: false,
+  canEditMedia: false,
+  canUseMetadataProviders: false,
+  canUseSourceProviders: false,
+  canRemoveFromLibrary: false,
+  canShowInStore: false,
+  canCheckForUpdates: false,
+};
+
 export const PROVIDER_CAPABILITIES: Record<LibraryGameSource, GameProviderCapabilities> = {
   steam: {
     canUseSteamAppInfo: true,
@@ -91,8 +113,46 @@ export const PROVIDER_CAPABILITIES: Record<LibraryGameSource, GameProviderCapabi
     canShowInStore: false,
     canCheckForUpdates: false,
   },
+  epic: {
+    canUseSteamAppInfo: false,
+    canUseSteamCloud: false,
+    canUseSteamAchievements: false,
+    canUseSteamUpdates: false,
+    canUseSteamInstall: false,
+    canUseSteamOwned: false,
+    canLaunchExecutable: false,
+    canEditLaunchPaths: false,
+    canEditMetadata: true,
+    canEditMedia: true,
+    canUseMetadataProviders: true,
+    canUseSourceProviders: false,
+    canRemoveFromLibrary: true,
+    canShowInStore: false,
+    canCheckForUpdates: false,
+  },
+  gog: {
+    canUseSteamAppInfo: false,
+    canUseSteamCloud: false,
+    canUseSteamAchievements: false,
+    canUseSteamUpdates: false,
+    canUseSteamInstall: false,
+    canUseSteamOwned: false,
+    canLaunchExecutable: false,
+    canEditLaunchPaths: false,
+    canEditMetadata: true,
+    canEditMedia: true,
+    canUseMetadataProviders: true,
+    canUseSourceProviders: false,
+    canRemoveFromLibrary: true,
+    canShowInStore: false,
+    canCheckForUpdates: false,
+  },
 };
 
+/**
+ * Return capabilities for a given game source.
+ * Unknown sources receive a conservative all-false profile, NOT Steam capabilities.
+ */
 export function getCapabilities(source: LibraryGameSource): GameProviderCapabilities {
-  return PROVIDER_CAPABILITIES[source] ?? PROVIDER_CAPABILITIES.steam;
+  return PROVIDER_CAPABILITIES[source] ?? UNKNOWN_CAPABILITIES;
 }

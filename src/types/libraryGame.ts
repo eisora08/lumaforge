@@ -2,23 +2,51 @@ import type { SteamAppMetadata } from "./gameMetadata";
 import type { InstalledLuaScript } from "./installedLua";
 import type { PackageSource } from "./package";
 
-export type LibraryGameSource = "steam" | "local" | "lua" | "manual";
+/**
+ * Canonical game source provider.
+ *
+ * Identity rules per source:
+ * - "steam":  source="steam",  providerId="steam",  providerGameId=Steam appId,  appId=Steam appId,  libraryId=existing convention
+ * - "local":  source="local",  providerId="local",  providerGameId=hash,          appId=undefined,    libraryId=undefined
+ * - "lua":    source="lua",    providerId="lua",    providerGameId=Steam appId,  appId=Steam appId,  libraryId=undefined
+ * - "manual": source="manual", providerId="manual", providerGameId=UUID,          appId=undefined,    libraryId="manual:<uuid>"
+ * - "epic":   source="epic",   providerId="epic",   providerGameId=stable native, appId=undefined,    libraryId="epic:<providerGameId>"
+ * - "gog":    source="gog",    providerId="gog",    providerGameId=GOG productId, appId=undefined,    libraryId="gog:<productId>"
+ *
+ * appId is Steam-only. External providers use providerId + providerGameId.
+ * Cross-provider duplicates (same title on Steam + Epic + GOG) are NEVER deduped.
+ */
+export type LibraryGameSource = "steam" | "local" | "lua" | "manual" | "epic" | "gog";
 
+/**
+ * Unified game model for all providers.
+ *
+ * Provider-neutral identity priority:
+ *   1. non-empty libraryId
+ *   2. providerId + providerGameId
+ *   3. non-empty id
+ *   4. Steam appId fallback (legacy Steam records only)
+ *
+ * Cross-provider copies of the same game MUST remain separate LibraryGame entries.
+ * linkedSteamAppId and linkedIgdbId are metadata links, NOT identity.
+ */
 export type LibraryGame = {
+  /** Unique identifier. Format varies by source: "steam-<appId>", "manual:<uuid>", "epic-<catalogId>", etc. */
   id: string;
+  /** Steam-specific numeric app ID. Undefined for all non-Steam sources. */
   appId?: string;
   customTitle?: string;
   title: string;
   source: LibraryGameSource;
-  /** Stable library-scoped ID: "steam-480", "manual:<uuid>", "local-<hash>" */
+  /** Stable library-scoped ID. Format: "steam-480", "manual:<uuid>", "epic:<providerGameId>", "gog:<productId>" */
   libraryId?: string;
-  /** Provider identifier: "steam" | "manual" | "epic" | "gog" | etc. */
+  /** Provider identifier. Must match source: "steam" | "manual" | "epic" | "gog" | "local" | "lua" */
   providerId?: string;
-  /** Provider's own game ID (separate from appId which is Steam-specific) */
+  /** Provider's own stable game ID. Separate from appId (Steam-specific). Must be collision-safe within the provider. */
   providerGameId?: string;
-  /** Optional link to a Steam appId for metadata resolution only */
+  /** Optional link to a Steam appId for metadata resolution only. NOT an identity field. */
   linkedSteamAppId?: string;
-  /** Optional link to an IGDB ID for metadata resolution only */
+  /** Optional link to an IGDB ID for metadata resolution only. NOT an identity field. */
   linkedIgdbId?: string;
   executablePath?: string;
   workingDirectory?: string;
@@ -26,8 +54,18 @@ export type LibraryGame = {
   installDir?: string;
   libraryPath?: string;
   imageUrl?: string;
+  /** Cover art path (relative provider path, e.g. games/epic/<id>/media/cover.jpg). Set by Epic/manual overrides. */
+  coverPath?: string;
+  /** Landscape art path. Set by Epic/manual overrides. */
+  landscapePath?: string;
+  /** Background art path. Set by Epic/manual overrides. */
+  backgroundPath?: string;
+  /** Logo art path. Set by Epic/manual overrides. */
+  logoPath?: string;
   iconPath?: string;
   metadata?: SteamAppMetadata;
+  /** Provider-neutral installed flag. True when the game exists on disk from any provider. */
+  isInstalled?: boolean;
   isPlayable: boolean;
   isInstallable: boolean;
   steamInstalled: boolean;
@@ -62,5 +100,5 @@ export type LibraryGame = {
   isFavorite?: boolean;
 };
 
-export type LibraryFilter = "all" | "steam" | "local" | "lua" | "installed" | "uninstalled" | "lua-ready" | "disabled" | "updates";
+export type LibraryFilter = "all" | "steam" | "local" | "lua" | "epic" | "gog" | "installed" | "uninstalled" | "lua-ready" | "disabled" | "updates";
 export type LibrarySort = "name" | "appid" | "modified" | "size" | "recent";

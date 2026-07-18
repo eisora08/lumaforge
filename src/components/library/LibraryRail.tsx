@@ -38,6 +38,8 @@ function computeCounts(games: LibraryGame[]): Counts {
     steam: 0,
     local: 0,
     lua: 0,
+    epic: 0,
+    gog: 0,
     installed: 0,
     uninstalled: 0,
     "lua-ready": 0,
@@ -48,6 +50,8 @@ function computeCounts(games: LibraryGame[]): Counts {
     if (g.source === "steam") counts.steam++;
     if (g.source === "local") counts.local++;
     if (g.source === "lua" || g.hasLua) counts.lua++;
+    if (g.source === "epic") counts.epic++;
+    if (g.source === "gog") counts.gog++;
     if (g.isPlayable || g.steamInstalled) counts.installed++;
     if (g.isInstallable || (!g.isPlayable && g.source === "steam")) counts.uninstalled++;
     if (g.hasLuaSource) counts["lua-ready"]++;

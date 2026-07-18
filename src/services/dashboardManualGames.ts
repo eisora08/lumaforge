@@ -19,6 +19,47 @@ import {
 import { resolveProviderMediaPreviewUrl } from "./gameCacheService";
 
 /**
+ * Pick the best image path from a LibraryGame's role fields.
+ * Epic/manual games have role paths (coverPath, landscapePath, etc.) set by
+ * mergeEpicOverrides or manualGameToLibraryGame, but imageUrl is often undefined.
+ * This helper provides the single source of truth for picking the best image
+ * from any LibraryGame regardless of provider.
+ *
+ * Priority for hero/background: backgroundPath → landscapePath → coverPath → imageUrl
+ * Priority for card/thumbnail: coverPath → landscapePath → backgroundPath → imageUrl
+ */
+export function getHeroImageCandidate(game: {
+  imageUrl?: string | null;
+  backgroundPath?: string | null;
+  landscapePath?: string | null;
+  coverPath?: string | null;
+}): string | null {
+  return game.backgroundPath ?? game.landscapePath ?? game.coverPath ?? game.imageUrl ?? null;
+}
+
+/**
+ * Card image candidate — prefers landscape for wider cards.
+ */
+export function getCardImageCandidate(game: {
+  imageUrl?: string | null;
+  coverPath?: string | null;
+  landscapePath?: string | null;
+  backgroundPath?: string | null;
+}): string | null {
+  return game.landscapePath ?? game.backgroundPath ?? game.coverPath ?? game.imageUrl ?? null;
+}
+
+/**
+ * Icon candidate from a LibraryGame.
+ */
+export function getIconCandidate(game: {
+  iconPath?: string | null;
+  coverPath?: string | null;
+}): string | null {
+  return game.iconPath ?? game.coverPath ?? null;
+}
+
+/**
  * Lightweight display game that both SnapshotGame and manual LibraryGame
  * can map to. Used by dashboard sections for unified rendering.
  */
@@ -53,6 +94,14 @@ export type DashboardDisplayGame = {
   _libraryGame?: LibraryGame;
   /** The original SnapshotGame reference (for snapshot fields) */
   _snapshotGame?: SnapshotGame;
+  /** Raw role paths from the source game (pre-resolution) for diagnostics */
+  _rolePaths?: {
+    backgroundPath?: string | null;
+    landscapePath?: string | null;
+    coverPath?: string | null;
+    logoPath?: string | null;
+    iconPath?: string | null;
+  };
 };
 
 /**
@@ -82,16 +131,38 @@ export function snapshotToDisplayGame(
     playable: game.playable,
     updatedAt: game.updatedAt ?? 0,
     _snapshotGame: game,
+    _rolePaths: game.media ? {
+      backgroundPath: game.media.backgroundPath ?? null,
+      landscapePath: game.media.landscapePath ?? null,
+      coverPath: game.media.coverPath ?? null,
+      logoPath: game.media.logoPath ?? null,
+      iconPath: game.media.iconPath ?? null,
+    } : undefined,
   };
 }
 
 /**
- * Convert a manual LibraryGame to DashboardDisplayGame.
+ * Canonical game identity lookup — provider-neutral.
+ * Priority: libraryId > providerId+providerGameId > id > appId (Steam-only).
+ * Used for hero lookup, favorites lookup, click navigation, details identity.
+ */
+export function resolveCanonicalGameIdentity(game: LibraryGame): string {
+  if (game.libraryId) return game.libraryId;
+  if (game.providerId && game.providerGameId) return `${game.providerId}:${game.providerGameId}`;
+  if (game.id) return game.id;
+  if (game.appId) return game.appId;
+  return game.id;
+}
+
+/**
+ * Convert a manual/Epic LibraryGame to DashboardDisplayGame.
  * Resolves playtime from the playtime store.
+ * @param sourceOverride - Force source field (e.g. "epic" for Epic games)
  */
 export function manualToDisplayGame(
   game: LibraryGame,
   runningAppIds: Set<string>,
+  sourceOverride?: string,
 ): DashboardDisplayGame {
   const ptKey = resolvePlaytimeKey(game);
   const ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
@@ -101,26 +172,51 @@ export function manualToDisplayGame(
   return {
     stableId: game.libraryId || game.id,
     libraryId: game.libraryId,
-    source: "manual",
+    source: sourceOverride ?? game.source ?? "manual",
     title: game.title,
-    imageUrl: game.imageUrl ?? null,
-    iconUrl: game.iconPath ?? null,
+    imageUrl: null, // resolved async by caller — don't pre-bake; different surfaces need different role priorities
+    iconUrl: getIconCandidate(game),
     totalPlaytimeSeconds: totalSeconds,
     lastPlayedAt: lastPlayed,
     isRunning: runningAppIds.has(game.id),
-    installed: true, // manual games are always "installed"
+    installed: game.isInstalled ?? true,
     playable: game.isPlayable,
     updatedAt: 0,
     _libraryGame: game,
+    _rolePaths: {
+      backgroundPath: game.backgroundPath ?? null,
+      landscapePath: game.landscapePath ?? null,
+      coverPath: game.coverPath ?? null,
+      logoPath: game.logoPath ?? null,
+      iconPath: game.iconPath ?? null,
+    },
   };
 }
 
 /**
  * Filter manual games from libraryGames that should appear in dashboard sections.
  * Excludes games without a title.
+ * @deprecated Use getNonSnapshotGamesForDashboard for all non-snapshot games.
  */
 export function getManualGamesForDashboard(libraryGames: LibraryGame[]): LibraryGame[] {
   return libraryGames.filter((g) => g.source === "manual" && g.title);
+}
+
+/**
+ * Filter Epic games from libraryGames that should appear in dashboard sections.
+ * Excludes games without a title.
+ * @deprecated Use getNonSnapshotGamesForDashboard for all non-snapshot games.
+ */
+export function getEpicGamesForDashboard(libraryGames: LibraryGame[]): LibraryGame[] {
+  return libraryGames.filter((g) => g.source === "epic" && g.title);
+}
+
+/**
+ * Filter all non-snapshot games (manual + Epic + any future provider) from libraryGames.
+ * Single source of truth for dashboard sections — replaces separate manual/epic filters.
+ */
+export function getNonSnapshotGamesForDashboard(libraryGames: LibraryGame[]): LibraryGame[] {
+  return libraryGames.filter((g) => (g.source === "manual" || g.source === "epic") && g.title);
 }
 
 /**
@@ -149,8 +245,8 @@ export async function resolveDashboardImageUrls(
         result[game.stableId] = null;
       }
     } else if (game._libraryGame) {
-      // Manual game: resolve provider media URL
-      const rawPath = game._libraryGame.imageUrl;
+      // Non-snapshot game: resolve provider media URL from role paths (not just imageUrl)
+      const rawPath = getCardImageCandidate(game._libraryGame);
       if (rawPath) {
         result[game.stableId] = await resolveProviderMediaPreviewUrl(rawPath);
       } else {

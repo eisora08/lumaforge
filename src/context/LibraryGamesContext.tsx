@@ -41,6 +41,13 @@ import {
 } from "../services/perfCounters";
 import { loadManualGames, subscribeManualGames } from "../services/manualGameStore";
 import { manualGameToLibraryGame } from "../services/manualGameLibraryMapper";
+import { EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LIBRARY } from "../services/epicFeatureFlag";
+import {
+  getAllEpicGames,
+  subscribeEpicGames,
+  refreshEpicGames,
+  initOverrideSubscription,
+} from "../services/epicGameStore";
 
 // ── Library runtime state machine ──
 
@@ -60,17 +67,20 @@ export type LibrarySource =
 
 // Stable fingerprint based on fields that matter to Library/Sidebar rendering
 function computeLibraryFingerprint(games: LibraryGame[]): string {
-  return games.slice(0, 200).map(g =>
-    `${g.appId}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}:${g.imageUrl ?? ""}`
-  ).join("|");
+  return games.slice(0, 200).map(g => {
+    // Use provider-neutral identity key to avoid undefined: prefix for Epic/GOG entries
+    const identityKey = g.appId || g.libraryId || g.id;
+    return `${identityKey}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}:${g.imageUrl ?? ""}`;
+  }).join("|");
 }
 
 // Module-level fingerprint to skip scheduling full-rebuild snapshots when games haven't changed
 let _lastGamesFingerprint = "";
 function computeGamesFingerprint(games: LibraryGame[]): string {
-  return games.slice(0, 200).map(g =>
-    `${g.appId}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}`
-  ).join("|");
+  return games.slice(0, 200).map(g => {
+    const identityKey = g.appId || g.libraryId || g.id;
+    return `${identityKey}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}`;
+  }).join("|");
 }
 
 const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
@@ -100,6 +110,18 @@ function getManualLibraryGames(): LibraryGame[] {
   try {
     const games = loadManualGames().map(manualGameToLibraryGame);
     return games;
+  } catch {
+    return [];
+  }
+}
+
+// ── Epic game helpers ──
+
+/** Sync read from the in-memory Epic store. Returns [] when feature is disabled. */
+function getEpicLibraryGames(): LibraryGame[] {
+  if (!EPIC_LIBRARY_ENABLED) return [];
+  try {
+    return getAllEpicGames();
   } catch {
     return [];
   }
@@ -218,9 +240,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     options?: { allowReplace?: boolean },
   ): void {
     const current = gamesRef.current;
-    // Append manual games from manualGameStore so they appear in the Library grid.
-    // Manual games are never written to BootSnapshot, gameStore, SQLite, or appinfo.
-    const withManual = [...nextGames, ...getManualLibraryGames()];
+    // Append manual games from manualGameStore and Epic games from epicGameStore
+    // so they appear in the Library grid. Both are never written to BootSnapshot, gameStore, SQLite, or appinfo.
+    const withManual = [...nextGames, ...getManualLibraryGames(), ...getEpicLibraryGames()];
     // Phase 2: Block empty replacement of valid data unless explicit
     if (withManual.length === 0 && current.length > 0 && !options?.allowReplace) {
       countLibraryEmptyBlocked();
@@ -500,13 +522,19 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }
 
   function snapshotGameToLibraryGame(sg: { appId: string; title: string; source: string; installed?: boolean; playable?: boolean; lastPlayed?: number | null; playtime?: number | null }): LibraryGame {
+    const resolvedSource: LibraryGame["source"] =
+      sg.source === "lua" ? "lua" :
+      sg.source === "epic" ? "epic" :
+      sg.source === "gog" ? "gog" :
+      "steam";
     return {
-      id: `snapshot-${sg.appId}`,
-      appId: sg.appId,
+      id: sg.appId,
+      appId: (resolvedSource === "steam" || resolvedSource === "lua") ? sg.appId : undefined,
       title: sg.title || "",
-      source: (sg.source === "lua" ? "lua" : "steam") as LibraryGame["source"],
+      source: resolvedSource,
       isPlayable: sg.playable ?? false,
       isInstallable: !sg.playable,
+      isInstalled: sg.installed ?? false,
       steamInstalled: sg.installed ?? false,
       hasLua: sg.source === "lua",
       isLuaActive: sg.source === "lua",
@@ -705,6 +733,32 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
       applyGamesSafely(nonManual, "manual-update");
     });
+  }, []);
+
+  // Subscribe to Epic game store changes — re-apply with fresh Epic entries
+  useEffect(() => {
+    if (!EPIC_LIBRARY_ENABLED) return;
+
+    // Trigger initial Epic scan (fire-and-forget)
+    refreshEpicGames(settings.steamRoot || undefined).catch(() => {});
+
+    // Subscribe to override changes (media/metadata writes from GameEditDialog)
+    initOverrideSubscription();
+
+    return subscribeEpicGames(() => {
+      const current = gamesRef.current;
+      if (current.length === 0) return; // not loaded yet
+      // Strip Epic games — applyGamesSafely re-adds fresh ones from store.
+      // This avoids stale Epic objects surviving through mergeGames.
+      const nonEpic = current.filter((g) => g.source !== "epic");
+      if (DEBUG_EPIC_LIBRARY) {
+        const prevEpicCount = current.filter((g) => g.source === "epic").length;
+        const freshEpicCount = getEpicLibraryGames().length;
+        console.log(`[EPIC_STORE][LIBRARY_SUB] prevEpic=${prevEpicCount} freshEpic=${freshEpicCount} prevTotal=${current.length} nonEpic=${nonEpic.length}`);
+      }
+      applyGamesSafely(nonEpic, "epic-update");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

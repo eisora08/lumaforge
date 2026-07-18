@@ -105,6 +105,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   async function handlePlay(game: LibraryGame) {
     if (game.source === "steam" && game.appId) {
       await launchGame(game);
+    } else if (game.source === "epic") {
+      await launchGame(game);
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       await launchGame(game);
     } else if (game.source === "manual") {
@@ -243,6 +245,62 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             logo: lgUrl ? { url: lgUrl, source: "local", appId: manualId, kind: "logo" } : undefined,
           });
         }).catch(() => {});
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }
+
+    // ── Epic games: resolve provider media paths + build canonicalAppInfo ──
+    if (selectedGame?.source === "epic" && selectedGame.providerGameId) {
+      let cancelled = false;
+
+      const bgPath = selectedGame.backgroundPath ?? null;
+      const lsPath = selectedGame.landscapePath ?? null;
+      const cvPath = selectedGame.coverPath ?? null;
+      const lgPath = selectedGame.logoPath ?? null;
+      const icPath = selectedGame.iconPath ?? null;
+
+      Promise.all([
+        resolveProviderMediaPreviewUrl(bgPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(lsPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(cvPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(lgPath).catch(() => null),
+        resolveProviderMediaPreviewUrl(icPath).catch(() => null),
+      ]).then(([bgUrl, lsUrl, cvUrl, lgUrl, icUrl]) => {
+        if (cancelled) return;
+
+        // canonicalAppInfo.media: resolved asset:// URLs (not raw relative paths)
+        setCanonicalAppInfo({
+          appId: null as any,
+          name: selectedGame.title ?? "Epic Game",
+          media: {
+            coverPath: cvUrl,
+            landscapePath: lsUrl,
+            backgroundPath: bgUrl,
+            logoPath: lgUrl,
+            iconPath: icUrl,
+          },
+        } as any);
+
+        // localDetailsData from metadata (synthetic SteamAppMetadata built by mergeEpicOverrides)
+        const meta = selectedGame.metadata;
+        setLocalDetailsData({
+          developer: meta?.developer ?? (meta as any)?.developers?.join?.(", ") ?? null,
+          publisher: (meta as any)?.publishers?.join?.(", ") ?? null,
+          description: meta?.short_description ?? meta?.about_the_game ?? null,
+          shortDescription: meta?.short_description ?? null,
+          genres: meta?.genres ?? [],
+          categories: meta?.categories ?? [],
+          releaseDate: meta?.release_date ?? null,
+        });
+
+        // fallbackBundle with resolved asset:// URLs
+        setFallbackBundle({
+          appId: selectedGame.providerGameId ?? "",
+          background: bgUrl ? { url: bgUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "background" } : undefined,
+          landscape: lsUrl ? { url: lsUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "landscape" } : undefined,
+          cover: cvUrl ? { url: cvUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "cover" } : undefined,
+          logo: lgUrl ? { url: lgUrl, source: "local", appId: selectedGame.providerGameId ?? "", kind: "logo" } : undefined,
+        });
       }).catch(() => {});
       return () => { cancelled = true; };
     }
@@ -657,12 +715,17 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
   const handleRefreshArtwork = useCallback(async () => {
     const isManual = selectedGame?.source === "manual";
-    if (!selectedGame?.appId && !isManual) {
+    const isEpic = selectedGame?.source === "epic";
+    if (!selectedGame?.appId && !isManual && !isEpic) {
       showWarning("No App ID available for this game.", { title: "Artwork" });
       return;
     }
     if (isManual) {
       showInfo("Artwork refresh for manual games is managed through Edit Game Details.", { title: "Manual Game" });
+      return;
+    }
+    if (isEpic && selectedGame?.providerGameId) {
+      showInfo("Artwork for Epic games is managed through Edit Game Details.", { title: "Epic Game" });
       return;
     }
 

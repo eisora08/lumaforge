@@ -217,11 +217,12 @@ function GameLauncherTileInner({
   // Steam games: resolve via appId + canonical appinfo path
   useEffect(() => {
     if (!game.appId || !displayImage) {
-      // Manual games: resolve game.imageUrl (provider-relative path) directly
-      if (!game.appId && game.imageUrl) {
-        if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_INPUT] title=${game.title} source=${game.source} appId=${game.appId} imageUrl=${game.imageUrl} canonicalInfo=${!!canonicalInfo}`);
+      // Manual/Epic games: resolve provider-relative path directly
+      if (!game.appId && (game.imageUrl || game.coverPath || game.landscapePath)) {
+        const providerPath = game.imageUrl || (artworkMode === "poster" ? (game.coverPath || game.landscapePath) : (game.landscapePath || game.coverPath));
+        if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_INPUT] title=${game.title} source=${game.source} appId=${game.appId} providerPath=${providerPath} canonicalInfo=${!!canonicalInfo}`);
         let cancelled = false;
-        resolveProviderMediaPreviewUrl(game.imageUrl)
+        resolveProviderMediaPreviewUrl(providerPath!)
           .then((url) => {
             if (!cancelled) {
               if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][TILE_RESOLVED] imageUrl=${game.imageUrl} resolvedSrc=${url ?? "null"}`);
@@ -256,7 +257,7 @@ function GameLauncherTileInner({
         if (!cancelled) setResolvedSrc(undefined);
       });
     return () => { cancelled = true; };
-  }, [game.appId, game.imageUrl, displayImage, artworkMode]);
+  }, [game.appId, game.imageUrl, game.coverPath, game.landscapePath, displayImage, artworkMode]);
 
   // Render-time diagnostics — log once on state change, not every render
   // Disabled by default to reduce log spam. Set DEBUG_MEDIA_GRID=true in dev console to enable.
@@ -725,7 +726,7 @@ function GameLauncherTileInner({
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
               onClick={() => { const fk = game.appId || (game.source === "manual" ? game.libraryId : null) || game.id; if (fk) toggleFavorite(fk); setMenuOpen(false); }}
             />
-            {game.appId && (
+            {game.appId && game.source !== "epic" && (
               <MenuItem
                 label="Open in Steam"
                 icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -859,12 +860,12 @@ function GameLauncherTileInner({
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(String(game.appId))}`);
                     },
                   }]
-                  : game.source !== "manual"
-                    ? [{
-                      label: "Uninstall in Steam",
-                      icon: <ExternalLink className="h-3.5 w-3.5" />,
-                      disabled: !game.steamInstalled,
-                      subtitle: !game.steamInstalled ? "Not installed" : undefined,
+                    : game.source !== "manual" && game.source !== "epic"
+                      ? [{
+                        label: "Uninstall in Steam",
+                        icon: <ExternalLink className="h-3.5 w-3.5" />,
+                        disabled: !game.steamInstalled,
+                        subtitle: !game.steamInstalled ? "Not installed" : undefined,
                       onClick: game.steamInstalled ? async () => {
                         setMenuOpen(false);
                         const appId = Number(game.appId);
@@ -903,10 +904,11 @@ function GameLauncherTileInner({
           </CardActionMenu>
         </div>
 
-        {(game.appId || game.source === "manual") && (
+        {(game.appId || game.source === "manual" || game.source === "epic") && (
           <GameEditDialog
             appId={game.appId}
             manualGameId={game.source === "manual" ? game.providerGameId : undefined}
+            epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editInitialTab}

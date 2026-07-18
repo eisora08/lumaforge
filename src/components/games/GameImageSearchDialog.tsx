@@ -189,11 +189,28 @@ export default function GameImageSearchDialog({
 
   const applyUrl = useCallback(async (url: string, source: string) => {
     if (!url.startsWith("http://") && !url.startsWith("https://")) return;
-    const isManual = !!libraryId && !appId;
-    console.log(`[WEB_IMAGE_SEARCH][APPLY_URL_START] role=${role} source=${source} manual=${isManual}`);
+    const isEpic = !!libraryId && libraryId.startsWith("epic:");
+    const isManual = !!libraryId && !appId && !isEpic;
+    console.log(`[WEB_IMAGE_SEARCH][APPLY_URL_START] role=${role} source=${source} manual=${isManual} epic=${isEpic}`);
     setApplying(true);
     try {
-      if (isManual && libraryId) {
+      if (isEpic && libraryId) {
+        // ── Epic game — use provider media adapter ──
+        const providerGameId = libraryId.replace(/^epic:/, "");
+        const relativePath = await downloadProviderMediaFromUrl("epic", providerGameId, role, url);
+        if (relativePath) {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_SUCCESS] role=${role} path=${relativePath} epic=${providerGameId}`);
+          // Update epic overrides store with the new media path
+          const { writeEpicOverrides } = await import("../../services/epicOverrideStore");
+          const mediaKey = `${role}Path` as keyof import("../../services/tauri").GameMediaPaths;
+          writeEpicOverrides(providerGameId, { [mediaKey]: relativePath });
+          showSuccess(`${role} downloaded`);
+          onClose();
+        } else {
+          console.log(`[WEB_IMAGE_SEARCH][DOWNLOAD_FAIL] role=${role} error=null-result epic=${providerGameId}`);
+          showError(`Failed to download ${role}`);
+        }
+      } else if (isManual && libraryId) {
         // ── Manual game — use provider media adapter ──
         const relativePath = await downloadProviderMediaFromUrl("manual", libraryId, role, url);
         if (relativePath) {

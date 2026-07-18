@@ -21,7 +21,14 @@ import {
   readMediaManifest as readMediaManifestTauri,
   getMediaManifestsBatch,
   saveGameMediaFile as saveGameMediaFileTauri,
+  listProviderMediaFiles,
 } from "./tauri";
+import type { ProviderMediaFileEntry } from "./tauri";
+import {
+  parseProviderMediaComponents,
+  ROLE_EXTENSION_CANDIDATES,
+} from "./providerMediaPaths";
+import type { MediaRole } from "./providerMediaPaths";
 import { invalidateCanonicalMediaCache, notifyMediaUpdated } from "./startupSnapshotService";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
@@ -451,11 +458,17 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
 
   const luaActive = hasActiveInstalledLuaScript(game);
 
+  // Provider-neutral installed check: Epic (and future providers) set isInstalled=true
+  // when the game exists on disk from any source.
+  const providerNeutralInstalled =
+    (game.source === "epic" || game.source === "gog") && game.isInstalled === true;
+
   const included = Boolean(
     steamInstalled ||
     localInstalled ||
     explicitInstalledStatus ||
-    luaActive
+    luaActive ||
+    providerNeutralInstalled
   );
 
   if (DEBUG_SIDEBAR_FILTER && game.appId) {
@@ -492,9 +505,14 @@ export function getSidebarLabel(game: LibraryGame): string {
 
   const luaActive = hasActiveInstalledLuaScript(game);
 
+  // Provider-neutral installed check for Epic/GOG
+  const providerNeutralInstalled =
+    (game.source === "epic" || game.source === "gog") && game.isInstalled === true;
+
   if (steamInstalled && luaActive) return "Steam + Lua";
   if (steamInstalled) return "Steam";
   if (luaActive) return "Lua";
+  if (providerNeutralInstalled) return game.source === "epic" ? "Epic" : "GOG";
   if (localInstalled) return game.source === "manual" ? "Manual" : "Local";
   if (explicitInstalledStatus) return "Installed";
 
@@ -2205,6 +2223,256 @@ export async function resolveGameMediaUrl(
  *
  * Returns null when the path is empty, already an HTTP URL, or cannot be resolved.
  */
+
+// ---------------------------------------------------------------------------
+// Extension-aware provider media file resolution
+// ---------------------------------------------------------------------------
+
+const DEBUG_EPIC_SURFACES = false;
+
+/** Module-level cache for directory listing results. Maps provider+game → files. */
+const _mediaDirCache = new Map<string, { files: ProviderMediaFileEntry[]; ts: number }>();
+const MEDIA_DIR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Module-level cache for resolved absolute paths. Maps relative path → absolute or null. */
+const _roleFileResolveCache = new Map<string, { abs: string | null; ts: number }>();
+const ROLE_FILE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * List all files in a provider+game media directory via a single batched IPC call.
+ * Caches results for 5 minutes.
+ */
+async function listMediaDirFiles(
+  providerId: string,
+  providerGameId: string,
+): Promise<ProviderMediaFileEntry[]> {
+  const key = `${providerId}:${providerGameId}`;
+  const cached = _mediaDirCache.get(key);
+  if (cached && Date.now() - cached.ts < MEDIA_DIR_CACHE_TTL_MS) {
+    return cached.files;
+  }
+  try {
+    const files = await listProviderMediaFiles(providerId, providerGameId);
+    _mediaDirCache.set(key, { files, ts: Date.now() });
+    return files;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Invalidate the media directory cache for a specific game.
+ */
+export function invalidateMediaDirCache(providerId?: string, providerGameId?: string): void {
+  if (!providerId || !providerGameId) {
+    _mediaDirCache.clear();
+    return;
+  }
+  _mediaDirCache.delete(`${providerId}:${providerGameId}`);
+}
+
+/**
+ * Select the best file for a given role from a list of directory entries.
+ *
+ * Deterministic priority:
+ * 1. Stored override path (if provided and valid — file exists on disk)
+ * 2. Last successful saved path from override store
+ * 3. Newest valid candidate (by modification time, largest size wins ties)
+ * 4. Stable extension fallback (png > jpg > jpeg > webp)
+ *
+ * Filters out: zero-byte files, .tmp files, non-image extensions.
+ */
+function selectBestRoleFile(
+  role: string,
+  files: ProviderMediaFileEntry[],
+  storedPath?: string | null,
+): ProviderMediaFileEntry | null {
+  const roleFiles = files.filter(
+    (f) =>
+      f.role === role &&
+      f.sizeBytes > 0 &&
+      !f.filename.endsWith(".tmp") &&
+      ROLE_EXTENSION_CANDIDATES.includes(f.extension),
+  );
+  if (roleFiles.length === 0) return null;
+
+  // Priority 1: stored override path — exact match
+  if (storedPath) {
+    const storedFilename = storedPath.replace(/\\/g, "/").split("/").pop();
+    const storedMatch = roleFiles.find((f) => f.filename === storedFilename);
+    if (storedMatch) return storedMatch;
+    // Also try with extension stripped (in case stored path has wrong ext)
+    const storedBase = storedFilename?.replace(/\.[^.]+$/, "");
+    if (storedBase) {
+      const baseMatch = roleFiles.find((f) => f.filename.startsWith(storedBase + "."));
+      if (baseMatch) return baseMatch;
+    }
+  }
+
+  // Priority 2+3: newest by modification time, largest wins ties
+  const sorted = [...roleFiles].sort((a, b) => {
+    const aTime = a.modifiedAt ?? 0;
+    const bTime = b.modifiedAt ?? 0;
+    if (aTime !== bTime) return bTime - aTime; // newest first
+    return b.sizeBytes - a.sizeBytes; // largest first for same timestamp
+  });
+
+  // Priority 4: extension fallback order (png > jpg > jpeg > webp)
+  for (const ext of ROLE_EXTENSION_CANDIDATES) {
+    const match = sorted.find((f) => f.extension === ext);
+    if (match) return match;
+  }
+
+  return sorted[0] ?? null;
+}
+
+/**
+ * Resolve a provider media role file with extension-aware filesystem scanning.
+ *
+ * Given a relative path like "games/epic/.../media/landscape.png":
+ * 1. If the exact file exists on disk → return its absolute path
+ * 2. If not, scan the media directory for alternate extensions
+ * 3. Select the best match deterministically
+ * 4. Return the absolute path of the resolved file, or null
+ *
+ * When the stored path is valid (file exists), it always wins.
+ * Scans only happen when the stored path is missing, stale, empty, or undecodable.
+ */
+export async function resolveProviderMediaRoleFile(
+  relativePath: string | null | undefined,
+): Promise<string | null> {
+  if (!relativePath) return null;
+  if (isHttpUrl(relativePath)) return relativePath;
+  if (relativePath.startsWith("asset://") || relativePath.startsWith("data:") || relativePath.startsWith("file://")) return relativePath;
+
+  // Already absolute
+  if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) {
+    return localPathToUrl(relativePath) ?? relativePath;
+  }
+
+  // Parse the path to get provider + game info
+  const parsed = parseProviderMediaComponents(relativePath);
+  if (!parsed) {
+    // Can't parse — fall through to raw path construction
+    return null;
+  }
+
+  // Check resolve cache
+  const cached = _roleFileResolveCache.get(relativePath);
+  if (cached && Date.now() - cached.ts < ROLE_FILE_CACHE_TTL_MS) {
+    return cached.abs;
+  }
+
+  const base = await getAppDataBase();
+  if (!base) return null;
+  const sep = base.includes("\\") ? "\\" : "/";
+  const toAbsolute = (rel: string) =>
+    `${base}${base.endsWith(sep) ? "" : sep}${rel.replace(/\//g, sep)}`;
+
+  // Priority 1: check if the exact stored path exists on disk
+  const exactAbs = toAbsolute(relativePath);
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const exists = await invoke<boolean>("file_exists", { path: exactAbs });
+    if (exists) {
+      _roleFileResolveCache.set(relativePath, { abs: exactAbs, ts: Date.now() });
+      if (DEBUG_EPIC_SURFACES) {
+        console.debug("[MEDIA][ROLE_FILE] exact path exists", { relativePath, abs: exactAbs });
+      }
+      return exactAbs;
+    }
+  } catch {
+    // Fall through to directory scan
+  }
+
+  // Priority 2: scan directory for alternate extensions
+  const files = await listMediaDirFiles(parsed.providerId, parsed.providerGameId);
+  if (files.length === 0) {
+    _roleFileResolveCache.set(relativePath, { abs: null, ts: Date.now() });
+    return null;
+  }
+
+  const role = parsed.role;
+  if (!role) {
+    _roleFileResolveCache.set(relativePath, { abs: null, ts: Date.now() });
+    return null;
+  }
+
+  const best = selectBestRoleFile(role, files, relativePath);
+  if (!best) {
+    _roleFileResolveCache.set(relativePath, { abs: null, ts: Date.now() });
+    return null;
+  }
+
+  const resolvedAbs = toAbsolute(best.relativePath);
+  _roleFileResolveCache.set(relativePath, { abs: resolvedAbs, ts: Date.now() });
+  if (DEBUG_EPIC_SURFACES) {
+    console.debug("[MEDIA][ROLE_FILE] resolved via scan", {
+      input: relativePath,
+      resolved: best.relativePath,
+      role: best.role,
+      ext: best.extension,
+      size: best.sizeBytes,
+    });
+  }
+  return resolvedAbs;
+}
+
+/**
+ * Resolve a provider media role file when NO stored path exists.
+ * Scans the media directory for any file matching the role.
+ *
+ * Used for auto-discovery when an override doesn't exist yet.
+ * Returns the relative path from app data root, or null.
+ */
+export async function discoverProviderMediaRoleFile(
+  providerId: string,
+  providerGameId: string,
+  role: MediaRole,
+): Promise<string | null> {
+  const files = await listMediaDirFiles(providerId, providerGameId);
+  if (files.length === 0) return null;
+
+  const best = selectBestRoleFile(role, files, null);
+  if (!best) return null;
+
+  if (DEBUG_EPIC_SURFACES) {
+    console.debug("[MEDIA][DISCOVER]", {
+      provider: providerId,
+      game: providerGameId,
+      role,
+      found: best.relativePath,
+      ext: best.extension,
+      size: best.sizeBytes,
+    });
+  }
+  return best.relativePath;
+}
+
+/**
+ * Discover all 5 media roles for a provider+game in one batch.
+ * Returns a record mapping each role to its relative path (or null).
+ * Used by auto-discovery to populate overrides from existing disk files.
+ */
+export async function discoverAllProviderMediaRoles(
+  providerId: string,
+  providerGameId: string,
+): Promise<Partial<Record<MediaRole, string>>> {
+  const files = await listMediaDirFiles(providerId, providerGameId);
+  if (files.length === 0) return {};
+
+  const roles: MediaRole[] = ["cover", "landscape", "background", "logo", "icon"];
+  const result: Partial<Record<MediaRole, string>> = {};
+
+  for (const role of roles) {
+    const best = selectBestRoleFile(role, files, null);
+    if (best) {
+      result[role] = best.relativePath;
+    }
+  }
+  return result;
+}
+
 export async function resolveProviderMediaPreviewUrl(
   relativePath: string | null | undefined,
 ): Promise<string | null> {
@@ -2215,7 +2483,13 @@ export async function resolveProviderMediaPreviewUrl(
   if (/^[a-zA-Z]:[\\/]/.test(relativePath) || relativePath.startsWith("/")) {
     return localPathToUrl(relativePath);
   }
-  // Relative path from app data root (e.g. "games/manual/<id>/media/cover.jpg")
+  // Extension-aware resolution: check exact path, scan alternate extensions
+  const resolved = await resolveProviderMediaRoleFile(relativePath);
+  if (resolved && resolved !== relativePath) {
+    // File found at a different path (different extension)
+    return localPathToUrl(resolved);
+  }
+  // Exact path didn't resolve to a different file — try raw construction
   const base = await getAppDataBase();
   if (!base) return null;
   const sep = base.includes("\\") ? "\\" : "/";

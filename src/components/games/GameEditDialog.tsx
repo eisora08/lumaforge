@@ -40,6 +40,7 @@ import type { SteamAppMetadata } from "../../types/gameMetadata";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { getManualGame, saveManualGame, updateManualGame } from "../../services/manualGameStore";
+import { readEpicOverrides, writeEpicOverrides } from "../../services/epicOverrideStore";
 import GameImageSearchDialog from "./GameImageSearchDialog";
 import GameMediaRoleRow from "./GameMediaRoleRow";
 import { SourceOption } from "./GameMediaRoleRow";
@@ -54,6 +55,7 @@ const SMALL_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB for icon/logo
 export type GameEditDialogProps = {
   appId?: string;
   manualGameId?: string; // raw UUID — normalized internally
+  epicProviderGameId?: string; // Epic provider game ID (e.g. "Fortnite" or "AppName")
   open: boolean;
   onClose: () => void;
   initialTab?: TabId;
@@ -155,6 +157,7 @@ const DEBUG_MANUAL_COVER = false;
 export default function GameEditDialog({
   appId,
   manualGameId,
+  epicProviderGameId,
   open,
   onClose,
   initialTab = "general",
@@ -164,10 +167,11 @@ export default function GameEditDialog({
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Mode detection — manual games use manualGameId, Steam games use appId
-  const isManualMode = !!manualGameId && !appId;
-  const isCreateMode = !appId && !manualGameId;
-  const effectiveId = manualGameId ?? appId ?? "";
+  // Mode detection — manual games use manualGameId, Steam games use appId, Epic uses epicProviderGameId
+  const isManualMode = !!manualGameId && !appId && !epicProviderGameId;
+  const isEpicMode = !!epicProviderGameId && !appId && !manualGameId;
+  const isCreateMode = !appId && !manualGameId && !epicProviderGameId;
+  const effectiveId = manualGameId ?? epicProviderGameId ?? appId ?? "";
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
@@ -184,6 +188,9 @@ export default function GameEditDialog({
   // Manual game state
   const [manualEntry, setManualEntry] = useState<ManualGameEntry | null>(null);
   const [createdManualId, setCreatedManualId] = useState<string | null>(null);
+
+  // Epic override state
+  const [epicOverrides, setEpicOverrides] = useState<Record<string, unknown> | null>(null);
 
   // Metadata state
   const [metadata, setMetadata] = useState<SteamAppMetadata | null>(null);
@@ -278,11 +285,14 @@ export default function GameEditDialog({
     if (isManualMode && manualGameId) {
       return createMediaAdapter("manual", manualGameId);
     }
+    if (isEpicMode && epicProviderGameId) {
+      return createMediaAdapter("epic", epicProviderGameId);
+    }
     if (appId) {
       return createMediaAdapter("steam", appId);
     }
     return null;
-  }, [appId, manualGameId, isManualMode]);
+  }, [appId, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
 
   // ── Load drafts from userData ──
   function loadDraftsFromUserData(info: GameAppInfo | null) {
@@ -370,6 +380,32 @@ export default function GameEditDialog({
       return;
     }
 
+    // Epic edit mode — load from Epic override store
+    if (isEpicMode && epicProviderGameId) {
+      const overrides = readEpicOverrides(epicProviderGameId);
+      if (overrides) {
+        // Populate drafts from overrides
+        if (overrides.name) setNameDraft(overrides.name);
+        if (overrides.sortingName) setSortingNameDraft(overrides.sortingName);
+        if (overrides.description) setDescriptionDraft(overrides.description);
+        if (overrides.genres?.length) setGenresDraft(overrides.genres.join(", "));
+        if (overrides.developers?.length) setDevelopersDraft(overrides.developers.join(", "));
+        if (overrides.publishers?.length) setPublishersDraft(overrides.publishers.join(", "));
+        if (overrides.categories?.length) setCategoriesDraft(overrides.categories.join(", "));
+        if (overrides.features?.length) setFeaturesDraft(overrides.features.join(", "));
+        if (overrides.tags?.length) setTagsDraft(overrides.tags.join(", "));
+        if (overrides.releaseDate) setReleaseDateDraft(overrides.releaseDate);
+        if (overrides.series) setSeriesDraft(overrides.series);
+        if (overrides.ageRating) setAgeRatingDraft(overrides.ageRating);
+        if (overrides.region) setRegionDraft(overrides.region);
+        if (overrides.linkedSteamAppId) setLinkedIgdbIdDraft(overrides.linkedIgdbId);
+        setEpicOverrides(overrides as unknown as Record<string, unknown>);
+      }
+      setLoading(false);
+      loadRolePreviews();
+      return;
+    }
+
     // Create mode — blank form, no data to load
     if (isCreateMode) {
       setLoading(false);
@@ -409,7 +445,7 @@ export default function GameEditDialog({
   // ── Download Metadata handler ──
   const handleDownloadMetadata = useCallback(async (source: MetadataSourceId) => {
     setMetadataMenuOpen(false);
-    if (!appId && !isManualMode && !isCreateMode) return;
+    if (!appId && !isManualMode && !isCreateMode && !isEpicMode) return;
 
     // Manual/create: IGDB or Steam name search
     if (isManualMode || isCreateMode) {
@@ -488,6 +524,74 @@ export default function GameEditDialog({
       return;
     }
 
+    // Epic games: search Steam by game name (same as manual Steam path)
+    if (isEpicMode) {
+      const searchName = nameDraft.trim() || game?.title || "";
+      if (!searchName) {
+        showError("Enter a game name first or use the game title");
+        setMetadataDownloading(false);
+        return;
+      }
+      setMetadataDownloading(true);
+      try {
+        if (source === "steam") {
+          if (DEBUG_MANUAL_METADATA) console.log(`[EPIC][META] source=steam searchName="${searchName}"`);
+          const steamResults = await resolveSteamStoreSearch({ term: searchName, limit: 5 });
+          if (DEBUG_MANUAL_METADATA) console.log("[EPIC][META] Steam results:", steamResults);
+          if (!steamResults || steamResults.length === 0) {
+            showError(`No Steam results for "${searchName}"`);
+            setMetadataDownloading(false);
+            return;
+          }
+          const best = steamResults[0];
+          if (DEBUG_MANUAL_METADATA) console.log(`[EPIC][META] best match: appId=${best.app_id} name="${best.name}"`);
+          if (best.name) setNameDraft(best.name);
+          const metaMap = await resolveGameMetadata([best.app_id]);
+          const meta = metaMap[best.app_id];
+          if (DEBUG_MANUAL_METADATA) console.log("[EPIC][META] Steam metadata:", meta);
+          if (meta) {
+            if (meta.developer) setDevelopersDraft(meta.developer);
+            if (meta.publishers?.length) setPublishersDraft(meta.publishers.join(", "));
+            if (meta.genres?.length) setGenresDraft(meta.genres.join(", "));
+            if (meta.release_date) setReleaseDateDraft(meta.release_date);
+            if (meta.short_description || meta.about_the_game) setDescriptionDraft(meta.short_description ?? meta.about_the_game ?? "");
+            if (meta.name && meta.name !== best.name) setNameDraft(meta.name);
+            setHasEdits(true);
+            showSuccess(`Found "${meta.name ?? best.name}" on Steam — metadata filled. Use Media tab to add artwork.`);
+          } else {
+            setHasEdits(true);
+            showSuccess(`Found "${best.name}" on Steam — name filled. Metadata not available for this app.`);
+          }
+        } else if (source === "igdb") {
+          if (!settings?.igdbClientId || !settings?.igdbClientSecret) {
+            showError("Configure IGDB credentials in Settings first");
+            setMetadataDownloading(false);
+            return;
+          }
+          if (DEBUG_MANUAL_METADATA) console.log(`[EPIC][META] source=igdb searchName="${searchName}"`);
+          const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+          if (DEBUG_MANUAL_METADATA) console.log("[EPIC][META] IGDB result:", result);
+          if (result) {
+            if (result.name) setNameDraft(result.name);
+            if (result.genres?.length) setGenresDraft(result.genres.join(", "));
+            if (result.developers?.length) setDevelopersDraft(result.developers.join(", "));
+            if (result.publishers?.length) setPublishersDraft(result.publishers.join(", "));
+            if (result.releaseDate) setReleaseDateDraft(result.releaseDate);
+            if (result.summary) setDescriptionDraft(result.summary);
+            setHasEdits(true);
+            showSuccess(`Found "${result.name ?? searchName}" on IGDB — metadata filled. Use Media tab to add artwork.`);
+          } else {
+            showError(`No IGDB results for "${searchName}"`);
+          }
+        }
+      } catch (e) {
+        if (DEBUG_MANUAL_METADATA) console.error("[EPIC][META] error:", e);
+        showError(`Failed to search ${source === "steam" ? "Steam" : "IGDB"}`);
+      }
+      setMetadataDownloading(false);
+      return;
+    }
+
     // Steam games — existing flow
     if (!appId) { setMetadataDownloading(false); return; }
     setMetadataDownloading(true);
@@ -541,7 +645,7 @@ export default function GameEditDialog({
       showError(`Failed to download metadata from ${source}`);
     }
     setMetadataDownloading(false);
-  }, [appId, settings, isManualMode, isCreateMode, nameDraft]);
+  }, [appId, settings, isManualMode, isCreateMode, isEpicMode, nameDraft, game?.title]);
 
   // ── Build userData from drafts ──
   function buildUserData(): Record<string, unknown> {
@@ -574,13 +678,15 @@ export default function GameEditDialog({
     try {
       if (isManualMode && manualGameId) {
         await openProviderMediaFolder("manual", manualGameId);
+      } else if (isEpicMode && epicProviderGameId) {
+        await openProviderMediaFolder("epic", epicProviderGameId);
       } else if (appId) {
         await openGameMediaFolder(appId);
       }
     } catch {
       showError("Could not open media folder");
     }
-  }, [appId, manualGameId, isManualMode]);
+  }, [appId, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
 
   const handleBrowseExe = useCallback(async () => {
     const fullPath = await pickFile("Select Executable", [
@@ -721,6 +827,36 @@ export default function GameEditDialog({
         return;
       }
 
+      // ── Epic game save ──
+      if (isEpicMode && epicProviderGameId) {
+        const parseList = (s: string): string[] =>
+          s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+
+        writeEpicOverrides(epicProviderGameId, {
+          name: nameDraft || undefined,
+          sortingName: sortingNameDraft || undefined,
+          description: descriptionDraft || undefined,
+          genres: parseList(genresDraft),
+          developers: parseList(developersDraft),
+          publishers: parseList(publishersDraft),
+          categories: parseList(categoriesDraft),
+          features: parseList(featuresDraft),
+          tags: parseList(tagsDraft),
+          releaseDate: releaseDateDraft || undefined,
+          series: seriesDraft || undefined,
+          ageRating: ageRatingDraft || undefined,
+          region: regionDraft || undefined,
+        });
+
+        // Title update is handled by the epicOverrideStore → epicGameStore subscription chain.
+        // No need to call updateGame here — it only matches by appId (undefined for Epic).
+
+        setHasEdits(false);
+        showSuccess("Epic game details saved");
+        setSaving(false);
+        return;
+      }
+
       // ── Steam game save (existing) ──
       const media: GameMediaPaths = {
         coverPath: appInfo?.media?.coverPath ?? null,
@@ -753,7 +889,7 @@ export default function GameEditDialog({
       showError("Failed to save game details");
     }
     setSaving(false);
-  }, [appId, manualGameId, isManualMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, updateGame]);
+  }, [appId, manualGameId, epicProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, updateGame]);
 
   // ── Track edits ──
   useEffect(() => {
@@ -792,6 +928,27 @@ export default function GameEditDialog({
       return;
     }
 
+    // Epic mode — compare against Epic overrides
+    if (isEpicMode && epicOverrides) {
+      const eo = epicOverrides as Record<string, unknown>;
+      const hasChanges =
+        nameDraft !== (String(eo.name ?? "")) ||
+        sortingNameDraft !== (String(eo.sortingName ?? "")) ||
+        descriptionDraft !== (String(eo.description ?? "")) ||
+        genresDraft !== ((eo.genres as string[] | undefined)?.join(", ") ?? "") ||
+        developersDraft !== ((eo.developers as string[] | undefined)?.join(", ") ?? "") ||
+        publishersDraft !== ((eo.publishers as string[] | undefined)?.join(", ") ?? "") ||
+        categoriesDraft !== ((eo.categories as string[] | undefined)?.join(", ") ?? "") ||
+        featuresDraft !== ((eo.features as string[] | undefined)?.join(", ") ?? "") ||
+        tagsDraft !== ((eo.tags as string[] | undefined)?.join(", ") ?? "") ||
+        releaseDateDraft !== (String(eo.releaseDate ?? "")) ||
+        seriesDraft !== (String(eo.series ?? "")) ||
+        ageRatingDraft !== (String(eo.ageRating ?? "")) ||
+        regionDraft !== (String(eo.region ?? ""));
+      setHasEdits(hasChanges);
+      return;
+    }
+
     // Steam mode (existing)
     const hasChanges =
       nameDraft !== (appInfo?.name ?? "") ||
@@ -815,7 +972,7 @@ export default function GameEditDialog({
       regionDraft !== u(appInfo?.userData?.region) ||
       completionStatusDraft !== u(appInfo?.userData?.completionStatus);
     setHasEdits(hasChanges);
-  }, [open, appInfo, manualEntry, isManualMode, isCreateMode, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft]);
+  }, [open, appInfo, manualEntry, epicOverrides, isManualMode, isEpicMode, isCreateMode, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft]);
 
   // ── Escape key ──
 
@@ -877,6 +1034,20 @@ export default function GameEditDialog({
         return;
       }
 
+      // ── Epic game — update overrides store ──
+      if (isEpicMode && epicProviderGameId) {
+        const { writeEpicOverrides } = await import("../../services/epicOverrideStore");
+        writeEpicOverrides(epicProviderGameId, {
+          coverPath: updatedMedia.coverPath ?? undefined,
+          landscapePath: updatedMedia.landscapePath ?? undefined,
+          backgroundPath: updatedMedia.backgroundPath ?? undefined,
+          logoPath: updatedMedia.logoPath ?? undefined,
+          iconPath: updatedMedia.iconPath ?? undefined,
+        });
+        if (DEBUG_MEDIA_EDIT) console.log(`[GAME_EDIT_MEDIA][EPIC_OVERRIDES_WRITTEN] providerGameId=${epicProviderGameId} roles=${Object.keys(updatedMedia).filter(k => updatedMedia[k as keyof GameMediaPaths]).join(",")}`);
+        return;
+      }
+
       // ── Steam game — existing path ──
       if (!appId) return;
       await updateGameAppinfoMediaIfChanged(
@@ -893,7 +1064,7 @@ export default function GameEditDialog({
       // Trigger immediate React re-render across library/tiles
       updateGame(appId, {} as Partial<LibraryGame>);
     },
-    [appId, appInfo, updateGame, isManualMode, isCreateMode, manualGameId, createdManualId],
+    [appId, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId],
   );
 
   // ── File pick handler ──
@@ -916,7 +1087,7 @@ export default function GameEditDialog({
       try {
         const { base64, ext } = await readFileAsBase64(file);
 
-        if ((isManualMode || isCreateMode) && mediaAdapter?.saveRoleFromBase64) {
+        if ((isManualMode || isCreateMode || isEpicMode) && mediaAdapter?.saveRoleFromBase64) {
           // Manual game — use adapter's base64 save
           const relPath = await mediaAdapter.saveRoleFromBase64(role, base64, ext);
           if (relPath) {
@@ -1137,6 +1308,88 @@ export default function GameEditDialog({
         }
         return; // All manual sources handled above
       }
+
+      // ── Epic games — name-based search for SGDB/IGDB, no Steam CDN ──
+      if (isEpicMode) {
+        if (sourceId === "sgdb" && settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled) {
+          setSaving(true);
+          setBrowsingRole(role);
+          try {
+            const searchName = nameDraft.trim();
+            if (!searchName) {
+              showError("Enter a game name first to search SteamGridDB");
+              setSaving(false);
+              setBrowsingRole(null);
+              return;
+            }
+            const { searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId } = await import("../../services/tauri");
+            const searchResults = await searchSteamGridDbGames(searchName, settings.steamGridDbApiKey);
+            if (!searchResults?.length) {
+              showError(`No SteamGridDB results found for "${searchName}"`);
+              setSaving(false);
+              setBrowsingRole(null);
+              return;
+            }
+            const bestMatch = searchResults[0];
+            const artwork = await resolveSteamGridDbArtworkByGameId(bestMatch.sgdbGameId, settings.steamGridDbApiKey);
+            if (artwork) {
+              let downloadUrl: string | null = null;
+              if (role === "cover") downloadUrl = artwork.gridUrl ?? null;
+              else if (role === "landscape") downloadUrl = artwork.gridHorizontalUrl ?? null;
+              else if (role === "background") downloadUrl = artwork.heroUrl ?? null;
+              else if (role === "logo") downloadUrl = artwork.logoUrl ?? null;
+              else if (role === "icon") downloadUrl = artwork.iconUrl ?? null;
+              if (downloadUrl) {
+                await handleUrlDownload(role, downloadUrl);
+              } else {
+                showError(`No SteamGridDB ${role} art available for this game`);
+              }
+            } else {
+              showError("No SteamGridDB results found");
+            }
+          } catch (e) {
+            const msg = typeof e === "string" ? e : String(e ?? "Failed to search SteamGridDB");
+            if (/<html/i.test(msg)) {
+              showError("SteamGridDB search failed. Check API key or endpoint.");
+            } else {
+              showError(msg);
+            }
+          }
+          setSaving(false);
+          setBrowsingRole(null);
+          return;
+        }
+        if (sourceId === "igdb" && settings?.igdbClientId && settings?.igdbClientSecret) {
+          const searchName = nameDraft.trim();
+          if (!searchName) {
+            showError("Enter a game name first to search IGDB");
+            return;
+          }
+          setSaving(true);
+          setBrowsingRole(role);
+          try {
+            const { fetchIgdbMetadataByName } = await import("../../services/storeArtworkResolver");
+            const result = await fetchIgdbMetadataByName(settings.igdbClientId, settings.igdbClientSecret, searchName);
+            if (!result) {
+              showError(`No IGDB results found for "${searchName}"`);
+            } else if (role === "cover" && result.coverUrl) {
+              await handleUrlDownload(role, result.coverUrl);
+            } else if ((role === "background" || role === "landscape") && result.screenshotUrls?.length) {
+              await handleUrlDownload(role, result.screenshotUrls[0]);
+            } else {
+              showError(`No IGDB candidates available for ${role}. IGDB provides cover and screenshots only.`);
+            }
+          } catch (e) {
+            showError(typeof e === "string" ? e : "Failed to search IGDB");
+          }
+          setSaving(false);
+          setBrowsingRole(null);
+          return;
+        }
+        showError(`Source "${sourceId}" is not available for Epic games`);
+        return;
+      }
+
       if (!appId) return;
 
       setSaving(true);
@@ -1199,7 +1452,7 @@ export default function GameEditDialog({
       setSaving(false);
       setBrowsingRole(null);
     },
-    [appId, metadata, settings, handleUrlDownload, isManualMode, isCreateMode, nameDraft, manualEntry?.linkedSteamAppId],
+    [appId, metadata, settings, handleUrlDownload, isManualMode, isCreateMode, isEpicMode, nameDraft, manualEntry?.linkedSteamAppId],
   );
 
   const handleOpenImageSearch = useCallback((role: MediaRole) => {
@@ -2327,12 +2580,12 @@ export default function GameEditDialog({
         </div>
       </div>
 
-      {imageSearchOpen && imageSearchRole && (appId || manualGameId) && (
+      {imageSearchOpen && imageSearchRole && (appId || manualGameId || epicProviderGameId) && (
         <GameImageSearchDialog
           open={imageSearchOpen}
           onClose={() => { setImageSearchOpen(false); setImageSearchRole(null); }}
           appId={appId}
-          libraryId={manualGameId}
+          libraryId={manualGameId ?? (isEpicMode ? `epic:${epicProviderGameId}` : undefined)}
           gameTitle={appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
           role={imageSearchRole}
           settings={{

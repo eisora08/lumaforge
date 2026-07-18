@@ -84,6 +84,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     return games.filter((g) => {
       if (filter === "steam" && g.source !== "steam") return false;
       if (filter === "local" && g.source !== "local") return false;
+      if (filter === "epic" && g.source !== "epic") return false;
       if (filter === "playable" && !g.isPlayable) return false;
       return true;
     });
@@ -161,6 +162,14 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
       } catch (err) {
         showError(String(err), { title: "Error" });
       }
+    } else if (game.source === "epic" && game.isPlayable) {
+      try {
+        await session.launchGame(game);
+      } catch (err) {
+        showError(String(err), { title: "Error" });
+      }
+    } else if (game.source === "epic" && !game.isPlayable) {
+      showWarning("Epic launch is not enabled for this game.", { title: "Not available" });
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       try {
         await session.launchGame(game);
@@ -189,6 +198,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
     { key: "all", label: "All", count: games.length },
     { key: "steam", label: "Steam", count: games.filter((g) => g.source === "steam").length },
     { key: "local", label: "Local", count: games.filter((g) => g.source === "local").length },
+    { key: "epic", label: "Epic", count: games.filter((g) => g.source === "epic").length },
     { key: "playable", label: "Playable", count: games.filter((g) => g.isPlayable).length },
   ];
 

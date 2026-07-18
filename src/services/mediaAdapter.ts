@@ -451,8 +451,9 @@ export class ManualMediaAdapter implements GameMediaAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Generic adapter for future providers (epic, gog, etc.).
- * Same pattern as ManualMediaAdapter — uses providerMediaPaths.
+ * Generic adapter for non-Steam/non-manual providers (epic, gog, etc.).
+ * Uses providerMediaPaths for path building and provider_media Rust commands
+ * for mutations and state queries.
  */
 export class GenericMediaAdapter implements GameMediaAdapter {
   readonly providerId: MediaProviderId;
@@ -479,12 +480,18 @@ export class GenericMediaAdapter implements GameMediaAdapter {
     }).relativePath;
   }
 
-  async getRolePreviewUrl(): Promise<string | null> { return null; }
+  async getRolePreviewUrl(role: MediaRole): Promise<string | null> {
+    const relPath = this.getRolePath(role);
+    return resolveProviderMediaPreviewUrl(relPath);
+  }
 
   async getRoleState(role: MediaRole): Promise<RoleMediaState> {
+    const relPath = this.getRolePath(role);
+    const previewUrl = await resolveProviderMediaPreviewUrl(relPath);
     return {
-      hasFile: false,
-      relativePath: this.getRolePath(role),
+      hasFile: !!previewUrl,
+      relativePath: relPath,
+      previewUrl,
       extension: ROLE_DEFAULT_EXTENSIONS[role],
     };
   }
@@ -492,19 +499,78 @@ export class GenericMediaAdapter implements GameMediaAdapter {
   async getAllRoleStates(): Promise<Record<MediaRole, RoleMediaState>> {
     const roles: MediaRole[] = ["cover", "landscape", "background", "logo", "icon"];
     const result = {} as Record<MediaRole, RoleMediaState>;
-    for (const role of roles) { result[role] = await this.getRoleState(role); }
+    for (const role of roles) {
+      result[role] = await this.getRoleState(role);
+    }
     return result;
   }
 
-  async saveRoleFromFile(): Promise<string | null> { return null; }
-  async saveRoleFromUrl(): Promise<string | null> { return null; }
-  async removeRole(): Promise<boolean> { return false; }
+  async saveRoleFromFile(role: MediaRole, filePath: string): Promise<string | null> {
+    try {
+      const relativePath = await saveProviderMediaFromPath(
+        this.providerId,
+        this.providerGameId,
+        role,
+        filePath,
+      );
+      return relativePath;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][SAVE_FILE] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);
+      return null;
+    }
+  }
 
-  getAvailableSources(): MediaSourceDescriptor[] {
+  async saveRoleFromUrl(role: MediaRole, url: string): Promise<string | null> {
+    try {
+      const relativePath = await downloadProviderMediaFromUrl(
+        this.providerId,
+        this.providerGameId,
+        role,
+        url,
+      );
+      return relativePath;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][SAVE_URL] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);
+      return null;
+    }
+  }
+
+  async saveRoleFromBase64(role: MediaRole, contentBase64: string, ext: string): Promise<string | null> {
+    try {
+      const relativePath = await saveProviderMediaFromBase64(
+        this.providerId,
+        this.providerGameId,
+        role,
+        contentBase64,
+        ext,
+      );
+      return relativePath;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][SAVE_BASE64] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);
+      return null;
+    }
+  }
+
+  async removeRole(role: MediaRole): Promise<boolean> {
+    try {
+      await deleteProviderMediaFile(this.providerId, this.providerGameId, role);
+      return true;
+    } catch (err) {
+      console.error(`[MEDIA_ADAPTER][REMOVE] provider=${this.providerId} game=${this.providerGameId} role=${role} error=`, err);
+      return false;
+    }
+  }
+
+  getAvailableSources(_role: MediaRole): MediaSourceDescriptor[] {
+    // Provider games: local file, URL, web search, IGDB, RAWG, SGDB
     return [
       { id: "local-file", label: "Local File", enabled: true },
       { id: "url", label: "URL", enabled: true },
       { id: "web-search", label: "Web Search", enabled: true },
+      { id: "steamgriddb", label: "SteamGridDB", enabled: true },
+      { id: "igdb", label: "IGDB", enabled: true },
+      { id: "rawg", label: "RAWG", enabled: true },
+      { id: "steam-original", label: "Steam Original Assets", enabled: false, disabledReason: `Not a Steam game (${this.providerId})` },
     ];
   }
 }

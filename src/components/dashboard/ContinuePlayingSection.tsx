@@ -9,7 +9,8 @@ import {
   type DashboardDisplayGame,
   snapshotToDisplayGame,
   manualToDisplayGame,
-  getManualGamesForDashboard,
+  getNonSnapshotGamesForDashboard,
+  getCardImageCandidate,
 } from "../../services/dashboardManualGames";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { resolveGameMediaUrl } from "../../services/gameCacheService";
@@ -26,7 +27,7 @@ type Props = {
 
 function getContinueDisplayGames(
   snapshotGames: Array<{ appId: string; lastPlayed: number | null; playtime: number | null; installed: boolean; title: string; source: string; updatedAt?: number }>,
-  manualGames: Array<{ id: string; title: string; libraryId?: string }>,
+  nonSnapshotGames: Array<{ id: string; title: string; libraryId?: string; source?: string }>,
   sessions: Record<string, { appId?: string; gameKey?: string; state: string }>,
   excludeAppId?: string,
   maxItems?: number,
@@ -37,7 +38,7 @@ function getContinueDisplayGames(
       .map((s) => s.appId as string),
   );
 
-  // For manual games (no appId), index by gameKey ("manual:<uuid>") so manualToDisplayGame can match g.id
+  // For non-snapshot games (no appId), index by gameKey so displayGame can match g.id
   const runningGameIds = new Set(
     Object.values(sessions)
       .filter((s) => s.state === "running")
@@ -50,20 +51,22 @@ function getContinueDisplayGames(
   if (excludeAppId) seen.add(excludeAppId);
 
   // Snapshot games → display games
+  // Non-Steam games (Epic/manual) go through the non-snapshot path below,
+  // which uses correct playtime keys and live media paths from LibraryGame.
   for (const sg of snapshotGames) {
     if (!sg.appId || seen.has(sg.appId)) continue;
+    if (sg.source && sg.source !== "steam") continue;
     seen.add(sg.appId);
     const dg = snapshotToDisplayGame(sg as any, runningAppIds);
     result.push(dg);
   }
 
-  // Manual games → display games
-  for (const mg of manualGames) {
+  // Non-snapshot games (manual + Epic + future) → display games
+  for (const mg of nonSnapshotGames) {
     const sid = mg.libraryId || mg.id;
     if (seen.has(sid)) continue;
     seen.add(sid);
-    const fakeLibGame = { ...mg, source: "manual" as const, libraryId: mg.libraryId } as any;
-    const dg = manualToDisplayGame(fakeLibGame, runningGameIds);
+    const dg = manualToDisplayGame(mg as any, runningGameIds, mg.source ?? undefined);
     result.push(dg);
   }
 
@@ -95,17 +98,17 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
 
-  const manualGames = useMemo(() => getManualGamesForDashboard(libraryGames), [libraryGames]);
+  const nonSnapshotGames = useMemo(() => getNonSnapshotGamesForDashboard(libraryGames), [libraryGames]);
 
   const displayGames = useMemo(
     () => getContinueDisplayGames(
       snapshot?.library?.games ?? [],
-      manualGames,
+      nonSnapshotGames,
       sessions,
       excludeAppId,
       maxItems,
     ),
-    [snapshot, manualGames, sessions, excludeAppId, maxItems],
+    [snapshot, nonSnapshotGames, sessions, excludeAppId, maxItems],
   );
 
   useEffect(() => {
@@ -116,13 +119,10 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
     }
   }, [displayGames]);
 
-  // Stable key for effect dependency
-  const displayIdsKey = useMemo(
-    () => displayGames.map(g => g.stableId).sort().join(','),
-    [displayGames],
-  );
-
   // Resolve image URLs for all display games
+  // Depend on displayGames directly — when libraryGames state changes (e.g. Epic
+  // scan populates coverPath/landscapePath), nonSnapshotGames recomputes →
+  // displayGames gets new reference → this effect re-runs with fresh _libraryGame paths.
   useEffect(() => {
     let cancelled = false;
     const resolve = async () => {
@@ -136,7 +136,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
             ? await resolveGameMediaUrl(game.appId, imgPath)
             : null;
         } else if (game._libraryGame) {
-          const rawPath = game._libraryGame.imageUrl;
+          const rawPath = getCardImageCandidate(game._libraryGame);
           urls[game.stableId] = rawPath ? await resolveProviderMediaPreviewUrl(rawPath) : null;
         } else {
           urls[game.stableId] = null;
@@ -151,7 +151,7 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
     };
     resolve();
     return () => { cancelled = true; };
-  }, [displayIdsKey]);
+  }, [displayGames]);
 
   if (displayGames.length === 0) return null;
 

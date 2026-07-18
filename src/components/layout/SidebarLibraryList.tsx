@@ -364,7 +364,57 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     return () => { cancelled = true; };
   }, [filtered]);
 
-  // High-priority media repair for visible games with missing thumbnails
+  // Resolve sidebar media for Epic games (no appId — use coverPath/landscapePath from overrides)
+  const epicMediaLoading = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const epicGames = filtered.filter((g) => !g.appId && g.source === "epic");
+    if (epicGames.length === 0) return;
+    const unloaded = epicGames.filter((g) => {
+      if (epicMediaLoading.current.has(g.id)) return false;
+      return sidebarMediaMap[g.id] === undefined;
+    });
+    if (unloaded.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        unloaded.map(async (g) => {
+          epicMediaLoading.current.add(g.id);
+
+          const iconLocal = g.iconPath ?? undefined;
+          const coverLocal = g.coverPath ?? g.imageUrl ?? undefined;
+          const landscapeLocal = g.landscapePath ?? undefined;
+          const backgroundLocal = g.backgroundPath ?? undefined;
+
+          const [resolvedIcon, resolvedCover, resolvedLandscape, resolvedBackground] = await Promise.all([
+            iconLocal ? resolveProviderMediaPreviewUrl(iconLocal).catch(() => null) : Promise.resolve(null),
+            coverLocal ? resolveProviderMediaPreviewUrl(coverLocal).catch(() => null) : Promise.resolve(null),
+            landscapeLocal ? resolveProviderMediaPreviewUrl(landscapeLocal).catch(() => null) : Promise.resolve(null),
+            backgroundLocal ? resolveProviderMediaPreviewUrl(backgroundLocal).catch(() => null) : Promise.resolve(null),
+          ]);
+
+          const media: ResolvedSidebarMedia = {
+            icon: resolvedIcon ? { src: resolvedIcon, localPath: iconLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            cover: resolvedCover ? { src: resolvedCover, localPath: coverLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            landscape: resolvedLandscape ? { src: resolvedLandscape, localPath: landscapeLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            background: resolvedBackground ? { src: resolvedBackground, localPath: backgroundLocal ?? null, exists: true } : { src: null, localPath: null, exists: false },
+            logo: { src: null, localPath: null, exists: false },
+          };
+          return [g.id, media] as const;
+        })
+      );
+      if (cancelled) return;
+      setSidebarMediaMap((prev) => {
+        const next = { ...prev };
+        for (const [id, media] of results) next[id] = media;
+        return next;
+      });
+      for (const g of unloaded) epicMediaLoading.current.delete(g.id);
+    })();
+    return () => { cancelled = true; };
+  }, [filtered]);
+
+  // High-priority media resolution for visible games with missing thumbnails
   // useEffect(() => {
   //   const ids = filtered.map((g) => g.appId).filter(Boolean) as string[];
   //   const uniqueIds = [...new Set(ids)];
@@ -848,7 +898,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                         console.log(`[UNINSTALL_PENDING] appid=${menuGame.appId} phase=manual-cancel after=${isPendingUninstall(String(menuGame.appId))}`);
                       },
                     }]
-                    : menuGame.source !== "manual"
+                    : menuGame.source !== "manual" && menuGame.source !== "epic"
                       ? [{
                         label: "Uninstall in Steam",
                         icon: <ExternalLink className="h-3.5 w-3.5" />,
@@ -901,8 +951,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         {renderMenu()}
         {editDialogOpen && (
           <GameEditDialog
-            appId={editDialogGame?.source !== "manual" ? editDialogGame?.appId : undefined}
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" ? editDialogGame?.appId : undefined}
             manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editDialogInitialTab}
@@ -936,8 +987,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         {renderMenu()}
         {editDialogOpen && (
           <GameEditDialog
-            appId={editDialogGame?.source !== "manual" ? editDialogGame?.appId : undefined}
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" ? editDialogGame?.appId : undefined}
             manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editDialogInitialTab}
@@ -963,8 +1015,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       {renderMenu()}
       {editDialogOpen && (
         <GameEditDialog
-          appId={editDialogGame?.source !== "manual" ? editDialogGame?.appId : undefined}
+          appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" ? editDialogGame?.appId : undefined}
           manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+          epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab={editDialogInitialTab}

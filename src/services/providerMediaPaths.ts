@@ -14,6 +14,7 @@
  */
 
 import type { MediaRole } from "../types/gameProviderCapabilities";
+export type { MediaRole } from "../types/gameProviderCapabilities";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -317,4 +318,88 @@ export function buildAllProviderMediaPaths(
     result[role] = providerMediaPath(providerId, providerGameId, role, ext);
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Extension-aware role-file resolution helpers
+// ---------------------------------------------------------------------------
+
+/** Extensions to try when resolving a media role file, in priority order. */
+export const ROLE_EXTENSION_CANDIDATES: readonly string[] = ["png", "jpg", "jpeg", "webp"];
+
+/**
+ * Build candidate file paths for a role, trying each extension.
+ * Returns relative paths from app data root:
+ *   ["games/epic/<id>/media/landscape.png", "games/epic/<id>/media/landscape.jpg", ...]
+ *
+ * Pure — no I/O, no disk checks.
+ */
+export function buildCandidateRolePaths(
+  providerId: MediaProviderId,
+  providerGameId: string,
+  role: MediaRole,
+): string[] {
+  return ROLE_EXTENSION_CANDIDATES.map(
+    (ext) => providerMediaPath(providerId, providerGameId, role, ext),
+  );
+}
+
+/**
+ * Given a relative path like "games/epic/.../media/landscape.png",
+ * replace the extension and return a new path.
+ * "games/epic/.../media/landscape.png" + "jpg" → "games/epic/.../media/landscape.jpg"
+ *
+ * Pure — no I/O.
+ */
+export function withExtension(path: string, newExt: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  const filename = lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
+  const dotIdx = filename.lastIndexOf(".");
+  const base = dotIdx > 0 ? filename.substring(0, dotIdx) : filename;
+  const newFilename = `${base}.${newExt}`;
+  return lastSlash >= 0
+    ? `${normalized.substring(0, lastSlash + 1)}${newFilename}`
+    : newFilename;
+}
+
+/**
+ * Extract just the base name (no extension) from a relative media path.
+ * "games/epic/.../media/landscape.png" → "landscape"
+ *
+ * Pure — no I/O.
+ */
+export function extractFileNameFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  const filename = lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
+  const dotIdx = filename.lastIndexOf(".");
+  return dotIdx > 0 ? filename.substring(0, dotIdx) : filename;
+}
+
+/**
+ * Parse a provider-relative media path into its components.
+ * "games/epic/.../media/landscape.png" → { providerId, providerGameId, role, extension, filename }
+ *
+ * Pure — no I/O.
+ */
+export function parseProviderMediaComponents(path: string): {
+  providerId: MediaProviderId;
+  providerGameId: string;
+  role: MediaRole | null;
+  extension: string;
+  filename: string;
+} | null {
+  const providerId = extractProviderFromPath(path);
+  const providerGameId = extractProviderGameIdFromPath(path);
+  const role = extractRoleFromPath(path);
+  if (!providerId || !providerGameId) return null;
+
+  const normalized = path.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  const filename = lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
+  const dotIdx = filename.lastIndexOf(".");
+  const extension = dotIdx > 0 ? filename.substring(dotIdx + 1).toLowerCase() : "";
+
+  return { providerId, providerGameId, role, extension, filename };
 }
