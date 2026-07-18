@@ -83,6 +83,11 @@ fn init_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create games table: {}", e))?;
 
+    // Store catalog tables — versioned Steam catalog index for Discover/View All
+    if let Err(e) = super::store_catalog::create_catalog_tables(conn) {
+        eprintln!("[SqliteCache] catalog table init failed (non-fatal): {}", e);
+    }
+
     Ok(())
 }
 

@@ -256,6 +256,13 @@ pub fn run() {
             commands::manual_games::backup_manual_games,
             commands::epic::scan_epic_installed_games,
             commands::epic::launch_epic_game,
+            commands::store_catalog::get_catalog_meta,
+            commands::store_catalog::import_steam_catalog,
+            commands::store_catalog::query_catalog_by_genre,
+            commands::store_catalog::query_catalog_search,
+            commands::store_catalog::query_catalog_game,
+            commands::store_catalog::query_catalog_featured,
+            commands::store_catalog::query_catalog_new_noteworthy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
