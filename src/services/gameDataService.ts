@@ -1,22 +1,18 @@
 import {
   loadGameAppInfoWithMediaFallback,
   localPathToUrl,
-  clearResolvedMediaSessionCache,
 } from "./gameCacheService";
 import type { GameMediaPaths } from "./gameCacheService";
 import {
   getLibraryAppInfo,
-  clearAppInfoMemoryCache,
 } from "./libraryLocalCacheService";
 import {
   getStoreAppInfo,
   getStoreGameDetails,
   getStoreReviewSummary,
-  clearStoreAppInfoMemoryCache,
 } from "./storeLocalCacheService";
 import {
   resolveGameMetadata,
-  clearGameMetadataCache,
 } from "./gameMetadataResolver";
 import {
   resolveGameMediaImageSrc,
@@ -200,17 +196,6 @@ export async function requestGameData(gameId: string, priority: LoadPriority): P
     if (!_backgroundTimer) {
       _backgroundTimer = setTimeout(processBackgroundQueue, BACKGROUND_BATCH_DELAY_MS);
     }
-  }
-}
-
-/** Reset priority state (e.g. on navigation or session clear) */
-export function clearPriorityState(): void {
-  _requestedIds.clear();
-  _backgroundQueue.length = 0;
-  _backgroundProcessing.clear();
-  if (_backgroundTimer) {
-    clearTimeout(_backgroundTimer);
-    _backgroundTimer = null;
   }
 }
 
@@ -660,18 +645,4 @@ export async function getStoreData(appId: string): Promise<StoreDataResult | nul
  */
 export async function isSqliteAvailable(): Promise<boolean> {
   return ensureSqliteAvailable();
-}
-
-/**
- * Clear any in-memory caches used by this service.
- * Delegates to existing cache-clearing methods.
- */
-export function clearGameDataCaches(): void {
-  clearResolvedMediaSessionCache();
-  clearAppInfoMemoryCache();
-  clearStoreAppInfoMemoryCache();
-  clearGameMetadataCache();
-  _writtenMediaIds.clear();
-  _writtenMetadataIds.clear();
-  _requestedIds.clear();
 }

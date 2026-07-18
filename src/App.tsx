@@ -26,7 +26,7 @@ import { showSessionOverlay, isSessionOverlayEnabled } from "./services/sessionO
 import { GameToastViewport } from "./components/toast/GameToast";
 import { AchievementToastViewport } from "./components/activity/AchievementToast";
 import { AppPage } from "./types/navigation";
-import { getCachedStoreDiscover, isCacheComplete } from "./services/storeDiscoverCache";
+
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
 import ModeSwitchSplash from "./components/splash/ModeSwitchSplash";
@@ -54,14 +54,9 @@ function restoreActivePage(): AppPage {
   try {
     const stored = localStorage.getItem(ACTIVE_PAGE_KEY);
     if (stored && KNOWN_PAGES.has(stored as AppPage)) {
-      // Phase: If last route was Store but no complete cache, start on Home instead
-      if (stored === "store") {
-        const cached = getCachedStoreDiscover();
-        if (!isCacheComplete(cached)) {
-          console.log(`[ROUTE][RESTORE_FALLBACK] from=store to=home reason=no-complete-store-cache`);
-          return "home";
-        }
-      }
+      // Store handles its own partial cache gracefully via allStoreSections fallback.
+      // No longer redirect Store → Home on incomplete cache — let Store render
+      // with whatever cached data is available (partial sections, ranked catalog, etc.).
       return stored as AppPage;
     }
   } catch { /* ignore */ }

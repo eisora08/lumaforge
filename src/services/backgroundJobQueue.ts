@@ -79,6 +79,7 @@ export function gameDetailsRepairKey(provider: string, appId: string, roles: str
 
 const MAX_CONCURRENT = 3;
 const COMPLETED_TTL_MS = 30_000;
+const JOB_WATCHDOG_TIMEOUT_MS = 60_000; // 60s — force-fail stuck jobs
 
 let queue: BackgroundJob[] = [];
 let activeJobs: Map<string, BackgroundJob> = new Map();
@@ -325,7 +326,10 @@ async function processNext(): Promise<void> {
   if (paused) return;
   if (activeJobs.size >= MAX_CONCURRENT) return;
   if (queue.length === 0) {
-    console.log(`[JOB] drain complete — queued=${queue.length} running=${activeJobs.size} recent=${recentlyCompleted.size}`);
+    // Only log drain complete when there are active jobs or recently completed (not on idle polls)
+    if (activeJobs.size > 0 || recentlyCompleted.size > 0) {
+      console.log(`[JOB] drain complete — queued=${queue.length} running=${activeJobs.size} recent=${recentlyCompleted.size}`);
+    }
     return;
   }
 
@@ -414,7 +418,13 @@ async function processNext(): Promise<void> {
   }
 
   try {
-    await executeJob(job);
+    // Watchdog: force-fail if executeJob hangs for > 60s
+    await Promise.race([
+      executeJob(job),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`watchdog timeout after ${JOB_WATCHDOG_TIMEOUT_MS}ms`)), JOB_WATCHDOG_TIMEOUT_MS)
+      ),
+    ]);
     job.status = "completed";
     job.finishedAt = Date.now();
     const elapsed = job.finishedAt - job.startedAt;

@@ -288,22 +288,6 @@ function scheduleSave() {
   }, 2000);
 }
 
-export async function saveSourceAvailabilityIndexNow(): Promise<void> {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  if (!cachedIndex) return;
-  try {
-    await invoke("write_source_availability_index", {
-      index: cachedIndex,
-    });
-    log("saved source-index immediately");
-  } catch {
-    console.warn("[SourceCache] immediate save failed");
-  }
-}
-
 export function buildSourceAvailabilityFromProviders(
   appId: string,
   title: string,

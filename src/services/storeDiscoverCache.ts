@@ -229,10 +229,6 @@ export function setCachedStoreDiscover(entry: CacheEntry): void {
       console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=complete-cache-exists currentPartial=${!!entry.isPartialCache} currentFeatured=${entry.featuredGames.length} currentSections=${entry.discoverSections.length} existingSections=${existing.discoverSections.length}`);
       return;
     }
-    if (existing && isCacheComplete(existing) && existing.catalogFingerprint === entry.catalogFingerprint) {
-      console.log(`[STORE][DISCOVER_CACHE_WRITE_SKIP] reason=complete-cache-exists fingerprint=matched`);
-      return;
-    }
   }
   entry.status = isComplete ? "complete" : "partial";
   _cachedDiscover = entry;

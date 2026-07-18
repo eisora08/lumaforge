@@ -467,7 +467,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     _showMoreLastTick.current = now;
     setDiscoverMoreVisibleCount((prev) => {
       const next = prev + CATALOG_PAGE_SIZE;
-      console.log(`[STORE][SHOW_MORE] old=${prev} added=${CATALOG_PAGE_SIZE} next=${next}`);
+      if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][SHOW_MORE] old=${prev} added=${CATALOG_PAGE_SIZE} next=${next}`);
       return next;
     });
   }, []);
@@ -965,12 +965,17 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     return index;
   }, [highQualityPool, storeMetadataByAppId, reviewSummaryByAppId, genreConfidence, interactionScoreByAppId, catalogFingerprint, steamCatalog.length]);
 
-  // Save compiled discovery index to disk after build
+  // Save compiled discovery index to disk after build — skip if content unchanged
   const indexSaveRef = useRef<number>(0);
+  const indexContentRef = useRef<string>("");
   useEffect(() => {
     if (!compiledDiscoveryIndex) return;
     if (indexSaveRef.current === compiledDiscoveryIndex.builtAt) return;
+    // Skip save if content fingerprint matches (sections + score count unchanged)
+    const contentFp = `${compiledDiscoveryIndex.sections.topPicks.length}:${compiledDiscoveryIndex.sections.featured.length}:${Object.keys(compiledDiscoveryIndex.sections.genres).length}:${Object.keys(compiledDiscoveryIndex.scores).length}`;
+    if (indexContentRef.current === contentFp) return;
     indexSaveRef.current = compiledDiscoveryIndex.builtAt;
+    indexContentRef.current = contentFp;
     saveDiscoveryIndexToDisk(compiledDiscoveryIndex).catch(() => {});
   }, [compiledDiscoveryIndex]);
 
@@ -1244,6 +1249,8 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   }
 
   // ── Rich Discover sections (new model) ──
+  // Phase 2+3: Input fingerprint to skip expensive 300-line section builder when material inputs unchanged.
+  const _sectionBuildFpRef = useRef({ fp: "", sections: null as StoreDiscoverSection[] | null });
   const discoverSections = useMemo(() => {
     // Skip stale cache when enriched provider data is available — always recompute
     const hasEnrichedData = enrichedCatalogSections.length > 0;
@@ -1255,6 +1262,26 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     // Also skip cache when enriched data exists — merge must run to produce provider-first sections.
     if (!hasEnrichedData && cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache && !hasReviewsLoaded) {
       return cached.discoverSections;
+    }
+
+    // Phase 2+3: Skip full rebuild when material inputs haven't changed.
+    // Fingerprint captures: metadata count, review count, review version, installed count,
+    // interaction count, provider overlay count, featured count, enriched sections, discovery index hash.
+    const inputFp = [
+      Object.keys(storeMetadataByAppId).length,
+      Object.keys(reviewSummaryByAppId).length,
+      reviewVersion,
+      installedStatusByAppId.size,
+      Object.keys(interactionScoreByAppId).length,
+      Object.keys(providerOverlayByAppId).length,
+      featuredGames.length,
+      enrichedCatalogSections.length,
+      compiledDiscoveryIndex?.sections.topPicks.length ?? 0,
+      highQualityPool.length,
+      catalogFingerprint,
+    ].join(":");
+    if (_sectionBuildFpRef.current.fp === inputFp && _sectionBuildFpRef.current.sections) {
+      return _sectionBuildFpRef.current.sections;
     }
 
     const usedIds = new Set<string>();
@@ -1538,14 +1565,18 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     // Curated sections are in dedupedSections as baseline; enriched can replace where quality is better
     if (enrichedCatalogSections.length > 0) {
       const merged = mergeEnrichedSections(dedupedSections, enrichedCatalogSections);
-      const summary = merged.map((s) => `${s.id}:${s.items.length}:${s.source ?? "?"}`).join(" | ");
-      console.log(`[STORE_CATALOG][FINAL_SECTION] curated+provider=true sections=${merged.length} ${summary}`);
+      if (DEBUG_STORE_DISCOVERY) {
+        const summary = merged.map((s) => `${s.id}:${s.items.length}:${s.source ?? "?"}`).join(" | ");
+        console.log(`[STORE_CATALOG][FINAL_SECTION] curated+provider=true sections=${merged.length} ${summary}`);
+      }
+      _sectionBuildFpRef.current = { fp: inputFp, sections: merged };
       return merged;
     }
 
     // ── Curated IS the baseline — always available, no network needed ──
     const curatedCount = dedupedSections.filter((s) => s.source === "curated").reduce((sum, s) => sum + s.items.length, 0);
-    console.log(`[STORE_CATALOG][FINAL_SECTION] curated=true sections=${dedupedSections.length} curatedGames=${curatedCount}`);
+    if (DEBUG_STORE_DISCOVERY) console.log(`[STORE_CATALOG][FINAL_SECTION] curated=true sections=${dedupedSections.length} curatedGames=${curatedCount}`);
+    _sectionBuildFpRef.current = { fp: inputFp, sections: dedupedSections };
     return dedupedSections;
   }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, reviewVersion, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections]);
 
@@ -1619,7 +1650,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     const windowStart = 0;
     const windowEnd = mounted;
     // Throttled: only log when values change
-    if (effectiveDiscoverCount !== _lastMoreRenderLog.visible || mounted !== _lastMoreRenderLog.mounted || pool.length !== _lastMoreRenderLog.pool || games.length !== _lastMoreRenderLog.rendered) {
+    if (DEBUG_STORE_RENDER_VERBOSE && (effectiveDiscoverCount !== _lastMoreRenderLog.visible || mounted !== _lastMoreRenderLog.mounted || pool.length !== _lastMoreRenderLog.pool || games.length !== _lastMoreRenderLog.rendered)) {
       _lastMoreRenderLog = { visible: effectiveDiscoverCount, mounted, pool: pool.length, rendered: games.length };
       console.log(`[STORE][MORE_RENDER] logicalVisible=${effectiveDiscoverCount} mounted=${mounted} totalPool=${pool.length} rendered=${games.length}`);
       console.log(`[STORE][MORE_WINDOW] logicalVisible=${effectiveDiscoverCount} mounted=${mounted} start=${windowStart} end=${windowEnd}`);
@@ -1637,7 +1668,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }
     // 2. Complete cache entry
     if (cached && cached.catalogFingerprint === catalogFingerprint && isCacheComplete(cached) && cached.allStoreSections.length > 0) {
-      console.log(`[STORE][ALL_SECTIONS_SOURCE] source=complete-cache sections=${cached.allStoreSections.length}`);
+      if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][ALL_SECTIONS_SOURCE] source=complete-cache sections=${cached.allStoreSections.length}`);
       return cached.allStoreSections;
     }
     // 3. Computed from lumaForgeSections + sectionModels
@@ -1646,7 +1677,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }
     // 4. Partial cache fallback (only when nothing else available)
     if (cached && cached.allStoreSections.length > 0 && !isCacheComplete(cached)) {
-      console.log(`[STORE][ALL_SECTIONS_SOURCE] source=partial-fallback sections=${cached.allStoreSections.length}`);
+      if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][ALL_SECTIONS_SOURCE] source=partial-fallback sections=${cached.allStoreSections.length}`);
       return cached.allStoreSections;
     }
     return [];
@@ -2101,8 +2132,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }
 
     const ids = Array.from(appIds);
-    if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][METADATA_WINDOW_LOAD] requested=${ids.length}`);
-    return ids;
+    // Phase 7: Cap metadata fetch scope — prevent loading metadata for 500+ games per batch.
+    // Detail game is always included (added last in the Set). Section games beyond the cap
+    // are lower priority and will be loaded when the user scrolls into them.
+    const METADATA_WINDOW_MAX = 200;
+    const capped = ids.length > METADATA_WINDOW_MAX ? ids.slice(0, METADATA_WINDOW_MAX) : ids;
+    if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][METADATA_WINDOW_LOAD] requested=${ids.length} capped=${capped.length}`);
+    return capped;
     // NOTE: storeMetadataByAppId intentionally NOT in deps to avoid render loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogGames, results, allStoreSections, steamSearchItems, steamSubmittedSearchGames, selectedDetailGame, activeStoreTab, browsePage]);

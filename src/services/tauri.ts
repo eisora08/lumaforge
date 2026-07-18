@@ -508,20 +508,6 @@ export async function cleanupAchievementOrphanImages(params: {
   });
 }
 
-export async function ensureAchievementImages(params: {
-  appId: number;
-  mode: string;
-  schemaUrls: string[];
-  schemaGrayUrls: string[];
-}): Promise<[number, number]> {
-  return await invoke<[number, number]>("ensure_achievement_images", {
-    appId: params.appId,
-    mode: params.mode,
-    schemaUrls: params.schemaUrls,
-    schemaGrayUrls: params.schemaGrayUrls,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Achievement folder migration
 // ---------------------------------------------------------------------------
@@ -1080,10 +1066,6 @@ export async function libraryClearGameMediaCache(
   return await invoke<void>("library_clear_game_media_cache", { gameKey });
 }
 
-export async function libraryClearAllGameMediaCache(): Promise<void> {
-  return await invoke<void>("library_clear_all_game_media_cache");
-}
-
 // --- Unprefixed convenience aliases for library cache wrappers ---
 
 export async function getGameMediaCache(
@@ -1103,10 +1085,6 @@ export async function clearGameMediaCache(
   gameKey: string
 ): Promise<void> {
   return await libraryClearGameMediaCache(gameKey);
-}
-
-export async function clearAllGameMediaCache(): Promise<void> {
-  return await libraryClearAllGameMediaCache();
 }
 
 export async function readImageAsDataUrl(path: string): Promise<string | null> {
@@ -1430,20 +1408,6 @@ export async function repairAppinfoMediaPaths(appId: string): Promise<boolean> {
     return await invoke<boolean>("repair_appinfo_media_paths", { appId });
   } catch {
     return false;
-  }
-}
-
-// cacheTrailerFile — download a trailer video/thumbnail to
-// <gameDir>/media/trailers/<filename>. Returns local path or null.
-export async function cacheTrailerFile(
-  appId: string,
-  filename: string,
-  url: string,
-): Promise<string | null> {
-  try {
-    return await invoke<string | null>("cache_trailer_file", { appId, filename, url });
-  } catch {
-    return null;
   }
 }
 
@@ -1801,14 +1765,6 @@ export type GameEntry = {
   updatedAt: number;
 };
 
-export async function upsertGame(entry: GameEntry): Promise<void> {
-  try {
-    await invoke("upsert_game", { entry });
-  } catch {
-    // silent — best-effort only
-  }
-}
-
 export async function batchUpsertGames(entries: GameEntry[]): Promise<void> {
   try {
     await invoke("batch_upsert_games", { entries });
@@ -1822,14 +1778,6 @@ export async function readAllGames(): Promise<GameEntry[]> {
     return await invoke<GameEntry[]>("read_all_games");
   } catch {
     return [];
-  }
-}
-
-export async function getGameCount(): Promise<number> {
-  try {
-    return await invoke<number>("get_game_count");
-  } catch {
-    return 0;
   }
 }
 

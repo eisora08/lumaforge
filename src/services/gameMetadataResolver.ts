@@ -4,8 +4,17 @@ import type { ResolvedGameTrailer } from "../types/gameMedia";
 
 const ENABLE_VERBOSE_APPDETAILS_FETCH = false;
 const inMemoryCache = new Map<number, SteamAppMetadata>();
-const metadataInFlight = new Map<string, Promise<Record<number, SteamAppMetadata>>>();
+/** Per-appId in-flight dedup — prevents overlapping boot batches from fetching the same appId twice. */
+const metadataInFlightByAppId = new Map<number, Promise<SteamAppMetadata>>();
+/** Per-batch-key in-flight dedup for resolveGameMetadataForMedia (batch-level is acceptable here since media resolution is inherently per-batch). */
 const mediaInFlight = new Map<string, Promise<Record<number, SteamAppMetadata>>>();
+
+/**
+ * Session-level negative cache for games confirmed to have no Steam movies.
+ * After the first refetch confirms `movies: []`, we remember the appId
+ * so we don't force-refetch on every subsequent read.
+ */
+const _moviesCheckedThisSession = new Set<number>();
 
 export function loadMetadataCache(): Record<string, SteamAppMetadata> {
   const result: Record<string, SteamAppMetadata> = {};
@@ -24,8 +33,9 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
       const moviesNames = meta.movies?.map((m) => `"${m.name}"`).join(", ") ?? "";
       console.log(`[STORE][STORE_DETAILS_CACHE_MOVIES] appid=${appId} count=${moviesCount} names=${moviesNames}`);
       // If cached as resolved but has 0 movies for a real game (has about_the_game),
-      // the cache is stale — treat as miss so the Rust fetch updates it
-      if (meta.resolved === true && moviesCount === 0 && meta.about_the_game) {
+      // the cache may be from an old parser that didn't capture movies.
+      // After the first refetch confirms no movies, skip subsequent refetches.
+      if (meta.resolved === true && moviesCount === 0 && meta.about_the_game && !_moviesCheckedThisSession.has(appId)) {
         console.log(`[STORE][CACHE_MOVIES_STALE] appid=${appId} reason=resolved-but-no-movies forcing-refetch`);
         return null;
       }
@@ -108,25 +118,50 @@ export async function resolveGameMetadata(
     return result;
   }
 
-  // Dedup in-flight metadata requests for the same batch
-  const fetchKey = toFetch.join(",");
-  const pending = metadataInFlight.get(fetchKey);
-  if (pending) {
-    const resolved = await pending;
-    for (const [id, meta] of Object.entries(resolved)) {
-      result[Number(id)] = meta;
+  // Per-appId in-flight dedup: if any of the toFetch appIds are already being fetched,
+  // reuse their promise instead of issuing a duplicate Rust call.
+  const trulyNeedsFetch: number[] = [];
+  const inFlightPromises: Promise<void>[] = [];
+
+  for (const appId of toFetch) {
+    const inflight = metadataInFlightByAppId.get(appId);
+    if (inflight) {
+      // Already fetching this appId — wait for it and merge
+      inFlightPromises.push(
+        inflight.then((meta) => {
+          result[appId] = meta;
+        })
+      );
+    } else {
+      trulyNeedsFetch.push(appId);
     }
+  }
+
+  if (inFlightPromises.length > 0) {
+    await Promise.all(inFlightPromises);
+  }
+
+  if (trulyNeedsFetch.length === 0) {
     return result;
   }
 
-  const fetchPromise = resolveSteamAppMetadata(toFetch).then((resolved) => {
+  // Create per-appId promises for the remaining appIds, then batch-fetch them
+  const fetchPromise = resolveSteamAppMetadata(trulyNeedsFetch).then((resolved) => {
     const map: Record<number, SteamAppMetadata> = {};
     for (const meta of resolved) {
       map[meta.app_id] = meta;
     }
     return map;
   });
-  metadataInFlight.set(fetchKey, fetchPromise);
+
+  // Register all per-appId promises sharing the same batch fetch
+  for (const appId of trulyNeedsFetch) {
+    metadataInFlightByAppId.set(
+      appId,
+      fetchPromise.then((map) => map[appId] ?? createFallbackMetadata(appId))
+    );
+  }
+
   const resolvedMap = await fetchPromise;
 
   for (const [appId, meta] of Object.entries(resolvedMap)) {
@@ -138,17 +173,25 @@ export async function resolveGameMetadata(
     if (meta.resolved) {
       inMemoryCache.set(meta.app_id, meta);
       saveToAppCache(meta.app_id, meta);
+      if ((meta.movies?.length ?? 0) === 0) {
+        _moviesCheckedThisSession.add(meta.app_id);
+      }
     }
     result[Number(appId)] = meta;
   }
 
-  for (const appId of toFetch) {
+  // Fill any trulyNeedsFetch appIds that the Rust call didn't return
+  for (const appId of trulyNeedsFetch) {
     if (!result[appId]) {
       result[appId] = createFallbackMetadata(appId);
     }
   }
 
-  metadataInFlight.delete(fetchKey);
+  // Clean up per-appId in-flight entries
+  for (const appId of trulyNeedsFetch) {
+    metadataInFlightByAppId.delete(appId);
+  }
+
   return result;
 }
 
@@ -249,14 +292,6 @@ export async function resolveGameMetadataForMedia(
     result[Number(id)] = meta;
   }
   return result;
-}
-
-/**
- * Clear both the regular and English-media metadata caches.
- */
-export function clearGameMetadataCache() {
-  inMemoryCache.clear();
-  englishMediaCache.clear();
 }
 
 /* ── Trailer priority resolver ── */
