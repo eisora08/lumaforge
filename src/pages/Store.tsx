@@ -103,6 +103,11 @@ import {
   getStoreImageCacheVersion,
 } from "../services/storeImageCache";
 import { downloadFromSource as sharedDownloadFromSource } from "../features/download/downloadFromSource";
+import {
+  preFetchGenreGroups,
+  getLocalGenreGroups,
+  isLocalCatalogReady,
+} from "../services/steamCatalogService";
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
 const DEBUG_STORE_RENDER_VERBOSE = false;
@@ -536,6 +541,11 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (sourceCacheLoadedRef.current) return;
     sourceCacheLoadedRef.current = true;
     loadSourceAvailabilityIndex().catch(() => {});
+    // Pre-fetch local catalog genre groups for Discover sections
+    if (!isLocalCatalogReady()) {
+      const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter", "RPG", "Adventure"];
+      preFetchGenreGroups(DISPLAY_GENRES, 20).catch(() => {});
+    }
   }, []);
 
   // Cancellation guard for async Tauri operations — prevents setState after unmount
@@ -1349,9 +1359,28 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       const meta = storeMetadataByAppId[Number(g.appId)];
       return meta?.genres?.length;
     }).length;
-    if (metaCount > 0 && DEBUG_STORE_DISCOVERY) {
-      console.log(`[STORE][GENRE_INDEX_READY] source=metadata games=${metaCount} topGamesWithGenres=${gamesWithMetaCount}`);
+    // Merge local catalog genre data first (pre-fetched from SQLite)
+    const localGenreData = getLocalGenreGroups();
+    if (localGenreData && localGenreData.size > 0) {
+      for (const [genre, catalogGames] of localGenreData) {
+        const list: StoreGame[] = [];
+        for (const g of catalogGames) {
+          if (list.length >= 20) break;
+          list.push({
+            appId: String(g.appId),
+            title: g.name,
+            imageUrl: g.headerImage || g.capsuleImage || undefined,
+            platforms: [],
+            sources: [],
+          });
+        }
+        if (list.length > 0) rawGenreGroups.set(genre, list);
+      }
+      if (DEBUG_STORE_DISCOVERY) {
+        console.log(`[STORE][GENRE_INDEX_READY] source=local-catalog genres=${localGenreData.size}`);
+      }
     }
+    // Supplement with runtime metadata enrichment (may add games already in catalog)
     for (const game of topGames) {
       const meta = storeMetadataByAppId[Number(game.appId)];
       if (!meta?.genres?.length) continue;
@@ -1362,8 +1391,11 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         seenInGame.add(normalized);
         if (!rawGenreGroups.has(normalized)) rawGenreGroups.set(normalized, []);
         const list = rawGenreGroups.get(normalized)!;
-        if (list.length < 20) list.push(game);
+        if (list.length < 20 && !list.some((g) => g.appId === game.appId)) list.push(game);
       }
+    }
+    if (metaCount > 0 && DEBUG_STORE_DISCOVERY && !localGenreData) {
+      console.log(`[STORE][GENRE_INDEX_READY] source=metadata games=${metaCount} topGamesWithGenres=${gamesWithMetaCount}`);
     }
 
     const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter", "RPG", "Adventure"];

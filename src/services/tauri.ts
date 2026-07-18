@@ -951,6 +951,79 @@ export async function writeStoreCatalogSectionsCache(data: unknown): Promise<voi
   return await invoke<void>("write_store_catalog_sections_cache", { data });
 }
 
+// --- Store catalog (versioned local index) ---
+
+export type CatalogMetaResult = {
+  schemaVersion: number;
+  catalogVersion: number;
+  importedAt: string;
+  recordCount: number;
+  gameCount: number;
+  checksum: string;
+  hasCatalog: boolean;
+};
+
+export type CatalogGameResult = {
+  appId: number;
+  name: string;
+  type: string;
+  genres: string[];
+  categories: string[];
+  releaseTimestamp: number;
+  comingSoon: boolean;
+  isFree: boolean;
+  reviewPercent: number;
+  reviewCount: number;
+  headerImage: string;
+  capsuleImage: string;
+  developers: string[];
+  publishers: string[];
+};
+
+export async function getCatalogMeta(): Promise<CatalogMetaResult> {
+  return await invoke<CatalogMetaResult>("get_catalog_meta");
+}
+
+export async function importSteamCatalog(
+  artifactJson: string,
+  checksum: string,
+): Promise<number> {
+  return await invoke<number>("import_steam_catalog", { artifactJson, checksum });
+}
+
+export async function queryCatalogByGenre(
+  genre: string,
+  limit: number,
+  offset: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_by_genre", { genre, limit, offset });
+}
+
+export async function queryCatalogSearch(
+  query: string,
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_search", { query, limit });
+}
+
+export async function queryCatalogGame(
+  appId: number,
+): Promise<CatalogGameResult | null> {
+  return await invoke<CatalogGameResult | null>("query_catalog_game", { appId });
+}
+
+export async function queryCatalogFeatured(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_featured", { limit });
+}
+
+export async function queryCatalogNewNoteworthy(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_new_noteworthy", { limit });
+}
+
 // --- Library cache ---
 
 export type LibraryAppInfoEntry = {
