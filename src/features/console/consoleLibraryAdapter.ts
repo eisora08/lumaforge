@@ -3,6 +3,8 @@ import type { LibraryGame } from "../../types/libraryGame";
 import { getCachedGameMediaPaths, resolveGameMediaUrl, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
 import { getManualGame } from "../../services/manualGameStore";
 
+const DEBUG_EPIC_CONSOLE_MEDIA = false;
+
 export type ConsoleMedia = {
   coverSrc: string | null;
   landscapeSrc: string | null;
@@ -107,6 +109,46 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
               return { key: g.id, media, meta };
             }
           }
+          // Epic games (no appId): resolve provider-relative media paths directly
+          if (g.source === "epic") {
+            if (DEBUG_EPIC_CONSOLE_MEDIA) {
+              console.log("[EPIC_CONSOLE_MEDIA][INPUT]", {
+                libraryId: g.libraryId,
+                providerGameId: g.providerGameId,
+                coverPath: g.coverPath,
+                landscapePath: g.landscapePath,
+                backgroundPath: g.backgroundPath,
+                logoPath: g.logoPath,
+                iconPath: g.iconPath,
+                imageUrl: g.imageUrl,
+              });
+            }
+            const [coverSrc, landscapeSrc, backgroundSrc, logoSrc] = await Promise.all([
+              g.coverPath ? resolveProviderMediaPreviewUrl(g.coverPath) : Promise.resolve(null),
+              g.landscapePath ? resolveProviderMediaPreviewUrl(g.landscapePath) : Promise.resolve(null),
+              g.backgroundPath ? resolveProviderMediaPreviewUrl(g.backgroundPath) : Promise.resolve(null),
+              g.logoPath ? resolveProviderMediaPreviewUrl(g.logoPath) : Promise.resolve(null),
+            ]);
+            const media: ConsoleMedia = {
+              coverSrc,
+              landscapeSrc,
+              backgroundSrc,
+              logoSrc,
+              heroSrc: backgroundSrc || landscapeSrc || coverSrc,
+            };
+            if (DEBUG_EPIC_CONSOLE_MEDIA) {
+              console.log("[EPIC_CONSOLE_MEDIA][RESOLVED]", {
+                key: g.id,
+                coverPresent: !!coverSrc,
+                landscapePresent: !!landscapeSrc,
+                backgroundPresent: !!backgroundSrc,
+                logoPresent: !!logoSrc,
+                failedRoles: [!coverSrc && "cover", !landscapeSrc && "landscape", !backgroundSrc && "background", !logoSrc && "logo"].filter(Boolean),
+              });
+            }
+            const meta: ConsoleMeta = { resolved: true, resolvedAt };
+            return { key: g.id, media, meta };
+          }
           return { key: g.id, media: undefined, meta: undefined };
         }),
       );
@@ -133,6 +175,23 @@ export function useConsoleLibraryMedia(games: LibraryGame[]): ConsoleLibraryGame
           return out;
         }),
       );
+
+      if (DEBUG_EPIC_CONSOLE_MEDIA) {
+        for (const g of currentGames) {
+          if (g.source === "epic") {
+            const key = g.appId || g.id;
+            const m = mediaMap.get(key);
+            console.log("[EPIC_CONSOLE_MEDIA][OUTPUT]", {
+              cacheKey: key,
+              consoleMediaFields: m ? Object.keys(m) : "none",
+              coverPresent: !!m?.coverSrc,
+              landscapePresent: !!m?.landscapeSrc,
+              backgroundPresent: !!m?.backgroundSrc,
+              logoPresent: !!m?.logoSrc,
+            });
+          }
+        }
+      }
     }
 
     resolveAll();
