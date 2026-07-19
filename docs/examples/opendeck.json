@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "id": "opendeck",
+  "name": "opendeck",
+  "displayName": "OpenDeck",
+  "description": "Custom Steam controller configuration and input mapping",
+  "longDescription": "# OpenDeck\n\nOpenDeck provides custom controller configuration for Steam games, supporting Xbox, PlayStation, Switch Pro, and generic DirectInput controllers.\n\n## Features\n\n- Custom button mapping per game\n- Gyro and touchpad configuration\n- Community-shared controller profiles\n- Per-game sensitivity curves",
+  "summary": "Custom controller configuration for Steam",
+  "version": "1.2.0",
+  "minimumLauncherVersion": "1.0.0",
+  "author": "LumaForge Team",
+  "authorEmail": "extensions@lumaforge.com",
+  "homepage": "https://github.com/lumaforge/opendeck",
+  "repository": "https://github.com/lumaforge/opendeck",
+  "license": "MIT",
+  "icon": "icon.png",
+  "banner": "banner.png",
+  "categories": ["input", "steam"],
+  "tags": ["controller", "input", "mapping", "gamepad"],
+  "managedFiles": [
+    {
+      "path": "gameoverlayrenderer.dll",
+      "isExecutable": true,
+      "replaceStrategy": "if-different",
+      "backupStrategy": "rename",
+      "validationStrategy": "checksum",
+      "checksum": "sha256-a1b2c3d4e5f6..."
+    },
+    {
+      "path": "config.ini",
+      "required": false,
+      "replaceStrategy": "never",
+      "backupStrategy": "copy"
+    },
+    {
+      "path": "profiles/default.json",
+      "required": true,
+      "replaceStrategy": "if-newer",
+      "backupStrategy": "none"
+    }
+  ],
+  "permissions": [
+    { "id": "filesystem.read", "reason": "Read Steam controller configuration" },
+    { "id": "filesystem.write", "reason": "Write custom controller profiles" },
+    { "id": "steam.appdata", "reason": "Access Steam input configuration directories" },
+    { "id": "system.processes", "reason": "Detect Steam process for overlay injection" }
+  ],
+  "capabilities": [
+    {
+      "id": "steam-tool",
+      "version": "1.0",
+      "description": "Modifies Steam runtime to support custom controller mappings"
+    },
+    {
+      "id": "launcher-integration",
+      "version": "1.0",
+      "description": "Adds controller configuration UI to game details"
+    }
+  ],
+  "installStrategy": {
+    "type": "transaction-copy"
+  },
+  "toggleStrategy": {
+    "type": "rename",
+    "config": {
+      "targetFiles": ["gameoverlayrenderer.dll"],
+      "enabledExtension": ".dll",
+      "disabledExtension": ".dll.bak"
+    }
+  },
+  "updateStrategy": {
+    "type": "replace",
+    "autoCheck": true,
+    "autoInstall": false
+  },
+  "releaseProvider": {
+    "provider": "github",
+    "config": {
+      "owner": "lumaforge",
+      "repo": "opendeck",
+      "tagPattern": "v*",
+      "assetPattern": "*.zip",
+      "includePrereleases": false
+    }
+  },
+  "behavior": {
+    "luaOwnershipOverride": false,
+    "injectsDll": true,
+    "modifiesStorePage": false,
+    "addsGameEntries": false
+  },
+  "validation": {
+    "requiredFiles": ["gameoverlayrenderer.dll"],
+    "maxTotalSize": 10485760
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "steamgriddb",
+  "name": "steamgriddb",
+  "displayName": "SteamGridDB",
+  "description": "High-quality game artwork from the SteamGridDB community database",
+  "longDescription": "# SteamGridDB\n\nSteamGridDB provides high-quality game artwork including covers, heroes, logos, and icons for your game library.\n\n## Features\n\n- Automatic artwork fetching\n- Per-game artwork customization\n- Community-curated artwork\n- Logo and icon extraction",
+  "summary": "Community game artwork from SteamGridDB",
+  "version": "2.1.0",
+  "minimumLauncherVersion": "1.0.0",
+  "author": "LumaForge Team",
+  "homepage": "https://github.com/lumaforge/steamgriddb",
+  "license": "MIT",
+  "icon": "icon.png",
+  "categories": ["media", "steam"],
+  "tags": ["artwork", "covers", "heroes", "logos", "steamgriddb"],
+  "managedFiles": [
+    {
+      "path": "steamgriddb.json",
+      "required": true,
+      "replaceStrategy": "always",
+      "backupStrategy": "none",
+      "validationStrategy": "exists"
+    },
+    {
+      "path": "cache/",
+      "required": false,
+      "replaceStrategy": "always",
+      "backupStrategy": "none",
+      "validationStrategy": "none"
+    }
+  ],
+  "permissions": [
+    { "id": "network.http", "reason": "Fetch artwork from SteamGridDB API" },
+    { "id": "filesystem.write", "reason": "Cache downloaded artwork locally" },
+    { "id": "filesystem.read", "reason": "Read cached artwork" }
+  ],
+  "capabilities": [
+    {
+      "id": "media-provider",
+      "version": "1.0",
+      "description": "Provides game artwork (covers, heroes, logos) from SteamGridDB"
+    },
+    {
+      "id": "metadata-provider",
+      "version": "1.0",
+      "description": "Provides game metadata from SteamGridDB community database"
+    }
+  ],
+  "installStrategy": {
+    "type": "transaction-copy"
+  },
+  "toggleStrategy": {
+    "type": "configuration",
+    "config": {
+      "configFile": "steamgriddb.json",
+      "enabledKey": "enabled",
+      "enabledValue": true,
+      "disabledValue": false
+    }
+  },
+  "updateStrategy": {
+    "type": "replace",
+    "autoCheck": true,
+    "autoInstall": true
+  },
+  "releaseProvider": {
+    "provider": "github",
+    "config": {
+      "owner": "lumaforge",
+      "repo": "steamgriddb",
+      "tagPattern": "v*",
+      "assetPattern": "*.zip"
+    }
+  },
+  "behavior": {
+    "luaOwnershipOverride": false,
+    "injectsDll": false,
+    "modifiesStorePage": false,
+    "addsGameEntries": false
+  },
+  "validation": {
+    "requiredFiles": ["steamgriddb.json"],
+    "maxTotalSize": 104857600
+  },
+  "metadata": {
+    "apiKeyRequired": false,
+    "rateLimitPerSecond": 10,
+    "supportsBatchRequests": true
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "id": "opensteamtool",
+  "name": "opensteamtool",
+  "displayName": "OpenSteamTool",
+  "description": "DLL-based Steam integration tool. Manages dwmapi.dll, xinput1_4.dll, and OpenSteamTool.dll in the Steam root directory.",
+  "longDescription": "OpenSteamTool is a DLL-based Steam integration tool that modifies the Steam client by placing custom DLLs in the Steam root directory. It provides enhanced functionality for Steam game management and integration.\n\nManaged files: dwmapi.dll, xinput1_4.dll, OpenSteamTool.dll",
+  "summary": "DLL-based Steam integration tool for enhanced Steam functionality",
+  "version": "1.4.8",
+  "author": "OpenSteam001",
+  "homepage": "https://github.com/OpenSteam001/OpenSteamTool",
+  "repository": "https://github.com/OpenSteam001/OpenSteamTool",
+  "license": "MIT",
+  "categories": ["tools"],
+  "tags": ["steam", "dll", "integration", "tool"],
+  "managedFiles": [
+    {
+      "path": "dwmapi.dll",
+      "required": true,
+      "optional": false,
+      "replaceStrategy": "always",
+      "backupStrategy": "rename",
+      "validationStrategy": "exists",
+      "isExecutable": true,
+      "excludeFromVcs": true
+    },
+    {
+      "path": "xinput1_4.dll",
+      "required": true,
+      "optional": false,
+      "replaceStrategy": "always",
+      "backupStrategy": "rename",
+      "validationStrategy": "exists",
+      "isExecutable": true,
+      "excludeFromVcs": true
+    },
+    {
+      "path": "OpenSteamTool.dll",
+      "required": true,
+      "optional": false,
+      "replaceStrategy": "always",
+      "backupStrategy": "rename",
+      "validationStrategy": "exists",
+      "isExecutable": true,
+      "excludeFromVcs": true
+    }
+  ],
+  "permissions": [
+    {
+      "id": "filesystem.write",
+      "reason": "Write DLL files to Steam root directory"
+    },
+    {
+      "id": "filesystem.delete",
+      "reason": "Remove/replace DLL files during install/update"
+    },
+    {
+      "id": "steam.appdata",
+      "reason": "Access Steam root directory for file management"
+    },
+    {
+      "id": "network.http",
+      "reason": "Download releases from GitHub"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "steam-tool",
+      "version": "1.0.0",
+      "description": "Modifies Steam runtime behavior via DLL injection"
+    }
+  ],
+  "installStrategy": {
+    "type": "transaction-extract",
+    "config": {
+      "source": "github-release",
+      "extractFormat": "zip"
+    }
+  },
+  "toggleStrategy": {
+    "type": "rename",
+    "config": {
+      "extension": ".bak"
+    }
+  },
+  "updateStrategy": {
+    "type": "download",
+    "autoCheck": true,
+    "autoInstall": false
+  },
+  "releaseProvider": {
+    "provider": "github",
+    "config": {
+      "owner": "OpenSteam001",
+      "repo": "OpenSteamTool",
+      "tagPattern": "v*",
+      "assetPattern": "*.zip",
+      "includePrereleases": false
+    }
+  },
+  "behavior": {
+    "luaOwnershipOverride": true,
+    "injectsDll": true,
+    "modifiesStorePage": false,
+    "addsGameEntries": false
+  },
+  "validation": {
+    "requiredFiles": [
+      "dwmapi.dll",
+      "xinput1_4.dll",
+      "OpenSteamTool.dll"
+    ],
+    "maxTotalSize": 10485760
+  },
+  "metadata": {
+    "surfaces": ["settings"],
+    "opensteamtool": {
+      "githubRepository": "OpenSteam001/OpenSteamTool",
+      "managedFiles": ["dwmapi.dll", "xinput1_4.dll", "OpenSteamTool.dll"]
+    }
+  }
+}
