@@ -58,7 +58,12 @@ import {
   deleteBackupArchive,
 } from "../../services/tauri";
 
+import { restoreLuaFilesFromBackup } from "../../services/steamLuaBackupService";
+import { restoreAchievementFilesFromBackup } from "../../services/steamAchievementBackupService";
+import { scanInstalledLuaScripts } from "../../services/tauri";
+
 import ConfirmModal from "../common/ConfirmModal";
+import ExternalSteamDataPanel from "./ExternalSteamDataPanel";
 
 const DEBUG_BACKUP_PREVIEW = false;
 const DEBUG_BACKUP_RESTORE = false;
@@ -347,6 +352,58 @@ export default function BackupSection() {
       const sectionsToRestore = selectedRestoreSections ?? new Set(manifest.files.map((f) => f.section));
       setStageDetail(`Preparing ${sectionsToRestore.size} section(s)`);
 
+      // Stage 2.5: Restore external files (Lua scripts + achievement data) to disk via Rust
+      // Lua files
+      const luaPaths = manifest.files
+        .filter((f) => sectionsToRestore.has(f.section) && f.relativePath.startsWith("steam/lua/"))
+        .map((f) => f.relativePath);
+
+      if (luaPaths.length > 0) {
+        setStageDetail(`Restoring ${luaPaths.length} Lua file(s) to disk`);
+        try {
+          const luaResult = await restoreLuaFilesFromBackup(fileData, luaPaths);
+          if (luaResult.failed > 0) {
+            console.warn("[BACKUP][RESTORE] Lua file restore warnings:", luaResult.errors);
+          }
+          if (DEBUG_BACKUP_RESTORE) {
+            console.log("[BACKUP][RESTORE] external Lua files", luaResult);
+          }
+
+          // Re-scan Lua directory after restore
+          try {
+            const settings = JSON.parse(localStorage.getItem("lumaforge-settings") || "{}");
+            if (settings.luaPath) {
+              await scanInstalledLuaScripts(settings.luaPath);
+              if (DEBUG_BACKUP_RESTORE) console.log("[BACKUP][RESTORE] Lua re-scan complete");
+            }
+          } catch (reScanErr) {
+            if (DEBUG_BACKUP_RESTORE) console.log("[BACKUP][RESTORE] Lua re-scan failed (non-fatal)", reScanErr);
+          }
+        } catch (extErr) {
+          console.error("[BACKUP][RESTORE] Lua file restore failed:", extErr);
+        }
+      }
+
+      // Achievement data files
+      const achievementPaths = manifest.files
+        .filter((f) => sectionsToRestore.has(f.section) && f.relativePath.startsWith("steam/achievements/"))
+        .map((f) => f.relativePath);
+
+      if (achievementPaths.length > 0) {
+        setStageDetail(`Restoring ${achievementPaths.length} achievement file(s) to disk`);
+        try {
+          const achResult = await restoreAchievementFilesFromBackup(fileData, achievementPaths);
+          if (achResult.failed > 0) {
+            console.warn("[BACKUP][RESTORE] Achievement file restore warnings:", achResult.errors);
+          }
+          if (DEBUG_BACKUP_RESTORE) {
+            console.log("[BACKUP][RESTORE] external achievement files", achResult);
+          }
+        } catch (achErr) {
+          console.error("[BACKUP][RESTORE] Achievement file restore failed:", achErr);
+        }
+      }
+
       // Stage 3: Apply changes
       setRestoreStage("applying-changes");
       setStageDetail("Writing data to storage");
@@ -587,19 +644,19 @@ export default function BackupSection() {
             <div className="grid grid-cols-2 gap-2 pl-4">
               {ALL_BACKUP_SECTIONS.map((section) => {
                 const auditStatus = SECTION_AUDIT_STATUS[section];
-                const isPlaceholder = auditStatus === "placeholder";
+                const isDisabled = auditStatus === "placeholder" || auditStatus === "partial";
                 const statusStyle = AUDIT_STATUS_STYLES[auditStatus];
                 return (
                   <button
                     key={section}
                     type="button"
-                    disabled={isPlaceholder}
+                    disabled={isDisabled}
                     onClick={() => toggleCustomSection(section)}
                     className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
                       customSections.has(section)
                         ? "border-(--color-accent)/30 bg-(--color-accent)/10 text-(--color-accent)"
                         : "border-(--surface-active-border) bg-white/5 text-(--color-muted)"
-                    } ${isPlaceholder ? "opacity-50 cursor-not-allowed" : ""}`}
+                    } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     {customSections.has(section) ? (
                       <CheckCircle2 className="h-3 w-3 shrink-0" />
@@ -1011,6 +1068,9 @@ export default function BackupSection() {
           </div>
         )}
       </div>
+
+      {/* ── External Steam Data (Lua, Achievements, Depot Cache) ── */}
+      <ExternalSteamDataPanel />
 
       {/* ── Advanced Backup Details (collapsed by default) ── */}
       <div className="lf-surface rounded-2xl border overflow-hidden">

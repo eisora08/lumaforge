@@ -171,6 +171,16 @@ export async function runBootTasks(): Promise<void> {
               console.warn("[BOOT] settings load failed:", String(err));
             }
             logBoot("load settings end");
+
+            // Register Lua backup settings accessor — reads current settings from
+            // localStorage on each call, so runtime settings updates are always visible.
+            try {
+              const { registerLuaBackupSettingsAccessor } = await import("./steamLuaBackupService");
+              registerLuaBackupSettingsAccessor(() => loadSettings() as Record<string, unknown>);
+              logBoot("lua backup settings accessor registered");
+            } catch {
+              // Non-critical — Lua backup gracefully returns empty when accessor is missing
+            }
           });
 
           // Stage 2: Migrate portable paths (safe, non-blocking)

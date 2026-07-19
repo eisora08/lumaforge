@@ -268,6 +268,14 @@ pub fn run() {
             commands::backup::list_backup_archives,
             commands::backup::delete_backup_archive,
             commands::backup::validate_backup_file,
+            commands::external_files::scan_external_file_collection,
+            commands::external_files::read_file_collection_content,
+            commands::external_files::restore_external_files,
+            commands::external_files::create_external_safety_backup,
+            commands::external_files::restore_from_safety_backup,
+            commands::external_files::verify_file_checksums,
+            commands::external_files::resolve_achievements_root_dir,
+            commands::external_files::resolve_app_data_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

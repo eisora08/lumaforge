@@ -1847,6 +1847,127 @@ export async function validateBackupFile(filename: string): Promise<BackupManife
   return await invoke<BackupManifestJson>("validate_backup_file", { filename });
 }
 
+// ── External file collection (backup for Lua / achievement disk files) ──
+
+export type ExternalFileEntry = {
+  relativePath: string;
+  absolutePath: string;
+  size: number;
+  modifiedAt: number;
+  checksum: string;
+  fileName: string;
+};
+
+export type ExternalFileCollection = {
+  rootLabel: string;
+  rootPath: string;
+  totalFiles: number;
+  totalSize: number;
+  files: ExternalFileEntry[];
+};
+
+export type ExternalFileRestoreEntry = {
+  relativePath: string;
+  content: string;
+  expectedChecksum: string;
+};
+
+export type ExternalRestoreResult = {
+  restored: number;
+  failed: number;
+  errors: string[];
+};
+
+export type ExternalVerifyResult = {
+  allValid: boolean;
+  checked: number;
+  errors: string[];
+};
+
+export async function scanExternalFileCollection(
+  rootPath: string,
+  rootLabel: string,
+  allowedExtensions: string[],
+  maxFileSize?: number,
+  maxFiles?: number,
+): Promise<ExternalFileCollection> {
+  return await invoke<ExternalFileCollection>("scan_external_file_collection", {
+    rootPath,
+    rootLabel,
+    allowedExtensions,
+    maxFileSize,
+    maxFiles,
+  });
+}
+
+export async function readFileCollectionContent(
+  rootPath: string,
+  relativePaths: string[],
+): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("read_file_collection_content", {
+    rootPath,
+    relativePaths,
+  });
+}
+
+export async function restoreExternalFiles(
+  targetRoot: string,
+  files: ExternalFileRestoreEntry[],
+  dryRun?: boolean,
+): Promise<ExternalRestoreResult> {
+  return await invoke<ExternalRestoreResult>("restore_external_files", {
+    targetRoot,
+    files,
+    dryRun,
+  });
+}
+
+export async function createExternalSafetyBackup(
+  operationId: string,
+  sourceRoot: string,
+  relativePaths: string[],
+): Promise<string> {
+  return await invoke<string>("create_external_safety_backup", {
+    operationId,
+    sourceRoot,
+    relativePaths,
+  });
+}
+
+export async function restoreFromSafetyBackup(
+  operationId: string,
+  targetRoot: string,
+  relativePaths: string[],
+): Promise<ExternalRestoreResult> {
+  return await invoke<ExternalRestoreResult>("restore_from_safety_backup", {
+    operationId,
+    targetRoot,
+    relativePaths,
+  });
+}
+
+export async function verifyFileChecksums(
+  rootPath: string,
+  files: [string, string][],
+): Promise<ExternalVerifyResult> {
+  return await invoke<ExternalVerifyResult>("verify_file_checksums", {
+    rootPath,
+    files,
+  });
+}
+
+export async function resolveAchievementsRootDir(
+  provider: string,
+): Promise<string> {
+  return await invoke<string>("resolve_achievements_root_dir", {
+    provider,
+  });
+}
+
+export async function resolveAppDataDir(): Promise<string> {
+  return await invoke<string>("resolve_app_data_dir");
+}
+
 // ── Dev console exposure ──
 
 if (typeof window !== "undefined") {

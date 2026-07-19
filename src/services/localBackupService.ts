@@ -11,6 +11,19 @@
  * and validates that all secrets/credentials are preserved unchanged after restore.
  */
 
+// ── Depotcache policy ──
+
+/**
+ * Depotcache is NOT a backup section. Steam manages depotcache files
+ * and regenerates them automatically. LumaForge never reads, backs up,
+ * or restores depotcache content. The depotcache path setting is protected
+ * (listed in PROTECTED_SETTINGS_KEYS) and must never be modified by
+ * any restore operation.
+ */
+export const DEPOTCACHE_BACKUP_POLICY = "not-backed-up" as const;
+export const DEPOTCACHE_RESTORE_POLICY = "not-restored" as const;
+export const DEPOTCACHE_EXCLUDED_FROM_PRESETS = true as const;
+
 // ── Appearance field allowlist (safe for Customization backup) ──
 
 /**
@@ -232,7 +245,7 @@ export const SECTION_AUDIT_STATUS: Record<BackupSection, SectionAuditStatus> = {
   profile: "implemented",
   steamAchievementInputs: "partial",
   customArtwork: "placeholder",
-  steamLua: "placeholder",
+  steamLua: "partial",
   uiPreferences: "implemented",
 };
 
@@ -245,9 +258,9 @@ export const SECTION_AUDIT_NOTES: Record<BackupSection, string> = {
   sessionHistory: "Exports session history records",
   providerOverrides: "Exports Epic provider overrides",
   profile: "Exports user profile (avatar, banner, display name)",
-  steamAchievementInputs: "Partial — exports launcher achievement input configuration only. Achievement progress, unlocked timestamps, summaries, and Steam source files are not included. Restore changes input configuration only.",
-  customArtwork: "Planned — reads game-activities, not real artwork files. No usable payload.",
-  steamLua: "Planned — exports only a notification hash, not Lua scripts or manifests. No usable payload.",
+  steamAchievementInputs: "Partial. Collector reads localStorage launcher config + disk-based LumaForge-owned achievement JSONs (achievements.json, percentages.json) via Rust. Steam-owned progress (librarycache) and icon images are excluded. Restore writes via Rust with checksum verification. Missing: runtime re-scan after restore, full rollback on failure.",
+  customArtwork: "Planned — reads game-activities, not real artwork files. No usable payload. Not selectable for backup.",
+  steamLua: "Partial. Export reads real .lua/.lua.disabled files from disk via Rust with checksum verification. Restore writes via Rust safety backup + checksummed write. Missing: Lua directory re-scan after restore, settings accessor wired during boot. Not selectable for backup.",
   uiPreferences: "Exports only visual fields from lumaforge-settings (28 keys) plus lumaforge-theme and lumaforge-surface-mode. Never touches steamRoot, API keys, or providers.",
 };
 
@@ -384,13 +397,13 @@ export type BackupWriteSet = Array<{
 
 // ── Internal helpers ──
 
-function generateBackupId(): string {
+export function generateBackupId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.random().toString(36).substring(2, 8);
   return `lf-backup-${ts}-${rand}`;
 }
 
-function getDeviceId(): string {
+export function getDeviceId(): string {
   const key = "lumaforge-device-id";
   let id = localStorage.getItem(key);
   if (!id) {
@@ -400,7 +413,7 @@ function getDeviceId(): string {
   return id;
 }
 
-async function sha256(data: string): Promise<string> {
+export async function sha256(data: string): Promise<string> {
   const encoder = new TextEncoder();
   const buffer = await crypto.subtle.digest("SHA-256", encoder.encode(data));
   return Array.from(new Uint8Array(buffer))
@@ -408,7 +421,7 @@ async function sha256(data: string): Promise<string> {
     .join("");
 }
 
-function isPathSafe(relativePath: string): boolean {
+export function isPathSafe(relativePath: string): boolean {
   if (relativePath.includes("..")) return false;
   if (relativePath.startsWith("/")) return false;
   if (relativePath.startsWith("\\")) return false;
@@ -419,7 +432,7 @@ function isPathSafe(relativePath: string): boolean {
   return true;
 }
 
-function isExecutablePath(path: string): boolean {
+export function isExecutablePath(path: string): boolean {
   return /\.(exe|dll|bat|cmd|ps1|msi|com|scr|vbs|js|wsf)$/i.test(path);
 }
 
@@ -431,7 +444,7 @@ const BLOCKED_PATHS = [
   "config/steam.cfg",
 ];
 
-function isBlockedPath(relativePath: string): boolean {
+export function isBlockedPath(relativePath: string): boolean {
   const lower = relativePath.toLowerCase();
   return BLOCKED_PATHS.some((bp) => lower === bp.toLowerCase());
 }
@@ -539,15 +552,41 @@ const SECTION_COLLECTORS: SectionCollector[] = [
   {
     section: "steamLua",
     collect: async () => {
-      const data = collectLocalStorage("lumaforge_lua_scan_notified_hash");
-      return data ? [{ path: "steam/lua/manifest.json", data: JSON.stringify({ notifiedHash: data }) }] : [];
+      const files: Array<{ path: string; data: string }> = [];
+      // Include the Lua scan notified hash from localStorage
+      const hashData = collectLocalStorage("lumaforge_lua_scan_notified_hash");
+      if (hashData) {
+        files.push({ path: "steam/lua/manifest.json", data: JSON.stringify({ notifiedHash: hashData }) });
+      }
+      // Include actual Lua script files from disk via Rust
+      try {
+        const { collectSteamLuaBackupData } = await import("./steamLuaBackupService");
+        const luaFiles = await collectSteamLuaBackupData();
+        files.push(...luaFiles);
+      } catch (e) {
+        debugLog("[BACKUP][LUA] disk collection failed:", e);
+      }
+      return files;
     },
   },
   {
     section: "steamAchievementInputs",
     collect: async () => {
-      const data = collectLocalStorage("lumaforge-launcher-achievements-v1");
-      return data ? [{ path: "steam/achievement-inputs/manifest.json", data }] : [];
+      const files: Array<{ path: string; data: string }> = [];
+      // Include achievement launcher state from localStorage
+      const launcherData = collectLocalStorage("lumaforge-launcher-achievements-v1");
+      if (launcherData) {
+        files.push({ path: "steam/achievement-inputs/manifest.json", data: launcherData });
+      }
+      // Include actual achievement data files from disk via Rust
+      try {
+        const { collectSteamAchievementBackupData } = await import("./steamAchievementBackupService");
+        const achievementFiles = await collectSteamAchievementBackupData();
+        files.push(...achievementFiles);
+      } catch (e) {
+        debugLog("[BACKUP][ACHIEVEMENT] disk collection failed:", e);
+      }
+      return files;
     },
   },
   {
@@ -918,8 +957,15 @@ const FILE_PATH_TO_STORAGE_KEY: Record<string, string> = {
 /**
  * Resolve the correct localStorage key for a file path + section combination.
  * This is the single source of truth for where backup files land on restore.
+ * Returns null for external file paths (steam/lua/*, steam/achievements/*)
+ * which are restored via Rust commands, not localStorage.
  */
 export function resolveStorageKeyForFilePath(relativePath: string, section: string): string | null {
+  // External file paths are restored via Rust — skip localStorage mapping
+  if (relativePath.startsWith("steam/lua/") || relativePath.startsWith("steam/achievements/")) {
+    return null;
+  }
+
   // Direct lookup for known paths
   const key = FILE_PATH_TO_STORAGE_KEY[relativePath];
   if (key) return key;
@@ -1376,6 +1422,8 @@ export const SECTION_STORAGE_KEYS: Record<string, string[]> = {
   integrations: ["lumaforge-integration-settings"],
   profile: ["lumaforge-user-profile-v1"],
   providerOverrides: ["lumaforge-epic-overrides-v1"],
+  steamLua: ["lumaforge_lua_scan_notified_hash"],
+  steamAchievementInputs: ["lumaforge-launcher-achievements-v1"],
 };
 
 /**
