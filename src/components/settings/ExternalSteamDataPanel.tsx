@@ -25,6 +25,8 @@ import {
   Info,
   FileCode,
   Eye,
+  ShieldCheck,
+  Database,
 } from "lucide-react";
 
 import {
@@ -67,6 +69,16 @@ import {
 } from "../../services/localBackupService";
 
 import { loadSettings } from "../../context/SettingsContext";
+
+import {
+  auditSteamAchievementSources,
+  buildGameSummaries,
+  checkSteamRunning,
+  clearAchSourceCache,
+  exportSteamAchievementSourcesToArchive,
+  type VerifiedSourcesManifest,
+  type AchSourceGameSummary,
+} from "../../services/steamAchievementSources";
 
 // ── Helpers ──
 
@@ -136,6 +148,22 @@ export default function ExternalSteamDataPanel() {
 
   // ── Depotcache state (informational) ──
   const [depotcacheExpanded, setDepotcacheExpanded] = useState(false);
+
+  // ── Verified Steam Achievement Sources state ──
+  const [achSourceManifest, setAchSourceManifest] = useState<VerifiedSourcesManifest | null>(null);
+  const [achSourceAuditing, setAchSourceAuditing] = useState(false);
+  const [achSourceAuditTime, setAchSourceAuditTime] = useState("");
+  const [achSourceReviewOpen, setAchSourceReviewOpen] = useState(false);
+  const [achSourceGameSummaries, setAchSourceGameSummaries] = useState<AchSourceGameSummary[]>([]);
+  const [achSourceSelected, setAchSourceSelected] = useState<Set<string>>(new Set());
+  const [achSourceExporting, setAchSourceExporting] = useState(false);
+  const [achSourceExportResult, setAchSourceExportResult] = useState<{
+    success: boolean;
+    gameCount: number;
+    fileCount: number;
+    totalSize: number;
+  } | null>(null);
+  const [achSourceSteamRunning, setAchSourceSteamRunning] = useState<boolean | null>(null);
 
   // ── Boot: resolve roots ──
   const bootRan = useRef(false);
@@ -432,6 +460,90 @@ export default function ExternalSteamDataPanel() {
       setAchExporting(false);
     }
   }, [achReview.selected, achRoot, achReview.gameSummaries]);
+
+  // ── Verified Steam Achievement Sources handlers ──
+
+  const handleAchSourceAudit = useCallback(async () => {
+    setAchSourceAuditing(true);
+    setAchSourceManifest(null);
+    try {
+      const settings = loadSettings();
+      const manifest = await auditSteamAchievementSources(
+        settings.steamRoot || undefined,
+        settings.steamAccountId || undefined,
+      );
+      setAchSourceManifest(manifest);
+      const summaries = buildGameSummaries(manifest);
+      setAchSourceGameSummaries(summaries);
+      setAchSourceSelected(new Set());
+      setAchSourceAuditTime(new Date().toLocaleString());
+
+      // Check Steam process status
+      try {
+        const steamCheck = await checkSteamRunning();
+        setAchSourceSteamRunning(steamCheck.running);
+      } catch {
+        setAchSourceSteamRunning(null);
+      }
+    } catch (err) {
+      setAchSourceManifest(null);
+      setAchSourceGameSummaries([]);
+      setAchSourceAuditTime(new Date().toLocaleString());
+      setAchSourceSteamRunning(null);
+    } finally {
+      setAchSourceAuditing(false);
+    }
+  }, []);
+
+  const handleAchSourceToggleGame = useCallback((appId: string) => {
+    setAchSourceSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(appId)) next.delete(appId);
+      else next.add(appId);
+      return next;
+    });
+  }, []);
+
+  const handleAchSourceSelectAll = useCallback(() => {
+    setAchSourceSelected(new Set(achSourceGameSummaries.map((s) => s.appId)));
+  }, [achSourceGameSummaries]);
+
+  const handleAchSourceClearSelection = useCallback(() => {
+    setAchSourceSelected(new Set());
+  }, []);
+
+  const handleAchSourceExport = useCallback(async () => {
+    if (achSourceSelected.size === 0) return;
+    setAchSourceExporting(true);
+    setAchSourceExportResult(null);
+    try {
+      const settings = loadSettings();
+      const result = await exportSteamAchievementSourcesToArchive(
+        Array.from(achSourceSelected),
+        settings.steamRoot || undefined,
+        settings.steamAccountId || undefined,
+      );
+      setAchSourceExportResult(result);
+      if (result.success) {
+        setAchSourceReviewOpen(false);
+        clearAchSourceCache();
+      }
+    } catch (err) {
+      console.error("[ACH_SOURCE][EXPORT] failed:", err);
+      setAchSourceExportResult({ success: false, gameCount: 0, fileCount: 0, totalSize: 0 });
+    } finally {
+      setAchSourceExporting(false);
+    }
+  }, [achSourceSelected]);
+
+  const handleAchSourceRefresh = useCallback(async () => {
+    clearAchSourceCache();
+    setAchSourceManifest(null);
+    setAchSourceGameSummaries([]);
+    setAchSourceSelected(new Set());
+    setAchSourceExportResult(null);
+    await handleAchSourceAudit();
+  }, [handleAchSourceAudit]);
 
   // ── Computed values ──
 
@@ -923,6 +1035,265 @@ export default function ExternalSteamDataPanel() {
           Limits: {ACHIEVEMENT_MAX_FILE_SIZE / (1024 * 1024)} MB per file, {ACHIEVEMENT_MAX_FILES} max files.
           Only LumaForge-owned JSON files (achievements.json, percentages.json, image_sources.json). Icons, Steam userdata, and account IDs are excluded.
         </p>
+      </div>
+
+      {/* ═══════════════════════════════════════════
+          CARD 2.5 — Verified Steam Achievement Sources
+          ═══════════════════════════════════════════ */}
+      <div className="lf-surface rounded-2xl border p-5 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-400">
+            <Database className="h-5 w-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-bold text-(--color-text)">Verified Steam Achievement Sources</h4>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400">Partial</span>
+            </div>
+            <p className="text-[10px] text-(--color-muted)">
+              Steam-owned achievement source files (appcache stats, library cache). Only the three verified file types that LumaForge reads are included. Account ID and Steam userdata are never exposed.
+            </p>
+          </div>
+        </div>
+
+        {/* Status row — split source counts */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+          <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+            <p className="text-(--color-muted)">Games Found</p>
+            <p className="font-medium text-emerald-400">{achSourceManifest ? achSourceManifest.totalGames : "—"}</p>
+          </div>
+          <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+            <p className="text-(--color-muted)">Total Files</p>
+            <p className="font-medium text-(--color-text)">{achSourceManifest ? achSourceManifest.totalFiles : "—"}</p>
+          </div>
+          <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+            <p className="text-(--color-muted)">Total Size</p>
+            <p className="font-medium text-(--color-text)">{achSourceManifest ? formatBytes(achSourceManifest.totalSize) : "—"}</p>
+          </div>
+          <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+            <p className="text-(--color-muted)">Steam Running</p>
+            <p className={`font-medium ${
+              achSourceSteamRunning === true ? "text-amber-400" :
+              achSourceSteamRunning === false ? "text-emerald-400" :
+              "text-(--color-muted)"
+            }`}>
+              {achSourceSteamRunning === true ? "Yes (close to restore)" :
+               achSourceSteamRunning === false ? "No (safe)" :
+               "—"}
+            </p>
+          </div>
+        </div>
+
+        {/* Per-source counts */}
+        {achSourceManifest && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">UserGameStats</p>
+              <p className="font-medium text-cyan-400">{achSourceManifest.statsCount}</p>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">Stats Schema</p>
+              <p className="font-medium text-violet-400">{achSourceManifest.schemaCount}</p>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">Library Cache</p>
+              <p className="font-medium text-amber-400">{achSourceManifest.librarycacheCount}</p>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">Rejected Files</p>
+              <p className={`font-medium ${achSourceManifest.rejected.length > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                {achSourceManifest.rejected.length}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Audit time */}
+        {achSourceAuditTime && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">Last Audit</p>
+              <p className="font-medium text-(--color-text)">{achSourceAuditTime}</p>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">Account Scope</p>
+              <p className="font-medium text-(--color-text)">{achSourceManifest?.accountScope || "—"}</p>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">Export Status</p>
+              <p className="font-medium text-(--color-muted)">
+                {achSourceExportResult
+                  ? (achSourceExportResult.success ? "✓ Exported" : "Failed")
+                  : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+              <p className="text-(--color-muted)">Restore Status</p>
+              <p className="font-medium text-(--color-muted)">Via Stored Backups</p>
+            </div>
+          </div>
+        )}
+
+        {/* Steam safety warning */}
+        {achSourceSteamRunning === true && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+            <p className="text-[10px] font-medium text-amber-400">⚠ Steam is running</p>
+            <p className="text-[10px] text-amber-400/80">
+              Achievement source files may be locked. Close Steam before restoring from a backup.
+              Export is safe while Steam is running.
+            </p>
+          </div>
+        )}
+
+        {/* Rejected files summary */}
+        {achSourceManifest && achSourceManifest.rejected.length > 0 && (
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
+            <p className="text-[10px] font-medium text-red-400">
+              {achSourceManifest.rejected.length} file(s) rejected
+            </p>
+            <p className="text-[10px] text-red-400/80">
+              {achSourceManifest.rejected.slice(0, 5).map((r) => r.fileName).join(", ")}
+              {achSourceManifest.rejected.length > 5 && ` +${achSourceManifest.rejected.length - 5} more`}
+              {" — "}reasons: {[...new Set(achSourceManifest.rejected.map((r) => r.reason))].join(", ")}
+            </p>
+          </div>
+        )}
+
+        {/* Export result */}
+        {achSourceExportResult && (
+          <div className={`rounded-lg border px-3 py-2 text-[11px] ${
+            achSourceExportResult.success
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+              : "border-red-500/30 bg-red-500/10 text-red-400"
+          }`}>
+            {achSourceExportResult.success
+              ? `Exported ${achSourceExportResult.gameCount} game(s), ${achSourceExportResult.fileCount} file(s) (${formatBytes(achSourceExportResult.totalSize)}) — added to Stored Backups`
+              : "Export failed — no files were exported"}
+          </div>
+        )}
+
+        {/* Review panel */}
+        {achSourceReviewOpen && achSourceGameSummaries.length > 0 && (
+          <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-(--color-text)">
+                Game Review ({achSourceSelected.size} selected of {achSourceGameSummaries.length} verified)
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleAchSourceSelectAll}
+                  className="text-[10px] text-(--color-accent) hover:underline"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAchSourceClearSelection}
+                  className="text-[10px] text-(--color-muted) hover:underline"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-64 overflow-y-auto space-y-1">
+              {achSourceGameSummaries.map((summary) => (
+                <label
+                  key={summary.appId}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-[11px] hover:bg-white/[0.03] cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={achSourceSelected.has(summary.appId)}
+                    onChange={() => handleAchSourceToggleGame(summary.appId)}
+                    className="rounded border-(--surface-active-border)"
+                  />
+                  <span className="font-mono text-(--color-text) w-20 shrink-0">{summary.appId}</span>
+                  <span className="flex items-center gap-1 text-[9px] shrink-0">
+                    {summary.hasStats && <span className="px-1 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400">Stats</span>}
+                    {summary.hasSchema && <span className="px-1 py-0.5 rounded-full bg-violet-500/15 text-violet-400">Schema</span>}
+                    {summary.hasLibraryCache && <span className="px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-400">Cache</span>}
+                  </span>
+                  <span className="text-[10px] text-(--color-muted) w-12 text-right shrink-0">
+                    {summary.files.length} file{summary.files.length !== 1 ? "s" : ""}
+                  </span>
+                  <span className="text-[10px] text-(--color-muted) w-16 text-right shrink-0">
+                    {formatBytes(summary.totalSize)}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={achSourceExporting || achSourceSelected.size === 0}
+                onClick={handleAchSourceExport}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-500/20 px-3 py-1.5 text-[11px] font-bold text-cyan-400 transition hover:bg-cyan-500/30 disabled:opacity-50"
+              >
+                {achSourceExporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileArchive className="h-3 w-3" />}
+                {achSourceExporting ? "Exporting..." : `Export Selected (${achSourceSelected.size})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAchSourceReviewOpen(false)}
+                className="text-[10px] text-(--color-muted) hover:text-(--color-text) transition"
+              >
+                Close Review
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={achSourceAuditing}
+            onClick={handleAchSourceAudit}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-medium text-cyan-400 transition hover:bg-cyan-500/20 disabled:opacity-50"
+          >
+            {achSourceAuditing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Database className="h-3 w-3" />}
+            {achSourceAuditing ? "Auditing..." : "Audit Sources"}
+          </button>
+          <button
+            type="button"
+            disabled={!achSourceManifest || achSourceGameSummaries.length === 0}
+            onClick={() => setAchSourceReviewOpen(!achSourceReviewOpen)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-[11px] font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
+          >
+            <Eye className="h-3 w-3" />
+            Review Games
+          </button>
+          <button
+            type="button"
+            disabled={achSourceExporting || achSourceSelected.size === 0}
+            onClick={handleAchSourceExport}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-500/20 px-3 py-1.5 text-[11px] font-bold text-cyan-400 transition hover:bg-cyan-500/30 disabled:opacity-50"
+          >
+            {achSourceExporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileArchive className="h-3 w-3" />}
+            Export Selected Sources
+          </button>
+          <button
+            type="button"
+            disabled={!achSourceManifest}
+            onClick={handleAchSourceRefresh}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-[11px] font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
+          >
+            <Loader2 className="h-3 w-3" />
+            Refresh
+          </button>
+        </div>
+
+        {/* Info */}
+        <div className="flex items-start gap-2 text-[10px] text-(--color-muted)">
+          <ShieldCheck className="h-3 w-3 shrink-0 mt-0.5" />
+          <span>
+            Only three verified file types are included: UserGameStats .bin, UserGameStatsSchema .bin, and librarycache .json.
+            Account IDs are never exposed in logs or exports. Steam must be closed before restoring.
+          </span>
+        </div>
       </div>
 
       {/* ═══════════════════════════════════════════

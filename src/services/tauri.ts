@@ -727,6 +727,134 @@ export async function debugAchievementProgress(params: {
   });
 }
 
+// ── Verified Steam Achievement Sources ──
+
+export interface RejectedSourceFileTs {
+  fileName: string;
+  sourceKind: string;
+  reason: string;
+}
+
+export interface VerifiedSourceFileTs {
+  sourceKind: string;
+  logicalPath: string;
+  absolutePath: string;
+  size: number;
+  modifiedAt: number;
+  checksum: string;
+  requiresSteamClosed: boolean;
+}
+
+export interface VerifiedSourceGameEntryTs {
+  appId: string;
+  files: VerifiedSourceFileTs[];
+  totalSize: number;
+}
+
+export interface VerifiedSourcesManifestTs {
+  schemaVersion: number;
+  accountScope: string;
+  steamRoot: string;
+  totalGames: number;
+  totalFiles: number;
+  totalSize: number;
+  games: VerifiedSourceGameEntryTs[];
+  rejected: RejectedSourceFileTs[];
+  statsCount: number;
+  schemaCount: number;
+  librarycacheCount: number;
+}
+
+export interface ExportedSourceFileTs {
+  logicalPath: string;
+  sourceKind: string;
+  base64Content: string;
+  checksum: string;
+  size: number;
+}
+
+export interface ExportedSourceResultTs {
+  appId: string;
+  files: ExportedSourceFileTs[];
+  totalSize: number;
+}
+
+export interface SteamProcessCheckResultTs {
+  running: boolean;
+  message: string;
+}
+
+export interface RestoreSourceResultTs {
+  restored: number;
+  failed: number;
+  errors: string[];
+  checksumsValid: boolean;
+}
+
+export async function auditSteamAchievementSources(
+  steamPath?: string,
+  steamAccountId?: string,
+): Promise<VerifiedSourcesManifestTs> {
+  return await invoke<VerifiedSourcesManifestTs>(
+    "audit_steam_achievement_sources",
+    {
+      steamPath: steamPath || null,
+      steamAccountId: steamAccountId || "",
+    },
+  );
+}
+
+export async function exportSteamAchievementSourcesRaw(
+  steamPath?: string,
+  steamAccountId?: string,
+  appIds?: string[],
+): Promise<ExportedSourceResultTs[]> {
+  return await invoke<ExportedSourceResultTs[]>(
+    "export_steam_achievement_sources",
+    {
+      steamPath: steamPath || null,
+      steamAccountId: steamAccountId || "",
+      appIds: appIds || [],
+    },
+  );
+}
+
+export async function readSteamAchievementSourceForGame(
+  steamPath?: string,
+  steamAccountId?: string,
+  appId?: string,
+): Promise<ExportedSourceResultTs | null> {
+  return (
+    (await invoke<ExportedSourceResultTs | null>(
+      "read_steam_achievement_source_for_game",
+      {
+        steamPath: steamPath || null,
+        steamAccountId: steamAccountId || "",
+        appId: appId || "",
+      },
+    )) ?? null
+  );
+}
+
+export async function checkSteamRunning(): Promise<SteamProcessCheckResultTs> {
+  return await invoke<SteamProcessCheckResultTs>("check_steam_running");
+}
+
+export async function restoreSteamAchievementSources(
+  steamPath?: string,
+  steamAccountId?: string,
+  exports?: ExportedSourceResultTs[],
+): Promise<RestoreSourceResultTs> {
+  return await invoke<RestoreSourceResultTs>(
+    "restore_steam_achievement_sources",
+    {
+      steamPath: steamPath || null,
+      steamAccountId: steamAccountId || "",
+      exports: exports || [],
+    },
+  );
+}
+
 export async function resolveSteamGridDbArtwork(
   appIds: number[],
   apiKey: string
