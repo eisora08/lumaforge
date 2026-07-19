@@ -57,6 +57,23 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.dataset.surface = surfaceMode;
   }, [surfaceMode]);
 
+  // Listen for external restore writes and reload theme/surface from localStorage
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.key === THEME_STORAGE_KEY) {
+        const fresh = localStorage.getItem(THEME_STORAGE_KEY) as ThemeId | null;
+        if (fresh && fresh !== theme) setThemeState(fresh);
+      }
+      if (detail?.key === SURFACE_STORAGE_KEY) {
+        const fresh = localStorage.getItem(SURFACE_STORAGE_KEY) as SurfaceMode | null;
+        if (fresh && fresh !== surfaceMode) setSurfaceModeState(fresh);
+      }
+    };
+    window.addEventListener("lumaforge-data-changed", handler);
+    return () => window.removeEventListener("lumaforge-data-changed", handler);
+  }, [theme, surfaceMode]);
+
   const value = useMemo(
     () => ({
       theme,

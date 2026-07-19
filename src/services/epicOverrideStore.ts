@@ -231,3 +231,16 @@ export function hasEpicOverrides(providerGameId: string): boolean {
   const { updatedAt: _, ...rest } = overrides;
   return Object.values(rest).some((v) => v !== undefined && v !== null && v !== "");
 }
+
+// Listen for external restore writes and reload all overrides from localStorage
+if (typeof window !== "undefined") {
+  window.addEventListener("lumaforge-data-changed", (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.key === STORAGE_KEY) {
+      // Force all listeners to re-read from storage on next access
+      for (const listener of _overrideListeners) {
+        try { listener(""); } catch { /* listener error must not break */ }
+      }
+    }
+  });
+}

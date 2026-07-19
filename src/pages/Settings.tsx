@@ -24,6 +24,8 @@ import {
   ExternalLink,
   Code,
   FolderOpen,
+  Zap,
+  Cloud,
 } from "lucide-react";
 
 import {
@@ -44,9 +46,10 @@ import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
-import SettingsImportExport from "../components/settings/SettingsImportExport";
+import BackupSectionUI from "../components/settings/BackupSection";
 import SteamAccountDetector from "../components/settings/SteamAccountDetector";
 import PageContainer from "../components/layout/PageContainer";
+import IntegrationsSection from "../components/settings/IntegrationsSection";
 
 import { defaultApiProviders } from "../data/providers";
 import { ApiProviderUserSettings } from "../types/provider";
@@ -64,6 +67,8 @@ type SettingsSectionId =
   | "collections"
   | "metadata"
   | "artwork"
+  | "integrations"
+  | "cloudBackup"
   | "manual"
   | "console"
   | "packages"
@@ -83,6 +88,8 @@ const navSections: {
   { key: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, description: "Game grouping and organization" },
   { key: "metadata", label: "Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG, Google and Bing" },
   { key: "artwork", label: "Artwork Providers", icon: <Image className="h-4 w-4" />, description: "SteamGridDB artwork configuration" },
+  { key: "integrations", label: "Integrations", icon: <Zap className="h-4 w-4" />, description: "Provider integrations and visibility" },
+  { key: "cloudBackup", label: "Cloud & Backup", icon: <Cloud className="h-4 w-4" />, description: "Backups, restore and cloud sync" },
   { key: "manual", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, description: "Manually added games info" },
   { key: "console", label: "Console Mode", icon: <MonitorSmartphone className="h-4 w-4" />, description: "Controller-friendly interface" },
   { key: "packages", label: "Downloads / Packages", icon: <Download className="h-4 w-4" />, description: "Multi-provider package sources" },
@@ -643,6 +650,53 @@ export default function Settings() {
               </>
             )}
 
+            {activeSection === "integrations" && (
+              <>
+                <SettingsSection
+                  title="Integrations"
+                  description="Control which game providers are active and where they appear."
+                >
+                  <div className="space-y-4">
+                    <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
+                      <Zap className="h-4 w-4" />
+                      Provider integrations
+                    </div>
+                    <p className="text-xs text-(--color-muted)">
+                      Disable an integration to stop its scans and hide its games from selected UI surfaces.
+                      All stored data is preserved when an integration is disabled.
+                    </p>
+                  </div>
+                </SettingsSection>
+                <IntegrationsSection />
+              </>
+            )}
+
+            {activeSection === "cloudBackup" && (
+              <>
+                <SettingsSection
+                  title="Cloud & Backup"
+                  description="Backups, restore and cloud sync."
+                >
+                  <div className="space-y-4">
+                    <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
+                      <Cloud className="h-4 w-4" />
+                      Backup & Restore
+                    </div>
+                    <p className="text-xs text-(--color-muted)">
+                      Export your LumaForge settings, favorites, manual games, playtime and other data.
+                      Import a backup to restore settings across devices or after a fresh install.
+                    </p>
+                  </div>
+                </SettingsSection>
+                <SettingsSection
+                  title="Local Backups"
+                  description="Export and import backup archives stored on this device."
+                >
+                  <BackupSectionUI />
+                </SettingsSection>
+              </>
+            )}
+
             {activeSection === "collections" && (
               <CollectionsSection />
             )}
@@ -1011,13 +1065,6 @@ export default function Settings() {
                     })}
                   </div>
                 </SettingsSection>
-
-                <SettingsSection
-                  title="Importar / Exportar"
-                  description="Guarda o restaura tu configuración local de LumaForge."
-                >
-                  <SettingsImportExport />
-                </SettingsSection>
               </>
             )}
 
@@ -1107,13 +1154,6 @@ export default function Settings() {
                       </button>
                     </div>
                   </div>
-                </SettingsSection>
-
-                <SettingsSection
-                  title="Importar / Exportar"
-                  description="Guarda o restaura tu configuración local de LumaForge."
-                >
-                  <SettingsImportExport />
                 </SettingsSection>
               </>
             )}

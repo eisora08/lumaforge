@@ -140,3 +140,13 @@ export function clearSessions(): void {
   saveStore({ version: 1, sessions: [] });
   notifyListeners();
 }
+
+// Listen for external restore writes and reload session history from localStorage
+if (typeof window !== "undefined") {
+  window.addEventListener("lumaforge-data-changed", (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.key === STORAGE_KEY) {
+      notifyListeners();
+    }
+  });
+}

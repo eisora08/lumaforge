@@ -3555,20 +3555,35 @@ Replace runtime-enriched genre sections (which depend on remote Steam appdetails
 - **Graceful fallback**: when no catalog imported, Store behaves identically to before (runtime enrichment continues)
 - **5-min TTL cache**: consistent across all query functions (genre, search, featured, status)
 
+#### Phase 14: Section wiring — Featured, New & Noteworthy, View All
+- `DISPLAY_GENRES` hoisted to module-level constant (was duplicated in two closures)
+- `catalogGameToStoreGame()` helper converts `CatalogGameResult` → `StoreGame`
+- `catalogFeaturedGames` state + `queryFeaturedGames(8)` on boot; used as primary in `discoverSections` useMemo; runtime `queryIndexFeatured` is fallback
+- `catalogNewNoteworthyGames` state + `queryNewNoteworthyGames(8)` on boot; used as primary in `discoverSections` useMemo; runtime `parseReleaseDate` is fallback
+- View All: `viewAllGames` + `viewAllLoading` + `viewAllPage` + `viewAllHasMore` state; `queryByGenre(genre, 24, offset)` with pagination; `loadMoreViewAll` callback; "Load More" button at bottom
+- Mount effect: `ensureCatalogImported()` → `preFetchGenreGroups()` → `Promise.all([queryFeaturedGames(8), queryNewNoteworthyGames(8)])`
+
 ### Key Files Created/Changed
 - `tools/steam-catalog-builder/taxonomy.ts` — **new** — genre/category taxonomy
 - `tools/steam-catalog-builder/catalogSchema.ts` — **new** — record/artifact/manifest types
 - `tools/steam-catalog-builder/build.ts` — **new** — offline builder with checkpoint/resume
+- `tools/steam-catalog-builder/generate.cjs` — **new** — standalone CJS runner with rate-limit handling
 - `tools/steam-catalog-builder/package.json` — **new** — builder package
-- `src-tauri/src/commands/store_catalog.rs` — **new** — schema, import, queries, 7 Tauri commands
+- `public/data/catalog/steam-catalog-v1.json` — **new** — bundled 1,984-record artifact
+- `public/data/catalog/steam-catalog-v1.json.gz` — **new** — compressed artifact
+- `public/data/catalog/steam-catalog-v1.manifest.json` — **new** — manifest with checksum
+- `src-tauri/src/commands/store_catalog.rs` — **new** — schema, import, queries, 7 Tauri commands, 20 unit tests
 - `src-tauri/src/commands/mod.rs` — `pub mod store_catalog` added
 - `src-tauri/src/commands/sqlite_cache.rs` — catalog tables in `init_tables()`
 - `src-tauri/src/lib.rs` — 7 commands registered
 - `src/services/tauri.ts` — CatalogMetaResult, CatalogGameResult types + 7 TS bindings
-- `src/services/steamCatalogService.ts` — **new** — query service with TTL cache + pre-fetch
-- `src/pages/Store.tsx` — mount effect pre-fetch, rawGenreGroups catalog merge, diagnostic logs
+- `src/services/steamCatalogService.ts` — **new** — query service with TTL cache + pre-fetch + ensureCatalogImported
+- `src/__tests__/steamCatalogService.test.ts` — **new** — 16 TS contract tests
+- `vitest.config.ts` — **new** — vitest configuration
+- `src/pages/Store.tsx` — mount auto-import + featured/noteworthy pre-fetch, DISPLAY_GENRES module constant, catalogGameToStoreGame helper, catalogFeaturedGames/catalogNewNoteworthyGames state, discoverSections with catalog-primary/fallback logic, View All pagination
 
 ### Build
 - `tsc --noEmit` ✅ (0 errors)
 - `vite build` ✅ (0 errors, only pre-existing chunk warnings)
 - `cargo check` ✅ (0 errors)
+- `vitest` ✅ 16/16 tests pass

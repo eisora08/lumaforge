@@ -472,3 +472,14 @@ export function subscribeManualGames(listener: Listener): () => void {
 export function resetManualGameCache(): void {
   _cache = null;
 }
+
+// Listen for external restore writes and reload from localStorage
+if (typeof window !== "undefined") {
+  window.addEventListener("lumaforge-data-changed", (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.key === LOCAL_STORAGE_KEY) {
+      _cache = null;
+      notifyListeners();
+    }
+  });
+}

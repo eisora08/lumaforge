@@ -300,3 +300,13 @@ export async function importSnapshotPlaytime(
     }
   }
 }
+
+// Listen for external restore writes and force-refresh playtime from Rust
+if (typeof window !== "undefined") {
+  window.addEventListener("lumaforge-data-changed", (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.key === "lumaforge-playtime-v1") {
+      loadPlaytimeStore(true).then(() => notifyPlaytimeStored()).catch(() => {});
+    }
+  });
+}

@@ -7,6 +7,7 @@ import type { AppSettings } from "../types/settings";
 import type { SteamGameIndexEntry } from "./fullSteamGameIndex";
 import { initPerfCounters, setBootPhaseLabel } from "./perfCounters";
 import { reportLibraryProgress } from "./libraryProgressService";
+import { isIntegrationScanOnStartup, isIntegrationEnabled } from "./integrationSettingsService";
 
 export type BootStatus =
   | "booting"
@@ -246,6 +247,10 @@ export async function runBootTasks(): Promise<void> {
 
           // Stage 3.25: Load manual games from AppData JSON (migrate from localStorage if needed)
           await track("load-manual-games", async () => {
+            if (!isIntegrationEnabled("manual")) {
+              logBoot("manual games skip: integration disabled");
+              return;
+            }
             logBoot("load manual games start");
             try {
               const { loadManualGamesFromJson } = await import("./manualGameStore");
@@ -366,7 +371,9 @@ export async function runBootTasks(): Promise<void> {
 
                 // Use TTL-guarded steam scan to avoid repeated scans on boot re-runs
                 let steamGames: Awaited<ReturnType<typeof scanSteamInstalledGames>> = [];
-                if (checkSteamScanAllowed()) {
+                if (!isIntegrationScanOnStartup("steam")) {
+                  console.log("[steam-scan][SKIP] reason=integration-disabled");
+                } else if (checkSteamScanAllowed()) {
                   steamGames = await scanSteamInstalledGames({
                     steamPath: settings.steamRoot || undefined,
                     luaPath: settings.luaPath || undefined,
@@ -379,7 +386,9 @@ export async function runBootTasks(): Promise<void> {
                 }
 
                 const [luaScripts, sqliteCache] = await Promise.all([
-                  settings.luaPath ? scanInstalledLuaScripts(settings.luaPath).catch(() => []) : Promise.resolve([]),
+                  (settings.luaPath && isIntegrationScanOnStartup("lua"))
+                    ? scanInstalledLuaScripts(settings.luaPath).catch(() => [])
+                    : Promise.resolve([]),
                   loadCachedGames().catch(() => null),
                 ]);
 

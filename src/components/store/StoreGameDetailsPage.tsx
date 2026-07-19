@@ -537,6 +537,24 @@ export default function StoreGameDetailsPage({
 
   const metadataLoading = !metadata?.resolved;
 
+  // Safety timeout: if metadata never resolves, show error after 15s instead of infinite skeleton
+  const [metadataTimedOut, setMetadataTimedOut] = useState(false);
+  const _timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!metadataLoading) {
+      setMetadataTimedOut(false);
+      if (_timeoutRef.current) { clearTimeout(_timeoutRef.current); _timeoutRef.current = null; }
+      return;
+    }
+    _timeoutRef.current = setTimeout(() => {
+      setMetadataTimedOut(true);
+      console.warn(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${game.appId} timeout=true loadingCleared=false finalRenderedState=error`);
+    }, 15_000);
+    return () => {
+      if (_timeoutRef.current) { clearTimeout(_timeoutRef.current); _timeoutRef.current = null; }
+    };
+  }, [metadataLoading, game.appId]);
+
   const title = getTitle(game, metadata);
   const developer = getDeveloper(game, metadata);
   const imageUrl = getBestImage(game, metadata);
@@ -981,6 +999,31 @@ export default function StoreGameDetailsPage({
   }
 
   if (metadataLoading) {
+    if (metadataTimedOut) {
+      return (
+        <div className="space-y-6">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Volver al Store
+          </button>
+          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-(--surface-active-border) bg-white/5 p-12 text-center">
+            <div className="text-sm font-medium text-(--color-text)">Could not load game details</div>
+            <div className="text-xs text-(--color-muted)">The Steam Store API did not respond in time.</div>
+            <button
+              type="button"
+              onClick={onBack}
+              className="mt-2 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            >
+              Back to Store
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="space-y-6">
         <button

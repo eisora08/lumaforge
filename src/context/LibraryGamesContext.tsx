@@ -42,6 +42,8 @@ import {
 import { loadManualGames, subscribeManualGames } from "../services/manualGameStore";
 import { manualGameToLibraryGame } from "../services/manualGameLibraryMapper";
 import { EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LIBRARY } from "../services/epicFeatureFlag";
+import { isIntegrationEnabled, isIntegrationScanOnStartup } from "../services/integrationSettingsService";
+import { filterEnabledGames } from "../services/providerSurfaceFilter";
 import {
   getAllEpicGames,
   subscribeEpicGames,
@@ -347,7 +349,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       console.log(`[LIBRARY_CONTEXT][APPLY_GAMES] source=${source} previous=${current.length} incoming=${withManual.length} merged=${merged.length} deduped=${deduped.length}`);
     }
     countLibraryApplied();
-    setGames(stable);
+    setGames(filterEnabledGames(stable));
     hasInitialData.current = true;
 
     // Phase 1: Update runtime status based on source
@@ -714,6 +716,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
   // Subscribe to manualGameStore changes — re-apply with fresh manual games
   useEffect(() => {
+    if (!isIntegrationEnabled("manual")) return;
     return subscribeManualGames(() => {
       const current = gamesRef.current;
       if (current.length === 0) return; // not loaded yet
@@ -737,10 +740,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
   // Subscribe to Epic game store changes — re-apply with fresh Epic entries
   useEffect(() => {
-    if (!EPIC_LIBRARY_ENABLED) return;
+    if (!EPIC_LIBRARY_ENABLED || !isIntegrationEnabled("epic")) return;
 
-    // Trigger initial Epic scan (fire-and-forget)
-    refreshEpicGames(settings.steamRoot || undefined).catch(() => {});
+    // Trigger initial Epic scan (fire-and-forget) only when scanOnStartup is enabled
+    if (isIntegrationScanOnStartup("epic")) {
+      refreshEpicGames(settings.steamRoot || undefined).catch(() => {});
+    }
 
     // Subscribe to override changes (media/metadata writes from GameEditDialog)
     initOverrideSubscription();
@@ -1081,6 +1086,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
   // ── Uninstall detection: periodic check for removed Steam appmanifests ──
   useEffect(() => {
+    if (!isIntegrationEnabled("steam")) return;
     const UNINSTALL_POLL_MS = 30000;
     let running = false;
 

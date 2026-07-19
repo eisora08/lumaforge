@@ -1803,6 +1803,50 @@ export async function getMetadataCacheSqlite(gameId: string): Promise<SqliteMeta
   }
 }
 
+// ── Backup Archive ──
+
+export type BackupFileInfo = {
+  relative_path: string;
+  section: string;
+  size: number;
+  checksum: string;
+};
+
+export type BackupManifestJson = {
+  schema_version: number;
+  backup_id: string;
+  created_at: string;
+  app_version: string;
+  device_id: string;
+  sections: Record<string, boolean>;
+  files: BackupFileInfo[];
+  total_size: number;
+  total_files: number;
+};
+
+export async function writeBackupArchive(
+  backupJson: string,
+  filename: string,
+): Promise<string> {
+  return await invoke<string>("write_backup_archive", { backupJson, filename });
+}
+
+export async function readBackupArchive(filename: string): Promise<string> {
+  return await invoke<string>("read_backup_archive", { filename });
+}
+
+export async function listBackupArchives(): Promise<string[]> {
+  return await invoke<string[]>("list_backup_archives");
+}
+
+export async function deleteBackupArchive(filename: string): Promise<void> {
+  return await invoke("delete_backup_archive", { filename });
+}
+
+export async function validateBackupFile(filename: string): Promise<BackupManifestJson> {
+  return await invoke<BackupManifestJson>("validate_backup_file", { filename });
+}
+
 // ── Dev console exposure ──
 
 if (typeof window !== "undefined") {

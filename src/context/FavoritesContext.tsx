@@ -6,6 +6,8 @@ type FavoritesState = {
   favoriteIds: Set<string>;
   isFavorite: (appId: string) => boolean;
   toggleFavorite: (appId: string) => void;
+  /** Force re-read from localStorage after an external restore writes new data. */
+  reloadFavorites: () => void;
 };
 
 const FavoritesContext = createContext<FavoritesState | null>(null);
@@ -54,7 +56,21 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const ctxValue = useMemo(() => ({ favoriteIds, isFavorite, toggleFavorite }), [favoriteIds]);
+  const reloadFavorites = useCallback(() => {
+    setFavoriteIds(loadFavorites());
+  }, []);
+
+  // Listen for external restore writes and reload
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.key === STORAGE_KEY) reloadFavorites();
+    };
+    window.addEventListener("lumaforge-data-changed", handler);
+    return () => window.removeEventListener("lumaforge-data-changed", handler);
+  }, [reloadFavorites]);
+
+  const ctxValue = useMemo(() => ({ favoriteIds, isFavorite, toggleFavorite, reloadFavorites }), [favoriteIds, reloadFavorites]);
 
   return (
     <FavoritesContext.Provider value={ctxValue}>

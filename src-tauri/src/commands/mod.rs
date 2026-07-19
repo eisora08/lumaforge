@@ -40,3 +40,4 @@ pub mod igdb;
 pub mod manual_games;
 pub mod epic;
 pub mod store_catalog;
+pub mod backup;

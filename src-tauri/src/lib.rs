@@ -263,6 +263,11 @@ pub fn run() {
             commands::store_catalog::query_catalog_game,
             commands::store_catalog::query_catalog_featured,
             commands::store_catalog::query_catalog_new_noteworthy,
+            commands::backup::write_backup_archive,
+            commands::backup::read_backup_archive,
+            commands::backup::list_backup_archives,
+            commands::backup::delete_backup_archive,
+            commands::backup::validate_backup_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

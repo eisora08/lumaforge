@@ -177,6 +177,18 @@ export function SettingsProvider({
     document.documentElement.dataset.cardLabel = settings.hideCardLabels ? "hidden" : "visible";
   }, [settings.hideCardLabels]);
 
+  // ── Listen for restore-triggered refresh events ──
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key?: string } | undefined;
+      if (detail?.key === STORAGE_KEY) {
+        setSettings(loadSettings());
+      }
+    };
+    window.addEventListener("lumaforge-data-changed", handler);
+    return () => window.removeEventListener("lumaforge-data-changed", handler);
+  }, []);
+
   const value = useMemo(
     () => ({
       settings,

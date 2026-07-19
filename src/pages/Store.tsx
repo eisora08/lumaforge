@@ -118,6 +118,7 @@ const ENABLE_VERBOSE_SOURCE_LOGS = false;
 const DEBUG_STORE_RENDER_VERBOSE = false;
 const DEBUG_STORE_BADGE_DECISIONS = false;
 const DEBUG_STORE_DISCOVERY = false;
+const DEBUG_STORE_DETAILS_BOUNDARY = false;
 
 /** Tracks how many providers have completed during concurrent resolution. */
 type SourceProgress = {
@@ -2224,7 +2225,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   const reviewScopeKeyRef = useRef("");
 
   // Visible appIds for metadata loading - does NOT depend on storeMetadataByAppId
-  // Phase 8: Reduced cap from 200→80. Detail game has its own dedicated effect below.
+  // Phase 8: Reduced cap from 200→80. Detail game has its own dedicated effect (~line 2383).
   const visibleAppIds = useMemo(() => {
     const appIds = new Set<number>();
 
@@ -2278,7 +2279,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }
     });
 
-    // NOTE: selectedDetailGame excluded — it has its own dedicated metadata effect below
+    // NOTE: selectedDetailGame excluded from this batch — handled by dedicated detail effect below (line ~2383)
 
     const ids = Array.from(appIds);
     // Phase 8: Cap metadata fetch scope — 80 covers hero + sections (8×8=64) + browse page.
@@ -2378,6 +2379,50 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       setCachedStoreMetadata(storeMetadataByAppId as unknown as Record<number, Record<string, unknown>>);
     }
   }, [storeMetadataByAppId]);
+
+  // Dedicated metadata load for the selected detail game.
+  // The visibleAppIds batch effect (above) caps at 80 IDs dominated by Browse catalog.
+  // Detail games from local-catalog sections often fall outside that window.
+  // This effect guarantees metadata is loaded for whichever game the user opens.
+  const _detailMetadataReqRef = useRef(0);
+  useEffect(() => {
+    const appId = Number(selectedDetailGameWithOverlay?.appId);
+    if (!appId || appId <= 0) return;
+
+    const existing = storeMetadataByAppId[appId];
+    if (existing && existing.resolved) return;
+
+    const reqId = ++_detailMetadataReqRef.current;
+
+    if (DEBUG_STORE_DETAILS_BOUNDARY) {
+      const catalogRecord = discoverSections.flatMap((s) => s.items).find((g) => Number(g.appId) === appId);
+      console.log(`[STORE_DETAILS_BOUNDARY][LOAD] appId=${appId} fullCacheHit=${!!existing} lightweightRecordPresent=${!!catalogRecord} requestStarted=true`);
+    }
+
+    resolveGameMetadata([appId])
+      .then((metadata) => {
+        if (!_mountedRef.current) return;
+        if (reqId !== _detailMetadataReqRef.current) {
+          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} staleResultIgnored=true`);
+          return;
+        }
+        const meta = metadata[appId];
+        if (meta) {
+          setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: meta }));
+          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} success=true loadingCleared=true finalRenderedState=details`);
+        } else {
+          // createFallbackMetadata returns resolved:false — the page will show skeleton
+          // but at least the effect won't re-fire (existing is now set)
+          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} unavailable=true loadingCleared=false finalRenderedState=skeleton`);
+        }
+      })
+      .catch((err) => {
+        if (!_mountedRef.current) return;
+        if (reqId !== _detailMetadataReqRef.current) return;
+        if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} error=${String(err).slice(0, 80)} loadingCleared=false finalRenderedState=retry`);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDetailGameWithOverlay?.appId]);
 
   // Smart preload: proactively load metadata for upcoming items
   useEffect(() => {
@@ -2835,6 +2880,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   function openDetailsForGame(game: PackageGame) {
     if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${game.appId} reason=click`);
+    if (DEBUG_STORE_DETAILS_BOUNDARY) {
+      const appIdNum = Number(game.appId);
+      console.log(`[STORE_DETAILS_BOUNDARY][OPEN] callerSurface=store-card rawAppId=${game.appId} normalizedAppId=${appIdNum} title=${game.title} source=local-catalog-or-browse existingCallback=openDetailsForGame`);
+    }
     const appId = game.appId;
     const cached = getSourceAvailability(appId);
 
