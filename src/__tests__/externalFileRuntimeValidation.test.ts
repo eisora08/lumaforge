@@ -729,8 +729,9 @@ describe("TASK 6 — Controlled achievement export", () => {
     const { SECTION_AUDIT_NOTES } = await import("../services/localBackupService");
     const note = SECTION_AUDIT_NOTES["steamAchievementInputs"];
     expect(note).toContain("LumaForge-owned");
-    expect(note).toContain("Steam-owned");
-    expect(note).toContain("excluded");
+    expect(note).toContain("achievementpercentages.json");
+    expect(note).toContain("summary.json");
+    expect(note).toContain("checksummed write");
   });
 });
 

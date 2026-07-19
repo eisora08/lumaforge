@@ -42,3 +42,4 @@ pub mod epic;
 pub mod store_catalog;
 pub mod backup;
 pub mod external_files;
+pub mod extension;

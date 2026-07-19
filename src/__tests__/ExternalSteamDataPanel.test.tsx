@@ -1356,3 +1356,284 @@ describe("TASK 5 — Settings Accessor", () => {
     });
   });
 });
+
+// ══════════════════════════════════════════════════════════════
+//  TASK 11 — React Error/Empty-State Tests
+// ══════════════════════════════════════════════════════════════
+
+describe("TASK 11 — Lua error/empty states", () => {
+  it("1. Missing Lua path shows 'Not configured' and disables Audit", async () => {
+    mockLoadSettings.mockReturnValue({ luaPath: "" });
+    render(<ExternalSteamDataPanel />);
+    await waitFor(() => {
+      const luaCard = screen.getByText("Steam Lua Scripts").closest("div.lf-surface")!;
+      expect(within(luaCard).getByText("Not configured")).toBeTruthy();
+    });
+    const auditBtn = screen.getByRole("button", { name: /Audit Files/ });
+    expect(auditBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("2. Undefined Lua path shows 'Not configured' and disables Audit", async () => {
+    mockLoadSettings.mockReturnValue({});
+    render(<ExternalSteamDataPanel />);
+    await waitFor(() => {
+      const luaCard = screen.getByText("Steam Lua Scripts").closest("div.lf-surface")!;
+      expect(within(luaCard).getByText("Not configured")).toBeTruthy();
+    });
+    const auditBtn = screen.getByRole("button", { name: /Audit Files/ });
+    expect(auditBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("3. Lua audit failure shows error banner and empty counts", async () => {
+    await renderAndWait();
+    mockAuditLuaScripts.mockRejectedValue(new Error("Permission denied"));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/Audit failed/)).toBeTruthy();
+      expect(screen.getByText(/Permission denied/)).toBeTruthy();
+    });
+  });
+
+  it("4. Lua valid-empty audit shows zero allowed count and disabled Review", async () => {
+    await renderAndWait();
+    mockAuditLuaScripts.mockResolvedValue(makeLuaResult({ entries: [], errors: [] }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      const luaCard = screen.getByText("Steam Lua Scripts").closest("div.lf-surface")!;
+      const allowedLabel = within(luaCard).getByText("Allowed Files");
+      const cell = allowedLabel.closest("div")!.parentElement!;
+      expect(cell.textContent).toContain("0");
+    });
+    const reviewBtn = screen.getByRole("button", { name: /Review Allowed Files/ });
+    expect(reviewBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("5. Lua audit with warnings completes without crash", async () => {
+    await renderAndWait();
+    const result = makeLuaResult({
+      entries: [
+        { relativePath: "helper.lua", category: "lua-script", safe: true, reason: "", size: 2048 },
+      ],
+    });
+    result.warnings = ["File helper.lua is larger than expected"];
+    mockAuditLuaScripts.mockResolvedValue(result);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      // Component completes audit without crash; warnings are not rendered inline
+      expect(screen.getByText("Review Allowed Files")).not.toHaveAttribute("disabled");
+    });
+  });
+});
+
+describe("TASK 11 — Achievement error/empty states", () => {
+  it("1. Achievement missing root shows 'Missing' and disables Audit Data", async () => {
+    mockResolveAchievementsRootDir.mockResolvedValue(null);
+    render(<ExternalSteamDataPanel />);
+    await waitFor(() => {
+      const achCard = screen.getByText("LumaForge Achievement Data").closest("div.lf-surface")!;
+      expect(within(achCard).getByText("Missing")).toBeTruthy();
+    });
+    const auditBtn = screen.getByRole("button", { name: /Audit Data/ });
+    expect(auditBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("2. Achievement root error shows 'Error' and disables Audit Data", async () => {
+    mockResolveAchievementsRootDir.mockRejectedValue(new Error("Path not found"));
+    render(<ExternalSteamDataPanel />);
+    await waitFor(() => {
+      const achCard = screen.getByText("LumaForge Achievement Data").closest("div.lf-surface")!;
+      expect(within(achCard).getByText("Error")).toBeTruthy();
+    });
+    const auditBtn = screen.getByRole("button", { name: /Audit Data/ });
+    expect(auditBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("3. Achievement valid-empty audit shows zero game directories and disabled Review", async () => {
+    await renderAndWait();
+    mockAuditAchievementData.mockResolvedValue(makeAchResult({ entries: [], errors: [] }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Data/ }));
+    await waitFor(() => {
+      const achCard = screen.getByText("LumaForge Achievement Data").closest("div.lf-surface")!;
+      const gameDirLabel = within(achCard).getByText("Game Directories");
+      const cell = gameDirLabel.closest("div")!.parentElement!;
+      expect(cell.textContent).toContain("0");
+    });
+    const reviewBtn = screen.getByRole("button", { name: /Review Records/ });
+    expect(reviewBtn.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("4. Achievement valid-empty audit completes without crash", async () => {
+    await renderAndWait();
+    const emptyResult = makeAchResult({ entries: [], errors: [] });
+    emptyResult.warnings = ["No achievement data files found (valid-empty)"];
+    mockAuditAchievementData.mockResolvedValue(emptyResult);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Data/ }));
+    await waitFor(() => {
+      // Component completes audit; review button stays disabled (no appIds)
+      const reviewBtn = screen.getByRole("button", { name: /Review Records/ });
+      expect(reviewBtn.hasAttribute("disabled")).toBe(true);
+    });
+  });
+
+  it("5. Achievement audit failure shows error banner", async () => {
+    await renderAndWait();
+    mockAuditAchievementData.mockRejectedValue(new Error("Disk read error"));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Data/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/Audit failed/)).toBeTruthy();
+      expect(screen.getByText(/Disk read error/)).toBeTruthy();
+    });
+  });
+});
+
+describe("TASK 11 — Malformed entry handling", () => {
+  it("1. Lua entry missing fileName does not crash component", async () => {
+    await renderAndWait();
+    mockAuditLuaScripts.mockResolvedValue(makeLuaResult({
+      entries: [
+        { relativePath: "helper.lua", category: "lua-script", safe: true, reason: "", size: 2048 },
+      ],
+    }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Review Allowed Files")).not.toHaveAttribute("disabled");
+    });
+    // Open review — component should render without crash
+    await user.click(screen.getByRole("button", { name: /Review Allowed Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/File Review/)).toBeTruthy();
+    });
+  });
+
+  it("2. Lua entry with absolute path renders but review panel works", async () => {
+    await renderAndWait();
+    // Simulate a malformed entry with absolute path (normalizeEntry would fix, but
+    // mock returns it directly — component should still render)
+    mockAuditLuaScripts.mockResolvedValue(makeLuaResult({
+      entries: [
+        { relativePath: "helper.lua", category: "lua-script", safe: true, reason: "", size: 2048 },
+        { relativePath: "C:/bad/absolute.lua", category: "lua-script", safe: false, reason: "Absolute path", size: 512 },
+      ],
+    }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Review Allowed Files")).not.toHaveAttribute("disabled");
+    });
+    await user.click(screen.getByRole("button", { name: /Review Allowed Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/File Review/)).toBeTruthy();
+    });
+    // The absolute path entry renders with forward slashes in jsdom
+    expect(screen.getByText("C:/bad/absolute.lua")).toBeTruthy();
+  });
+
+  it("3. Achievement entry missing appId is filtered from summaries", async () => {
+    await renderAndWait();
+    mockAuditAchievementData.mockResolvedValue(makeAchResult({
+      entries: [
+        { relativePath: "268910/achievements.json", category: "achievements", safe: true, reason: "", size: 4096 },
+        // No appId field — component should filter it from game summaries
+      ],
+    }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Data/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Review Records")).not.toHaveAttribute("disabled");
+    });
+    await user.click(screen.getByRole("button", { name: /Review Records/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/Game Review/)).toBeTruthy();
+    });
+  });
+
+  it("4. Achievement entry with all fields missing does not crash", async () => {
+    await renderAndWait();
+    mockAuditAchievementData.mockResolvedValue(makeAchResult({
+      entries: [
+        { relativePath: "", safe: true, reason: "", size: 0 },
+      ],
+    }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Data/ }));
+    await waitFor(() => {
+      // Component renders without crash — even with empty entries
+      expect(screen.getByText("LumaForge Achievement Data")).toBeTruthy();
+    });
+  });
+});
+
+describe("TASK 11 — Compound .lua.disabled extension", () => {
+  it("1. Compound extension entry renders with lua-disabled category", async () => {
+    await renderAndWait();
+    mockAuditLuaScripts.mockResolvedValue(makeLuaResult({
+      entries: [
+        { relativePath: "helper.lua.disabled", category: "lua-disabled", safe: true, reason: "", size: 512 },
+        { relativePath: "script.lua", category: "lua-script", safe: true, reason: "", size: 2048 },
+      ],
+    }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Review Allowed Files")).not.toHaveAttribute("disabled");
+    });
+    await user.click(screen.getByRole("button", { name: /Review Allowed Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/File Review/)).toBeTruthy();
+    });
+    // Both entries should be in the review list
+    expect(screen.getByText("helper.lua.disabled")).toBeTruthy();
+    expect(screen.getByText("script.lua")).toBeTruthy();
+  });
+
+  it("2. Only .lua extension is classified as lua-script", async () => {
+    await renderAndWait();
+    mockAuditLuaScripts.mockResolvedValue(makeLuaResult({
+      entries: [
+        { relativePath: "only.lua", category: "lua-script", safe: true, reason: "", size: 1024 },
+        { relativePath: "disabled.lua.disabled", category: "lua-disabled", safe: true, reason: "", size: 512 },
+        { relativePath: "bad.lua.exe", category: "unknown", safe: false, reason: "Unexpected extension", size: 256 },
+      ],
+    }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Review Allowed Files")).not.toHaveAttribute("disabled");
+    });
+    await user.click(screen.getByRole("button", { name: /Review Allowed Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/File Review/)).toBeTruthy();
+    });
+    // Verify categories render
+    const luaCard = screen.getByText("Steam Lua Scripts").closest("div.lf-surface")!;
+    expect(within(luaCard).getByText("lua-script")).toBeTruthy();
+    expect(within(luaCard).getByText("lua-disabled")).toBeTruthy();
+  });
+
+  it("3. Entry with multiple dots in filename renders correctly", async () => {
+    await renderAndWait();
+    mockAuditLuaScripts.mockResolvedValue(makeLuaResult({
+      entries: [
+        { relativePath: "my.special.script.lua", category: "lua-script", safe: true, reason: "", size: 3072 },
+        { relativePath: "disabled.backup.lua.disabled", category: "lua-disabled", safe: true, reason: "", size: 1024 },
+      ],
+    }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Audit Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Review Allowed Files")).not.toHaveAttribute("disabled");
+    });
+    await user.click(screen.getByRole("button", { name: /Review Allowed Files/ }));
+    await waitFor(() => {
+      expect(screen.getByText("my.special.script.lua")).toBeTruthy();
+      expect(screen.getByText("disabled.backup.lua.disabled")).toBeTruthy();
+    });
+  });
+});

@@ -276,6 +276,14 @@ pub fn run() {
             commands::external_files::verify_file_checksums,
             commands::external_files::resolve_achievements_root_dir,
             commands::external_files::resolve_app_data_dir,
+            commands::extension::extension_file_exists,
+            commands::extension::extension_file_status,
+            commands::extension::extension_rename_file,
+            commands::extension::extension_batch_rename,
+            commands::extension::extension_get_dll_version,
+            commands::extension::extension_list_directory,
+            commands::extension::extension_download_file,
+            commands::extension::extension_extract_zip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

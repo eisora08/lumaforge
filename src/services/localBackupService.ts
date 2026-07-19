@@ -258,9 +258,9 @@ export const SECTION_AUDIT_NOTES: Record<BackupSection, string> = {
   sessionHistory: "Exports session history records",
   providerOverrides: "Exports Epic provider overrides",
   profile: "Exports user profile (avatar, banner, display name)",
-  steamAchievementInputs: "Partial. Collector reads localStorage launcher config + disk-based LumaForge-owned achievement JSONs (achievements.json, percentages.json) via Rust. Steam-owned progress (librarycache) and icon images are excluded. Restore writes via Rust with checksum verification. Missing: runtime re-scan after restore, full rollback on failure.",
+  steamAchievementInputs: "Partial. Collector reads LumaForge-owned achievement JSONs (achievements.json, achievementpercentages.json, image_sources.json, summary.json) from disk via Rust with SHA-256 checksums. Export reads content via Rust and writes backup archive. Restore writes via Rust safety backup + checksummed write. Verified: directory resolution (Tauri), collector, export, restore. Missing: runtime re-scan of achievement data after restore, full rollback on partial failure.",
   customArtwork: "Planned — reads game-activities, not real artwork files. No usable payload. Not selectable for backup.",
-  steamLua: "Partial. Export reads real .lua/.lua.disabled files from disk via Rust with checksum verification. Restore writes via Rust safety backup + checksummed write. Missing: Lua directory re-scan after restore, settings accessor wired during boot. Not selectable for backup.",
+  steamLua: "Partial. Settings accessor wired at boot (Stage 1). Collector reads .lua/.lua.disabled files from disk via Rust with SHA-256 checksums. Export reads content via Rust and writes backup archive. Restore writes via Rust safety backup + checksummed write + Lua re-scan. Verified: settings accessor, collector, export, restore, post-restore re-scan. Missing: full rollback on partial restore failure.",
   uiPreferences: "Exports only visual fields from lumaforge-settings (28 keys) plus lumaforge-theme and lumaforge-surface-mode. Never touches steamRoot, API keys, or providers.",
 };
 

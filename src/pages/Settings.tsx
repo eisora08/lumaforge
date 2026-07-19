@@ -26,6 +26,7 @@ import {
   FolderOpen,
   Zap,
   Cloud,
+  Puzzle,
 } from "lucide-react";
 
 import {
@@ -50,6 +51,7 @@ import BackupSectionUI from "../components/settings/BackupSection";
 import SteamAccountDetector from "../components/settings/SteamAccountDetector";
 import PageContainer from "../components/layout/PageContainer";
 import IntegrationsSection from "../components/settings/IntegrationsSection";
+import ExtensionsSettings from "../extensions/ui/ExtensionsSettings";
 
 import { defaultApiProviders } from "../data/providers";
 import { ApiProviderUserSettings } from "../types/provider";
@@ -67,6 +69,7 @@ type SettingsSectionId =
   | "collections"
   | "metadata"
   | "artwork"
+  | "extensions"
   | "integrations"
   | "cloudBackup"
   | "manual"
@@ -88,6 +91,7 @@ const navSections: {
   { key: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, description: "Game grouping and organization" },
   { key: "metadata", label: "Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG, Google and Bing" },
   { key: "artwork", label: "Artwork Providers", icon: <Image className="h-4 w-4" />, description: "SteamGridDB artwork configuration" },
+  { key: "extensions", label: "Extensions", icon: <Puzzle className="h-4 w-4" />, description: "External tool integrations" },
   { key: "integrations", label: "Integrations", icon: <Zap className="h-4 w-4" />, description: "Provider integrations and visibility" },
   { key: "cloudBackup", label: "Cloud & Backup", icon: <Cloud className="h-4 w-4" />, description: "Backups, restore and cloud sync" },
   { key: "manual", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, description: "Manually added games info" },
@@ -669,6 +673,10 @@ export default function Settings() {
                 </SettingsSection>
                 <IntegrationsSection />
               </>
+            )}
+
+            {activeSection === "extensions" && (
+              <ExtensionsSettings />
             )}
 
             {activeSection === "cloudBackup" && (
