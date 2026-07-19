@@ -37,6 +37,14 @@ export async function extensionGetDllVersion(
   });
 }
 
+export async function extensionRemoveFile(path: string): Promise<boolean> {
+  return await invoke<boolean>("extension_remove_file", { path });
+}
+
+export async function extensionCreateDir(path: string): Promise<boolean> {
+  return await invoke<boolean>("extension_create_dir", { path });
+}
+
 export async function extensionListDirectory(path: string): Promise<string[]> {
   return await invoke<string[]>("extension_list_directory", { path });
 }

@@ -59,8 +59,13 @@ pub fn extension_rename_file(from: String, to: String) -> Result<(), String> {
             "WARNING: destination already exists, removing before rename: {}",
             to
         ));
-        fs::remove_file(to_path)
-            .map_err(|e| format!("Failed to remove existing destination: {}", e))?;
+        if to_path.is_dir() {
+            fs::remove_dir_all(to_path)
+                .map_err(|e| format!("Failed to remove existing destination directory: {}", e))?;
+        } else {
+            fs::remove_file(to_path)
+                .map_err(|e| format!("Failed to remove existing destination file: {}", e))?;
+        }
     }
 
     if let Some(parent) = to_path.parent() {
@@ -257,6 +262,28 @@ fn windows_version_from_file(path: &Path) -> Result<Option<String>, String> {
     }
 
     Ok(None)
+}
+
+#[tauri::command]
+pub fn extension_create_dir(path: String) -> Result<bool, String> {
+    let p = Path::new(&path);
+    if p.exists() {
+        return Ok(false);
+    }
+    fs::create_dir_all(p).map_err(|e| format!("Failed to create directory {}: {}", path, e))?;
+    extension_log(format!("created dir: {}", path));
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn extension_remove_file(path: String) -> Result<bool, String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(p).map_err(|e| format!("Failed to remove file {}: {}", path, e))?;
+    extension_log(format!("removed: {}", path));
+    Ok(true)
 }
 
 #[tauri::command]

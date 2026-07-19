@@ -9,7 +9,7 @@
 import type { ExtensionOperationResult, GitHubReleaseProviderConfig } from "../../types";
 import { detect } from "./detector";
 import { fetchLatestRelease, findManagedAssets } from "./github";
-import { executeTransaction, createBatchRenameStep } from "../../services/transactionManager";
+import { executeTransaction, createBatchRenameStep, createDir } from "../../services/transactionManager";
 import {
   extensionFileExists,
   extensionDownloadFile,
@@ -63,7 +63,7 @@ export async function install(
     {
       name: "download-release",
       execute: async () => {
-        const releaseUrl = release.zipballUrl;
+        const releaseUrl = assets[0].downloadUrl;
         await extensionDownloadFile(releaseUrl, zipPath);
         downloadedFiles.push(zipPath);
       },
@@ -116,6 +116,16 @@ export async function install(
           if (!exists) {
             throw new Error(`Verification failed: ${dll} not found after install.`);
           }
+        }
+      },
+      rollback: async () => {},
+    },
+    {
+      name: "ensure-lua-directory",
+      execute: async () => {
+        const luaDir = `${steamRoot}\\config\\lua`;
+        if (!await extensionFileExists(luaDir)) {
+          await createDir(luaDir);
         }
       },
       rollback: async () => {},
@@ -183,7 +193,7 @@ export async function update(
     {
       name: "download-release",
       execute: async () => {
-        await extensionDownloadFile(release.zipballUrl, zipPath);
+        await extensionDownloadFile(assets[0].downloadUrl, zipPath);
       },
       rollback: async () => {},
     },

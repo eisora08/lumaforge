@@ -1210,6 +1210,17 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     };
   }, [updateGame]);
 
+  // Listen for Lua folder changes (enable/disable/uninstall of extensions like OpenSteamTool)
+  // Triggers a full library refresh which includes Lua script scanning
+  useEffect(() => {
+    const handler = () => {
+      console.log("[LIBRARY][LUA_CHANGED] Extension toggled, refreshing Lua state");
+      refresh({ force: true }).catch(() => {});
+    };
+    window.addEventListener("lumaforge-lua-changed", handler);
+    return () => window.removeEventListener("lumaforge-lua-changed", handler);
+  }, [refresh]);
+
   const ctxValue = useMemo(() => ({
     games, warnings, loading, initialLoading,
     selectedId, setSelectedId, selectedGame, setSelectedGame,

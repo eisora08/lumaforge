@@ -93,13 +93,12 @@
     "config": {
       "owner": "OpenSteam001",
       "repo": "OpenSteamTool",
-      "tagPattern": "v*",
+      "tagPattern": "*",
       "assetPattern": "*.zip",
       "includePrereleases": false
     }
   },
   "behavior": {
-    "luaOwnershipOverride": true,
     "injectsDll": true,
     "modifiesStorePage": false,
     "addsGameEntries": false

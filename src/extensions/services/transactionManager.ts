@@ -108,12 +108,37 @@ export function createBatchRenameStep(
   };
 }
 
+export function createRemoveStep(
+  path: string,
+  description: string
+): TransactionStep {
+  return {
+    name: description,
+    execute: async () => {
+      await removeFile(path);
+    },
+    // No rollback for file deletion — file is gone permanently.
+    // The caller must ensure the transaction is structured so that
+    // deletion happens last (after verification steps).
+  };
+}
+
 export async function renameFile(from: string, to: string): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("extension_rename_file", { from, to });
 }
 
+export async function removeFile(path: string): Promise<boolean> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<boolean>("extension_remove_file", { path });
+}
+
 export async function fileExists(path: string): Promise<boolean> {
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<boolean>("extension_file_exists", { path });
+}
+
+export async function createDir(path: string): Promise<boolean> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<boolean>("extension_create_dir", { path });
 }

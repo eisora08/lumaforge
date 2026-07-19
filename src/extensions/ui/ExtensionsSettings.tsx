@@ -22,6 +22,8 @@ import type {
   ExtensionStatus,
 } from "../types";
 import { useSettings } from "../../context/SettingsContext";
+import { useConfirm } from "../../services/confirmService";
+import { compareVersions } from "../services/githubReleaseService";
 
 // =============================================================================
 // Surface config
@@ -243,6 +245,11 @@ export default function ExtensionsSettings() {
           if (ext) {
             await detectExtensionStatus(ext);
           }
+
+          // Notify library to rescan Lua state after enable/disable/uninstall
+          if (operation === "enable" || operation === "disable" || operation === "uninstall") {
+            window.dispatchEvent(new CustomEvent("lumaforge-lua-changed"));
+          }
         }
       }
     } catch (err) {
@@ -369,6 +376,7 @@ function ExtensionCard({
   onOperation: (extensionId: string, operation: "install" | "update" | "enable" | "disable" | "uninstall") => void;
 }) {
   const { manifest } = extension;
+  const { confirm } = useConfirm();
   const detection = state?.detection;
   const installedVersion = state?.installedVersion;
   const latestVersion = state?.latestVersion;
@@ -386,7 +394,7 @@ function ExtensionCard({
   const isUninstalling = operation === "uninstalling";
   const isBusy = isInstalling || isUpdating || isEnabling || isDisabling || isUninstalling;
 
-  const hasUpdate = installedVersion && latestVersion && installedVersion !== latestVersion;
+  const hasUpdate = installedVersion && latestVersion && compareVersions(latestVersion, installedVersion) > 0;
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
@@ -536,7 +544,20 @@ function ExtensionCard({
                 )}
 
                 <button
-                  onClick={() => onOperation(manifest.id, "uninstall")}
+                  onClick={async () => {
+                    const managedFileNames = manifest.managedFiles?.map((f) => f.path).join(", ");
+                    const result = await confirm({
+                      title: `Uninstall ${manifest.displayName}?`,
+                      description: managedFileNames
+                        ? `This will permanently remove all managed files (${managedFileNames}) from the Steam directory. You can reinstall later from this panel.`
+                        : `This will permanently remove ${manifest.displayName} from the Steam directory. You can reinstall later from this panel.`,
+                      confirmLabel: "Uninstall",
+                      variant: "danger",
+                    });
+                    if (result.confirmed) {
+                      onOperation(manifest.id, "uninstall");
+                    }
+                  }}
                   disabled={isBusy}
                   className="flex items-center gap-1 rounded-lg bg-rose-500/20 px-3 py-1.5 text-[10px] text-rose-400 hover:bg-rose-500/30 disabled:opacity-50"
                 >

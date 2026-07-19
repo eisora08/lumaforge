@@ -45,19 +45,22 @@ export function findManagedAssets(
 ): Array<{ fileName: string; downloadUrl: string; size: number }> {
   const results: Array<{ fileName: string; downloadUrl: string; size: number }> = [];
 
-  for (const dll of MANAGED_DLL_NAMES) {
-    let asset = null;
-    if (config) {
-      // Use config-based asset search (config.assetPattern matches first, fallback to by-name)
-      asset = findAssetForConfig(release, config);
-      // If asset doesn't match this specific DLL name, search by name directly
-      if (asset && asset.name !== dll) {
-        asset = release.assets.find((a) => a.name === dll) ?? null;
+  if (config) {
+    const zipAsset = findAssetForConfig(release, config);
+    if (zipAsset) {
+      for (const dll of MANAGED_DLL_NAMES) {
+        results.push({
+          fileName: dll,
+          downloadUrl: zipAsset.browserDownloadUrl,
+          size: 0,
+        });
       }
-    } else {
-      // Fallback: find by exact name
-      asset = release.assets.find((a) => a.name === dll) ?? null;
+      return results;
     }
+  }
+
+  for (const dll of MANAGED_DLL_NAMES) {
+    const asset = release.assets.find((a) => a.name === dll) ?? null;
     if (asset) {
       results.push({
         fileName: dll,

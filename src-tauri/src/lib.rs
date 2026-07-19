@@ -285,6 +285,8 @@ pub fn run() {
             commands::extension::extension_file_status,
             commands::extension::extension_rename_file,
             commands::extension::extension_batch_rename,
+            commands::extension::extension_remove_file,
+            commands::extension::extension_create_dir,
             commands::extension::extension_get_dll_version,
             commands::extension::extension_list_directory,
             commands::extension::extension_download_file,
