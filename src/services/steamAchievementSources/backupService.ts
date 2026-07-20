@@ -12,7 +12,7 @@
  * Export only via External Steam Data card.
  */
 
-import { writeBackupArchive } from "../tauri";
+import { writeBackupArchive, restoreSteamAchievementSources, type ExportedSourceResultTs } from "../tauri";
 
 import { auditSteamAchievementSources, exportSteamAchievementSources } from "./auditor";
 import {
@@ -20,12 +20,7 @@ import {
   fromLogicalPath,
 } from "./types";
 
-import { sha256, buildBackupManifest, type BackupSection } from "../localBackupService";
-
-import {
-  restoreExternalFiles,
-  type ExternalFileRestoreEntry,
-} from "../tauri";
+import { buildBackupManifest, type BackupSection } from "../localBackupService";
 
 // ── Collect (for Stored Backups integration) ──
 
@@ -114,30 +109,26 @@ export async function exportSteamAchievementSourcesToArchive(
 
     for (const exportResult of exports) {
       for (const file of exportResult.files) {
-        // Decode base64 → raw bytes → re-encode as UTF-8 string for JSON archive
-        const rawBytes = Uint8Array.from(atob(file.base64Content), (c) =>
-          c.charCodeAt(0),
-        );
-        const dataStr = new TextDecoder().decode(rawBytes);
-        const checksum = await sha256(dataStr);
         const archivePath = file.logicalPath.startsWith(
           ACH_SOURCE_BACKUP_PREFIX,
         )
           ? file.logicalPath
           : `${ACH_SOURCE_BACKUP_PREFIX}${file.logicalPath}`;
 
+        // Store base64 directly — preserves binary fidelity for .bin files.
+        // The Rust export already computed the checksum over raw bytes.
         allFiles.push({
           relativePath: archivePath,
           section: "steamAchievementSources",
-          data: dataStr,
+          data: file.base64Content,
         });
         fileEntries.push({
           relativePath: archivePath,
           section: "steamAchievementSources",
-          size: rawBytes.length,
-          checksum,
+          size: file.size,
+          checksum: file.checksum,
         });
-        totalSize += rawBytes.length;
+        totalSize += file.size;
         fileCount++;
       }
     }
@@ -177,14 +168,29 @@ export async function exportSteamAchievementSourcesToArchive(
 // ── Restore (from backup archive) ──
 
 /**
+ * Reverse mapping: archive fileName → sourceKind string (matches Rust enum).
+ * Used to reconstruct ExportedSourceResult from archive data.
+ */
+const FILE_NAME_TO_SOURCE_KIND: Record<string, string> = {
+  "user-game-stats.bin": "userGameStats",
+  "user-game-stats-schema.bin": "userGameStatsSchema",
+  "librarycache.json": "libraryCacheJson",
+};
+
+/**
  * Restore achievement source files from a backup archive.
- * Creates a safety backup of existing files, writes restored files,
- * and verifies checksums.
+ * Uses the custom restore_steam_achievement_sources Tauri command which:
+ *   1. Checks Steam is not running
+ *   2. Creates safety backups of existing files
+ *   3. Decodes base64 content → raw bytes (binary-safe)
+ *   4. Writes to correct Steam paths (appcache/stats/, userdata/)
+ *   5. Verifies checksums match original export
  */
 export async function restoreSteamAchievementSourcesFromBackup(
   archiveData: Record<string, string>,
   selectedPaths: string[],
   steamPath: string,
+  steamAccountId: string,
 ): Promise<{
   restored: number;
   failed: number;
@@ -194,14 +200,16 @@ export async function restoreSteamAchievementSourcesFromBackup(
 
   if (selectedPaths.length === 0) return result;
 
-  const restoreEntries: ExternalFileRestoreEntry[] = [];
+  // Group files by appId to build ExportedSourceResultTs[]
+  const byAppId = new Map<string, ExportedSourceResultTs>();
+
   for (const selPath of selectedPaths) {
     const archiveKey = selPath.startsWith(ACH_SOURCE_BACKUP_PREFIX)
       ? selPath
       : `${ACH_SOURCE_BACKUP_PREFIX}${selPath}`;
 
-    const data = archiveData[archiveKey] ?? archiveData[selPath];
-    if (data === undefined) {
+    const base64Data = archiveData[archiveKey] ?? archiveData[selPath];
+    if (base64Data === undefined) {
       result.errors.push(`Missing data for: ${selPath}`);
       result.failed++;
       continue;
@@ -214,23 +222,48 @@ export async function restoreSteamAchievementSourcesFromBackup(
       continue;
     }
 
-    restoreEntries.push({
-      relativePath: archiveKey,
-      content: data,
-      expectedChecksum: "", // Will be validated by Rust
+    const sourceKind = FILE_NAME_TO_SOURCE_KIND[parsed.fileName];
+    if (!sourceKind) {
+      result.errors.push(`Unknown file type: ${parsed.fileName}`);
+      result.failed++;
+      continue;
+    }
+
+    const logicalPath = archiveKey.startsWith(ACH_SOURCE_BACKUP_PREFIX)
+      ? archiveKey
+      : `${ACH_SOURCE_BACKUP_PREFIX}${archiveKey}`;
+
+    let entry = byAppId.get(parsed.appId);
+    if (!entry) {
+      entry = { appId: parsed.appId, files: [], totalSize: 0 };
+      byAppId.set(parsed.appId, entry);
+    }
+
+    entry.files.push({
+      logicalPath,
+      sourceKind,
+      base64Content: base64Data,
+      checksum: "", // Will be verified by Rust after decode
+      size: 0,     // Informational; Rust verifies integrity via checksum
     });
   }
 
-  if (restoreEntries.length === 0) return result;
+  if (byAppId.size === 0) return result;
+
+  const exports = Array.from(byAppId.values());
 
   try {
-    const restoreResult = await restoreExternalFiles(steamPath, restoreEntries);
+    const restoreResult = await restoreSteamAchievementSources(
+      steamPath,
+      steamAccountId,
+      exports,
+    );
     result.restored = restoreResult.restored;
     result.failed += restoreResult.failed;
     result.errors.push(...restoreResult.errors);
   } catch (err) {
     result.errors.push(`Restore failed: ${err}`);
-    result.failed += restoreEntries.length;
+    result.failed += exports.reduce((sum, e) => sum + e.files.length, 0);
   }
 
   return result;

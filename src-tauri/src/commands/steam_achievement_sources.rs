@@ -503,12 +503,27 @@ fn restore_sources_inner(
     steam_account_id: &str,
     exports: &[ExportedSourceResult],
 ) -> Result<RestoreSourceResult, String> {
+    // Validate steam_account_id: must be a positive integer (no path traversal)
+    if steam_account_id.is_empty() {
+        return Err("Missing steam account ID".to_string());
+    }
+    if steam_account_id.parse::<u32>().is_err() {
+        return Err(format!("Invalid steam account ID: {}", steam_account_id));
+    }
+
     let mut restored = 0usize;
     let mut failed = 0usize;
     let mut errors: Vec<String> = Vec::new();
     let mut all_checksums_valid = true;
 
     for export in exports {
+        // Validate appId per game entry
+        if validate_app_id(&export.app_id).is_err() {
+            errors.push(format!("Invalid app ID in restore: {}", export.app_id));
+            failed += export.files.len();
+            continue;
+        }
+
         for file in &export.files {
             let target_path = match file.source_kind {
                 SteamSourceKind::UserGameStats => {
@@ -1488,5 +1503,123 @@ mod tests {
         .unwrap();
 
         assert!(!manifest.games[0].files[0].requires_steam_closed);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  Path traversal validation in restore
+    // ══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn restore_rejects_empty_steam_account_id() {
+        let tmp = tmp_steam_root();
+        let result = restore_sources_inner(tmp.path(), "", &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing steam account ID"));
+    }
+
+    #[test]
+    fn restore_rejects_non_numeric_steam_account_id() {
+        let tmp = tmp_steam_root();
+        let result = restore_sources_inner(tmp.path(), "../etc/passwd", &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid steam account ID"));
+    }
+
+    #[test]
+    fn restore_rejects_path_traversal_steam_account_id() {
+        let tmp = tmp_steam_root();
+        let result = restore_sources_inner(tmp.path(), "12345/../../../etc", &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid steam account ID"));
+    }
+
+    #[test]
+    fn restore_rejects_invalid_app_id_in_export() {
+        let tmp = tmp_steam_root();
+        let content = b"test data";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(content);
+        let checksum = compute_checksum(content);
+
+        let exports = vec![ExportedSourceResult {
+            app_id: "0".to_string(), // Invalid
+            files: vec![ExportedSourceFile {
+                logical_path: "steam/achievement-sources/0/user-game-stats.bin".to_string(),
+                source_kind: SteamSourceKind::UserGameStats,
+                base64_content: encoded,
+                checksum,
+                size: content.len() as u64,
+            }],
+            total_size: content.len() as u64,
+        }];
+
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
+        assert_eq!(result.restored, 0);
+        assert_eq!(result.failed, 1);
+        assert!(result.errors[0].contains("Invalid app ID"));
+    }
+
+    #[test]
+    fn restore_rejects_traversal_app_id_in_export() {
+        let tmp = tmp_steam_root();
+        let content = b"test data";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(content);
+
+        let exports = vec![ExportedSourceResult {
+            app_id: "../268910".to_string(), // Path traversal
+            files: vec![ExportedSourceFile {
+                logical_path: "steam/achievement-sources/../268910/user-game-stats.bin".to_string(),
+                source_kind: SteamSourceKind::UserGameStats,
+                base64_content: encoded,
+                checksum: compute_checksum(content),
+                size: content.len() as u64,
+            }],
+            total_size: content.len() as u64,
+        }];
+
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
+        assert_eq!(result.restored, 0);
+        assert_eq!(result.failed, 1);
+        assert!(result.errors[0].contains("Invalid app ID"));
+    }
+
+    #[test]
+    fn restore_roundtrip_binary_data() {
+        let tmp = tmp_steam_root();
+        // Binary data with non-UTF8 bytes
+        let content: Vec<u8> = (0..=255).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&content);
+        let checksum = compute_checksum(&content);
+
+        let exports = vec![ExportedSourceResult {
+            app_id: "268910".to_string(),
+            files: vec![ExportedSourceFile {
+                logical_path: "steam/achievement-sources/268910/user-game-stats.bin".to_string(),
+                source_kind: SteamSourceKind::UserGameStats,
+                base64_content: encoded,
+                checksum,
+                size: content.len() as u64,
+            }],
+            total_size: content.len() as u64,
+        }];
+
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
+        assert_eq!(result.restored, 1);
+        assert!(result.checksums_valid);
+
+        let target = tmp
+            .path()
+            .join("appcache")
+            .join("stats")
+            .join("UserGameStats_12345_268910.bin");
+        assert!(target.is_file());
+        assert_eq!(fs::read(&target).unwrap(), content.as_slice());
+    }
+
+    #[test]
+    fn restore_validates_numeric_steam_account_id() {
+        let tmp = tmp_steam_root();
+        let result = restore_sources_inner(tmp.path(), "abc", &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid steam account ID"));
     }
 }
