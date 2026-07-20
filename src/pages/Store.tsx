@@ -3375,11 +3375,18 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             reviewSummaryByAppId[Number(selectedDetailGameWithOverlay.appId)]
           }
           installStatus={
-            installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) ??
-            "not-installed"
+            installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) === "disabled"
+              ? "disabled"
+              : (ownershipLookup.isLuaActive(selectedDetailGameWithOverlay.appId) ||
+                 installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) === "active")
+                ? "active"
+                : "not-installed"
           }
           isSteamInstalled={ownershipLookup.isSteamInstalled(selectedDetailGameWithOverlay.appId)}
-          luaInstalled={installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) === "active"}
+          luaInstalled={
+            ownershipLookup.isLuaActive(selectedDetailGameWithOverlay.appId) ||
+            installedStatusByAppId.get(selectedDetailGameWithOverlay.appId) === "active"
+          }
           steamOwned={ownershipLookup.isOwned(selectedDetailGameWithOverlay.appId)}
           selectedSource={getSelectedSourceForGame(selectedDetailGameWithOverlay)}
           sourceStatus={sourceStatus}

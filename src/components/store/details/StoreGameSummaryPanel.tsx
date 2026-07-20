@@ -139,8 +139,8 @@ function getButtonConfig(
     return { label, enabled: false, onClick: undefined, reason: "checking-sources" };
   }
 
-  // Installed games: isNone/needsRetry should not override provider status
-  if (luaInstalled || isSteamInstalled) {
+  // Steam-installed games: provider status always shown regardless of source checks
+  if (isSteamInstalled) {
     if (steamOwned) {
       return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
     }
@@ -170,7 +170,7 @@ function getButtonConfig(
     }
   }
 
-  // Non-installed
+  // Non-installed / Lua-only games
   if (isNone) {
     return { label: "No Sources Available", enabled: false, onClick: undefined, reason: "no-sources" };
   }
@@ -182,6 +182,9 @@ function getButtonConfig(
   }
   if (steamOwned) {
     return { label: "Already in account", enabled: false, onClick: undefined, reason: "steam-owned" };
+  }
+  if (luaInstalled && !isSteamInstalled) {
+    return { label: "Not Installed", enabled: false, onClick: undefined, reason: "lua-in-library-not-installed" };
   }
   if (!canDownload) {
     return { label: "Select a Source", enabled: false, onClick: undefined, reason: "no-source-selected" };
