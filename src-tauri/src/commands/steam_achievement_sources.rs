@@ -494,18 +494,27 @@ pub fn restore_steam_achievement_sources(
     }
 
     let steam_root = resolve_steam_root(steam_path.as_deref())?;
+    restore_sources_inner(&steam_root, &steam_account_id, &exports)
+}
+
+/// Core restore logic — testable without Steam-running check.
+fn restore_sources_inner(
+    steam_root: &Path,
+    steam_account_id: &str,
+    exports: &[ExportedSourceResult],
+) -> Result<RestoreSourceResult, String> {
     let mut restored = 0usize;
     let mut failed = 0usize;
     let mut errors: Vec<String> = Vec::new();
     let mut all_checksums_valid = true;
 
-    for export in &exports {
+    for export in exports {
         for file in &export.files {
             let target_path = match file.source_kind {
                 SteamSourceKind::UserGameStats => {
                     steam_root.join("appcache").join("stats").join(format!(
                         "UserGameStats_{}_{}.bin",
-                        &steam_account_id, &export.app_id
+                        steam_account_id, &export.app_id
                     ))
                 }
                 SteamSourceKind::UserGameStatsSchema => {
@@ -515,7 +524,7 @@ pub fn restore_steam_achievement_sources(
                         .join(format!("UserGameStatsSchema_{}.bin", &export.app_id))
                 }
                 SteamSourceKind::LibraryCacheJson => {
-                    steam_root.join("userdata").join(&steam_account_id).join("config")
+                    steam_root.join("userdata").join(steam_account_id).join("config")
                         .join("librarycache")
                         .join(format!("{}.json", &export.app_id))
                 }
@@ -1129,14 +1138,8 @@ mod tests {
             total_size: content.len() as u64,
         }];
 
-        // We need to mock check_steam_running — but it calls tasklist on Windows.
-        // In test env, Steam is almost certainly not running, so this should pass.
-        let result = restore_steam_achievement_sources(
-            Some(tmp.path().to_str().unwrap().to_string()),
-            "12345".to_string(),
-            exports,
-        )
-        .unwrap();
+        // Tests call restore_sources_inner directly to bypass the Steam-running guard
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
 
         assert_eq!(result.restored, 1);
         assert_eq!(result.failed, 0);
@@ -1178,12 +1181,7 @@ mod tests {
             total_size: new_content.len() as u64,
         }];
 
-        let result = restore_steam_achievement_sources(
-            Some(tmp.path().to_str().unwrap().to_string()),
-            "12345".to_string(),
-            exports,
-        )
-        .unwrap();
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
 
         assert_eq!(result.restored, 1);
 
@@ -1216,12 +1214,7 @@ mod tests {
             total_size: content.len() as u64,
         }];
 
-        let result = restore_steam_achievement_sources(
-            Some(tmp.path().to_str().unwrap().to_string()),
-            "12345".to_string(),
-            exports,
-        )
-        .unwrap();
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
 
         assert_eq!(result.restored, 1);
 
@@ -1256,12 +1249,7 @@ mod tests {
             total_size: content.len() as u64,
         }];
 
-        let result = restore_steam_achievement_sources(
-            Some(tmp.path().to_str().unwrap().to_string()),
-            "12345".to_string(),
-            exports,
-        )
-        .unwrap();
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
 
         assert_eq!(result.restored, 1);
         let target = tmp
@@ -1291,12 +1279,7 @@ mod tests {
             total_size: content.len() as u64,
         }];
 
-        let result = restore_steam_achievement_sources(
-            Some(tmp.path().to_str().unwrap().to_string()),
-            "12345".to_string(),
-            exports,
-        )
-        .unwrap();
+        let result = restore_sources_inner(tmp.path(), "12345", &exports).unwrap();
 
         // File is still written, but checksum validation fails
         assert_eq!(result.restored, 0);
@@ -1307,12 +1290,7 @@ mod tests {
     #[test]
     fn restore_empty_exports() {
         let tmp = tmp_steam_root();
-        let result = restore_steam_achievement_sources(
-            Some(tmp.path().to_str().unwrap().to_string()),
-            "12345".to_string(),
-            vec![],
-        )
-        .unwrap();
+        let result = restore_sources_inner(tmp.path(), "12345", &[]).unwrap();
 
         assert_eq!(result.restored, 0);
         assert_eq!(result.failed, 0);
