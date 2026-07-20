@@ -105,8 +105,19 @@ export async function discoverAllSources(): Promise<SourceManagerResult> {
       // Wire DeclarativeExtension fallback when source didn't provide a runtime.
       // This covers RepositorySource (and any future source) that discovers
       // manifests but doesn't create Extension instances.
+      // NOTE: If this extension has extension.lua on disk (in AppData), the Lua
+      // loader (loadExtensionsFromAppData) will REPLACE this DeclarativeExtension
+      // with the Lua-backed adapter. The replacement is logged as LUA_PRIORITY.
       if (!ext.extension) {
-        ext.extension = await tryCreateDeclarativeExtension(ext.manifest) ?? undefined;
+        const created = await tryCreateDeclarativeExtension(ext.manifest);
+        if (created) {
+          console.log(
+            `[SOURCE_MANAGER] Created DeclarativeExtension for "${ext.manifest.id}" — will be replaced by Lua adapter if extension.lua is found on disk`
+          );
+          ext.extension = created;
+        } else {
+          ext.extension = undefined;
+        }
       }
 
       const existing = getRegisteredExtension(ext.manifest.id);

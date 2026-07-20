@@ -34,6 +34,11 @@ pub struct LuaExtensionTable {
     pub version: Option<String>,
     pub description: Option<String>,
     pub criteria: Option<serde_json::Value>,
+    pub has_detect: bool,
+    pub has_install: bool,
+    pub has_enable: bool,
+    pub has_disable: bool,
+    pub has_uninstall: bool,
 }
 
 pub struct LuaEngine {
@@ -529,10 +534,18 @@ impl LuaEngine {
 
         match ext_value {
             Value::Table(ref tbl) => {
-                let ext: LuaExtensionTable = self
+                let mut ext: LuaExtensionTable = self
                     .lua
                     .from_value(Value::Table(tbl.clone()))
                     .map_err(|e| format!("Failed to deserialize extension table: {}", e))?;
+                // Populate has_* fields by checking whether each lifecycle
+                // function exists on the extension table. These are used by
+                // the TS adapter to decide which hooks to call.
+                ext.has_detect = tbl.contains_key("detect").unwrap_or(false);
+                ext.has_install = tbl.contains_key("install").unwrap_or(false);
+                ext.has_enable = tbl.contains_key("enable").unwrap_or(false);
+                ext.has_disable = tbl.contains_key("disable").unwrap_or(false);
+                ext.has_uninstall = tbl.contains_key("uninstall").unwrap_or(false);
                 self.extension_id = extension_id.to_string();
                 Ok(ext)
             }

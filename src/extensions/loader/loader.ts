@@ -66,13 +66,15 @@ export async function loadExtensionsFromAppData(
     try {
       const dirName = entry.dir_name;
 
-      // Skip if already registered
-      if (hasExtension(dirName)) {
-        if (DEBUG_LOADER) {
-          console.log(`[EXT][LOADER] Skipping "${dirName}" — already registered`);
-        }
-        result.skipped++;
-        continue;
+      // Lua extensions ALWAYS take priority over declarative/manifest-only
+      // extensions. If a DeclarativeExtension was registered from a remote
+      // source (e.g. RepositorySource's tryCreateDeclarativeExtension), we
+      // replace it here with the Lua-backed adapter.
+      const wasRegistered = hasExtension(dirName);
+      if (wasRegistered) {
+        console.log(
+          `[EXT][LOADER][LUA_PRIORITY] Replacing existing extension "${dirName}" with Lua-backed adapter (extension.lua found on disk)`
+        );
       }
 
       // Step 2a: Parse manifest.json
@@ -117,17 +119,18 @@ export async function loadExtensionsFromAppData(
       }
 
       // Step 2c: Register into ExtensionManager + Registry
+      // NOTE: This REPLACES any previously registered extension (e.g. DeclarativeExtension
+      // from RepositorySource), because Lua-backed adapters have full lifecycle control
+      // via the extension.lua script and must take priority.
       registerLoadedExtension(manifest, "appdata");
       registerExtension(extension);
 
       result.loaded++;
       result.loadedIds.push(manifest.id);
 
-      if (DEBUG_LOADER) {
-        console.log(
-          `[EXT][LOADER] Loaded: "${manifest.id}" (${manifest.displayName} v${manifest.version}) from ${extensionsDir}/${dirName}`,
-        );
-      }
+      console.log(
+        `[EXT][LOADER][LUA] ${wasRegistered ? "Replaced" : "Registered"}: "${manifest.id}" (${manifest.displayName} v${manifest.version}) — Lua adapter active`,
+      );
     } catch (err) {
       result.errors.push({
         dirName: entry.dir_name,

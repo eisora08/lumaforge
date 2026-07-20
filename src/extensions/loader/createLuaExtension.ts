@@ -163,17 +163,20 @@ export async function createLuaExtension(
     async install(
       options: ExtensionOperationOptions,
     ): Promise<ExtensionOperationResult> {
+      console.log(`[Frontend] Calling Lua Lifecycle command for extension: ${manifest.id} hook=install hostPath=${options.hostPath}`);
       log(`install: ${manifest.id} hostPath=${options.hostPath}`);
       if (!table.has_install) {
         return { success: false, error: "Extension does not implement install" };
       }
       const result = await callExtensionInstall(manifest.id, options.hostPath);
+      console.log(`[Frontend] Lua Lifecycle result for extension: ${manifest.id} hook=install success=${result.error ? "false" : "true"}${result.error ? ` error=${result.error}` : ""}`);
       return toOperationResult(result.value, result.error);
     },
 
     async update(
       options: ExtensionOperationOptions,
     ): Promise<ExtensionOperationResult> {
+      console.log(`[Frontend] Calling Lua Lifecycle command for extension: ${manifest.id} hook=update hostPath=${options.hostPath}`);
       log(`update: ${manifest.id} hostPath=${options.hostPath}`);
       // No dedicated Lua `update` — run uninstall then install
       const uninstallResult = await this.uninstall(options);
@@ -186,33 +189,39 @@ export async function createLuaExtension(
     async enable(
       options: ExtensionOperationOptions,
     ): Promise<ExtensionOperationResult> {
+      console.log(`[Frontend] Calling Lua Lifecycle command for extension: ${manifest.id} hook=enable hostPath=${options.hostPath}`);
       log(`enable: ${manifest.id} hostPath=${options.hostPath}`);
       if (!table.has_enable) {
         return { success: true };
       }
       const result = await callExtensionEnable(manifest.id, options.hostPath);
+      console.log(`[Frontend] Lua Lifecycle result for extension: ${manifest.id} hook=enable success=${result.error ? "false" : "true"}${result.error ? ` error=${result.error}` : ""}`);
       return toOperationResult(result.value, result.error);
     },
 
     async disable(
       options: ExtensionOperationOptions,
     ): Promise<ExtensionOperationResult> {
+      console.log(`[Frontend] Calling Lua Lifecycle command for extension: ${manifest.id} hook=disable hostPath=${options.hostPath}`);
       log(`disable: ${manifest.id} hostPath=${options.hostPath}`);
       if (!table.has_disable) {
         return { success: true };
       }
       const result = await callExtensionDisable(manifest.id, options.hostPath);
+      console.log(`[Frontend] Lua Lifecycle result for extension: ${manifest.id} hook=disable success=${result.error ? "false" : "true"}${result.error ? ` error=${result.error}` : ""}`);
       return toOperationResult(result.value, result.error);
     },
 
     async uninstall(
       options: ExtensionOperationOptions,
     ): Promise<ExtensionOperationResult> {
+      console.log(`[Frontend] Calling Lua Lifecycle command for extension: ${manifest.id} hook=uninstall hostPath=${options.hostPath}`);
       log(`uninstall: ${manifest.id} hostPath=${options.hostPath}`);
       if (!table.has_uninstall) {
         return { success: false, error: "Extension does not implement uninstall" };
       }
       const result = await callExtensionUninstall(manifest.id, options.hostPath);
+      console.log(`[Frontend] Lua Lifecycle result for extension: ${manifest.id} hook=uninstall success=${result.error ? "false" : "true"}${result.error ? ` error=${result.error}` : ""}`);
       return toOperationResult(result.value, result.error);
     },
 

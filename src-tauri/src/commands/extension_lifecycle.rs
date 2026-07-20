@@ -12,6 +12,11 @@ pub fn load_extension(
     extension_id: String,
     script_path: String,
 ) -> Result<LuaExtensionTable, String> {
+    eprintln!(
+        "[Backend Rust] ===== Loading Lua extension: {} from {} =====",
+        extension_id, script_path
+    );
+
     let script = fs::read_to_string(&script_path)
         .map_err(|e| format!("Failed to read extension script '{}': {}", script_path, e))?;
 
@@ -21,8 +26,15 @@ pub fn load_extension(
     ENGINES.insert(extension_id.clone(), engine);
 
     eprintln!(
-        "[EXT][LOAD] extension_id={} name={:?} version={:?}",
-        extension_id, table.name, table.version
+        "[Backend Rust] ===== Lua extension loaded: {} name={:?} version={:?} has_detect={} has_install={} has_enable={} has_disable={} has_uninstall={} =====",
+        extension_id,
+        table.name,
+        table.version,
+        table.has_detect,
+        table.has_install,
+        table.has_enable,
+        table.has_disable,
+        table.has_uninstall,
     );
 
     Ok(table)
@@ -56,6 +68,10 @@ pub fn call_extension_detect(
     extension_id: String,
     install_dir: String,
 ) -> Result<LuaFunctionResult, String> {
+    eprintln!(
+        "[Backend Rust] Executing Lua function 'detect' for extension: {} install_dir={}",
+        extension_id, install_dir
+    );
     call_extension_fn(&extension_id, "detect", &install_dir)
 }
 
@@ -64,6 +80,10 @@ pub fn call_extension_install(
     extension_id: String,
     install_dir: String,
 ) -> Result<LuaFunctionResult, String> {
+    eprintln!(
+        "[Backend Rust] Executing Lua function 'install' for extension: {} install_dir={}",
+        extension_id, install_dir
+    );
     call_extension_fn(&extension_id, "install", &install_dir)
 }
 
@@ -72,6 +92,10 @@ pub fn call_extension_enable(
     extension_id: String,
     install_dir: String,
 ) -> Result<LuaFunctionResult, String> {
+    eprintln!(
+        "[Backend Rust] Executing Lua function 'enable' for extension: {} install_dir={}",
+        extension_id, install_dir
+    );
     call_extension_fn(&extension_id, "enable", &install_dir)
 }
 
@@ -80,6 +104,10 @@ pub fn call_extension_disable(
     extension_id: String,
     install_dir: String,
 ) -> Result<LuaFunctionResult, String> {
+    eprintln!(
+        "[Backend Rust] Executing Lua function 'disable' for extension: {} install_dir={}",
+        extension_id, install_dir
+    );
     call_extension_fn(&extension_id, "disable", &install_dir)
 }
 
@@ -88,6 +116,10 @@ pub fn call_extension_uninstall(
     extension_id: String,
     install_dir: String,
 ) -> Result<LuaFunctionResult, String> {
+    eprintln!(
+        "[Backend Rust] Executing Lua function 'uninstall' for extension: {} install_dir={}",
+        extension_id, install_dir
+    );
     call_extension_fn(&extension_id, "uninstall", &install_dir)
 }
 
