@@ -13,9 +13,9 @@
 import { BuiltInSource } from "./sources/builtin";
 import { RepositorySource } from "./sources/repository";
 import { registerSource, discoverAllSources } from "./sources/manager";
-import { listExtensions } from "./manager";
-import { hasExtension, registerExtension } from "./registry";
-import type { Extension } from "./types";
+import { listExtensions, subscribeExtensionManager } from "./manager";
+import { loadExtensionsFromAppData } from "./loader";
+import { resolveAppDataDir } from "../services/tauri";
 
 const DEBUG_BOOTSTRAP = false;
 
@@ -66,31 +66,20 @@ export async function bootstrapExtensions(): Promise<BootstrapResult> {
   const result = await discoverAllSources();
   if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] discoverAllSources completed: registered=${result.registered}, skipped=${result.skipped}, errors=${result.errors.length}`);
 
-  // Step 2b: Belt-and-suspenders — if SourceManager didn't register an
-  // Extension runtime into the Registry (e.g. factory failed silently
-  // or registration path was skipped), load it directly here.
-  // Also provides the DeclarativeExtension fallback for manifests with
-  // managedFiles but no hand-written factory.
-  const BUILTIN_FACTORIES: Record<string, () => Promise<Extension>> = {
-    opensteamtool: async () => {
-      const { getOpenSteamToolExtension } = await import("./builtin/opensteamtool");
-      return getOpenSteamToolExtension();
-    },
-  };
-
-  for (const [dirName, factory] of Object.entries(BUILTIN_FACTORIES)) {
-    if (!hasExtension(dirName)) {
-      if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Registry missing runtime for "${dirName}", loading directly...`);
-      try {
-        const ext = await factory();
-        registerExtension(ext);
-        if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Direct registration succeeded for "${dirName}"`);
-      } catch (err) {
-        console.error(`[BOOTSTRAP] Direct registration FAILED for "${dirName}":`, err);
+  // Step 3: Load Lua extensions from app data extensions directory
+  try {
+    const appDataDir = await resolveAppDataDir();
+    const luaResult = await loadExtensionsFromAppData(appDataDir);
+    if (luaResult.loaded > 0 || luaResult.errors.length > 0) {
+      console.log(
+        `[BOOTSTRAP] Lua extensions: ${luaResult.loaded} loaded, ${luaResult.skipped} skipped, ${luaResult.errors.length} errors`,
+      );
+      for (const err of luaResult.errors) {
+        console.warn(`[BOOTSTRAP] Lua extension error [${err.dirName}]: ${err.error}`);
       }
-    } else {
-      if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Registry already has runtime for "${dirName}", skipping direct load`);
     }
+  } catch (err) {
+    console.warn(`[BOOTSTRAP] Failed to load Lua extensions from app data:`, err);
   }
 
   const snapshot = listExtensions();
@@ -103,6 +92,19 @@ export async function bootstrapExtensions(): Promise<BootstrapResult> {
     extensions: snapshot,
   };
   _bootstrapped = true;
+
+  // Expose extensions to window for debugging and Tools page
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__LUMAFORGE_EXTENSIONS__ = listExtensions();
+    subscribeExtensionManager(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__LUMAFORGE_EXTENSIONS__ = listExtensions();
+    });
+    if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Exposed ${snapshot.length} extensions to window.__LUMAFORGE_EXTENSIONS__`);
+  } catch {
+    // Non-fatal — window may not be available in test environments
+  }
 
   return _bootstrapResult;
 }

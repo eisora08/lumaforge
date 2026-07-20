@@ -198,6 +198,11 @@ export function loadManifestFromObject(raw: unknown, opts?: { path?: string }): 
     }
   }
 
+  // 12. Criteria (optional, validated)
+  if (obj.criteria !== undefined) {
+    validateCriteria(obj.criteria, opts?.path);
+  }
+
   // Build the validated manifest — strip unknown top-level keys
   const manifest: ExtensionManifestV1 = {
     schemaVersion: 1,
@@ -215,7 +220,7 @@ export function loadManifestFromObject(raw: unknown, opts?: { path?: string }): 
     "repository", "license", "icon", "banner", "screenshots",
     "categories", "tags", "minimumLauncherVersion", "maximumLauncherVersion",
     "permissions", "capabilities", "installStrategy", "toggleStrategy",
-    "updateStrategy", "releaseProvider", "behavior", "validation", "metadata",
+    "updateStrategy", "releaseProvider", "behavior", "criteria", "validation", "metadata",
   ];
   for (const key of optionalKeys) {
     if (obj[key] !== undefined) {
@@ -251,6 +256,38 @@ function validateField(
 function validateMaxLength(field: string, value: string, max: number, path?: string): void {
   if (value.length > max) {
     throw new ManifestValidationError(field, `Maximum length is ${max} characters`, { path });
+  }
+}
+
+function validateCriteria(criteria: unknown, path?: string): void {
+  if (!criteria || typeof criteria !== "object") {
+    throw new ManifestValidationError("criteria", "Must be a non-null object", { path });
+  }
+  const c = criteria as Record<string, unknown>;
+
+  // detection (optional)
+  if (c.detection !== undefined) {
+    validateDetectionCriteria(c.detection, path);
+  }
+}
+
+function validateDetectionCriteria(detection: unknown, path?: string): void {
+  if (!detection || typeof detection !== "object") {
+    throw new ManifestValidationError("criteria.detection", "Must be a non-null object", { path });
+  }
+  const d = detection as Record<string, unknown>;
+
+  if (d.type !== "files_presence") {
+    throw new ManifestValidationError("criteria.detection.type", 'Must be "files_presence"', { path });
+  }
+
+  if (!Array.isArray(d.paths) || (d.paths as unknown[]).length === 0) {
+    throw new ManifestValidationError("criteria.detection.paths", "Must be a non-empty array of strings", { path });
+  }
+  for (let i = 0; i < (d.paths as unknown[]).length; i++) {
+    if (typeof (d.paths as unknown[])[i] !== "string") {
+      throw new ManifestValidationError(`criteria.detection.paths[${i}]`, "Must be a string", { path });
+    }
   }
 }
 

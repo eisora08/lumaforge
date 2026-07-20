@@ -27,10 +27,6 @@ import { tryCreateDeclarativeExtension } from "../declarative/wireExtensionRunti
  * No changes to SourceManager, ExtensionManager, or Settings UI needed.
  */
 const BUILTIN_EXTENSION_FACTORIES: Record<string, () => Promise<Extension>> = {
-  opensteamtool: async () => {
-    const { getOpenSteamToolExtension } = await import("../builtin/opensteamtool");
-    return getOpenSteamToolExtension();
-  },
 };
 
 // =============================================================================
@@ -41,7 +37,7 @@ const BUILTIN_EXTENSION_FACTORIES: Record<string, () => Promise<Extension>> = {
 const BUILTIN_BASE_PATH = "/extensions/builtin";
 
 /** Known built-in extension directory names. */
-const BUILTIN_EXTENSION_DIRS = ["placeholder", "opensteamtool"];
+const BUILTIN_EXTENSION_DIRS = ["placeholder"];
 
 /**
  * BuiltInSource discovers extensions from a known local directory.
@@ -83,7 +79,9 @@ export class BuiltInSource {
             // Runtime factory failure is non-fatal — manifest still registered
             console.warn(`[BUILTIN_SOURCE] Failed to load runtime for ${dirName}:`, err);
           }
-        } else {
+        } else if ((manifest.metadata as Record<string, unknown>)?.type !== "tool") {
+          // Non-tool manifests get DeclarativeExtension fallback.
+          // Tool manifests are handled by ToolManager — skip Extension runtime.
           extension = await tryCreateDeclarativeExtension(manifest);
         }
 

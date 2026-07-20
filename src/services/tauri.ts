@@ -2092,6 +2092,127 @@ export async function resolveAchievementsRootDir(
   });
 }
 
+// ── Extension Lifecycle ──
+
+export interface LuaFunctionResult {
+  success: boolean;
+  value: string | null;
+  error: string | null;
+}
+
+export interface LuaExtensionTable {
+  name: string;
+  version: string;
+  min_launcher_version: string | null;
+  has_detect: boolean;
+  has_install: boolean;
+  has_enable: boolean;
+  has_disable: boolean;
+  has_uninstall: boolean;
+  error: string | null;
+}
+
+export interface ExtensionDirEntry {
+  dir_name: string;
+  manifest_json: string | null;
+  has_extension_lua: boolean;
+}
+
+export interface ScanExtensionsResult {
+  entries: ExtensionDirEntry[];
+}
+
+/**
+ * Load a Lua extension into the backend engine.
+ * Must be called before any lifecycle functions.
+ */
+export async function loadExtension(
+  extensionId: string,
+  scriptPath: string,
+): Promise<LuaExtensionTable> {
+  return await invoke<LuaExtensionTable>("load_extension", {
+    extensionId,
+    scriptPath,
+  });
+}
+
+/**
+ * Call the detect lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionDetect(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_detect", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the install lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionInstall(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_install", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the enable lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionEnable(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_enable", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the disable lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionDisable(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_disable", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Call the uninstall lifecycle function on a loaded Lua extension.
+ */
+export async function callExtensionUninstall(
+  extensionId: string,
+  installDir: string,
+): Promise<LuaFunctionResult> {
+  return await invoke<LuaFunctionResult>("call_extension_uninstall", {
+    extensionId,
+    installDir,
+  });
+}
+
+/**
+ * Scan a directory for extension subdirectories.
+ * Returns entries for subdirectories that contain manifest.json and/or extension.lua.
+ */
+export async function scanExtensionsDirectory(
+  basePath: string,
+): Promise<ScanExtensionsResult> {
+  return await invoke<ScanExtensionsResult>("scan_extensions_directory", {
+    basePath,
+  });
+}
+
 export async function resolveAppDataDir(): Promise<string> {
   return await invoke<string>("resolve_app_data_dir");
 }

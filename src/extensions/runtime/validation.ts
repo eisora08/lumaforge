@@ -73,7 +73,7 @@ export function validateManifest(manifest: ExtensionManifestV1): ValidationResul
   validatePermissions(manifest.permissions, errors);
 
   // 5. Capability validation
-  validateCapabilities(manifest.capabilities, errors);
+  validateCapabilities(manifest.capabilities, errors, warnings);
 
   // 6. Contribution validation (surface format)
   validateContributionSurfaces(manifest, errors, warnings);
@@ -113,7 +113,30 @@ function validatePermissions(permissions: PermissionEntry[] | undefined, errors:
 // Capability Validation
 // =============================================================================
 
-function validateCapabilities(capabilities: CapabilityEntry[] | undefined, errors: string[]): void {
+/**
+ * Recognized system capabilities.
+ * Extensions must declare their capabilities here to be acknowledged.
+ * Unknown capabilities generate a warning but are not rejected.
+ */
+export const RECOGNIZED_CAPABILITIES = new Set([
+  "steam-tool",
+  "metadata-provider",
+  "save-manager",
+  "achievement-provider",
+  "launcher-integration",
+  "network-service",
+  "overlay",
+  "game-detection",
+  "backup-provider",
+  "media-provider",
+  "lua-runtime",
+]);
+
+function validateCapabilities(
+  capabilities: CapabilityEntry[] | undefined,
+  errors: string[],
+  warnings: string[] = [],
+): void {
   if (!capabilities) return;
 
   const seen = new Set<string>();
@@ -128,6 +151,9 @@ function validateCapabilities(capabilities: CapabilityEntry[] | undefined, error
     }
     if (seen.has(cap.id)) {
       errors.push(`Capability[${i}]: duplicate capability "${cap.id}"`);
+    }
+    if (!RECOGNIZED_CAPABILITIES.has(cap.id)) {
+      warnings.push(`Capability[${i}]: unrecognized capability "${cap.id}"`);
     }
     seen.add(cap.id);
   }

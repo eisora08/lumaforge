@@ -338,23 +338,23 @@ describe("SourceManager — DeclarativeExtension wiring for RepositorySource", (
   });
 
   it("does not overwrite an existing Extension runtime from a higher-priority source", async () => {
-    // Scenario: BuiltInSource already provided an Extension for "opensteamtool".
-    // RepositorySource also has "opensteamtool" with a manifest.
+    // Scenario: A higher-priority source already provided an Extension for "overlap-ext".
+    // RepositorySource also has "overlap-ext" with a manifest.
     // SourceManager should NOT overwrite the existing runtime.
     mockFetch((url) => {
       if (url.endsWith("index.json")) {
         return jsonResponse({
           ...FAKE_REPO_INDEX,
-          extensions: [{ ...FAKE_REPO_INDEX.extensions[0], id: "opensteamtool", manifestUrl: "manifest.json" }],
+          extensions: [{ ...FAKE_REPO_INDEX.extensions[0], id: "overlap-ext", manifestUrl: "manifest.json" }],
         });
       }
       if (url.endsWith("manifest.json")) return jsonResponse(FAKE_MANIFEST);
       return errorResponse(404);
     });
 
-    // Pre-register a fake runtime (simulating BuiltInSource having one)
+    // Pre-register a fake runtime (simulating a higher-priority source having one)
     const fakeRuntime = {
-      manifest: { ...FAKE_MANIFEST, id: "opensteamtool" },
+      manifest: { ...FAKE_MANIFEST, id: "overlap-ext" },
       detect: async () => ({ status: "enabled" as const, exists: true, details: [] }),
       install: async () => ({ success: true }),
       enable: async () => ({ success: true }),
@@ -378,7 +378,7 @@ describe("SourceManager — DeclarativeExtension wiring for RepositorySource", (
     await discoverAllSources();
 
     // The existing runtime should still be the fake one, not overwritten
-    const ext = getExtension("opensteamtool");
+    const ext = getExtension("overlap-ext");
     expect(ext).toBeDefined();
     const installedVersion = await ext!.getInstalledVersion("");
     expect(installedVersion).toBe("1.0.0"); // from fakeRuntime, not DeclarativeExtension

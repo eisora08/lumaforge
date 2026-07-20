@@ -544,10 +544,25 @@ describe("SourceManager with RepositorySource + BuiltInSource priority merge", (
   });
 
   it("built-in source (priority 0) wins over repository source (priority 10) for same extension id", async () => {
+    // Use "placeholder" as the overlapping ID — builtin still discovers it
+    const PLACEHOLDER_INDEX = {
+      ...OFFICIAL_INDEX,
+      extensions: [{
+        id: "placeholder" as const,
+        displayName: "Placeholder Extension",
+        description: "A placeholder for testing overlap",
+        version: "0.0.1",
+        author: "test",
+        categories: ["test"],
+        tags: ["test"],
+        manifestUrl: "placeholder/manifest.json",
+        verified: false,
+      }],
+    };
+
     mockFetch((url) => {
-      // Repository returns opensteamtool
-      if (url.endsWith("index.json")) return jsonResponse(OFFICIAL_INDEX);
-      if (url.endsWith("manifest.json")) return jsonResponse(OPENSTEAMTOOL_MANIFEST);
+      if (url.endsWith("index.json")) return jsonResponse(PLACEHOLDER_INDEX);
+      if (url.endsWith("placeholder/manifest.json")) return jsonResponse({ ...OPENSTEAMTOOL_MANIFEST, id: "placeholder", name: "placeholder" });
       return errorResponse(404);
     });
 
@@ -566,17 +581,15 @@ describe("SourceManager with RepositorySource + BuiltInSource priority merge", (
 
     const result = await discoverAllSources();
 
-    // Built-in source discovers opensteamtool (from public/extensions/builtin/)
-    // Repository source also discovers opensteamtool
+    // Built-in source discovers placeholder (from public/extensions/builtin/)
+    // Repository source also discovers placeholder
     // Built-in wins because priority 0 < priority 10
-    // Skipped count should include the duplicate from repository
     expect(result.registered).toBeGreaterThanOrEqual(1);
-    expect(result.skipped).toBeGreaterThanOrEqual(0); // depends on whether builtin discovers opensteamtool
 
-    // The registered opensteamtool should come from builtin source
+    // The registered placeholder should come from builtin source
     const { getRegisteredExtension } = await import("../extensions/manager");
-    const ost = getRegisteredExtension("opensteamtool");
-    expect(ost).toBeDefined();
-    expect(ost!.sourceId).toBe("builtin");
+    const pl = getRegisteredExtension("placeholder");
+    expect(pl).toBeDefined();
+    expect(pl!.sourceId).toBe("builtin");
   });
 });

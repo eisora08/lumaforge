@@ -1,4 +1,5 @@
 mod commands;
+mod lua_engine;
 mod models;
 mod utils;
 
@@ -286,11 +287,24 @@ pub fn run() {
             commands::extension::extension_rename_file,
             commands::extension::extension_batch_rename,
             commands::extension::extension_remove_file,
+            commands::extension::extension_copy_file,
             commands::extension::extension_create_dir,
             commands::extension::extension_get_dll_version,
             commands::extension::extension_list_directory,
             commands::extension::extension_download_file,
             commands::extension::extension_extract_zip,
+            commands::extension::extension_run_process,
+            commands::extension::extension_fetch_url_as_text,
+            commands::extension::extension_find_largest_exe,
+            commands::extension::extension_extract_zip_all,
+            commands::extension::extension_write_text_file,
+            commands::extension_lifecycle::load_extension,
+            commands::extension_lifecycle::call_extension_detect,
+            commands::extension_lifecycle::call_extension_install,
+            commands::extension_lifecycle::call_extension_enable,
+            commands::extension_lifecycle::call_extension_disable,
+            commands::extension_lifecycle::call_extension_uninstall,
+            commands::extension_lifecycle::scan_extensions_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

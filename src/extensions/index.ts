@@ -31,6 +31,9 @@ export type {
   HttpReleaseProviderConfig,
   ExtensionManifestV1,
   ExtensionBehavior,
+  CriteriaDeclaration,
+  DetectionCriteria,
+  FilesPresenceCriteria,
   ExtensionValidation,
   ExtensionStatus,
   ExtensionOperation,
@@ -161,6 +164,16 @@ export {
   InMemoryEnabledState,
 } from "./runtime";
 
+// Runtime — Criteria Evaluator
+export type {
+  GameContext,
+  CriteriaEvaluationResult,
+} from "./runtime";
+export {
+  evaluateManifestCriteria,
+  filterMatchingManifests,
+} from "./runtime";
+
 // Runtime — Store
 export {
   registerExtensionRuntime,
@@ -201,6 +214,12 @@ export {
   filterActiveContributions,
   extractManifestContributionSources,
 } from "./contributions";
+
+// Tools
+export {
+  getApplicableTools,
+  gameContextFromInstallDir,
+} from "./tools/ToolManager";
 
 // Manager — Runtime integration
 export type {

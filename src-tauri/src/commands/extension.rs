@@ -344,6 +344,29 @@ pub fn extension_download_file(
 }
 
 #[tauri::command]
+pub fn extension_copy_file(from: String, to: String) -> Result<(), String> {
+    let from_path = Path::new(&from);
+    let to_path = Path::new(&to);
+
+    if !from_path.exists() {
+        return Err(format!("Source file does not exist: {}", from));
+    }
+
+    if let Some(parent) = to_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+        }
+    }
+
+    fs::copy(from_path, to_path)
+        .map_err(|e| format!("Copy failed: {} -> {}: {}", from, to, e))?;
+
+    extension_log(format!("copied: {} -> {}", from, to));
+    Ok(())
+}
+
+#[tauri::command]
 pub fn extension_extract_zip(
     zip_path: String,
     target_dir: String,
@@ -411,4 +434,184 @@ pub fn extension_extract_zip(
     }
 
     Ok(extracted)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionProcessResult {
+    pub success: bool,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+#[tauri::command]
+pub fn extension_run_process(
+    exe_path: String,
+    args: Vec<String>,
+) -> Result<ExtensionProcessResult, String> {
+    use std::process::Command;
+
+    let exe = Path::new(&exe_path);
+    if !exe.exists() {
+        return Err(format!("Executable not found: {}", exe_path));
+    }
+
+    let output = Command::new(&exe_path)
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run process: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+
+    extension_log(format!(
+        "run_process: {} {} => exit_code={}",
+        exe_path,
+        args.join(" "),
+        exit_code
+    ));
+
+    Ok(ExtensionProcessResult {
+        success: output.status.success(),
+        exit_code,
+        stdout,
+        stderr,
+    })
+}
+
+#[tauri::command]
+pub fn extension_fetch_url_as_text(url: String) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("LumaForge-ExtensionManager/1.0")
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("HTTP client creation failed: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP request failed with status: {}", response.status()));
+    }
+
+    let text = response
+        .text()
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    extension_log(format!("fetch_url: {} => {} bytes", url, text.len()));
+    Ok(text)
+}
+
+#[tauri::command]
+pub fn extension_find_largest_exe(
+    dir: String,
+    exclude: Vec<String>,
+) -> Result<Option<String>, String> {
+    let dir_path = Path::new(&dir);
+    if !dir_path.exists() || !dir_path.is_dir() {
+        return Ok(None);
+    }
+
+    let exclude_lower: Vec<String> = exclude.iter().map(|s| s.to_lowercase()).collect();
+
+    let entries = fs::read_dir(dir_path)
+        .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+    let mut largest: Option<(String, u64)> = None;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("exe") {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let name_lower = name.to_lowercase();
+        if exclude_lower.contains(&name_lower) {
+            continue;
+        }
+        if let Ok(meta) = path.metadata() {
+            if meta.is_file() {
+                let size = meta.len();
+                if largest.as_ref().map_or(true, |(_, s)| size > *s) {
+                    largest = Some((name, size));
+                }
+            }
+        }
+    }
+
+    Ok(largest.map(|(name, _)| name))
+}
+
+#[tauri::command]
+pub fn extension_extract_zip_all(
+    zip_path: String,
+    target_dir: String,
+) -> Result<Vec<String>, String> {
+    let zip_file =
+        fs::File::open(&zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+
+    let mut archive = zip::ZipArchive::new(zip_file)
+        .map_err(|e| format!("Failed to read zip archive: {}", e))?;
+
+    let target = Path::new(&target_dir);
+    fs::create_dir_all(target)
+        .map_err(|e| format!("Failed to create extract directory: {}", e))?;
+
+    let mut extracted = Vec::new();
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+
+        let entry_name = entry.name().to_string();
+        let file_name = entry_name.split('/').last().unwrap_or(&entry_name);
+
+        if file_name.is_empty() || entry_name.ends_with('/') {
+            if entry.is_dir() {
+                let dir_path = target.join(&entry_name);
+                let _ = fs::create_dir_all(&dir_path);
+            }
+            continue;
+        }
+
+        let out_path = target.join(file_name);
+
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent: {}", e))?;
+        }
+
+        let mut out_file =
+            fs::File::create(&out_path).map_err(|e| format!("Failed to create file: {}", e))?;
+
+        std::io::copy(&mut entry, &mut out_file)
+            .map_err(|e| format!("Failed to extract file: {}", e))?;
+
+        extracted.push(file_name.to_string());
+    }
+
+    extension_log(format!("extract_zip_all: {} => {} files", zip_path, extracted.len()));
+    Ok(extracted)
+}
+
+#[tauri::command]
+pub fn extension_write_text_file(path: String, content: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if let Some(parent) = p.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+        }
+    }
+    fs::write(p, &content)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+    extension_log(format!("wrote text file: {}", path));
+    Ok(())
 }

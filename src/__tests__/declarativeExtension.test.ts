@@ -540,10 +540,10 @@ describe("DeclarativeExtension", () => {
     it("returns manifest behavior when set", async () => {
       const manifest: ExtensionManifestV1 = {
         ...TEST_MANIFEST,
-        behavior: { luaOwnershipOverride: true },
+        behavior: { injectsDll: true },
       };
       const ext = new DeclarativeExtension(manifest);
-      expect(ext.getBehavior()).toEqual({ luaOwnershipOverride: true });
+      expect(ext.getBehavior()).toEqual({ injectsDll: true });
     });
 
     it("returns empty behavior when no behavior in manifest", async () => {

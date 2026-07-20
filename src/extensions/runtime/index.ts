@@ -87,6 +87,19 @@ export {
 } from "./validation";
 
 // =============================================================================
+// Criteria Evaluator
+// =============================================================================
+
+export {
+  evaluateManifestCriteria,
+  filterMatchingManifests,
+} from "./criteriaEvaluator";
+export type {
+  GameContext,
+  CriteriaEvaluationResult,
+} from "./criteriaEvaluator";
+
+// =============================================================================
 // Store
 // =============================================================================
 

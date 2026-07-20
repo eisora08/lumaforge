@@ -475,6 +475,10 @@ export interface ExtensionManifestV1 {
   /** Behavioral effects when enabled (host-specific). */
   behavior?: ExtensionBehavior;
 
+  // -- Criteria --------------------------------------------------------------
+  /** Declarative criteria for matching extensions to games. */
+  criteria?: CriteriaDeclaration;
+
   // -- Validation ------------------------------------------------------------
   /** Validation rules for this extension. */
   validation?: ExtensionValidation;
@@ -493,26 +497,63 @@ export interface ExtensionManifestV1 {
  * The host application reads these to adjust its own behavior.
  *
  * Well-known behavior keys:
- * - "luaOwnershipOverride": treat Lua-active games as owned
  * - "injectsDll": extension injects DLLs into the Steam process
  * - "modifiesStorePage": extension modifies the Steam Store page
  * - "addsGameEntries": extension adds games to the library
+ * - "capabilities": capabilities this behavior enables
  */
 export interface ExtensionBehavior {
-  /** Override Steam ownership: treat Lua-active games as owned in Store. */
-  luaOwnershipOverride?: boolean;
   /** Extension injects DLLs into the Steam process. */
   injectsDll?: boolean;
   /** Extension modifies the Steam Store page. */
   modifiesStorePage?: boolean;
   /** Extension adds games to the library. */
   addsGameEntries?: boolean;
+  /** Capabilities that this behavior enables (e.g. "steam-tool"). */
+  capabilities?: string[];
   /** Future: arbitrary key-value pairs for host-specific behaviors. */
   [key: string]: unknown;
 }
 
 // =============================================================================
-// SECTION 13: Extension Validation
+// SECTION 13: Criteria Declaration
+// =============================================================================
+
+/**
+ * Declarative criteria for matching extensions to games.
+ *
+ * The framework reads `criteria.detection` from the manifest to determine
+ * which games an extension applies to — purely from manifest data, with
+ * zero hardcoded ID branching.
+ *
+ * Each criteria type describes a different matching strategy:
+ * - "files_presence": game install dir must contain all listed files
+ * - Future: "steam_appid", "provider", "capability", etc.
+ */
+export interface CriteriaDeclaration {
+  /** Detection criteria — what must be true for this extension to apply. */
+  detection?: DetectionCriteria;
+}
+
+/**
+ * Detection criteria types.
+ * Extensible union — add new types without breaking existing manifests.
+ */
+export type DetectionCriteria = FilesPresenceCriteria;
+
+/**
+ * Files-presence criteria: game's install directory must contain
+ * all files in the `paths` array. Relative paths are resolved
+ * against the game's install directory root.
+ */
+export interface FilesPresenceCriteria {
+  type: "files_presence";
+  /** File paths (relative to game install dir) that must all exist. */
+  paths: string[];
+}
+
+// =============================================================================
+// SECTION 14: Extension Validation
 // =============================================================================
 
 /**
@@ -530,7 +571,7 @@ export interface ExtensionValidation {
 }
 
 // =============================================================================
-// SECTION 14: Runtime Types
+// SECTION 15: Runtime Types
 // =============================================================================
 
 /**
@@ -604,7 +645,7 @@ export interface ExtensionOperationResult {
 }
 
 // =============================================================================
-// SECTION 15: Extension Runtime Interface
+// SECTION 16: Extension Runtime Interface
 // =============================================================================
 
 /**
@@ -626,7 +667,7 @@ export interface Extension {
 }
 
 // =============================================================================
-// SECTION 16: Repository Specification
+// SECTION 17: Repository Specification
 // =============================================================================
 
 /**
@@ -687,7 +728,7 @@ export interface RepositoryIndex {
 }
 
 // =============================================================================
-// SECTION 17: Source Specification
+// SECTION 18: Source Specification
 // =============================================================================
 
 /**
@@ -721,7 +762,7 @@ export interface ExtensionSourceConfig {
 }
 
 // =============================================================================
-// SECTION 18: Validation Rules
+// SECTION 19: Validation Rules
 // =============================================================================
 
 /**

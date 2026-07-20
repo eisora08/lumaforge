@@ -93,21 +93,14 @@ describe("Live RepositorySource fetch (real network)", () => {
     // so it may discover 0 extensions. RepositorySource always works (real network).
     // When BuiltInSource discovers nothing, RepositorySource fills in — correct behavior.
     // When BuiltInSource discovers something, it should win for overlapping IDs.
-    if (builtinExtensions.length > 0) {
-      // BuiltInSource found extensions — verify it won for overlapping IDs
-      const ostFromBuiltin = builtinExtensions.find((e) => e.manifest.id === "opensteamtool");
-      const ostFromRepo = repoExtensions.find((e) => e.manifest.id === "opensteamtool");
-      if (ostFromBuiltin && ostFromRepo) {
-        // Both found it — builtin should have won (registered, repo skipped)
-        expect(ostFromBuiltin.sourceId).toBe("builtin");
-        console.log(`  [LIVE] Priority merge: opensteamtool won by builtin (correct)`);
-      } else if (ostFromBuiltin) {
-        console.log(`  [LIVE] opensteamtool only from builtin (no conflict)`);
-      }
-    } else {
+    if (builtinExtensions.length === 0) {
       // BuiltInSource found nothing (jsdom) — RepositorySource fills in
       expect(repoExtensions.length).toBeGreaterThanOrEqual(1);
       console.log(`  [LIVE] BuiltInSource returned 0 in jsdom — RepositorySource correctly fills in`);
+    } else {
+      console.log(`  [LIVE] BuiltInSource discovered ${builtinExtensions.length} extension(s) — verifying no stale builtin opensteamtool conflicting`);
+      // After Phase 4 removal, builtin no longer has opensteamtool.
+      // Any overlap is tested in unit tests; this live test just verifies sources work.
     }
 
     // Core assertion: at least one source contributed extensions

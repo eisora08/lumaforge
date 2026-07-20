@@ -41,6 +41,7 @@ import { pauseBackgroundFill, resumeBackgroundFill } from "./services/background
 import { setAppFullscreen, toggleAppFullscreen } from "./services/windowModeService";
 import { useSettings } from "./context/SettingsContext";
 import { setConsoleMode } from "./features/console/consoleInputHints";
+import { bootstrapExtensions } from "./extensions/bootstrap";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -124,6 +125,15 @@ function App() {
     setBootStarted(true);
     runBootTasks();
   }, [bootStarted]);
+
+  // Bootstrap extensions at app startup (built-in + repository)
+  useEffect(() => {
+    bootstrapExtensions().then((result) => {
+      console.log(`[App] Extensions bootstrapped: ${result.registered} registered, ${result.skipped} skipped, ${result.errors.length} errors`);
+    }).catch((err) => {
+      console.error("[App] Extension bootstrap failed:", err);
+    });
+  }, []);
 
   // Init catalog orchestrator at app level — loads disk cache, provides canonical sections to Home and Store
   useEffect(() => {

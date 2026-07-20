@@ -44,3 +44,4 @@ pub mod backup;
 pub mod external_files;
 pub mod steam_achievement_sources;
 pub mod extension;
+pub mod extension_lifecycle;

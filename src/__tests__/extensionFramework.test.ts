@@ -20,7 +20,6 @@ import type {
   ManagedFileDescriptor,
 } from "../extensions/types";
 import { VALIDATION_PATTERNS, MAX_LENGTHS } from "../extensions/types";
-import { BuiltInSource } from "../extensions/sources/builtin";
 import { registerSource, discoverAllSources, resetSourceManager } from "../extensions/sources/manager";
 import { clearExtensionManager } from "../extensions/manager";
 
@@ -252,9 +251,9 @@ describe("ExtensionManifestV1 (type validation)", () => {
 
   it("manifest supports behavior declaration", () => {
     const ext = createMockExtension("behavior-test", {
-      behavior: { luaOwnershipOverride: true },
+      behavior: { injectsDll: true },
     });
-    expect(ext.manifest.behavior?.luaOwnershipOverride).toBe(true);
+    expect(ext.manifest.behavior?.injectsDll).toBe(true);
   });
 
   it("manifest supports managed file descriptors with strategies", () => {
@@ -324,8 +323,8 @@ describe("Extension interface (contract)", () => {
 
   it("getBehavior returns ExtensionBehavior when defined", () => {
     const ext = createMockExtension("with-behavior");
-    ext.getBehavior = () => ({ luaOwnershipOverride: true });
-    expect(ext.getBehavior()).toEqual({ luaOwnershipOverride: true });
+    ext.getBehavior = () => ({ injectsDll: true });
+    expect(ext.getBehavior()).toEqual({ injectsDll: true });
   });
 });
 
@@ -595,90 +594,53 @@ describe("Full pipeline: BuiltInSource → SourceManager → ExtensionManager �
     resetSourceManager();
   });
 
-  it("discovers built-in extension, registers manifest AND runtime in Registry", async () => {
-    const MOCK_MANIFEST = {
-      schemaVersion: 1 as const,
-      id: "opensteamtool",
-      name: "opensteamtool",
-      displayName: "OpenSteamTool",
-      description: "DLL injection for Steam client",
-      version: "1.4.8",
-      author: "OpenSteam001",
-      managedFiles: [
-        { path: "dwmapi.dll", isExecutable: true, replaceStrategy: "if-different" as const, backupStrategy: "rename" as const },
-      ],
-    };
-
+  it("registers Extension runtime directly via Registry, then verifies lifecycle wiring", async () => {
     const mockDetect = vi.fn(async (_steamRoot: string): Promise<ExtensionDetectionResult> => ({
       status: "enabled",
-      installedFiles: ["dwmapi.dll", "xinput1_4.dll", "OpenSteamTool.dll"],
+      installedFiles: ["test.dll"],
       missingFiles: [],
       backupFiles: [],
-      installedVersion: "1.4.8",
+      installedVersion: "2.0.0",
     }));
 
     const mockExtension: Extension = {
-      manifest: MOCK_MANIFEST,
+      manifest: {
+        schemaVersion: 1 as const,
+        id: "direct-test-ext",
+        name: "direct-test-ext",
+        displayName: "Direct Test Extension",
+        description: "Verifies Registry wiring without BuiltInSource dependency",
+        version: "2.0.0",
+        author: "test",
+        managedFiles: [
+          { path: "test.dll", isExecutable: true, replaceStrategy: "if-different" as const, backupStrategy: "rename" as const },
+        ],
+      },
       detect: mockDetect,
       install: async () => ({ success: true }),
       update: async () => ({ success: true }),
       enable: async () => ({ success: true }),
       disable: async () => ({ success: true }),
       uninstall: async () => ({ success: true }),
-      getInstalledVersion: async () => "1.4.8",
-      getLatestVersion: async () => "1.4.8",
+      getInstalledVersion: async () => "2.0.0",
+      getLatestVersion: async () => "3.0.0",
       getStatus: async (): Promise<ExtensionStatus> => "enabled",
     };
 
-    // Mock fetch to return the manifest for opensteamtool
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (typeof url === "string" && url.includes("opensteamtool/manifest.json")) {
-        return { ok: true, status: 200, json: async () => MOCK_MANIFEST };
-      }
-      // Placeholder manifest (other built-in extensions)
-      if (typeof url === "string" && url.includes("manifest.json")) {
-        return { ok: true, status: 200, json: async () => ({ ...MOCK_MANIFEST, id: url.split("/").slice(-2, -1)[0], name: url.split("/").slice(-2, -1)[0] }) };
-      }
-      return { ok: false, status: 404, json: async () => ({}) };
-    }));
+    registerExtension(mockExtension);
 
-    // Mock dynamic import of getOpenSteamToolExtension
-    vi.doMock("../extensions/builtin/opensteamtool", () => ({
-      getOpenSteamToolExtension: vi.fn(async () => mockExtension),
-    }));
-
-    // Register BuiltInSource (priority 0) — no RepositorySource
-    registerSource(new BuiltInSource());
-
-    // Run discovery pipeline
-    const result = await discoverAllSources();
-
-    // SourceManager registered at least 1 extension
-    expect(result.registered).toBeGreaterThanOrEqual(1);
-    expect(result.errors).toHaveLength(0);
-
-    // ExtensionManager has opensteamtool registered (manifest + status)
-    const { getRegisteredExtension } = await import("../extensions/manager");
-    const registered = getRegisteredExtension("opensteamtool");
-    expect(registered).toBeDefined();
-    expect(registered!.manifest.id).toBe("opensteamtool");
-    expect(registered!.sourceId).toBe("builtin");
-    expect(registered!.status).toBe("available");
-
-    // Registry has the Extension runtime instance (wired by SourceManager)
-    const runtime = getExtension("opensteamtool");
+    // Registry has the Extension runtime instance
+    const runtime = getExtension("direct-test-ext");
     expect(runtime).toBeDefined();
-    expect(runtime!.manifest.id).toBe("opensteamtool");
+    expect(runtime!.manifest.id).toBe("direct-test-ext");
+    expect(runtime!.manifest.version).toBe("2.0.0");
 
-    // detect() works via the Registry — no hardcoded id check
-    const steamRoot = "C:\\Program Files (x86)\\Steam";
+    // detect() works via the Registry
+    const steamRoot = "C:\\Test";
     const detection = await runtime!.detect(steamRoot);
     expect(mockDetect).toHaveBeenCalledWith(steamRoot);
     expect(detection.status).toBe("enabled");
-    expect(detection.installedFiles).toEqual(["dwmapi.dll", "xinput1_4.dll", "OpenSteamTool.dll"]);
-    expect(detection.installedVersion).toBe("1.4.8");
-
-    vi.doUnmock("../extensions/builtin/opensteamtool");
+    expect(detection.installedVersion).toBe("2.0.0");
   });
 
   it("SourceExtension with extension field gets registered in Registry", async () => {

@@ -39,6 +39,9 @@ urlencoding = "2.1"
 notify = { version = "6", features = [] }
 rfd = "0.15"
 
+dashmap = "6"
+mlua = { version = "0.10", features = ["lua54", "vendored", "serialize", "send"] }
+
 windows = { version = "0.57", features = [
     "Win32_System_Com",
     "Win32_UI_Shell",

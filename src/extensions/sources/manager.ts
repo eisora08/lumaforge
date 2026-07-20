@@ -86,6 +86,22 @@ export async function discoverAllSources(): Promise<SourceManagerResult> {
 
     // Register extensions (skip duplicates)
     for (const ext of result.extensions) {
+      // Tool manifests (metadata.type === "tool") should use DeclarativeTool with
+      // per-game game-folder logic, NOT DeclarativeExtension (which installs to
+      // Steam root). Register the manifest for ToolManager discovery and Browse
+      // visibility, but skip creating an Extension runtime.
+      if (!ext.extension && (ext.manifest.metadata as Record<string, unknown>)?.type === "tool") {
+        const existing = getRegisteredExtension(ext.manifest.id);
+        if (existing) {
+          skipped.push(1);
+          continue;
+        }
+        registerLoadedExtension(ext.manifest, source.id);
+        registered.push(1);
+        if (DEBUG_SOURCE_MANAGER) console.log(`[SOURCE_MANAGER][DEBUG] Registered tool "${ext.manifest.id}" from "${source.id}" (skipped Extension runtime — handled by ToolManager)`);
+        continue;
+      }
+
       // Wire DeclarativeExtension fallback when source didn't provide a runtime.
       // This covers RepositorySource (and any future source) that discovers
       // manifests but doesn't create Extension instances.
