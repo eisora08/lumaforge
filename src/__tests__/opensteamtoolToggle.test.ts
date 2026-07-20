@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock @tauri-apps/api/core before importing anything that uses it
 const invokeCalls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
 const fileSystem = new Map<string, "file" | "dir">();
+/** Paths that simulate being locked by a running process (Windows "Access is denied"). */
+const lockedPaths = new Set<string>();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -16,6 +18,9 @@ vi.mock("@tauri-apps/api/core", () => ({
       const to = args.to as string;
       if (!fileSystem.has(from)) {
         throw new Error(`Source file does not exist: ${from}`);
+      }
+      if (lockedPaths.has(from)) {
+        throw new Error(`Rename failed: ${from} -> ${to}: Access is denied. (os error 5)`);
       }
       const type = fileSystem.get(from)!;
       fileSystem.delete(from);
@@ -36,6 +41,9 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (cmd === "extension_remove_file") {
       const p = args.path as string;
       if (!fileSystem.has(p)) return false;
+      if (lockedPaths.has(p)) {
+        throw new Error(`Failed to remove file ${p}: Access is denied. (os error 5)`);
+      }
       fileSystem.delete(p);
       return true;
     }
@@ -75,9 +83,18 @@ function hasFile(path: string) {
   return fileSystem.has(path);
 }
 
+function lockFile(path: string) {
+  lockedPaths.add(path);
+}
+
+function unlockAll() {
+  lockedPaths.clear();
+}
+
 function clearAll() {
   fileSystem.clear();
   invokeCalls.length = 0;
+  lockedPaths.clear();
 }
 
 beforeEach(() => {
@@ -456,5 +473,102 @@ describe("uninstall idempotency - from any state", () => {
   it("from clean state: no-op, no error", async () => {
     const result = await uninstall({ steamRoot: STEAM_ROOT });
     expect(result.success).toBe(true);
+  });
+});
+
+// ── File-locked error handling ──
+
+describe("file-locked errors", () => {
+  it("disable returns fileLocked when a DLL is locked by a running process", async () => {
+    setFile(`${STEAM_ROOT}\\dwmapi.dll`);
+    setFile(`${STEAM_ROOT}\\xinput1_4.dll`);
+    setFile(`${STEAM_ROOT}\\OpenSteamTool.dll`);
+    lockFile(`${STEAM_ROOT}\\dwmapi.dll`);
+
+    const result = await disable({ steamRoot: STEAM_ROOT });
+
+    expect(result.success).toBe(false);
+    expect(result.fileLocked).toBe(true);
+    expect(result.error).toContain("Access is denied");
+    // Rollback should restore the files that were already renamed before the lock
+    expect(hasFile(`${STEAM_ROOT}\\dwmapi.dll`)).toBe(true);
+  });
+
+  it("enable returns fileLocked when a .bak DLL is locked", async () => {
+    setFile(`${STEAM_ROOT}\\dwmapi.dll.bak`);
+    setFile(`${STEAM_ROOT}\\xinput1_4.dll.bak`);
+    setFile(`${STEAM_ROOT}\\OpenSteamTool.dll.bak`);
+    lockFile(`${STEAM_ROOT}\\OpenSteamTool.dll.bak`);
+
+    const result = await enable({ steamRoot: STEAM_ROOT });
+
+    expect(result.success).toBe(false);
+    expect(result.fileLocked).toBe(true);
+  });
+
+  it("uninstall returns fileLocked when a DLL is locked", async () => {
+    setFile(`${STEAM_ROOT}\\dwmapi.dll`);
+    setFile(`${STEAM_ROOT}\\xinput1_4.dll`);
+    setFile(`${STEAM_ROOT}\\OpenSteamTool.dll`);
+    lockFile(`${STEAM_ROOT}\\xinput1_4.dll`);
+
+    const result = await uninstall({ steamRoot: STEAM_ROOT });
+
+    expect(result.success).toBe(false);
+    expect(result.fileLocked).toBe(true);
+  });
+
+  it("disable succeeds after lock is released (retry scenario)", async () => {
+    // Phase 1: files exist but DLL is locked → fileLocked result
+    setFile(`${STEAM_ROOT}\\dwmapi.dll`);
+    setFile(`${STEAM_ROOT}\\xinput1_4.dll`);
+    setFile(`${STEAM_ROOT}\\OpenSteamTool.dll`);
+    lockFile(`${STEAM_ROOT}\\dwmapi.dll`);
+
+    const firstResult = await disable({ steamRoot: STEAM_ROOT });
+    expect(firstResult.success).toBe(false);
+    expect(firstResult.fileLocked).toBe(true);
+
+    // Phase 2: lock released → retry succeeds
+    unlockAll();
+
+    const secondResult = await disable({ steamRoot: STEAM_ROOT });
+    expect(secondResult.success).toBe(true);
+    expect(secondResult.fileLocked).toBeUndefined();
+    expect(hasFile(`${STEAM_ROOT}\\dwmapi.dll.bak`)).toBe(true);
+    expect(hasFile(`${STEAM_ROOT}\\dwmapi.dll`)).toBe(false);
+  });
+
+  it("renameFile and removeFile throw FileLockedError on Access is denied", async () => {
+    const { renameFile, removeFile } = await import("../extensions/services/transactionManager");
+
+    setFile(`${STEAM_ROOT}\\test.dll`);
+    lockFile(`${STEAM_ROOT}\\test.dll`);
+
+    await expect(renameFile(`${STEAM_ROOT}\\test.dll`, `${STEAM_ROOT}\\test.dll.bak`))
+      .rejects.toThrow("Access is denied");
+
+    await expect(removeFile(`${STEAM_ROOT}\\test.dll`))
+      .rejects.toThrow("Access is denied");
+  });
+});
+
+describe("isFileLockedError utility", () => {
+  it("returns true for FileLockedError instances", async () => {
+    const { FileLockedError, isFileLockedError } = await import("../extensions/services/transactionManager");
+    const err = new FileLockedError("Access denied", "/some/path");
+    expect(isFileLockedError(err)).toBe(true);
+  });
+
+  it("returns false for plain Error instances", async () => {
+    const { isFileLockedError } = await import("../extensions/services/transactionManager");
+    expect(isFileLockedError(new Error("some error"))).toBe(false);
+  });
+
+  it("returns false for non-Error values", async () => {
+    const { isFileLockedError } = await import("../extensions/services/transactionManager");
+    expect(isFileLockedError("string")).toBe(false);
+    expect(isFileLockedError(null)).toBe(false);
+    expect(isFileLockedError(undefined)).toBe(false);
   });
 });

@@ -598,6 +598,8 @@ export interface ExtensionOperationResult {
   error?: string;
   affectedFiles?: string[];
   rolledBack?: boolean;
+  /** True when the operation failed because a managed file is locked by a running process. */
+  fileLocked?: boolean;
   installedVersion?: string | null;
 }
 

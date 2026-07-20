@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Puzzle, Check, Shield, Layers, Box, Download, Settings, Trash2, RefreshCw } from "lucide-react";
+import { Puzzle, Check, Shield, Layers, Box, Download, Settings, Trash2, RefreshCw, AlertTriangle } from "lucide-react";
 import {
   listExtensions,
   subscribeExtensionManager,
@@ -24,6 +24,7 @@ import type {
 import { useSettings } from "../../context/SettingsContext";
 import { useConfirm } from "../../services/confirmService";
 import { compareVersions } from "../services/githubReleaseService";
+import { terminateProcessByName } from "../../services/tauri";
 
 // =============================================================================
 // Surface config
@@ -48,6 +49,8 @@ interface ExtensionState {
   latestVersion: string | null;
   operation: "idle" | "installing" | "updating" | "enabling" | "disabling" | "uninstalling";
   error: string | null;
+  /** When set, the operation failed because a file was locked. Holds the operation to retry. */
+  fileLockedOperation?: "install" | "update" | "enable" | "disable" | "uninstall";
 }
 
 // =============================================================================
@@ -197,6 +200,7 @@ export default function ExtensionsSettings() {
                     operation === "disable" ? "disabling" :
                     "uninstalling",
           error: null,
+          fileLockedOperation: undefined,
         });
       }
       return next;
@@ -226,7 +230,22 @@ export default function ExtensionsSettings() {
       }
 
       if (mountedRef.current) {
-        if (!result.success && result.error) {
+        if (!result.success && result.fileLocked) {
+          // File locked by a running process — show friendly retry UI
+          setExtensionStates((prev) => {
+            const next = new Map(prev);
+            const state = next.get(extensionId);
+            if (state) {
+              next.set(extensionId, {
+                ...state,
+                operation: "idle",
+                error: null,
+                fileLockedOperation: operation,
+              });
+            }
+            return next;
+          });
+        } else if (!result.success && result.error) {
           setExtensionStates((prev) => {
             const next = new Map(prev);
             const state = next.get(extensionId);
@@ -246,10 +265,10 @@ export default function ExtensionsSettings() {
             await detectExtensionStatus(ext);
           }
 
-          // Notify library to rescan Lua state after enable/disable/uninstall
-          if (operation === "enable" || operation === "disable" || operation === "uninstall") {
-            window.dispatchEvent(new CustomEvent("lumaforge-lua-changed"));
-          }
+          // Notify library to rescan Lua state after any operation that
+          // could change what the Lua scanner sees (install creates lua dir,
+          // enable/disable/uninstall rename lua ↔ lua.bak, update may refresh files)
+          window.dispatchEvent(new CustomEvent("lumaforge-lua-changed"));
         }
       }
     } catch (err) {
@@ -382,6 +401,7 @@ function ExtensionCard({
   const latestVersion = state?.latestVersion;
   const operation = state?.operation || "idle";
   const error = state?.error;
+  const fileLockedOperation = state?.fileLockedOperation;
 
   const status = detection?.status || "available";
   const isInstalled = status === "enabled" || status === "disabled" || status === "installed";
@@ -395,6 +415,27 @@ function ExtensionCard({
   const isBusy = isInstalling || isUpdating || isEnabling || isDisabling || isUninstalling;
 
   const hasUpdate = installedVersion && latestVersion && compareVersions(latestVersion, installedVersion) > 0;
+
+  const handleFileLockedRetry = useCallback(async () => {
+    const result = await confirm({
+      title: "Close Steam?",
+      description: "This will close Steam and any running games. LumaForge will retry the operation after Steam closes.",
+      confirmLabel: "Close Steam",
+      variant: "danger",
+    });
+    if (!result.confirmed || !fileLockedOperation) return;
+
+    try {
+      await terminateProcessByName("steam.exe");
+      // Wait briefly for Steam to fully exit
+      await new Promise((r) => setTimeout(r, 1500));
+    } catch {
+      // terminateProcessByName may throw if Steam isn't running — ignore,
+      // the retry will succeed anyway or surface a new error.
+    }
+
+    onOperation(manifest.id, fileLockedOperation);
+  }, [confirm, fileLockedOperation, manifest.id, onOperation]);
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
@@ -469,6 +510,26 @@ function ExtensionCard({
           )}
 
           {/* Error display */}
+          {fileLockedOperation && (
+            <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                <div className="flex-1">
+                  <p className="text-xs text-amber-300">
+                    Steam is currently running and has these files in use. Close Steam to continue.
+                  </p>
+                  <button
+                    onClick={handleFileLockedRetry}
+                    disabled={isBusy}
+                    className="mt-2 flex items-center gap-1.5 rounded-lg bg-amber-500/20 px-3 py-1.5 text-[10px] font-medium text-amber-300 hover:bg-amber-500/30 disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-2.5 w-2.5" />
+                    Close Steam and Retry
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {error && (
             <div className="mt-2 rounded-lg bg-rose-500/10 border border-rose-500/20 px-3 py-2 text-xs text-rose-400">
               {error}

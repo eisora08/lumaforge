@@ -124,9 +124,24 @@ export async function install(
       name: "ensure-lua-directory",
       execute: async () => {
         const luaDir = `${steamRoot}\\config\\lua`;
-        if (!await extensionFileExists(luaDir)) {
-          await createDir(luaDir);
+        const luaBackup = `${steamRoot}\\config\\lua.bak`;
+
+        if (await extensionFileExists(luaDir)) {
+          // Lua already active — nothing to do
+          return;
         }
+
+        if (await extensionFileExists(luaBackup)) {
+          // Lua backup exists from a previous uninstall — restore it
+          // instead of creating a fresh empty directory (which would
+          // cause data loss on the next uninstall when the empty dir
+          // overwrites this backup).
+          await extensionRenameFile(luaBackup, luaDir);
+          return;
+        }
+
+        // First install — create empty lua directory for new scripts
+        await createDir(luaDir);
       },
       rollback: async () => {},
     },

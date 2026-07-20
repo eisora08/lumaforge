@@ -53,8 +53,23 @@ export async function disable(
   }
 
   const luaFolder = getLuaFolder(steamRoot);
-  if (await fileExists(luaFolder)) {
-    renames.push({ from: luaFolder, to: getLuaBackupFolder(steamRoot) });
+  const luaBackup = getLuaBackupFolder(steamRoot);
+  const hasLuaFolder = await fileExists(luaFolder);
+  const hasLuaBackup = await fileExists(luaBackup);
+
+  // Defense-in-depth: both lua and lua.bak should never coexist.
+  // If they do, refuse to proceed rather than silently overwriting.
+  if (hasLuaFolder && hasLuaBackup) {
+    return {
+      success: false,
+      error:
+        "Cannot disable: both config/lua and config/lua.bak exist. " +
+        "One of them may be stale. Please resolve manually.",
+    };
+  }
+
+  if (hasLuaFolder) {
+    renames.push({ from: luaFolder, to: luaBackup });
   }
 
   if (renames.length === 0) {
@@ -109,8 +124,14 @@ export async function enable(
   }
 
   const luaBackup = getLuaBackupFolder(steamRoot);
-  if (await fileExists(luaBackup)) {
-    renames.push({ from: luaBackup, to: getLuaFolder(steamRoot) });
+  const luaFolder = getLuaFolder(steamRoot);
+  const hasLuaBackup = await fileExists(luaBackup);
+  const hasLuaFolder = await fileExists(luaFolder);
+
+  // If both exist, Lua is already active — skip restore (don't overwrite
+  // active lua with a stale backup).
+  if (hasLuaBackup && !hasLuaFolder) {
+    renames.push({ from: luaBackup, to: luaFolder });
   }
 
   if (renames.length === 0) {
@@ -196,6 +217,12 @@ export async function uninstall(
   ];
 
   if (hasLuaFolder) {
+    // If a stale .bak already exists, remove it first so the rename
+    // from lua → lua.bak can succeed (Windows fs::rename won't
+    // overwrite a non-empty directory).
+    if (hasLuaBackup) {
+      steps.push(createRemoveStep(luaBackup, "remove-stale-lua-backup"));
+    }
     steps.push(
       createRenameStep(luaFolder, luaBackup, "uninstall-rename-lua-folder")
     );
