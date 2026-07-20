@@ -17,6 +17,8 @@ import { listExtensions } from "./manager";
 import { hasExtension, registerExtension } from "./registry";
 import type { Extension } from "./types";
 
+const DEBUG_BOOTSTRAP = false;
+
 // =============================================================================
 // Bootstrap State
 // =============================================================================
@@ -37,11 +39,11 @@ export interface BootstrapResult {
  */
 export async function bootstrapExtensions(): Promise<BootstrapResult> {
   if (_bootstrapResult) {
-    console.log(`[BOOTSTRAP][DEBUG] Already bootstrapped, returning cached result (registered=${_bootstrapResult.registered})`);
+    if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Already bootstrapped, returning cached result (registered=${_bootstrapResult.registered})`);
     return _bootstrapResult;
   }
 
-  console.log(`[BOOTSTRAP][DEBUG] Starting bootstrap...`);
+  if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Starting bootstrap...`);
 
   // Step 1: Register built-in source (highest priority)
   registerSource(new BuiltInSource());
@@ -62,11 +64,13 @@ export async function bootstrapExtensions(): Promise<BootstrapResult> {
 
   // Step 2: Discover from all sources (fetches local manifest.json + remote index)
   const result = await discoverAllSources();
-  console.log(`[BOOTSTRAP][DEBUG] discoverAllSources completed: registered=${result.registered}, skipped=${result.skipped}, errors=${result.errors.length}`);
+  if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] discoverAllSources completed: registered=${result.registered}, skipped=${result.skipped}, errors=${result.errors.length}`);
 
   // Step 2b: Belt-and-suspenders — if SourceManager didn't register an
   // Extension runtime into the Registry (e.g. factory failed silently
   // or registration path was skipped), load it directly here.
+  // Also provides the DeclarativeExtension fallback for manifests with
+  // managedFiles but no hand-written factory.
   const BUILTIN_FACTORIES: Record<string, () => Promise<Extension>> = {
     opensteamtool: async () => {
       const { getOpenSteamToolExtension } = await import("./builtin/opensteamtool");
@@ -76,21 +80,21 @@ export async function bootstrapExtensions(): Promise<BootstrapResult> {
 
   for (const [dirName, factory] of Object.entries(BUILTIN_FACTORIES)) {
     if (!hasExtension(dirName)) {
-      console.log(`[BOOTSTRAP][DEBUG] Registry missing runtime for "${dirName}", loading directly...`);
+      if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Registry missing runtime for "${dirName}", loading directly...`);
       try {
         const ext = await factory();
         registerExtension(ext);
-        console.log(`[BOOTSTRAP][DEBUG] Direct registration succeeded for "${dirName}"`);
+        if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Direct registration succeeded for "${dirName}"`);
       } catch (err) {
-        console.error(`[BOOTSTRAP][DEBUG] Direct registration FAILED for "${dirName}":`, err);
+        console.error(`[BOOTSTRAP] Direct registration FAILED for "${dirName}":`, err);
       }
     } else {
-      console.log(`[BOOTSTRAP][DEBUG] Registry already has runtime for "${dirName}", skipping direct load`);
+      if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Registry already has runtime for "${dirName}", skipping direct load`);
     }
   }
 
   const snapshot = listExtensions();
-  console.log(`[BOOTSTRAP][DEBUG] Bootstrap complete: ${snapshot.length} extensions listed`);
+  if (DEBUG_BOOTSTRAP) console.log(`[BOOTSTRAP][DEBUG] Bootstrap complete: ${snapshot.length} extensions listed`);
 
   _bootstrapResult = {
     registered: result.registered,

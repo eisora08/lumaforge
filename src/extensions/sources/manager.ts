@@ -15,6 +15,9 @@ import type { SourceQueryResult } from "./index";
 import { registerLoadedExtension, getRegisteredExtension } from "../manager";
 import { registerExtension, hasExtension } from "../registry";
 import { SourceLoadError } from "../errors";
+import { tryCreateDeclarativeExtension } from "../declarative/wireExtensionRuntime";
+
+const DEBUG_SOURCE_MANAGER = false;
 
 // =============================================================================
 // Types
@@ -83,13 +86,20 @@ export async function discoverAllSources(): Promise<SourceManagerResult> {
 
     // Register extensions (skip duplicates)
     for (const ext of result.extensions) {
+      // Wire DeclarativeExtension fallback when source didn't provide a runtime.
+      // This covers RepositorySource (and any future source) that discovers
+      // manifests but doesn't create Extension instances.
+      if (!ext.extension) {
+        ext.extension = await tryCreateDeclarativeExtension(ext.manifest) ?? undefined;
+      }
+
       const existing = getRegisteredExtension(ext.manifest.id);
       if (existing) {
         skipped.push(1);
         // Even if manifest is skipped, register Extension runtime if present
         // (higher-priority source may have the runtime while a lower-priority had the manifest first)
         if (ext.extension && !hasExtension(ext.manifest.id)) {
-          console.log(`[SOURCE_MANAGER][DEBUG] Skipped manifest "${ext.manifest.id}" but registering runtime from "${source.id}"`);
+          if (DEBUG_SOURCE_MANAGER) console.log(`[SOURCE_MANAGER][DEBUG] Skipped manifest "${ext.manifest.id}" but registering runtime from "${source.id}"`);
           try {
             registerExtension(ext.extension);
           } catch (err) {
@@ -100,19 +110,19 @@ export async function discoverAllSources(): Promise<SourceManagerResult> {
             });
           }
         } else {
-          console.log(`[SOURCE_MANAGER][DEBUG] Skipped "${ext.manifest.id}" from "${source.id}": existing=${!!existing}, ext.extension=${!!ext.extension}, hasExt=${hasExtension(ext.manifest.id)}`);
+          if (DEBUG_SOURCE_MANAGER) console.log(`[SOURCE_MANAGER][DEBUG] Skipped "${ext.manifest.id}" from "${source.id}": existing=${!!existing}, ext.extension=${!!ext.extension}, hasExt=${hasExtension(ext.manifest.id)}`);
         }
         continue;
       }
       registerLoadedExtension(ext.manifest, source.id);
       registered.push(1);
-      console.log(`[SOURCE_MANAGER][DEBUG] Registered "${ext.manifest.id}" from "${source.id}", ext.extension=${!!ext.extension}`);
+      if (DEBUG_SOURCE_MANAGER) console.log(`[SOURCE_MANAGER][DEBUG] Registered "${ext.manifest.id}" from "${source.id}", ext.extension=${!!ext.extension}`);
 
       // Register Extension runtime into Registry if provided by the source
       if (ext.extension && !hasExtension(ext.manifest.id)) {
         try {
           registerExtension(ext.extension);
-          console.log(`[SOURCE_MANAGER][DEBUG] Registered runtime for "${ext.manifest.id}" into Registry`);
+          if (DEBUG_SOURCE_MANAGER) console.log(`[SOURCE_MANAGER][DEBUG] Registered runtime for "${ext.manifest.id}" into Registry`);
         } catch (err) {
           errors.push({
             sourceId: source.id,

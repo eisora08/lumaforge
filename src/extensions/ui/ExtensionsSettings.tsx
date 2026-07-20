@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Puzzle, Check, Shield, Layers, Box, Download, Settings, Trash2, RefreshCw, AlertTriangle } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Puzzle, Check, Shield, Layers, Box, Download, Settings, Trash2, RefreshCw, AlertTriangle, Store, ExternalLink, X } from "lucide-react";
 import {
   listExtensions,
   subscribeExtensionManager,
@@ -25,6 +26,8 @@ import { useSettings } from "../../context/SettingsContext";
 import { useConfirm } from "../../services/confirmService";
 import { compareVersions } from "../services/githubReleaseService";
 import { terminateProcessByName } from "../../services/tauri";
+
+const DEBUG_EXTENSIONS = false;
 
 // =============================================================================
 // Surface config
@@ -63,6 +66,7 @@ export default function ExtensionsSettings() {
   const [bootstrap, setBootstrap] = useState<BootstrapResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [extensionStates, setExtensionStates] = useState<Map<string, ExtensionState>>(new Map());
+  const [browseModalOpen, setBrowseModalOpen] = useState(false);
   const mountedRef = useRef(true);
   const latestDetectionKeyRef = useRef<string>("");
 
@@ -70,10 +74,10 @@ export default function ExtensionsSettings() {
   useEffect(() => {
     mountedRef.current = true;
     let mounted = true;
-    console.log(`[EXTENSIONS][DEBUG] Bootstrap useEffect starting...`);
+    if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] Bootstrap useEffect starting...`);
 
     bootstrapExtensions().then((result) => {
-      console.log(`[EXTENSIONS][DEBUG] Bootstrap resolved: registered=${result.registered}, extensions=${result.extensions.length}, errors=${result.errors.length}`);
+      if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] Bootstrap resolved: registered=${result.registered}, extensions=${result.extensions.length}, errors=${result.errors.length}`);
       if (!mounted) return;
       setBootstrap(result);
       setExtensions(listExtensions());
@@ -94,14 +98,14 @@ export default function ExtensionsSettings() {
   // Detect status for each extension via the Registry
   const detectExtensionStatus = useCallback(async (ext: RegisteredExtension) => {
     const extension = getExtension(ext.manifest.id);
-    console.log(`[EXTENSIONS][DEBUG] detectExtensionStatus "${ext.manifest.id}": getExtension returned ${extension ? `Extension(id=${extension.manifest.id})` : "undefined"}`);
+    if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] detectExtensionStatus "${ext.manifest.id}": getExtension returned ${extension ? `Extension(id=${extension.manifest.id})` : "undefined"}`);
     if (!extension) return;
 
     try {
       const steamRoot = settings.steamRoot || "";
       const detectionKey = `${ext.manifest.id}:${steamRoot}`;
       latestDetectionKeyRef.current = detectionKey;
-      console.log(`[EXTENSIONS][DEBUG] Detecting "${ext.manifest.id}" with steamRoot="${steamRoot}"`);
+      if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] Detecting "${ext.manifest.id}" with steamRoot="${steamRoot}"`);
       
       const [detection, installedVersion, latestVersion] = await Promise.all([
         extension.detect(steamRoot),
@@ -109,7 +113,7 @@ export default function ExtensionsSettings() {
         extension.getLatestVersion(),
       ]);
 
-      console.log(`[EXTENSIONS][DEBUG] Detection for "${ext.manifest.id}": status=${detection.status}, installed=${installedVersion}, latest=${latestVersion}`);
+      if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] Detection for "${ext.manifest.id}": status=${detection.status}, installed=${installedVersion}, latest=${latestVersion}`);
 
       // Bug E fix: when PE header version is null but files are detected as installed,
       // fall back to the manifest version (DLLs may not embed version resources)
@@ -117,12 +121,12 @@ export default function ExtensionsSettings() {
         ? ext.manifest.version
         : installedVersion;
       if (!installedVersion && resolvedInstalledVersion) {
-        console.log(`[EXTENSIONS][DEBUG] Installed version fallback for "${ext.manifest.id}": PE=null → manifest v${resolvedInstalledVersion}`);
+        if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] Installed version fallback for "${ext.manifest.id}": PE=null → manifest v${resolvedInstalledVersion}`);
       }
 
       // Stale-call guard: skip if a newer detection started (different steamRoot or re-detection)
       if (latestDetectionKeyRef.current !== detectionKey) {
-        console.log(`[EXTENSIONS][DEBUG] Stale detection skipped for "${ext.manifest.id}" (key mismatch: expected=${detectionKey}, current=${latestDetectionKeyRef.current})`);
+        if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] Stale detection skipped for "${ext.manifest.id}" (key mismatch: expected=${detectionKey}, current=${latestDetectionKeyRef.current})`);
         return;
       }
 
@@ -140,16 +144,16 @@ export default function ExtensionsSettings() {
           return next;
         });
       } else {
-        console.log(`[EXTENSIONS][DEBUG] mountedRef is false, skipping state update for "${ext.manifest.id}"`);
+        if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] mountedRef is false, skipping state update for "${ext.manifest.id}"`);
       }
     } catch (err) {
-      console.error(`[EXTENSIONS][DEBUG] FAILED to detect status for "${ext.manifest.id}":`, err);
+      if (DEBUG_EXTENSIONS) console.error(`[EXTENSIONS][DEBUG] FAILED to detect status for "${ext.manifest.id}":`, err);
     }
   }, [settings.steamRoot]);
 
   // Detect status on mount and when extensions change
   useEffect(() => {
-    console.log(`[EXTENSIONS][DEBUG] detect useEffect triggered: ${extensions.length} extensions`);
+    if (DEBUG_EXTENSIONS) console.log(`[EXTENSIONS][DEBUG] detect useEffect triggered: ${extensions.length} extensions`);
     for (const ext of extensions) {
       detectExtensionStatus(ext);
     }
@@ -290,10 +294,21 @@ export default function ExtensionsSettings() {
     }
   }, [settings.steamRoot, extensions, detectExtensionStatus]);
 
-  // Group by surface
-  const grouped = groupBySurface(extensions);
   const hasExtensions = extensions.length > 0;
   const hasErrors = bootstrap && bootstrap.errors.length > 0;
+
+  // Split into Browse (available, from repos) vs My Extensions (installed)
+  const browseExtensions = extensions.filter((ext) => {
+    const state = extensionStates.get(ext.manifest.id);
+    const status = state?.detection?.status || "available";
+    return status === "available" && ext.sourceId !== "builtin";
+  });
+  const installedExtensions = extensions.filter((ext) => {
+    const state = extensionStates.get(ext.manifest.id);
+    const status = state?.detection?.status || "available";
+    return status !== "available" || ext.sourceId === "builtin";
+  });
+  const hasInstalled = installedExtensions.length > 0;
 
   return (
     <div className="space-y-6">
@@ -330,38 +345,62 @@ export default function ExtensionsSettings() {
         </div>
       )}
 
+      {/* Browse Extensions — always visible */}
+      <button
+        onClick={() => setBrowseModalOpen(true)}
+        className="flex w-full items-center gap-3 rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/[0.04] p-4 text-left transition-colors hover:bg-(--color-accent)/[0.08]"
+      >
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-(--color-accent)/10">
+          <Store className="h-5 w-5 text-(--color-accent)" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium text-(--color-foreground)">
+            Browse Extensions
+          </h3>
+          <p className="text-xs text-(--color-muted)">
+            Discover extensions from the repository
+          </p>
+        </div>
+        <ExternalLink className="h-4 w-4 text-(--color-muted)" />
+      </button>
+
       {/* Extension list */}
       {hasExtensions && (
         <div className="space-y-6">
-          {SURFACE_ORDER.map((surface) => {
-            const exts = grouped[surface];
-            if (!exts || exts.length === 0) return null;
-            const config = SURFACE_CONFIG[surface];
-            const Icon = config.icon;
-            return (
-              <div key={surface}>
-                <div className="mb-3 flex items-center gap-2">
-                  <Icon className="h-4 w-4 text-(--color-muted)" />
-                  <h3 className="text-sm font-medium text-(--color-foreground)">
-                    {config.label}
-                  </h3>
-                  <span className="text-xs text-(--color-muted)">
-                    ({exts.length})
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {exts.map((ext) => (
-                    <ExtensionCard
-                      key={ext.manifest.id}
-                      extension={ext}
-                      state={extensionStates.get(ext.manifest.id)}
-                      onOperation={handleOperation}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+          {/* My Extensions — installed/enabled/disabled + built-in */}
+          {hasInstalled && (
+            <div className="space-y-6">
+              {SURFACE_ORDER.map((surface) => {
+                const exts = groupBySurface(installedExtensions)[surface];
+                if (!exts || exts.length === 0) return null;
+                const config = SURFACE_CONFIG[surface];
+                const Icon = config.icon;
+                return (
+                  <div key={surface}>
+                    <div className="mb-3 flex items-center gap-2">
+                      <Icon className="h-4 w-4 text-(--color-muted)" />
+                      <h3 className="text-sm font-medium text-(--color-foreground)">
+                        {config.label}
+                      </h3>
+                      <span className="text-xs text-(--color-muted)">
+                        ({exts.length})
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {exts.map((ext) => (
+                        <ExtensionCard
+                          key={ext.manifest.id}
+                          extension={ext}
+                          state={extensionStates.get(ext.manifest.id)}
+                          onOperation={handleOperation}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -376,6 +415,18 @@ export default function ExtensionsSettings() {
             Extension support is coming soon.
           </p>
         </div>
+      )}
+
+      {/* Browse Extensions Modal */}
+      {createPortal(
+        <BrowseExtensionsModal
+          open={browseModalOpen}
+          onClose={() => setBrowseModalOpen(false)}
+          extensions={browseExtensions}
+          extensionStates={extensionStates}
+          onOperation={handleOperation}
+        />,
+        document.body
       )}
     </div>
   );
@@ -639,6 +690,120 @@ function ExtensionCard({
 }
 
 // =============================================================================
+// Browse Extension Card — Marketplace card for not-yet-installed extensions
+// =============================================================================
+
+function BrowseExtensionCard({
+  extension,
+  state,
+  onOperation,
+}: {
+  extension: RegisteredExtension;
+  state?: ExtensionState;
+  onOperation: (extensionId: string, operation: "install" | "update" | "enable" | "disable" | "uninstall") => void;
+}) {
+  const { manifest } = extension;
+  const operation = state?.operation || "idle";
+  const error = state?.error;
+  const isInstalling = operation === "installing";
+  const isBusy = isInstalling;
+
+  return (
+    <div className="rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/[0.03] p-4 transition-colors hover:bg-(--color-accent)/[0.06]">
+      <div className="flex items-start gap-3">
+        {/* Icon */}
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-(--color-accent)/10">
+          <Puzzle className="h-6 w-6 text-(--color-accent)" />
+        </div>
+
+        {/* Content */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-(--color-foreground)">
+              {manifest.displayName}
+            </h4>
+            <span className="inline-flex items-center gap-1 rounded-full bg-(--color-accent)/10 px-2 py-0.5 text-[10px] font-medium text-(--color-accent)">
+              v{manifest.version}
+            </span>
+            {extension.sourceId !== "builtin" && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-(--color-muted)">
+                <ExternalLink className="h-2.5 w-2.5" />
+                Repository
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-(--color-muted) line-clamp-2">
+            {manifest.description}
+          </p>
+
+          {/* Meta row */}
+          <div className="mt-2 flex items-center gap-3 text-[10px] text-white/30">
+            {manifest.author && <span>by {manifest.author}</span>}
+            {manifest.license && <span>{manifest.license}</span>}
+            {manifest.categories && manifest.categories.length > 0 && (
+              <span>{manifest.categories.join(", ")}</span>
+            )}
+          </div>
+
+          {/* Capabilities */}
+          {manifest.capabilities && manifest.capabilities.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {manifest.capabilities.map((cap) => (
+                <span
+                  key={cap.id}
+                  className="inline-flex items-center gap-1 rounded-full bg-(--color-accent)/10 px-2 py-0.5 text-[10px] text-(--color-accent)"
+                >
+                  <Layers className="h-2.5 w-2.5" />
+                  {cap.id}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Permissions */}
+          {manifest.permissions && manifest.permissions.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {manifest.permissions.map((perm) => (
+                <span
+                  key={perm.id}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400"
+                >
+                  <Shield className="h-2.5 w-2.5" />
+                  {perm.id}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div className="mt-2 rounded-lg bg-rose-500/10 border border-rose-500/20 px-3 py-2 text-xs text-rose-400">
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* Install button */}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <button
+            onClick={() => onOperation(manifest.id, "install")}
+            disabled={isBusy}
+            className="flex items-center gap-1.5 rounded-lg bg-(--color-accent)/20 px-4 py-2 text-xs font-medium text-(--color-accent) hover:bg-(--color-accent)/30 disabled:opacity-50"
+          >
+            {isInstalling ? (
+              <RefreshCw className="h-3 w-3 animate-spin" />
+            ) : (
+              <Download className="h-3 w-3" />
+            )}
+            {isInstalling ? "Installing..." : "Install"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // Status Badge
 // =============================================================================
 
@@ -661,6 +826,98 @@ function StatusBadge({ status }: { status: ExtensionStatus }) {
       {(status === "enabled" || status === "installed") && <Check className="h-2.5 w-2.5" />}
       {label}
     </span>
+  );
+}
+
+// =============================================================================
+// Browse Extensions Modal
+// =============================================================================
+
+function BrowseExtensionsModal({
+  open,
+  onClose,
+  extensions,
+  extensionStates,
+  onOperation,
+}: {
+  open: boolean;
+  onClose: () => void;
+  extensions: RegisteredExtension[];
+  extensionStates: Map<string, ExtensionState>;
+  onOperation: (extensionId: string, operation: "install" | "update" | "enable" | "disable" | "uninstall") => void;
+}) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      ref={backdropRef}
+      onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-md"
+    >
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-2xl border border-white/10 bg-[--color-bg] p-6 lf-surface">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-(--color-accent)/10">
+              <Store className="h-5 w-5 text-(--color-accent)" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-(--color-foreground)">Browse Extensions</h2>
+              <p className="text-xs text-(--color-muted)">
+                Discover extensions from the repository
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-(--color-muted) hover:bg-white/10 hover:text-(--color-foreground) transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="mt-4 flex-1 overflow-y-auto -mr-2 pr-2">
+          {extensions.length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-8 text-center">
+              <Store className="mx-auto mb-3 h-8 w-8 text-white/20" />
+              <p className="text-sm text-(--color-muted)">
+                No extensions available in the repository.
+              </p>
+              <p className="mt-1 text-xs text-white/30">
+                Extensions will appear here once they are published.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {extensions.map((ext) => (
+                <BrowseExtensionCard
+                  key={ext.manifest.id}
+                  extension={ext}
+                  state={extensionStates.get(ext.manifest.id)}
+                  onOperation={onOperation}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

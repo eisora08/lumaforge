@@ -12,6 +12,7 @@ import type { Extension, ExtensionId } from "../types";
 import type { SourceExtension, SourceQueryResult } from "./index";
 import { loadManifestFromObject } from "../manifests";
 import { ManifestParseError, ManifestValidationError, SchemaVersionUnsupportedError } from "../errors";
+import { tryCreateDeclarativeExtension } from "../declarative/wireExtensionRuntime";
 
 // =============================================================================
 // Known built-in Extension runtime factories
@@ -71,19 +72,19 @@ export class BuiltInSource {
         const raw = await response.json();
         const manifest = loadManifestFromObject(raw, { path: manifestPath });
 
-        // Attach Extension runtime if a factory is registered for this dirName
+        // Attach Extension runtime if a factory is registered for this dirName.
+        // Otherwise, fall back to DeclarativeExtension via shared helper.
         let extension: Extension | undefined;
         const factory = BUILTIN_EXTENSION_FACTORIES[dirName];
         if (factory) {
           try {
             extension = await factory();
-            console.log(`[BUILTIN_SOURCE][DEBUG] Factory for "${dirName}" succeeded, extension manifest.id="${extension?.manifest?.id}"`);
           } catch (err) {
             // Runtime factory failure is non-fatal — manifest still registered
             console.warn(`[BUILTIN_SOURCE] Failed to load runtime for ${dirName}:`, err);
           }
         } else {
-          console.log(`[BUILTIN_SOURCE][DEBUG] No factory for "${dirName}", extension will be undefined`);
+          extension = await tryCreateDeclarativeExtension(manifest);
         }
 
         extensions.push({
