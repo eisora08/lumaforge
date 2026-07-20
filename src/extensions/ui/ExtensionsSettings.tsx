@@ -8,7 +8,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Puzzle, Check, Shield, Layers, Box, Download, Settings, Trash2, RefreshCw, AlertTriangle, Store, ExternalLink, X } from "lucide-react";
+import { Puzzle, Check, Shield, Layers, Box, Download, Trash2, RefreshCw, AlertTriangle, Store, ExternalLink, X } from "lucide-react";
 import {
   listExtensions,
   subscribeExtensionManager,
@@ -16,9 +16,20 @@ import {
   type ExtensionSurface,
 } from "../manager";
 import { bootstrapExtensions, type BootstrapResult } from "../bootstrap";
-import { getExtension } from "../registry";
+import { getExtension, registerExtension } from "../registry";
+import { getRepositoryManifestUrl, clearRepositoryManifestUrl } from "../sources/manager";
+import { createLuaExtension } from "../loader/createLuaExtension";
+import { loadManifestFromObject } from "../manifests";
+import {
+  extensionCreateDir,
+  extensionWriteTextFile,
+  extensionFetchUrlAsText,
+} from "../services/extensionTauri";
+import { resolveAppDataDir } from "../../services/tauri";
 import type {
+  Extension,
   ExtensionDetectionResult,
+  ExtensionManifestV1,
   ExtensionOperationResult,
   ExtensionStatus,
 } from "../types";
@@ -167,12 +178,221 @@ export default function ExtensionsSettings() {
     };
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Remote Repository Install — Fetches extension.lua from remote repo,
+  // saves to AppData/extensions/{id}/, creates a Lua extension, registers
+  // it in the Registry, then delegates to the Lua adapter's install.
+  // ---------------------------------------------------------------------------
+
+  const installRemoteRepositoryExtension = useCallback(async (
+    extensionId: string,
+    steamRoot: string,
+  ): Promise<ExtensionOperationResult> => {
+    const manifestUrl = getRepositoryManifestUrl(extensionId);
+    if (!manifestUrl) {
+      console.log(`[EXTENSIONS] No repository manifest URL for "${extensionId}" — cannot install from remote`);
+      return { success: false, error: `No repository source found for "${extensionId}". It may have been removed from the repository.` };
+    }
+
+    console.log(`[EXTENSIONS] Installing "${extensionId}" from remote repository: ${manifestUrl}`);
+
+    // 1. Find the existing manifest from the extensions list (already parsed)
+    const extEntry = extensions.find((e) => e.manifest.id === extensionId);
+    if (!extEntry) {
+      return { success: false, error: `Extension "${extensionId}" not found in discovered extensions.` };
+    }
+
+    // 2. Derive extension.lua URL from manifest URL
+    const luaUrl = manifestUrl.replace(/\/manifest\.json(\?.*)?$/, "/extension.lua");
+    console.log(`[EXTENSIONS] Fetching extension.lua from: ${luaUrl}`);
+
+    // 3. Fetch extension.lua and re-fetch manifest from remote
+    let luaContent: string;
+    let manifestRaw: string;
+    try {
+      [luaContent, manifestRaw] = await Promise.all([
+        extensionFetchUrlAsText(luaUrl),
+        extensionFetchUrlAsText(manifestUrl),
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Failed to fetch extension files from repository: ${msg}` };
+    }
+
+    if (!luaContent || !manifestRaw) {
+      return { success: false, error: "Repository returned empty extension files." };
+    }
+
+    // 4. Re-parse remote manifest to verify it's valid
+    let manifest: ExtensionManifestV1;
+    try {
+      const parsed = JSON.parse(manifestRaw);
+      manifest = loadManifestFromObject(parsed, { path: manifestUrl });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Invalid manifest.json from repository: ${msg}` };
+    }
+
+    // 5. Get AppData dir and create extension directory
+    const appDataDir = await resolveAppDataDir();
+    const extDir = `${appDataDir}/extensions/${extensionId}`;
+    const scriptPath = `${extDir}/extension.lua`;
+    const manifestPath = `${extDir}/manifest.json`;
+
+    try {
+      await extensionCreateDir(extDir);
+      console.log(`[EXTENSIONS] Created extension directory: ${extDir}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Failed to create extension directory: ${msg}` };
+    }
+
+    // 6. Write extension.lua and manifest.json
+    try {
+      await extensionWriteTextFile(scriptPath, luaContent);
+      await extensionWriteTextFile(manifestPath, manifestRaw);
+      console.log(`[EXTENSIONS] Saved extension.lua and manifest.json to: ${extDir}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Failed to save extension files to disk: ${msg}` };
+    }
+
+    // 7. Create Lua extension
+    let luaExtension: Extension;
+    try {
+      luaExtension = await createLuaExtension(manifest, scriptPath);
+      console.log(`[EXTENSIONS] Created Lua extension for "${extensionId}"`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Clean up the directory on failure
+      try {
+        await extensionWriteTextFile(`${extDir}/.install-failed`, msg);
+      } catch { /* best-effort cleanup */
+
+      }
+      clearRepositoryManifestUrl(extensionId);
+      return { success: false, error: `Failed to load Lua extension: ${msg}` };
+    }
+
+    // 8. Register in Registry
+    try {
+      registerExtension(luaExtension);
+      console.log(`[EXTENSIONS] Registered Lua extension "${extensionId}" in runtime registry`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Failed to register extension runtime: ${msg}` };
+    }
+
+    // 9. Call Lua install lifecycle
+    try {
+      const installResult = await luaExtension.install({ hostPath: steamRoot });
+      console.log(`[EXTENSIONS] Lua install for "${extensionId}": success=${installResult.success}`);
+      if (!installResult.success && installResult.error) {
+        return installResult;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Extension install failed: ${msg}` };
+    }
+
+    return { success: true };
+  }, [extensions]);
+
   // Handle extension operations via the Registry
   const handleOperation = useCallback(async (
     extensionId: string,
     operation: "install" | "update" | "enable" | "disable" | "uninstall"
   ) => {
-    const extension = getExtension(extensionId);
+    let extension = getExtension(extensionId);
+
+    // Remote repository install: if extension has no runtime but has a
+    // repository manifest URL, fetch extension.lua from remote, save to
+    // AppData, create Lua extension, register, then run install lifecycle.
+    if (!extension && operation === "install") {
+      const repoManifestUrl = getRepositoryManifestUrl(extensionId);
+      if (repoManifestUrl) {
+        const steamRoot = settings.steamRoot || "";
+        if (!steamRoot) {
+          setExtensionStates((prev) => {
+            const next = new Map(prev);
+            const state = next.get(extensionId);
+            if (!state) {
+              const regExt = extensions.find((e) => e.manifest.id === extensionId);
+              next.set(extensionId, {
+                extension: regExt!,
+                detection: null,
+                installedVersion: null,
+                latestVersion: null,
+                operation: "idle",
+                error: "Steam root path is not configured. Set it in General settings.",
+              });
+            } else {
+              next.set(extensionId, { ...state, error: "Steam root path is not configured. Set it in General settings." });
+            }
+            return next;
+          });
+          return;
+        }
+
+        // Create/update state entry with "installing" operation
+        setExtensionStates((prev) => {
+          const next = new Map(prev);
+          const existing = next.get(extensionId);
+          if (existing) {
+            next.set(extensionId, { ...existing, operation: "installing", error: null, fileLockedOperation: undefined });
+          } else {
+            const regExt = extensions.find((e) => e.manifest.id === extensionId);
+            if (regExt) {
+              next.set(extensionId, {
+                extension: regExt,
+                detection: null,
+                installedVersion: null,
+                latestVersion: null,
+                operation: "installing",
+                error: null,
+              });
+            }
+          }
+          return next;
+        });
+
+        // Run the remote install
+        const remoteResult = await installRemoteRepositoryExtension(extensionId, steamRoot);
+
+        if (mountedRef.current) {
+          if (!remoteResult.success && remoteResult.error) {
+            setExtensionStates((prev) => {
+              const next = new Map(prev);
+              const state = next.get(extensionId);
+              if (state) {
+                next.set(extensionId, { ...state, operation: "idle", error: remoteResult.error! });
+              }
+              return next;
+            });
+          } else {
+            // Set "idle" via re-detect after successful remote install
+            const ext = extensions.find((e) => e.manifest.id === extensionId);
+            if (ext) {
+              await detectExtensionStatus(ext);
+            } else {
+              // Fallback: mark idle directly if extension not in list
+              setExtensionStates((prev) => {
+                const next = new Map(prev);
+                const state = next.get(extensionId);
+                if (state) {
+                  next.set(extensionId, { ...state, operation: "idle", error: null });
+                }
+                return next;
+              });
+            }
+            window.dispatchEvent(new CustomEvent("lumaforge-lua-changed"));
+          }
+        }
+
+        return; // Remote install complete — don't fall through to normal path
+      }
+    }
+
     if (!extension) return;
 
     const steamRoot = settings.steamRoot || "";
@@ -263,10 +483,22 @@ export default function ExtensionsSettings() {
             return next;
           });
         } else {
-          // Re-detect status after successful operation
-          const ext = extensions.find((e) => e.manifest.id === extensionId);
-          if (ext) {
-            await detectExtensionStatus(ext);
+          if (operation === "uninstall") {
+            // Immediate state cleanup: delete the extension's state entry so
+            // the re-render instantly shows "Available / Install" without
+            // waiting for a full re-detect cycle (which would hit a stale
+            // Rust Lua engine cache that still reports "enabled").
+            setExtensionStates((prev) => {
+              const next = new Map(prev);
+              next.delete(extensionId);
+              return next;
+            });
+          } else {
+            // Re-detect status after other successful operations
+            const ext = extensions.find((e) => e.manifest.id === extensionId);
+            if (ext) {
+              await detectExtensionStatus(ext);
+            }
           }
 
           // Notify library to rescan Lua state after any operation that
@@ -456,14 +688,17 @@ function ExtensionCard({
 
   const status = detection?.status || "available";
   const isInstalled = status === "enabled" || status === "disabled" || status === "installed";
-  const isEnabled = status === "enabled";
-  const isDisabled = status === "disabled";
+  const isActive = status === "enabled" || status === "installed";
   const isInstalling = operation === "installing";
   const isUpdating = operation === "updating";
   const isEnabling = operation === "enabling";
   const isDisabling = operation === "disabling";
   const isUninstalling = operation === "uninstalling";
   const isBusy = isInstalling || isUpdating || isEnabling || isDisabling || isUninstalling;
+  // Optimistic toggle: show ON immediately while enabling, OFF immediately while disabling
+  const toggleEnabled = isBusy
+    ? (isEnabling ? true : isDisabling ? false : isActive)
+    : isActive;
 
   const hasUpdate = installedVersion && latestVersion && compareVersions(latestVersion, installedVersion) > 0;
 
@@ -610,35 +845,23 @@ function ExtensionCard({
 
             {isInstalled && (
               <>
-                {isEnabled && (
-                  <button
-                    onClick={() => onOperation(manifest.id, "disable")}
-                    disabled={isBusy}
-                    className="flex items-center gap-1 rounded-lg bg-amber-500/20 px-3 py-1.5 text-[10px] text-amber-400 hover:bg-amber-500/30 disabled:opacity-50"
-                  >
-                    {isDisabling ? (
-                      <RefreshCw className="h-2.5 w-2.5 animate-spin" />
-                    ) : (
-                      <Settings className="h-2.5 w-2.5" />
-                    )}
-                    {isDisabling ? "Disabling..." : "Disable"}
-                  </button>
-                )}
-
-                {isDisabled && (
-                  <button
-                    onClick={() => onOperation(manifest.id, "enable")}
-                    disabled={isBusy}
-                    className="flex items-center gap-1 rounded-lg bg-emerald-500/20 px-3 py-1.5 text-[10px] text-emerald-400 hover:bg-emerald-500/30 disabled:opacity-50"
-                  >
-                    {isEnabling ? (
-                      <RefreshCw className="h-2.5 w-2.5 animate-spin" />
-                    ) : (
-                      <Check className="h-2.5 w-2.5" />
-                    )}
-                    {isEnabling ? "Enabling..." : "Enable"}
-                  </button>
-                )}
+                {/* Toggle switch — same design as ToggleOption in Settings */}
+                <button
+                  type="button"
+                  onClick={() => onOperation(manifest.id, toggleEnabled ? "disable" : "enable")}
+                  disabled={isBusy}
+                  className={`relative h-7 w-12 shrink-0 rounded-full transition ${
+                    toggleEnabled ? "bg-(--color-accent)" : "bg-white/10"
+                  } ${isBusy ? "cursor-not-allowed opacity-50" : ""}`}
+                  role="switch"
+                  aria-checked={toggleEnabled}
+                >
+                  <span
+                    className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
+                      toggleEnabled ? "left-6" : "left-1"
+                    }`}
+                  />
+                </button>
 
                 {hasUpdate && (
                   <button

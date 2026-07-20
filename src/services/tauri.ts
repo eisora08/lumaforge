@@ -2213,6 +2213,47 @@ export async function scanExtensionsDirectory(
   });
 }
 
+// =============================================================================
+// Extension Config (cascading lifecycle support)
+// =============================================================================
+
+export interface ExtensionConfig {
+  enabled: boolean;
+}
+
+/**
+ * Write an extension-config.json into the extension's AppData directory.
+ * This marks the extension as enabled or disabled in the local registry.
+ */
+export async function writeExtensionConfig(
+  dirPath: string,
+  enabled: boolean,
+): Promise<void> {
+  return await invoke("write_extension_config", { dirPath, enabled });
+}
+
+/**
+ * Read the extension-config.json from the extension's AppData directory.
+ * Returns null when the file doesn't exist (pre-migration or first boot).
+ */
+export async function readExtensionConfig(
+  dirPath: string,
+): Promise<ExtensionConfig | null> {
+  return await invoke<ExtensionConfig | null>("read_extension_config", {
+    dirPath,
+  });
+}
+
+/**
+ * Delete the extension's entire AppData directory (extension.lua,
+ * manifest.json, config, and any other state files).
+ */
+export async function deleteExtensionDirectory(
+  dirPath: string,
+): Promise<void> {
+  return await invoke("delete_extension_directory", { dirPath });
+}
+
 export async function resolveAppDataDir(): Promise<string> {
   return await invoke<string>("resolve_app_data_dir");
 }

@@ -304,6 +304,9 @@ pub fn run() {
             commands::extension_lifecycle::call_extension_enable,
             commands::extension_lifecycle::call_extension_disable,
             commands::extension_lifecycle::call_extension_uninstall,
+            commands::extension_lifecycle::write_extension_config,
+            commands::extension_lifecycle::read_extension_config,
+            commands::extension_lifecycle::delete_extension_directory,
             commands::extension_lifecycle::scan_extensions_directory,
         ])
         .run(tauri::generate_context!())

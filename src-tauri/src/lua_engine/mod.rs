@@ -27,7 +27,7 @@ pub struct LuaFunctionResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct LuaExtensionTable {
     pub id: Option<String>,
     pub name: Option<String>,
@@ -534,18 +534,26 @@ impl LuaEngine {
 
         match ext_value {
             Value::Table(ref tbl) => {
-                let mut ext: LuaExtensionTable = self
-                    .lua
-                    .from_value(Value::Table(tbl.clone()))
-                    .map_err(|e| format!("Failed to deserialize extension table: {}", e))?;
-                // Populate has_* fields by checking whether each lifecycle
-                // function exists on the extension table. These are used by
-                // the TS adapter to decide which hooks to call.
-                ext.has_detect = tbl.contains_key("detect").unwrap_or(false);
-                ext.has_install = tbl.contains_key("install").unwrap_or(false);
-                ext.has_enable = tbl.contains_key("enable").unwrap_or(false);
-                ext.has_disable = tbl.contains_key("disable").unwrap_or(false);
-                ext.has_uninstall = tbl.contains_key("uninstall").unwrap_or(false);
+                let id: Option<String> = tbl.get("id").ok();
+                let name: Option<String> = tbl.get("name").ok();
+                let version: Option<String> = tbl.get("version").ok();
+                let description: Option<String> = tbl.get("description").ok();
+                let criteria: Option<serde_json::Value> = tbl
+                    .get::<mlua::Value>("criteria")
+                    .ok()
+                    .and_then(|v| self.lua.from_value(v).ok());
+                let ext = LuaExtensionTable {
+                    id,
+                    name,
+                    version,
+                    description,
+                    criteria,
+                    has_detect: tbl.contains_key("detect").unwrap_or(false),
+                    has_install: tbl.contains_key("install").unwrap_or(false),
+                    has_enable: tbl.contains_key("enable").unwrap_or(false),
+                    has_disable: tbl.contains_key("disable").unwrap_or(false),
+                    has_uninstall: tbl.contains_key("uninstall").unwrap_or(false),
+                };
                 self.extension_id = extension_id.to_string();
                 Ok(ext)
             }

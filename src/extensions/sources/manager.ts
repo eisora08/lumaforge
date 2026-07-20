@@ -20,6 +20,45 @@ import { tryCreateDeclarativeExtension } from "../declarative/wireExtensionRunti
 const DEBUG_SOURCE_MANAGER = false;
 
 // =============================================================================
+// Repository Extension Store — Maps extension ID → manifest URL for remote
+// Lua extensions discovered by RepositorySource. Used by Extensions UI to
+// fetch and install extension.lua on demand.
+// =============================================================================
+
+const _repositoryExtensionUrls = new Map<string, string>();
+
+/**
+ * Store a repository extension's manifest URL for later retrieval by the UI.
+ * Called by discoverAllSources() when a repository extension is discovered.
+ */
+function setRepositoryManifestUrl(id: string, url: string): void {
+  _repositoryExtensionUrls.set(id, url);
+}
+
+/**
+ * Get the repository manifest URL for an extension ID.
+ * Used by ExtensionsSettings to determine the remote source URL for
+ * fetching extension.lua during install.
+ */
+export function getRepositoryManifestUrl(id: string): string | undefined {
+  return _repositoryExtensionUrls.get(id);
+}
+
+/**
+ * Remove a repository extension's manifest URL (used when resetting).
+ */
+export function clearRepositoryManifestUrl(id: string): void {
+  _repositoryExtensionUrls.delete(id);
+}
+
+/**
+ * Clear all repository extension URLs.
+ */
+export function clearAllRepositoryManifestUrls(): void {
+  _repositoryExtensionUrls.clear();
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -102,21 +141,45 @@ export async function discoverAllSources(): Promise<SourceManagerResult> {
         continue;
       }
 
-      // Wire DeclarativeExtension fallback when source didn't provide a runtime.
-      // This covers RepositorySource (and any future source) that discovers
-      // manifests but doesn't create Extension instances.
-      // NOTE: If this extension has extension.lua on disk (in AppData), the Lua
-      // loader (loadExtensionsFromAppData) will REPLACE this DeclarativeExtension
-      // with the Lua-backed adapter. The replacement is logged as LUA_PRIORITY.
+      // Store repository metadata for UI install flow
+      // (must capture BEFORE extension is mutated below)
+      if (!ext.extension && ext.metadata?.manifestUrl) {
+        setRepositoryManifestUrl(ext.manifest.id, ext.metadata.manifestUrl as string);
+      }
+
+      // Wire Extension runtime when source didn't provide one.
+      //
+      // Policy:
+      //   Repository-sourced extensions (sourceId !== "builtin") with managedFiles
+      //   are Lua extensions — they MUST bypass DeclarativeExtension entirely.
+      //   The user installs them via the Extensions UI, which fetches extension.lua
+      //   from the remote repository and creates a Lua-backed adapter on the fly.
+      //
+      //   Built-in extensions with managedFiles use DeclarativeExtension (they have
+      //   no extension.lua — all lifecycle is from manifest data + GitHub releases).
       if (!ext.extension) {
-        const created = await tryCreateDeclarativeExtension(ext.manifest);
-        if (created) {
+        const isRepoExtension = source.id !== "builtin";
+        const hasManagedFiles = ext.manifest.managedFiles && ext.manifest.managedFiles.length > 0;
+
+        if (isRepoExtension && hasManagedFiles) {
+          // Repository Lua extension — NO DeclarativeExtension.
+          // The extension is registered as manifest-only. When the user clicks
+          // Install, ExtensionsSettings handles the remote fetch + Lua adapter creation.
           console.log(
-            `[SOURCE_MANAGER] Created DeclarativeExtension for "${ext.manifest.id}" — will be replaced by Lua adapter if extension.lua is found on disk`
+            `[SOURCE_MANAGER] Skipped DeclarativeExtension for "${ext.manifest.id}" (repo-sourced Lua) — will be installed via extension.lua from repository`
           );
-          ext.extension = created;
-        } else {
           ext.extension = undefined;
+        } else {
+          // Built-in or no managedFiles → DeclarativeExtension fallback
+          const created = await tryCreateDeclarativeExtension(ext.manifest);
+          if (created) {
+            console.log(
+              `[SOURCE_MANAGER] Created DeclarativeExtension for "${ext.manifest.id}"`
+            );
+            ext.extension = created;
+          } else {
+            ext.extension = undefined;
+          }
         }
       }
 
