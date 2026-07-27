@@ -138,7 +138,7 @@ export default function StoreDiscoverHeroCarousel({
                   e.stopPropagation();
                   onOpenGame(current);
                 }}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-black transition hover:opacity-90"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90"
               >
                 Details
               </button>

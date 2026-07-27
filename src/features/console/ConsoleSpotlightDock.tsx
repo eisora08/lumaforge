@@ -33,7 +33,7 @@ export default function ConsoleSpotlightDock({ activeIndex, focusedIndex = -1, c
               onClick={() => onSelect(i)}
               className={`relative flex items-center justify-center rounded-xl transition-all duration-200 ${
                 isActive
-                  ? "bg-(--color-accent) text-white shadow-lg shadow-(--color-accent)/35 scale-105"
+                  ? "bg-(--color-accent) text-(--color-accent-text) shadow-lg shadow-(--color-accent)/35 scale-105"
                   : "text-white/60 hover:text-white/85 hover:bg-white/[0.08]"
               } ${
                 isFocused && !isActive

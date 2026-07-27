@@ -2961,6 +2961,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       log("store-search", `start { appId: "${appId}", title: "${title}" }`);
       log("store-search", `cache miss { appId: "${appId}" }`);
 
+      // Owned or non-installed Lua games should not trigger provider resolution.
+      if (ownershipLookup.isOwned(appId) || (!ownershipLookup.isSteamInstalled(appId) && ownershipLookup.isLuaActive(appId))) {
+        console.log(`[STORE][SOURCE_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${ownershipLookup.isOwned(appId)} luaOnly=${!ownershipLookup.isSteamInstalled(appId) && ownershipLookup.isLuaActive(appId)}`);
+        setSourcesLoadingByAppId((current) => ({ ...current, [appId]: false }));
+        return;
+      }
+
       // Part 7: Loading already set synchronously in openDetailsForGame.
       // Only set here as a safety fallback (e.g. when called from handleSelectSearchItem).
       setSourcesLoadingByAppId((current) => ({
@@ -3429,8 +3436,15 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           onRefreshSources={() => {
             const game = selectedDetailGameWithOverlay;
             if (!game) return;
-            const requestId = ++sourceResolveReqRef.current;
             const appId = game.appId;
+
+            // Owned or non-installed Lua games should not trigger provider resolution.
+            if (ownershipLookup.isOwned(appId) || (!ownershipLookup.isSteamInstalled(appId) && ownershipLookup.isLuaActive(appId))) {
+              console.log(`[STORE][SOURCE_RETRY_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${ownershipLookup.isOwned(appId)} luaOnly=${!ownershipLookup.isSteamInstalled(appId) && ownershipLookup.isLuaActive(appId)}`);
+              return;
+            }
+
+            const requestId = ++sourceResolveReqRef.current;
 
             log("store-search", `retry { appId: "${appId}" }`);
 
@@ -3699,7 +3713,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                 onClick={() => { setActiveGenreSectionId(null); setBrowsePage(1); }}
                 className={`whitespace-nowrap cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                   activeGenreSectionId === null
-                    ? "bg-(--color-accent) text-black"
+                    ? "bg-(--color-accent) text-(--color-accent-text)"
                     : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                 }`}
               >
@@ -3713,7 +3727,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                   onClick={() => { setActiveGenreSectionId(section.id); setBrowsePage(1); }}
                   className={`whitespace-nowrap cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     activeGenreSectionId === section.id
-                      ? "bg-(--color-accent) text-black"
+                      ? "bg-(--color-accent) text-(--color-accent-text)"
                       : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                   }`}
                 >

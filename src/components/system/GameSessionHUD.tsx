@@ -184,7 +184,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
 
             <button
               onClick={handleStop}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-(--color-accent) text-black transition hover:brightness-110 active:scale-90"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-(--color-accent) text-(--color-accent-text) transition hover:brightness-110 active:scale-90"
               aria-label="Stop game"
             >
               <Square className="h-3 w-3 fill-current" />

@@ -1693,7 +1693,7 @@ export default function GameEditDialog({
               type="button"
               onClick={() => setMetadataMenuOpen(!metadataMenuOpen)}
               disabled={metadataDownloading}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3.5 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3.5 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:opacity-50"
             >
               {metadataDownloading ? "Downloading..." : "Download Metadata..."}
               <ChevronDown className="h-3 w-3" />

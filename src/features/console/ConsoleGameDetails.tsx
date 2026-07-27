@@ -896,7 +896,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg bg-(--color-accent) px-6 py-2.5 text-sm font-medium text-white transition hover:brightness-110"
+              className="rounded-lg bg-(--color-accent) px-6 py-2.5 text-sm font-medium text-(--color-accent-text) transition hover:brightness-110"
             >
               Go Back
             </button>
@@ -1084,7 +1084,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   <button
                     type="button"
                     disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-5 py-2.5 text-sm font-semibold text-(--color-accent-text) shadow-lg shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
                   >
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                     Launching…
@@ -1102,7 +1102,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   <button
                     type="button"
                     disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/70 px-5 py-2.5 text-sm font-semibold text-white shadow-lg opacity-60 cursor-not-allowed"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/70 px-5 py-2.5 text-sm font-semibold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed"
                   >
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                     {actionModel?.label ?? "Play"}…

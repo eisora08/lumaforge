@@ -71,7 +71,7 @@ export default function StoreNewsFeed({
             onClick={() => setActiveCategory(filter.id)}
             className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
               activeCategory === filter.id
-                ? "bg-(--color-accent) text-black"
+                ? "bg-(--color-accent) text-(--color-accent-text)"
                 : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
             }`}
           >

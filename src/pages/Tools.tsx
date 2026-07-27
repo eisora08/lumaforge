@@ -378,7 +378,7 @@ export default function Tools() {
                           type="button"
                           disabled={isLoading || !extensionDir}
                           onClick={() => handleApply(tool)}
-                          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:opacity-50"
                         >
                           <Zap className="h-3.5 w-3.5" />
                           {applying === tool.id ? "Applying..." : "Apply"}

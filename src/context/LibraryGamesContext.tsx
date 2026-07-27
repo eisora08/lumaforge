@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LibraryGame } from "../types/libraryGame";
 import type { AppSettings } from "../types/settings";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
@@ -29,6 +29,7 @@ import {
   refreshSingleGameSteamStatus,
 } from "../services/providerStatusReconciliation";
 import { installTrackerService } from "../services/installTrackingService";
+import { setInstalledAppIds } from "../services/providerStatusStore";
 import {
   reportLibraryProgress,
 } from "../services/libraryProgressService";
@@ -51,7 +52,7 @@ import {
   initOverrideSubscription,
 } from "../services/epicGameStore";
 
-// ── Library runtime state machine ──
+// â”€â”€ Library runtime state machine â”€â”€
 
 export type LibraryRuntimeStatus =
   | "empty"
@@ -103,7 +104,7 @@ function cleanupOldCacheKeys() {
 
 cleanupOldCacheKeys();
 
-// ── Manual game helpers ──
+// â”€â”€ Manual game helpers â”€â”€
 
 const DEBUG_MANUAL_COVER = false;
 const DEBUG_MANUAL_REMOVE = false;
@@ -117,7 +118,7 @@ function getManualLibraryGames(): LibraryGame[] {
   }
 }
 
-// ── Epic game helpers ──
+// â”€â”€ Epic game helpers â”€â”€
 
 /** Sync read from the in-memory Epic store. Returns [] when feature is disabled. */
 function getEpicLibraryGames(): LibraryGame[] {
@@ -201,6 +202,19 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     gamesRef.current = games;
   }, [games]);
 
+
+  // Sync installed appIds to providerStatusStore so update badges/counts
+  // only appear for actually installed games (not orphaned Lua files).
+  useEffect(() => {
+    const installed = new Set<string>();
+    for (const g of games) {
+      if (g.appId && (g.steamInstalled || g.isInstalled)) {
+        installed.add(g.appId);
+      }
+    }
+    setInstalledAppIds(installed);
+  }, [games]);
+
   const setSelectedId = useCallback((id: string | null) => {
     setSelectedIdState(id);
     storeSelectedId(id);
@@ -262,7 +276,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       return;
     }
     // Phase 4+8: Compute fingerprint of incoming games and skip if same as current
-    // Manual-update always applies — user explicitly changed media/state in the dialog
+    // Manual-update always applies â€” user explicitly changed media/state in the dialog
     const incomingFp = computeLibraryFingerprint(withManual);
     const currentFp = current.length > 0 ? computeLibraryFingerprint(current) : null;
     if (currentFp !== null && incomingFp === currentFp && source !== "manual-update") {
@@ -282,7 +296,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       return;
     }
     if (DEBUG_MANUAL_COVER && source === "manual-update") console.log(`[MANUAL_COVER][LIBRARY_MANUAL_UPDATE] fingerprintAfter=${incomingFp.substring(0, 80)}... skipped=false`);
-    // Phase 9: Preserve object identity — reuse existing objects when appId/title/source match
+    // Phase 9: Preserve object identity â€” reuse existing objects when appId/title/source match
     const currentById = new Map<string, LibraryGame>();
     for (const g of current) {
       if (g.appId) currentById.set(g.appId, g);
@@ -292,7 +306,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     if (DEBUG_MANUAL_REMOVE && source === "manual-update") {
       const prevManualCount = current.filter((g) => g.source === "manual").length;
       const freshManualCount = deduped.filter((g) => g.source === "manual").length;
-      console.log(`[MANUAL_REMOVE][APPLY] prev=${current.length}(${prevManualCount} manual) → merged=${deduped.length}(${freshManualCount} manual) fpChanged=${currentFp !== incomingFp}`);
+      console.log(`[MANUAL_REMOVE][APPLY] prev=${current.length}(${prevManualCount} manual) â†’ merged=${deduped.length}(${freshManualCount} manual) fpChanged=${currentFp !== incomingFp}`);
     }
 
     // Phase 6: Merge Activity playtime into LibraryGame runtime objects
@@ -390,7 +404,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           byAppId.set(g.appId, g);
         }
         // Manual games (no appId) are NOT copied from current into byAppId.
-        // They are always sourced from incoming → getManualLibraryGames() (line 222),
+        // They are always sourced from incoming â†’ getManualLibraryGames() (line 222),
         // which reads the latest manualGameStore. This prevents a removed manual
         // game from surviving the merge via a stale gamesRef.current.
       }
@@ -398,9 +412,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         if (game.appId) {
           const existing = byAppId.get(game.appId);
           if (existing) {
-            // Game already present — propagate Lua state changes from incoming scan.
+            // Game already present â€” propagate Lua state changes from incoming scan.
             // Skip for reconciled sources (reconciled-update/reconciled-fallback) because
-            // SQLite doesn't track Lua state — incoming would have hasLua=false, luaScripts=[]
+            // SQLite doesn't track Lua state â€” incoming would have hasLua=false, luaScripts=[]
             // which would incorrectly clear valid Lua state from the in-memory games.
             const isReconciledSource = source === "reconciled-update" || source === "reconciled-fallback";
             if (!isReconciledSource && (existing.hasLua !== game.hasLua || existing.luaScripts.length !== game.luaScripts.length)) {
@@ -412,7 +426,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
               existing.hasLuaSource = game.hasLuaSource;
               // If game was Lua-only and lost its last script, remove it
               if (!game.hasLua && game.luaScripts.length === 0 && existing.source === "lua" && !existing.steamInstalled) {
-                // Don't add to byAppId — game is effectively removed
+                // Don't add to byAppId â€” game is effectively removed
                 continue;
               }
             }
@@ -714,13 +728,13 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Subscribe to manualGameStore changes — re-apply with fresh manual games
+  // Subscribe to manualGameStore changes â€” re-apply with fresh manual games
   useEffect(() => {
     if (!isIntegrationEnabled("manual")) return;
     return subscribeManualGames(() => {
       const current = gamesRef.current;
       if (current.length === 0) return; // not loaded yet
-      // Strip manual games — applyGamesSafely re-adds fresh ones from store at line 222.
+      // Strip manual games â€” applyGamesSafely re-adds fresh ones from store at line 222.
       // This avoids stale manual objects surviving through mergeGames.
       const nonManual = current.filter((g) => g.source !== "manual");
       const freshManual = getManualLibraryGames();
@@ -738,7 +752,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     });
   }, []);
 
-  // Subscribe to Epic game store changes — re-apply with fresh Epic entries
+  // Subscribe to Epic game store changes â€” re-apply with fresh Epic entries
   useEffect(() => {
     if (!EPIC_LIBRARY_ENABLED || !isIntegrationEnabled("epic")) return;
 
@@ -753,7 +767,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     return subscribeEpicGames(() => {
       const current = gamesRef.current;
       if (current.length === 0) return; // not loaded yet
-      // Strip Epic games — applyGamesSafely re-adds fresh ones from store.
+      // Strip Epic games â€” applyGamesSafely re-adds fresh ones from store.
       // This avoids stale Epic objects surviving through mergeGames.
       const nonEpic = current.filter((g) => g.source !== "epic");
       if (DEBUG_EPIC_LIBRARY) {
@@ -817,7 +831,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       });
       let enriched = await enrichWithStats(result.games);
 
-      // ── Lua-only fallback when TTL/Store guard blocked resolveLibraryGames ──
+      // â”€â”€ Lua-only fallback when TTL/Store guard blocked resolveLibraryGames â”€â”€
       // After a Lua package download, the full Steam scan is TTL-blocked for 10 min.
       // We scan Lua scripts directly so newly installed Lua-only games appear in Library
       // immediately instead of requiring an app restart.
@@ -870,7 +884,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 isLuaDisabled: appScripts.every((s) => s.is_disabled),
               };
             }
-            // No scripts found for this appId — clear stale Lua state if it existed
+            // No scripts found for this appId â€” clear stale Lua state if it existed
             if (g.hasLua || g.luaScripts.length > 0) {
               clearedCount++;
               console.log(`[LIBRARY][LUA_CLEAR_STALE] appid=${g.appId} title="${g.title}" hadScripts=${g.luaScripts.length}`);
@@ -990,7 +1004,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     return result;
   }, [updateGame]);
 
-  // Subscribe to install completion events — re-ingest through real installed Steam pipeline
+  // Subscribe to install completion events â€” re-ingest through real installed Steam pipeline
   useEffect(() => {
     return installTrackerService.onInstalled(async (appId) => {
       console.log(`[INSTALL_REAL] appid=${appId} phase=detected`);
@@ -1007,7 +1021,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
 
       if (!installStatus || !installStatus.isInstalled) {
-        // Appmanifest not found yet — tracker race? Fall back to flag-only patch
+        // Appmanifest not found yet â€” tracker race? Fall back to flag-only patch
         updateGame(appId, { steamInstalled: true, isInstallable: false, isPlayable: true });
         console.log(`[INSTALL_REAL] appid=${appId} phase=fallback reason=not-on-disk-yet`);
         return;
@@ -1084,7 +1098,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     });
   }, [updateGame]);
 
-  // ── Uninstall detection: periodic check for removed Steam appmanifests ──
+  // â”€â”€ Uninstall detection: periodic check for removed Steam appmanifests â”€â”€
   useEffect(() => {
     if (!isIntegrationEnabled("steam")) return;
     const UNINSTALL_POLL_MS = 30000;
@@ -1104,7 +1118,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           scanResult.map((g) => String(g.appId))
         );
 
-        // ── Check for pending uninstall that timed out (user cancelled Steam modal) ──
+        // â”€â”€ Check for pending uninstall that timed out (user cancelled Steam modal) â”€â”€
         // Runs every poll cycle before the "no missing games" early return.
         try {
           const { isPendingUninstall, getPendingUninstallTimestamp, clearPendingUninstall, getUninstallPendingScanTtl } = await import("../services/gameCacheService");
@@ -1195,7 +1209,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         scheduleSnapshotWrite(updatedGames, appInfoMapRef.current, null, 100, "uninstall-detected");
         console.log(`[UNINSTALL][DONE] count=${missingAppIds.length}`);
       } catch {
-        // scan failed — try again next interval
+        // scan failed â€” try again next interval
       } finally {
         running = false;
       }

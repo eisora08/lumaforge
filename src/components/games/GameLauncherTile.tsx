@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender } from "../../services/perfCounters";
 import {
   Download,
@@ -150,7 +150,7 @@ function GameLauncherTileInner({
     requestGameData(game.appId, LoadPriority.VIEWPORT);
   }, [game.appId, isVisible]);
 
-  // Load canonical appinfo for this game — deferred until visible
+  // Load canonical appinfo for this game â€” deferred until visible
   useEffect(() => {
     if (!game.appId || !isVisible) {
       if (!game.appId) setMediaLoading(false);
@@ -163,7 +163,7 @@ function GameLauncherTileInner({
     loadGameAppInfoWithMediaFallback(game.appId)
       .then(async (appInfo) => {
         if (cancelled) return;
-        // Ensure canonical name is resolved — if appinfo.name is null/placeholder,
+        // Ensure canonical name is resolved â€” if appinfo.name is null/placeholder,
         // try metadata resolver and store details, and write back to disk.
         if (appInfo && (!appInfo.name || appInfo.name.startsWith("Steam App "))) {
           const resolvedName = await resolveCanonicalName(game.appId!);
@@ -191,7 +191,7 @@ function GameLauncherTileInner({
     canonicalInfo,
   );
 
-  // Source trace log — emitted once per instance per game
+  // Source trace log â€” emitted once per instance per game
   const DEBUG_NAME_SOURCE_TRACE = false;
   const displayTraced = useRef(false);
   if (DEBUG_NAME_SOURCE_TRACE && !displayTraced.current && game.appId) {
@@ -259,7 +259,7 @@ function GameLauncherTileInner({
     return () => { cancelled = true; };
   }, [game.appId, game.imageUrl, game.coverPath, game.landscapePath, displayImage, artworkMode]);
 
-  // Render-time diagnostics — log once on state change, not every render
+  // Render-time diagnostics â€” log once on state change, not every render
   // Disabled by default to reduce log spam. Set DEBUG_MEDIA_GRID=true in dev console to enable.
   const DEBUG_MEDIA_GRID = false;
   const renderLogRef = useRef<string | null>(null);
@@ -405,7 +405,7 @@ function GameLauncherTileInner({
       };
       await markSyncIndexItem(syncItem);
 
-      // Save provider status as up-to-date (triggers store → subscribers → UI updates)
+      // Save provider status as up-to-date (triggers store â†’ subscribers â†’ UI updates)
       const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
         ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
         : undefined;
@@ -499,7 +499,7 @@ function GameLauncherTileInner({
           </div>
         )}
         <div className="absolute inset-0 rounded-t-2xl bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100 pointer-events-none" />
-        {luaUpdateStatus === "update-available" && (
+        {luaUpdateStatus === "update-available" && game.steamInstalled && (
           <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-black">
             Update
           </span>
@@ -533,16 +533,16 @@ function GameLauncherTileInner({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   {installJob.message || (
                     installJob.status === "waiting" || installJob.status === "queued"
-                      ? "Waiting for Steam…"
+                      ? "Waiting for Steamâ€¦"
                       : installJob.status === "downloading"
                         ? `Downloading ${installJob.progress}%`
                         : installJob.status === "extracting" || installJob.status === "installing"
-                          ? "Installing…"
+                          ? "Installingâ€¦"
                           : installJob.status === "checking"
-                            ? "Checking…"
+                            ? "Checkingâ€¦"
                             : installJob.status === "paused"
                               ? "Paused"
-                              : "Installing…"
+                              : "Installingâ€¦"
                   )}
                   {installJob.bytesRead !== undefined && installJob.totalBytes !== undefined && installJob.totalBytes > 0 && (
                     <span className="text-[10px] text-amber-400/40">
@@ -584,7 +584,7 @@ function GameLauncherTileInner({
             ) : hasPendingUninstall ? (
               <div className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400/70">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Uninstalling…
+                Uninstallingâ€¦
               </div>
             ) : (
               <>
@@ -704,12 +704,12 @@ function GameLauncherTileInner({
               />
             ) : (
               <MenuItem
-                label={installJob?.status === "waiting" || installJob?.status === "queued" ? "Waiting for Steam…" : "Installing…"}
+                label={installJob?.status === "waiting" || installJob?.status === "queued" ? "Waiting for Steamâ€¦" : "Installingâ€¦"}
                 icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 disabled
               />
             )}
-            {luaUpdateStatus === "update-available" && (
+            {luaUpdateStatus === "update-available" && game.steamInstalled && (
               <MenuItem
                 label="Update Package"
                 icon={<RefreshCw className={`h-3.5 w-3.5 ${updateRunning ? "animate-spin" : ""}`} />

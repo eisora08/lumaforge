@@ -111,7 +111,7 @@ export default function ActivityFeed({ compact }: ActivityFeedProps) {
               onClick={() => setKindFilter(f.value)}
               className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
                 kindFilter === f.value
-                  ? "bg-(--color-accent) text-black"
+                  ? "bg-(--color-accent) text-(--color-accent-text)"
                   : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
               }`}
             >
@@ -126,7 +126,7 @@ export default function ActivityFeed({ compact }: ActivityFeedProps) {
               onClick={() => setSourceFilter(f.value)}
               className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
                 sourceFilter === f.value
-                  ? "bg-(--color-accent) text-black"
+                  ? "bg-(--color-accent) text-(--color-accent-text)"
                   : "border border-(--surface-active-border) bg-white/[0.03] text-(--color-muted) hover:border-(--color-muted) hover:text-(--color-text)"
               }`}
             >

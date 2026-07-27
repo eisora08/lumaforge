@@ -202,7 +202,7 @@ export default function DownloadJobCard({
           <button
             type="button"
             onClick={() => onOpenDetails(job.appId)}
-            className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+            className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <Eye className="h-4 w-4" />
             Ver detalles

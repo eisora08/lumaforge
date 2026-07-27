@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Languages, Puzzle, Star, ShieldAlert } from "lucide-react";
 
 import type { PackageGame, PackageSource } from "../../types/package";
@@ -155,7 +155,7 @@ function getReviewLabel(summary?: SteamReviewSummary) {
   }
 
   if (typeof summary.positive_percent === "number") {
-    return `${summary.review_score_desc} · ${summary.positive_percent}%`;
+    return `${summary.review_score_desc} Â· ${summary.positive_percent}%`;
   }
 
   return summary.review_score_desc || "N/A";
@@ -174,7 +174,7 @@ function getReviewSubLabel(summary?: SteamReviewSummary) {
     return "No reviews available for this game.";
   }
 
-  return `${summary.total_reviews.toLocaleString()} reviews · ${summary.total_positive.toLocaleString()} positive`;
+  return `${summary.total_reviews.toLocaleString()} reviews Â· ${summary.total_positive.toLocaleString()} positive`;
 }
 
 const ENABLE_VERBOSE_SOURCE_LOGS = false;
@@ -213,7 +213,7 @@ export default function StoreGameDetailsPage({
   const _drmResolveReqRef = useRef(0);
   const _mediaEnrichReqRef = useRef(0);
 
-  // Success modal state — shown after package download completes
+  // Success modal state â€” shown after package download completes
   const [successModalOpen, setSuccessModalOpen] = useState(false);
   const [completedGameTitle, setCompletedGameTitle] = useState("");
   const [completedJobId, setCompletedJobId] = useState<string | undefined>();
@@ -266,7 +266,7 @@ export default function StoreGameDetailsPage({
   const _checkRequestIdRef = useRef(0);
   const _checkInFlightRef = useRef(false);
 
-  // Internal source checking — used when parent does not provide sourceStatus/onRefreshSources
+  // Internal source checking â€” used when parent does not provide sourceStatus/onRefreshSources
   const [internalSourceStatus, setInternalSourceStatus] = useState<SourceCheckStatus | undefined>();
   const [internalSources, setInternalSources] = useState<PackageSource[]>(game.sources);
   const sourceResolveReqRef = useRef(0);
@@ -391,6 +391,8 @@ export default function StoreGameDetailsPage({
   // Origin-independent source check on mount/appId change
   useEffect(() => {
     if (hasParentSourceControl) return; // parent handles it
+    // Owned or non-installed Lua games should not trigger provider resolution.
+    if (steamOwned || (!isSteamInstalled && luaInstalled)) return;
 
     const appId = game.appId;
     let cancelled = false;
@@ -426,7 +428,7 @@ export default function StoreGameDetailsPage({
           return;
         }
         if (cached.status === "none" || cached.status === "error" || cached.status === "timeout" || cached.status === "needs-configuration" || cached.status === "checking") {
-          // Step 2: Stale cache (including stuck "checking") but saved provider exists — try to rebuild from cache sources
+          // Step 2: Stale cache (including stuck "checking") but saved provider exists â€” try to rebuild from cache sources
           if (savedProvider && cached.availableSources.length > 0) {
             const matchingSource = cached.availableSources.find(
               (s) => s.name === savedProvider || s.id === savedProvider,
@@ -465,7 +467,7 @@ export default function StoreGameDetailsPage({
         }
       }
 
-      // Not cached — run resolver
+      // Not cached â€” run resolver
       setInternalSourceStatus("checking");
       setInternalSources([]);
 
@@ -597,7 +599,7 @@ export default function StoreGameDetailsPage({
     isChecking,
   });
 
-  // Store details source state cache — persists across mount/unmount
+  // Store details source state cache â€” persists across mount/unmount
   // On mount, restore cached state and detect saved/selected provider mismatches
   useEffect(() => {
     const appId = game.appId;
@@ -617,7 +619,7 @@ export default function StoreGameDetailsPage({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.appId]);
 
-  // Diagnostic — source state on mount/change (change-only)
+  // Diagnostic â€” source state on mount/change (change-only)
   useEffect(() => {
     const hasSavedSource = !!(effectiveSelectedSource || (game.sources && game.sources.length > 0));
     const key = `${game.appId}|${isChecking}|${hasSavedSource}|${effectiveSelectedSource?.providerName || "null"}|${game.sources.length}|${!!imageUrl}`;
@@ -681,7 +683,7 @@ export default function StoreGameDetailsPage({
     const normalizedId = normalizeProviderId(providerId);
 
     const unsub = subscribeUpdateStatus(() => {
-      // Re-read provider-status from store cache (no disk I/O — store already loaded it)
+      // Re-read provider-status from store cache (no disk I/O â€” store already loaded it)
       getCachedProviderStatus(appId, normalizedId).then((statusFile) => {
         if (!statusFile || !statusFile.result) {
           setProviderCheckState("no-data");
@@ -793,8 +795,8 @@ export default function StoreGameDetailsPage({
     );
   }, [game.appId, drmInfo]);
 
-  // Save main game metadata to store cache when resolved — stable deps only
-  // NOTE: does NOT enqueue media downloads — Store display images must NOT
+  // Save main game metadata to store cache when resolved â€” stable deps only
+  // NOTE: does NOT enqueue media downloads â€” Store display images must NOT
   // update local MediaIndex, appinfo, or BootSnapshot. See mediaDownloadQueue
   // Store guard and startupSnapshotService Store guard for enforcement.
   const prevAppIdRef = useRef<number | null>(null);
@@ -946,6 +948,9 @@ export default function StoreGameDetailsPage({
   }
 
   async function handleCheckForUpdates() {
+    // Guard: only installed Steam games can have package updates.
+    // Non-installed Lua games (orphaned config/lua files) must not trigger provider checks.
+    if (!isSteamInstalled) return;
     const appId = game.appId;
     const providerId = effectiveSelectedSource?.providerId;
     if (!appId || !providerId) return;
@@ -957,7 +962,7 @@ export default function StoreGameDetailsPage({
       return;
     }
 
-    // In-flight guard — prevent duplicate checks
+    // In-flight guard â€” prevent duplicate checks
     if (_checkInFlightRef.current) {
       console.log(`[PACKAGE][CHECK_SKIP] appid=${appId} provider=${pid} reason=already-running`);
       return;
@@ -971,7 +976,7 @@ export default function StoreGameDetailsPage({
 
     try {
       const remote = await fetchHubcapAppStatus(hubcapSettings.baseUrl, hubcapSettings.apiKey, appId);
-      // Stale result protection — only apply if requestId matches latest
+      // Stale result protection â€” only apply if requestId matches latest
       if (_checkRequestIdRef.current !== requestId) {
         console.log(`[PACKAGE][CHECK_STALE_IGNORED] appid=${appId} provider=${pid} requestId=${requestId}`);
         return;

@@ -492,7 +492,7 @@ export default function CardLayoutEditor() {
               onClick={() => setTab(key)}
               className={`flex cursor-pointer items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium transition ${
                 tab === key
-                  ? "bg-(--color-accent) text-black"
+                  ? "bg-(--color-accent) text-(--color-accent-text)"
                   : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
               }`}
             >
@@ -561,7 +561,7 @@ export default function CardLayoutEditor() {
                 }}
                 className={`flex-1 cursor-pointer px-3 py-2 text-xs font-medium transition ${
                   !isExpanded
-                    ? "bg-(--color-accent) text-black"
+                    ? "bg-(--color-accent) text-(--color-accent-text)"
                     : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                 }`}
               >
@@ -572,7 +572,7 @@ export default function CardLayoutEditor() {
                 onClick={toggleExpanded}
                 className={`flex-1 cursor-pointer px-3 py-2 text-xs font-medium transition ${
                   isExpanded
-                    ? "bg-(--color-accent) text-black"
+                    ? "bg-(--color-accent) text-(--color-accent-text)"
                     : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                 }`}
               >

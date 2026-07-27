@@ -37,7 +37,7 @@ export default function ConsoleActionHints({ hintStyle, visible = true }: Props)
             <span
               className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none ${
                 item.primary
-                  ? "bg-(--color-accent) text-white"
+                  ? "bg-(--color-accent) text-(--color-accent-text)"
                   : "bg-white/[0.09] text-white/70"
               }`}
             >

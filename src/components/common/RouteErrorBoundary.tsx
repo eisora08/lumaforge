@@ -49,7 +49,7 @@ export default class RouteErrorBoundary extends Component<Props, State> {
               this.setState({ hasError: false, error: null });
               window.location.hash = "#/home";
             }}
-            className="rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
+            className="rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:brightness-110"
           >
             Go Home
           </button>

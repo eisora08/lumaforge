@@ -366,7 +366,7 @@ function EmptyHero({ onNavigate }: GameHeroProps) {
         <div className="mt-6 flex gap-3">
           <button
             onClick={() => onNavigate?.("store")}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-black transition hover:opacity-90"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-3 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <Store className="h-4 w-4" />
             Browse Store
@@ -841,7 +841,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
               <>
                 <button
                   disabled
-                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black opacity-60 transition"
+                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) opacity-60 transition"
                 >
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Stopping...
@@ -855,7 +855,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
               <>
                 <button
                   disabled
-                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black opacity-60 transition"
+                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) opacity-60 transition"
                 >
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Launching...
@@ -865,7 +865,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
               <>
                 <button
                   onClick={handlePrimaryAction}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
                 >
                   <Play className="h-4 w-4" />
                   Focus Game
@@ -911,7 +911,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
               <>
                 <button
                   onClick={handlePrimaryAction}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-black transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
                 >
                   <Play className="h-4 w-4" />
                   Play

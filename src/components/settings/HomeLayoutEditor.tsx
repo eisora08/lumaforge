@@ -276,7 +276,7 @@ export default function HomeLayoutEditor() {
                           <div
                             className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition ${
                               isSelected
-                                ? "bg-(--color-accent) text-black"
+                                ? "bg-(--color-accent) text-(--color-accent-text)"
                                 : "bg-white/10 text-transparent"
                             }`}
                           >

@@ -431,7 +431,7 @@ function PackageCardRaw({
         <button
           type="button"
           onClick={handleDownloadAction}
-          className="flex w-32 cursor-pointer items-center justify-center gap-1 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90"
+          className="flex w-32 cursor-pointer items-center justify-center gap-1 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90"
         >
           <Download className="h-3 w-3" />
           Download

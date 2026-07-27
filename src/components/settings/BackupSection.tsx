@@ -681,7 +681,7 @@ export default function BackupSection() {
           type="button"
           disabled={exporting || activeSections.length === 0}
           onClick={handleExport}
-          className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2.5 text-sm font-bold text-black transition hover:opacity-90 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2.5 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:opacity-50"
         >
           {exporting ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -959,7 +959,7 @@ export default function BackupSection() {
                 type="button"
                 disabled={restoreInFlight || !selectedRestoreSections || selectedRestoreSections.size === 0}
                 onClick={() => handleRestoreFromPreview()}
-                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:opacity-50"
               >
                 {restoreInFlight ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
                 {restoreInFlight
@@ -988,7 +988,7 @@ export default function BackupSection() {
                   setIsLegacyConfirm(true);
                   setShowRestoreConfirm(true);
                 }}
-                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-xs font-bold text-black transition hover:opacity-90 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:opacity-50"
               >
                 <RotateCcw className="h-3 w-3" />
                 {restoreInFlight ? "Restoring..." : "Restore Theme & Surface Mode"}

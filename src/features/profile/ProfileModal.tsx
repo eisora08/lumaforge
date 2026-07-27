@@ -242,7 +242,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
                 style={{ background: draft.accentMode === "custom" && draft.accentColor ? draft.accentColor : "var(--color-accent)" }}
               />
               {draft.avatarIsGif && (
-                <span className="absolute -top-1 -right-1 rounded bg-(--color-accent)/80 px-1 text-[9px] font-bold text-white">
+                <span className="absolute -top-1 -right-1 rounded bg-(--color-accent)/80 px-1 text-[9px] font-bold text-(--color-accent-text)">
                   GIF
                 </span>
               )}
@@ -346,7 +346,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
               </button>
               <button
                 onClick={handleSave}
-                className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-white transition hover:opacity-90 active:scale-[0.97]"
+                className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 active:scale-[0.97]"
               >
                 <Check className="h-4 w-4" />
                 Save

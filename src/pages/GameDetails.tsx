@@ -163,6 +163,15 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
       } else {
         // Cache miss or stale — run parent-controlled source resolution
         // (mirrors Store.tsx's scheduleSourceResolve pattern)
+
+        // Owned or non-installed Lua games should not trigger provider resolution.
+        if (steamOwned || (!isSteamInstalled && luaInstalled)) {
+          console.log(`[GLOBAL_SEARCH][SOURCE_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
+          setHydratedSources([]);
+          setHydratedStatus("idle");
+          return;
+        }
+
         const reason = !cached
           ? "no-cache-entry"
           : cached.availableSources.length === 0
@@ -322,6 +331,13 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     const sg = selectedGame;
     if (!sg) return;
     const appId = sg.appId;
+
+    // Owned or non-installed Lua games should not trigger provider resolution.
+    if (steamOwned || (!isSteamInstalled && luaInstalled)) {
+      console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
+      return;
+    }
+
     const title = sg.title;
     const imageUrl = sg.imageUrl;
     console.log(`[GLOBAL_SEARCH][SOURCE_RETRY] appid=${appId}`);
@@ -348,7 +364,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
       setHydratedSources([]);
       setHydratedStatus(isTimeout ? "timeout" : "error");
     }
-  }, [selectedGame, settings]);
+  }, [selectedGame, settings, isSteamInstalled, luaInstalled, steamOwned]);
 
   // Download handler — delegates to shared Store-canonical downloadFromSource helper
   const handleDownloadSource = useCallback(async (source: PackageSource): Promise<{ success: boolean; jobId?: string }> => {

@@ -383,7 +383,7 @@ export default function GameImageSearchDialog({
                 type="button"
                 onClick={handleSearch}
                 disabled={loading || !query.trim()}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? (
                   <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -616,7 +616,7 @@ export default function GameImageSearchDialog({
               type="button"
               onClick={handleSelect}
               disabled={!selectedUrl || applying}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {applying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               {applying ? "Downloading..." : "Select & Download"}
@@ -626,7 +626,7 @@ export default function GameImageSearchDialog({
               type="button"
               onClick={handlePasteApply}
               disabled={!canApplyPaste || applying}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-4 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {applying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               {applying ? "Downloading..." : "Apply URL"}

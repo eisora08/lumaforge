@@ -256,7 +256,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                   onClick={() => setFilter(f.key)}
                   className={`cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     filter === f.key
-                      ? "bg-(--color-accent) text-black"
+                      ? "bg-(--color-accent) text-(--color-accent-text)"
                       : "border border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
                   }`}
                 >
@@ -312,7 +312,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
                         onClick={() => { setFilter(f.key); setShowFilters(false); }}
                         className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition ${
                           filter === f.key
-                            ? "bg-(--color-accent) text-black"
+                            ? "bg-(--color-accent) text-(--color-accent-text)"
                             : "border border-(--surface-active-border) bg-white/5 text-(--color-muted)"
                         }`}
                       >

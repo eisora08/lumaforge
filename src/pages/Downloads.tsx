@@ -188,7 +188,7 @@ export default function Downloads({ onNavigate }: Props) {
 
           <a
             href="#/library"
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-2.5 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
           >
             <HardDrive className="h-4 w-4" />
             Explorar biblioteca

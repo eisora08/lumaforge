@@ -330,7 +330,7 @@ export default function Settings() {
                         onClick={() => updateSetting("libraryCardArtworkMode", "landscape")}
                         className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
                           settings.libraryCardArtworkMode === "landscape"
-                            ? "bg-(--color-accent) text-black"
+                            ? "bg-(--color-accent) text-(--color-accent-text)"
                             : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                         }`}
                       >
@@ -341,7 +341,7 @@ export default function Settings() {
                         onClick={() => updateSetting("libraryCardArtworkMode", "poster")}
                         className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
                           settings.libraryCardArtworkMode === "poster"
-                            ? "bg-(--color-accent) text-black"
+                            ? "bg-(--color-accent) text-(--color-accent-text)"
                             : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                         }`}
                       >
@@ -446,7 +446,7 @@ export default function Settings() {
                             }
                             setNewScanFolder("");
                           }}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90"
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Add Folder
@@ -525,7 +525,7 @@ export default function Settings() {
                             onClick={() => updateSetting("overlayNotificationPosition", pos)}
                             className={`cursor-pointer px-2 py-1.5 text-[11px] font-medium transition ${
                               settings.overlayNotificationPosition === pos
-                                ? "bg-(--color-accent) text-black"
+                                ? "bg-(--color-accent) text-(--color-accent-text)"
                                 : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                             }`}
                           >
@@ -1193,7 +1193,7 @@ export default function Settings() {
                           onClick={() => updateSetting("launchMode", "desktop")}
                           className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
                             settings.launchMode === "desktop"
-                              ? "bg-(--color-accent) text-black"
+                              ? "bg-(--color-accent) text-(--color-accent-text)"
                               : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                           }`}
                         >
@@ -1204,7 +1204,7 @@ export default function Settings() {
                           onClick={() => updateSetting("launchMode", "console")}
                           className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
                             settings.launchMode === "console"
-                              ? "bg-(--color-accent) text-black"
+                              ? "bg-(--color-accent) text-(--color-accent-text)"
                               : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                           }`}
                         >
@@ -1230,7 +1230,7 @@ export default function Settings() {
                             onClick={() => updateSetting("startupWindowMode", mode)}
                             className={`cursor-pointer px-3 py-1.5 text-xs font-medium capitalize transition ${
                               settings.startupWindowMode === mode
-                                ? "bg-(--color-accent) text-black"
+                                ? "bg-(--color-accent) text-(--color-accent-text)"
                                 : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
                             }`}
                           >

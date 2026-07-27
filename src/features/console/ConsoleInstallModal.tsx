@@ -296,7 +296,7 @@ function HintPill({ label, primary }: { label: string; primary?: boolean }) {
     <span className="inline-flex items-center gap-1.5 text-xs text-(--color-muted)/70">
       <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold leading-none ${
         primary
-          ? "bg-(--color-accent) text-white"
+          ? "bg-(--color-accent) text-(--color-accent-text)"
           : "bg-white/[0.09] text-white/60"
       }`}>
         {m[1]}

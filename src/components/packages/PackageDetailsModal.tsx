@@ -285,7 +285,7 @@ export default function PackageDetailsModal({
                           </div>
 
                           {isSelected && (
-                            <span className="rounded-full bg-(--color-accent) px-3 py-1 text-[11px] font-medium text-black">
+                            <span className="rounded-full bg-(--color-accent) px-3 py-1 text-[11px] font-medium text-(--color-accent-text)">
                               Selected
                             </span>
                           )}
@@ -347,7 +347,7 @@ export default function PackageDetailsModal({
                     type="button"
                     disabled={!selectedSource || !selectedSource.available}
                     onClick={onDownload}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-medium text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-3 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Download className="h-4 w-4" />
                     Descargar fuente seleccionada

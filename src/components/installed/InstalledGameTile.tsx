@@ -109,7 +109,7 @@ export default function InstalledGameTile({ game, onSelect, onPlay, onInstallSte
             <button
               type="button"
               onClick={(e) => handleAction(e, () => onPlay(game))}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-black transition hover:opacity-90"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90"
             >
               <Play className="h-3.5 w-3.5" />
               Play

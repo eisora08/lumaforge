@@ -229,7 +229,7 @@ export default function StoreSourceSelectorModal({
                 onDownloadSource?.(selectedSourceForDownload);
               }
             }}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2.5 text-sm font-bold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2.5 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
             {getDownloadLabel()}
