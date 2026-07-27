@@ -50,7 +50,7 @@ import {
   buildSourceAvailabilityFromProviders,
 } from "../services/sourceAvailabilityCacheService";
 import { getEnabledProviderIds } from "../services/providerSearch";
-import { consumePendingStoreDetailAppId, consumePendingStoreDetailAppTitle } from "../services/storeNavigationService";
+import { consumePendingStoreDetailAppId, consumePendingStoreDetailAppTitle, onPendingStoreDetail } from "../services/storeNavigationService";
 import { setPendingLibraryFocus } from "../services/libraryNavigationService";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import type { ProviderProgressCallback } from "../types/providerSearch";
@@ -150,9 +150,7 @@ function catalogGameToStoreGame(g: CatalogGameResult): StoreGame {
   };
 }
 
-  // Module-level flag: prevents auto-open of pending detail from re-firing
-  // when the user navigates back to Store later in the same session.
-  let _sessionAutoOpenDone = false;
+  // Module-level flags for logging dedup
   let _catalogSourceLogged = false;
   let _discoveryIndexStatusLogged = false;
 
@@ -702,7 +700,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }).catch(() => {});
   }, []);
 
-  // On mount, consume any pending store detail appId set by dashboard discovery sections
+  // On mount, consume any pending store detail appId set before Store mounted
   useEffect(() => {
     const pending = consumePendingStoreDetailAppId();
     if (pending) {
@@ -710,6 +708,33 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       console.log(`[STORE][PENDING_NAV] appid=${pending} waiting for catalog`);
     }
   }, []);
+
+  // Reactive: open details when a new pending appId is set while Store is already mounted
+  useEffect(() => {
+    function tryOpenPending() {
+      const pending = consumePendingStoreDetailAppId();
+      if (!pending) return;
+      if (steamCatalog.length === 0) {
+        pendingAppIdRef.current = pending;
+        console.log(`[STORE][PENDING_NAV] appid=${pending} catalog not ready, deferring`);
+        return;
+      }
+      const fallbackTitle = consumePendingStoreDetailAppTitle();
+      const appIdNum = parseInt(pending, 10);
+      const entry = steamCatalog.find((e) => e.appid === appIdNum);
+      if (entry) {
+        console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${pending} reason=notification-click`);
+        openDetailsForGame({ appId: pending, title: entry.name, platforms: [], sources: [] });
+      } else if (fallbackTitle) {
+        console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${pending} reason=notification-fallback title=${fallbackTitle}`);
+        openDetailsForGame({ appId: pending, title: fallbackTitle, platforms: [], sources: [] });
+      } else {
+        console.log(`[STORE][PENDING_NAV] appid=${pending} not found in catalog`);
+      }
+    }
+    const unsub = onPendingStoreDetail(tryOpenPending);
+    return unsub;
+  }, [steamCatalog]);
 
   // Phase 8: Skip fetch if initialized from complete cache with valid fingerprint
   const skipCatalogFetch = useMemo(() => {
@@ -779,42 +804,24 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When steamCatalog is loaded and there's a pending appId, auto-open details.
-  // Module-level flag survives mount/unmount so re-entering Store does not re-open.
+  // When steamCatalog is loaded and there's a pending appId from mount, auto-open details.
   const openedPendingRef = useRef(false);
   useEffect(() => {
-    if (_sessionAutoOpenDone) {
-      console.log(`[STORE][DETAILS_AUTO_OPEN_SKIP] reason=already-done-this-session`);
-      return;
-    }
     if (steamCatalog.length === 0) return;
     if (openedPendingRef.current) return;
     const appIdStr = pendingAppIdRef.current;
     if (!appIdStr) return;
     openedPendingRef.current = true;
-    _sessionAutoOpenDone = true;
 
+    const fallbackTitle = consumePendingStoreDetailAppTitle();
     const appIdNum = parseInt(appIdStr, 10);
     const entry = steamCatalog.find((e) => e.appid === appIdNum);
-    const fallbackTitle = consumePendingStoreDetailAppTitle();
     if (entry) {
       console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${appIdStr} reason=pending-nav`);
-      const game: PackageGame = {
-        appId: appIdStr,
-        title: entry.name,
-        platforms: [],
-        sources: [],
-      };
-      openDetailsForGame(game);
+      openDetailsForGame({ appId: appIdStr, title: entry.name, platforms: [], sources: [] });
     } else if (fallbackTitle) {
       console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${appIdStr} reason=pending-nav-fallback title=${fallbackTitle}`);
-      const game: PackageGame = {
-        appId: appIdStr,
-        title: fallbackTitle,
-        platforms: [],
-        sources: [],
-      };
-      openDetailsForGame(game);
+      openDetailsForGame({ appId: appIdStr, title: fallbackTitle, platforms: [], sources: [] });
     } else {
       console.log(`[STORE][PENDING_NAV] appid=${appIdStr} not found in catalog`);
     }
