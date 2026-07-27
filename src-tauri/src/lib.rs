@@ -78,6 +78,7 @@ pub fn run() {
             commands::steam::install_steam_app,
             commands::steam::uninstall_steam_app,
             commands::steam::open_steam_store_app,
+            commands::steam::open_steam_library,
             commands::steam::check_steam_game_installed,
             commands::steam_user_stats::scan_steam_user_game_stats,
             commands::steam_achievements::fetch_steam_player_achievements,

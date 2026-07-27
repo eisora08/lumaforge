@@ -237,6 +237,10 @@ export async function openSteamStoreApp(appId: number): Promise<void> {
   return await invoke("open_steam_store_app", { appId });
 }
 
+export async function openSteamLibrary(appId: number): Promise<void> {
+  return await invoke("open_steam_library", { appId });
+}
+
 export type DownloadProgress = {
   bytesDownloaded: number;
   bytesToDownload: number;

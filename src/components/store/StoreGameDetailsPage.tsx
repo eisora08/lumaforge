@@ -11,10 +11,10 @@ import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SourceCheckStatus } from "../../services/sourceAvailabilityCacheService";
 import type { StoreDetailsSourceState } from "../../services/storeDetailsSourceState";
 import { openExternalUrl } from "../../services/externalLinks";
+import { openSteamLibrary } from "../../services/tauri";
 import {
   getSteamDbUrl,
   getSteamStoreUrl,
-  getSteamLibraryUrl,
 } from "../../utils/steamLinks";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata, resolveGameMetadataForMedia } from "../../services/gameMetadataResolver";
@@ -868,7 +868,7 @@ export default function StoreGameDetailsPage({
 
   async function handleOpenSteamLibrary() {
     try {
-      await openExternalUrl(getSteamLibraryUrl(Number(game.appId)));
+      await openSteamLibrary(Number(game.appId));
     } catch (error) {
       console.error(error);
 

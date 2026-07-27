@@ -600,6 +600,12 @@ pub fn open_steam_store_app(app_id: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_steam_library(app_id: u32) -> Result<(), String> {
+    let url = format!("steam://nav/games/details/{}", app_id);
+    open::that_detached(&url).map_err(|e| format!("Could not open Steam library: {}", e))
+}
+
+#[tauri::command]
 pub fn check_steam_game_installed(
     app_id: u32,
     steam_root: Option<String>,

@@ -452,31 +452,33 @@ export default function StoreGameSummaryPanel({
           <p className="mt-1 text-xs text-(--color-muted)">
             {isInstalled ? "Installed and ready to play via Steam." : "You can install it from Steam at any time."}
           </p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={onOpenSteam}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Steam
-            </button>
+          <div className="mt-3 flex flex-col gap-2">
             <button
               type="button"
               onClick={onOpenSteamLibrary}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--color-accent)/30 bg-(--color-accent)/10 px-4 py-3 text-sm font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20"
             >
-              <Library className="h-3.5 w-3.5" />
+              <Library className="h-4 w-4" />
               Steam Library
             </button>
-            <button
-              type="button"
-              onClick={onOpenSteamDb}
-              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-            >
-              <Database className="h-3.5 w-3.5" />
-              SteamDB
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onOpenSteam}
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Steam
+              </button>
+              <button
+                type="button"
+                onClick={onOpenSteamDb}
+                className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              >
+                <Database className="h-3.5 w-3.5" />
+                SteamDB
+              </button>
+            </div>
           </div>
         </div>
       ) : (
