@@ -14,6 +14,7 @@ import { openExternalUrl } from "../../services/externalLinks";
 import {
   getSteamDbUrl,
   getSteamStoreUrl,
+  getSteamLibraryUrl,
 } from "../../utils/steamLinks";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata, resolveGameMetadataForMedia } from "../../services/gameMetadataResolver";
@@ -865,6 +866,18 @@ export default function StoreGameDetailsPage({
     }
   }
 
+  async function handleOpenSteamLibrary() {
+    try {
+      await openExternalUrl(getSteamLibraryUrl(Number(game.appId)));
+    } catch (error) {
+      console.error(error);
+
+      showError("No se pudo abrir Steam Library.", {
+        title: "Error abriendo enlace",
+      });
+    }
+  }
+
   async function reloadProviderStatus() {
     const appId = game.appId;
     const providerId = effectiveSelectedSource?.providerId;
@@ -1156,6 +1169,7 @@ export default function StoreGameDetailsPage({
               onChangeSource={() => setSourceSelectorOpen(true)}
               onOpenSteam={handleOpenSteam}
               onOpenSteamDb={handleOpenSteamDb}
+              onOpenSteamLibrary={handleOpenSteamLibrary}
               onRefreshSources={effectiveRefreshSources}
               providerCheckState={providerCheckState}
               providerCheckReason={providerCheckReason}

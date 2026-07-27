@@ -29,3 +29,7 @@ export function getSteamUninstallUrl(appId: number) {
 export function getSteamStoreProtocolUrl(appId: number) {
   return `steam://store/${appId}`;
 }
+
+export function getSteamLibraryUrl(appId: number) {
+  return `steam://nav/games/details/${appId}`;
+}

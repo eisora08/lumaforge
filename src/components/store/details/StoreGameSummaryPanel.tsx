@@ -55,6 +55,7 @@ type StoreGameSummaryPanelProps = {
   onChangeSource?: () => void;
   onOpenSteam: () => void;
   onOpenSteamDb: () => void;
+  onOpenSteamLibrary?: () => void;
   onRefreshSources?: () => void;
 
   // Provider-status sidecar props
@@ -238,6 +239,7 @@ export default function StoreGameSummaryPanel({
   onChangeSource,
   onOpenSteam,
   onOpenSteamDb,
+  onOpenSteamLibrary,
   onRefreshSources,
   providerCheckState = "no-data",
   providerCheckReason,
@@ -450,7 +452,7 @@ export default function StoreGameSummaryPanel({
           <p className="mt-1 text-xs text-(--color-muted)">
             {isInstalled ? "Installed and ready to play via Steam." : "You can install it from Steam at any time."}
           </p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={onOpenSteam}
@@ -458,6 +460,14 @@ export default function StoreGameSummaryPanel({
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Steam
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSteamLibrary}
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            >
+              <Library className="h-3.5 w-3.5" />
+              Steam Library
             </button>
             <button
               type="button"
