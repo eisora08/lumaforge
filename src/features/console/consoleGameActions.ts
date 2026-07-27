@@ -12,7 +12,7 @@
  * Check Update:
  *   HubcapDB-only (only provider with update-checking capability).
  *   Same function chain as StoreGameDetailsPage.handleCheckForUpdates:
- *     fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus → notifyProviderStatusWritten
+ *     fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus (saves to disk + notifies store)
  *
  * Steam Install:
  *   Only opens steam://install when getLauncherGamePrimaryAction returns "install"
@@ -28,7 +28,7 @@ import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import {
   getUpdateStatus,
-  notifyProviderStatusWritten,
+
 } from "../../services/providerStatusStore";
 import {
   fetchHubcapAppStatus,
@@ -325,7 +325,7 @@ async function resolveCachedSource(appId: string): Promise<PackageSource | null>
 /**
  * Check for updates via HubcapDB (the only provider with update-checking capability).
  * Same function chain as StoreGameDetailsPage.handleCheckForUpdates:
- *   fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus → notifyProviderStatusWritten
+ *   fetchHubcapAppStatus → checkHubcapAppUpdate → updateProviderRemoteStatus (saves to disk + notifies store)
  */
 async function handleConsoleCheckUpdates(
   game: LibraryGame,
@@ -390,8 +390,6 @@ async function handleConsoleCheckUpdates(
         steamRoot: settings.steamRoot || undefined,
       },
     );
-
-    await notifyProviderStatusWritten(appId, providerId);
 
     if (DEBUG_CONSOLE_ACTIONS) {
       console.log(

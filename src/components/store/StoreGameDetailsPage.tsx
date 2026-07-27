@@ -357,6 +357,17 @@ export default function StoreGameDetailsPage({
             return;
           }
           sourceLog("timeout-nocache", { appId });
+          // Fix: set status to "timeout" instead of leaving "checking" forever
+          updateSourceAvailability(appId, {
+            appId,
+            title: game.title,
+            status: "timeout",
+            luaReady: false,
+            availableSources: [],
+            sourceCount: 0,
+            totalProviderCount: 0,
+            updatedAt: Math.floor(Date.now() / 1000),
+          }).catch(() => {});
           return;
         }
         setInternalSourceStatus("error");
@@ -509,6 +520,17 @@ export default function StoreGameDetailsPage({
             return;
           }
           sourceLog("timeout-nocache", { appId });
+          // Fix: set status to "timeout" instead of leaving "checking" forever
+          await updateSourceAvailability(appId, {
+            appId,
+            title: game.title,
+            status: "timeout",
+            luaReady: false,
+            availableSources: [],
+            sourceCount: 0,
+            totalProviderCount: 0,
+            updatedAt: Math.floor(Date.now() / 1000),
+          });
           return;
         }
         if (!cancelled) {

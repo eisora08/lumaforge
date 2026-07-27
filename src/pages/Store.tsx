@@ -2925,12 +2925,9 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }));
     }
 
-    // Only skip source resolution when confirmed "none" (all queryable providers returned empty)
-    if (cached?.status === "none") {
-      return;
-    }
-
     // DEFERRED PATH — analytics + source resolution (outside click handler)
+    // Note: status "none" is no longer blocked here — always re-check so stale "none" results
+    // from a previous failed discovery don't permanently block source resolution on click.
     const requestId = ++sourceResolveReqRef.current;
     const title = game.title;
     scheduleSourceResolve(requestId, appId, title, game);
@@ -3090,6 +3087,18 @@ export default function Store({ onNavigate }: StoreProps = {}) {
               return;
             }
             log("store-search", `timeout-nocache { appId: "${appId}" }`);
+            // Fix: set status to "timeout" instead of leaving "checking" — otherwise UI shows
+            // "Checking sources..." forever with no way to retry
+            updateSourceAvailability(appId, {
+              appId,
+              title,
+              status: "timeout",
+              luaReady: false,
+              availableSources: [],
+              sourceCount: 0,
+              totalProviderCount: 0,
+              updatedAt: Math.floor(Date.now() / 1000),
+            }).catch(() => {});
             return;
           }
           updateSourceAvailability(appId, {
@@ -3542,6 +3551,16 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                     return;
                   }
                   log("store-search", `timeout-nocache { appId: "${appId}" }`);
+                  updateSourceAvailability(appId, {
+                    appId,
+                    title: game.title,
+                    status: "timeout",
+                    luaReady: false,
+                    availableSources: [],
+                    sourceCount: 0,
+                    totalProviderCount: 0,
+                    updatedAt: Math.floor(Date.now() / 1000),
+                  }).catch(() => {});
                   return;
                 }
                 updateSourceAvailability(appId, {

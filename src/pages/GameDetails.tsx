@@ -6,8 +6,9 @@ import { useDownloadQueue } from "../hooks/useDownloadQueue";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import { useGameOwnershipLookup } from "../features/search/useGameOwnershipLookup";
-import { getSourceAvailability, loadSourceAvailabilityIndex } from "../services/sourceAvailabilityCacheService";
+import { getSourceAvailability, loadSourceAvailabilityIndex, buildSourceAvailabilityFromProviders, updateSourceAvailability } from "../services/sourceAvailabilityCacheService";
 import { getStoreDetailsState } from "../services/storeDetailsSourceState";
+import { resolveProviderOverlaysForStoreGames } from "../services/storeProviderOverlay";
 import { downloadFromSource, type DownloadFromSourceDeps } from "../features/download/downloadFromSource";
 import { scanInstalledLuaScripts } from "../services/tauri";
 import { getSourceKey } from "../utils/sourceHelpers";
@@ -62,7 +63,9 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
 
   // Hydrated source state — restored from source availability cache
   const [hydratedSources, setHydratedSources] = useState<PackageSource[]>([]);
-  const [hydratedStatus, setHydratedStatus] = useState<SourceCheckStatus | undefined>();
+  // Start as "checking" so hasParentSourceControl is true from the first render,
+  // preventing internal checkSources() from firing before hydrate resolves
+  const [hydratedStatus, setHydratedStatus] = useState<SourceCheckStatus>("checking");
   // Source key selection (persists across renders for current game)
   const [selectedSourceKey, setSelectedSourceKey] = useState<string | undefined>();
 
@@ -124,6 +127,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     const appIdNum = Number(appId);
     if (!Number.isFinite(appIdNum)) return;
     const title = sg.title;
+    const imageUrl = sg.imageUrl;
 
     let cancelled = false;
 
@@ -157,16 +161,59 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
           console.log(`[STORE][SOURCE_RESTORE_FROM_CACHE] appid=${appId} found=${sources.length}`);
         }
       } else {
-        // Cache miss or incomplete — let StoreGameDetailsPage internal check handle source discovery
+        // Cache miss or stale — run parent-controlled source resolution
+        // (mirrors Store.tsx's scheduleSourceResolve pattern)
         const reason = !cached
           ? "no-cache-entry"
           : cached.availableSources.length === 0
             ? "no-sources"
             : `status=${cached.status}`;
-        console.log(`[STORE][SOURCE_EMPTY_GUARD] appid=${appId} reason=${reason} — not overwriting existing with empty`);
-        if (!cancelled) {
+        console.log(`[GLOBAL_SEARCH][SOURCE_RESOLUTION] appid=${appId} reason=${reason} — starting provider discovery`);
+
+        try {
+          const overlayMap = await resolveProviderOverlaysForStoreGames(
+            [{ appId, title, imageUrl, platforms: [], sources: [] }],
+            settings,
+          );
+          if (cancelled) return;
+
+          const overlayGame = overlayMap[appId];
+          const resolvedSources = overlayGame?.sources ?? [];
+          const totalProviders = resolvedSources.length;
+          const successes = resolvedSources.filter((s) => s.available).length;
+          const entry = buildSourceAvailabilityFromProviders(
+            appId,
+            title,
+            resolvedSources,
+            totalProviders,
+          );
+
+          console.log(
+            `[GLOBAL_SEARCH][SOURCE_RESOLUTION_DONE] appid=${appId} total=${totalProviders} successes=${successes} status=${entry.status}`,
+          );
+
+          setHydratedSources(resolvedSources);
+          setHydratedStatus(entry.status === "ready" ? "ready" : "error");
+          await updateSourceAvailability(appId, entry).catch(() => {});
+        } catch (err: unknown) {
+          if (cancelled) return;
+          const message = err instanceof Error ? err.message : String(err);
+          const isTimeout = message.toLowerCase().includes("timeout");
+          console.log(
+            `[GLOBAL_SEARCH][SOURCE_RESOLUTION_FAIL] appid=${appId} timeout=${isTimeout} error=${message}`,
+          );
           setHydratedSources([]);
-          setHydratedStatus(undefined);
+          setHydratedStatus(isTimeout ? "timeout" : "error");
+          await updateSourceAvailability(appId, {
+            appId,
+            title,
+            status: isTimeout ? "timeout" : "error",
+            luaReady: false,
+            availableSources: [],
+            sourceCount: 0,
+            totalProviderCount: 0,
+            updatedAt: Math.floor(Date.now() / 1000),
+          }).catch(() => {});
         }
       }
     }
@@ -261,15 +308,47 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     return packageGame;
   }, [packageGame, hydratedSources, hydratedStatus]);
 
-  // Only pass sourceStatus to StoreGameDetailsPage when we have real cached data
-  // Otherwise let the internal check handle discovery
-  const effectiveSourceStatus: SourceCheckStatus | undefined =
-    hydratedStatus === "ready" ? "ready" : undefined;
+  // Pass hydrated status to StoreGameDetailsPage — always defined (starts as "checking")
+  // so hasParentSourceControl is always true, preventing internal duplicate resolution
+  const effectiveSourceStatus: SourceCheckStatus = hydratedStatus;
 
   const handleBack = () => {
     clearSelection();
     onBack();
   };
+
+  // Retry handler — re-runs source resolution, mirrors Store.tsx's onRefreshSources
+  const handleRefreshSources = useCallback(async () => {
+    const sg = selectedGame;
+    if (!sg) return;
+    const appId = sg.appId;
+    const title = sg.title;
+    const imageUrl = sg.imageUrl;
+    console.log(`[GLOBAL_SEARCH][SOURCE_RETRY] appid=${appId}`);
+    setHydratedStatus("checking");
+    try {
+      const overlayMap = await resolveProviderOverlaysForStoreGames(
+        [{ appId, title, imageUrl, platforms: [], sources: [] }],
+        settings,
+      );
+      const overlayGame = overlayMap[appId];
+      const resolvedSources = overlayGame?.sources ?? [];
+      const totalProviders = resolvedSources.length;
+      const entry = buildSourceAvailabilityFromProviders(
+        appId, title, resolvedSources, totalProviders,
+      );
+      console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_DONE] appid=${appId} status=${entry.status} total=${totalProviders}`);
+      setHydratedSources(resolvedSources);
+      setHydratedStatus(entry.status === "ready" ? "ready" : "error");
+      await updateSourceAvailability(appId, entry).catch(() => {});
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isTimeout = message.toLowerCase().includes("timeout");
+      console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_FAIL] appid=${appId} timeout=${isTimeout}`);
+      setHydratedSources([]);
+      setHydratedStatus(isTimeout ? "timeout" : "error");
+    }
+  }, [selectedGame, settings]);
 
   // Download handler — delegates to shared Store-canonical downloadFromSource helper
   const handleDownloadSource = useCallback(async (source: PackageSource): Promise<{ success: boolean; jobId?: string }> => {
@@ -353,6 +432,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
         moreLikeThisGames={[]}
         onBack={handleBack}
         onDownloadSource={handleDownloadSource}
+        onRefreshSources={handleRefreshSources}
         onOpenGame={handleOpenGame}
         onSelectSourceKey={handleSelectSourceKey}
         onViewInLibrary={handleViewInLibrary}
