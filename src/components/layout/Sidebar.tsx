@@ -469,7 +469,7 @@ function SidebarSection({
               title={isCollapsed ? item.label : undefined}
               className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect lf-hover-lift ${
                 isActive
-                  ? "bg-(--color-accent)/8 text-(--color-text) lf-active-glow shadow-[inset_3px_0_0_0] shadow-(--color-accent)/40"
+                  ? "bg-(--color-accent)/8 text-(--color-text) lf-active-glow border-l-[3px] border-l-(--color-accent)/40"
                   : "text-(--color-muted) hover:bg-white/6 hover:text-(--color-text)"
               } ${isCollapsed ? "justify-center" : ""}`}
             >

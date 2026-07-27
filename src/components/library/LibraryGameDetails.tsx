@@ -1143,19 +1143,18 @@ export default function LibraryGameDetails({
         <div className="absolute bottom-0 left-0 right-0 z-30">
           <div className="mx-auto w-full max-w-[1440px] px-5 pb-4 lg:pb-5">
             {logoUrl ? (
-              <div className="mb-2">
-                <img
-                  src={logoUrl}
-                  alt={`${detailTitle} logo`}
-                  loading="lazy"
-                  decoding="async"
-                  className="max-h-14 max-w-[180px] object-contain drop-shadow-2xl lg:max-h-20 lg:max-w-[300px]"
-                />
-              </div>
-            ) : null}
-            <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
-              {detailTitle}
-            </h1>
+              <img
+                src={logoUrl}
+                alt={`${detailTitle} logo`}
+                loading="lazy"
+                decoding="async"
+                className="mb-2 max-h-14 max-w-[180px] object-contain drop-shadow-2xl lg:max-h-20 lg:max-w-[300px]"
+              />
+            ) : (
+              <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
+                {detailTitle}
+              </h1>
+            )}
 
             {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
               <p className="mt-0.5 text-sm text-white/70">
