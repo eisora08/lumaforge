@@ -33,7 +33,7 @@ import ModeSwitchSplash from "./components/splash/ModeSwitchSplash";
 import type { ModeSwitchMode } from "./components/splash/ModeSwitchSplash";
 import LibraryLoadProgressCard from "./components/loading/LibraryLoadProgressCard";
 import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
-import BackgroundJobDebugPanel from "./components/common/BackgroundJobDebugPanel";
+
 import { runBootTasks } from "./services/appBootCoordinator";
 import AppRouteTransition from "./components/common/AppRouteTransition";
 import { ConfirmProvider } from "./services/confirmService";
@@ -308,7 +308,6 @@ function App() {
       <InstallerProgressListener />
       <GameToastViewport />
       <AchievementToastViewport />
-      {import.meta.env.DEV && <BackgroundJobDebugPanel />}
       {/* Mode switch splash — covers Desktop ↔ Console transitions */}
       {showModeSwitch && (
         <ModeSwitchSplash
