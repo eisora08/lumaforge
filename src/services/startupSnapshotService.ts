@@ -1026,6 +1026,12 @@ export async function loadStartupSnapshot(): Promise<StartupSnapshot | null> {
       // Phase 6: Initialize fingerprint on load so first full-rebuild doesn't
       // write when dirtyAppIds=0 and content hasn't changed.
       _lastWriteFingerprint = computeSnapshotFingerprint(result);
+      // Notify subscribers that snapshot is now available from disk.
+      // Without this, Home.tsx and other subscribers only learn about the snapshot
+      // when a WRITE occurs (e.g. Stage 3.5 enrichment save). On warm boots where
+      // no titles need enrichment, no write happens and sections stay empty until
+      // the user navigates away and back.
+      notifySnapshotWritten();
       if (needsUpgrade) {
         saveStartupSnapshot(result); // persist upgraded fields to disk
       }

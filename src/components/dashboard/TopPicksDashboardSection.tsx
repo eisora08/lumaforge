@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 
-const DEBUG_DASH_GLOBAL_MEDIA = false;
-const DEBUG_DASH_FEATURED = false;
+const DEBUG_DASH_TOP_PICKS = false;
 const DEBUG_DASH_SECTION_LOGS = false;
 import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
 import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
@@ -45,12 +44,11 @@ function resolveBestMedia(game: NormalizedCatalogGame): string | null {
   return game.media.capsuleImageV5 || game.media.headerImage || game.media.libraryHeroImage || game.media.capsuleImage || game.media.backgroundImage || null;
 }
 
-export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
+export default function TopPicksDashboardSection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [sections, setSections] = useState(() => getCachedCatalogSections());
 
-  // Subscribe to orchestrator section updates (canonical Store catalog sections)
   useEffect(() => {
     const unsub = subscribeCatalogSections((s) => setSections([...s]));
     return unsub;
@@ -63,61 +61,50 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
   }, [libraryGames]);
 
   const displayGames = useMemo(() => {
-    // Find canonical featured section from orchestrator (matches Store's "Featured" section)
-    const featuredSection = sections.find(
-      (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
-    );
-    if (!featuredSection || featuredSection.games.length === 0) return [];
+    const topPicksSection = sections.find((s) => s.sectionId === "top-picks");
+    if (!topPicksSection || topPicksSection.games.length === 0) return [];
 
-    // Map orchestrator games to card model via shared bridge
-    const cards = featuredSection.games.map(mapStoreCatalogGameToCard);
+    const cards = topPicksSection.games.map(mapStoreCatalogGameToCard);
 
-    // Filter: non-library, non-tool, has appId+title
     const filtered = cards.filter(
       (g) => g.appId && g.title && !libraryAppIds.has(g.appId) && !isToolByTitle(g.title),
     );
     if (filtered.length === 0) return [];
 
-    // Sort: games with media first
     const withMedia = filtered.filter((g) => resolveBestMedia(g));
     const withoutMedia = filtered.filter((g) => !resolveBestMedia(g));
     const sorted = [...withMedia, ...withoutMedia];
     return sorted.slice(0, maxItems ?? 10);
   }, [sections, libraryAppIds, maxItems]);
 
-  // Change-only diagnostic
-  const featLogRef = useRef<string>("");
+  const logRef = useRef<string>("");
   useEffect(() => {
     const rendered = displayGames.length;
-    const featuredSection = sections.find(
-      (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
-    );
-    const candidates = featuredSection?.games.length ?? 0;
+    const topPicksSection = sections.find((s) => s.sectionId === "top-picks");
+    const candidates = topPicksSection?.games.length ?? 0;
     const key = `${rendered}|${candidates}|orchestrator`;
 
     if (sections.length === 0) {
-      if (featLogRef.current !== "loading") {
-        featLogRef.current = "loading";
-      }
+      if (logRef.current !== "loading") logRef.current = "loading";
       return;
     }
 
     if (candidates === 0 || rendered === 0) {
-      if (featLogRef.current !== `skip|${key}`) {
-        featLogRef.current = `skip|${key}`;
+      if (logRef.current !== `skip|${key}`) {
+        logRef.current = `skip|${key}`;
         if (DEBUG_DASH_SECTION_LOGS) {
-          console.log(`[DASH][SECTION_SKIP] section=FeaturedPicks reason=no-canonical-section total=${candidates}`);
+          console.log(`[DASH][SECTION_SKIP] section=TopPicks reason=no-canonical-section total=${candidates}`);
         }
       }
       return;
     }
 
-    if (featLogRef.current !== key) {
-      featLogRef.current = key;
-      if (DEBUG_DASH_FEATURED) {
+    if (logRef.current !== key) {
+      logRef.current = key;
+      if (DEBUG_DASH_TOP_PICKS) {
         const withMediaCount = displayGames.filter((g) => resolveBestMedia(g)).length;
         console.log(
-          `[DASH][FEATURED] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=orchestrator`,
+          `[DASH][TOP_PICKS] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=orchestrator`,
         );
       }
     }
@@ -128,10 +115,6 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
   function handleOpen(game: NormalizedCatalogGame) {
     if (!game.appId) return;
     const libGame = libraryGames.find((g) => g.appId === game.appId);
-    const hasMedia = !!resolveBestMedia(game);
-    if (DEBUG_DASH_SECTION_LOGS) {
-      console.log(`[DASH][GLOBAL_CLICK] section=FeaturedPicks appid=${game.appId} title="${game.title}" inLibrary=${!!libGame} hasMedia=${hasMedia}`);
-    }
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
@@ -146,10 +129,10 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-(--color-text)">
-            Featured Picks
+            Top Picks
           </h2>
           <p className="mt-0.5 text-sm text-(--color-muted)">
-            Curated games from the store catalog
+            Trending games from the catalog
           </p>
         </div>
       </div>
@@ -157,12 +140,12 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {deduplicateByAppId(displayGames).map((game) => {
           const imgSrc = resolveBestMedia(game);
-          if (imgSrc && DEBUG_DASH_GLOBAL_MEDIA) {
-            console.log(`[DASH][GLOBAL_MEDIA] section=FeaturedPicks appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
+          if (imgSrc && DEBUG_DASH_SECTION_LOGS) {
+            console.log(`[DASH][GLOBAL_MEDIA] section=TopPicks appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
           }
           return (
             <div
-              key={"dashboard:featured:steam:" + game.appId}
+              key={"dashboard:toppicks:steam:" + game.appId}
               className="shrink-0 snap-start"
               style={{ width: `min(75vw, ${settings.dashboardCardSize}px)` }}
             >
@@ -203,7 +186,7 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
                     {game.title}
                   </h3>
                   <span className="mt-1 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
-                    Available
+                    Top Rated
                   </span>
                 </div>
               </div>

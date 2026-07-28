@@ -8,7 +8,7 @@ import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
 import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
 import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
-import NewNoteworthySection from "../components/dashboard/NewNoteworthySection";
+import TopPicksDashboardSection from "../components/dashboard/TopPicksDashboardSection";
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
 import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
 import { getCachedSnapshot, subscribeSnapshotUpdated } from "../services/startupSnapshotService";
@@ -287,7 +287,7 @@ export default function Home({ onNavigate }: Props) {
       "recommended",
       "trending-right-now",
       "featured-picks",
-      "new-noteworthy",
+      "top-picks",
       "top-played",
       "store-highlights",
     ];
@@ -375,11 +375,11 @@ export default function Home({ onNavigate }: Props) {
           </SectionWrap>
         )}
 
-        {dashboardDiscoveryReady && isSectionVisible("new-noteworthy", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("new-noteworthy")}>
-            <NewNoteworthySection
+        {dashboardDiscoveryReady && isSectionVisible("top-picks", sectionVisibility) && (
+          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("top-picks")}>
+            <TopPicksDashboardSection
               onNavigate={onNavigate}
-              maxItems={getSectionLimit("new-noteworthy", sectionLimits, 12)}
+              maxItems={getSectionLimit("top-picks", sectionLimits, 12)}
             />
           </SectionWrap>
         )}
