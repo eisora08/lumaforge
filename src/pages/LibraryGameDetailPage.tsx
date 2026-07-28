@@ -1108,7 +1108,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     );
   }
 
-  const displayGame = resolvedGame || selectedGame;
+  const displayGame = selectedGame;
   const currentSession = session.getSession(gameKey);
   const appInfoEntry = displayGame.appId ? (appInfoMap[displayGame.appId] ?? null) : null;
   const detailTitle = resolveCanonicalDisplayTitle(
