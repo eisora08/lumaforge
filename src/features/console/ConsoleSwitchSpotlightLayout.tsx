@@ -104,6 +104,17 @@ export default function ConsoleSwitchSpotlightLayout({
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
   const logoSrc = useMemo(() => getConsoleLogoSrc(focusedGame), [focusedGame]);
+  const [logoNaturalHeight, setLogoNaturalHeight] = useState<number | null>(null);
+  const handleLogoLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    setLogoNaturalHeight(e.currentTarget.naturalHeight);
+  }, []);
+  useEffect(() => { setLogoNaturalHeight(null); }, [logoSrc]);
+  const logoDisplayHeight = (() => {
+    if (logoNaturalHeight == null) return undefined;
+    const MIN_H = 80;
+    const MAX_H = 150;
+    return Math.max(MIN_H, Math.min(MAX_H, logoNaturalHeight));
+  })();
   const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
 
   const scs = settings.spotlightCardStyle;
@@ -230,11 +241,12 @@ export default function ConsoleSwitchSpotlightLayout({
             key={focusedGame.appId}
             src={logoSrc}
             alt={focusedGame.title}
-            className="object-contain drop-shadow-2xl"
-            style={{
-              maxWidth: "clamp(280px, 28vw, 560px)",
-              maxHeight: "clamp(80px, 12vh, 150px)",
-            }}
+            className="object-contain drop-shadow-2xl w-auto"
+            style={logoDisplayHeight != null
+              ? { height: `${logoDisplayHeight}px`, maxWidth: "min(560px, 42vw)" }
+              : { maxHeight: "clamp(80px, 12vh, 150px)", maxWidth: "clamp(280px, 28vw, 560px)" }
+            }
+            onLoad={handleLogoLoad}
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
         </div>

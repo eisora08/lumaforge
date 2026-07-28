@@ -400,6 +400,10 @@ export default function LibraryGameDetails({
     return rawLogoUrl;
   })();
   const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | undefined>(undefined);
+  const [logoNaturalHeight, setLogoNaturalHeight] = useState<number | null>(null);
+  const handleLogoLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    setLogoNaturalHeight(e.currentTarget.naturalHeight);
+  }, []);
   useEffect(() => {
     if (!_validatedLogoSrc) { setResolvedLogoUrl(undefined); return; }
     if (_validatedLogoSrc.startsWith("games/") || _validatedLogoSrc.startsWith("media/") || _validatedLogoSrc.startsWith("img/")) {
@@ -420,6 +424,13 @@ export default function LibraryGameDetails({
     }
   }, [_validatedLogoSrc, game.appId]);
   const logoUrl = resolvedLogoUrl;
+  useEffect(() => { setLogoNaturalHeight(null); }, [logoUrl]);
+  const logoDisplayHeight = (() => {
+    if (logoNaturalHeight == null) return undefined;
+    const MIN_H = 80;
+    const MAX_H = 200;
+    return Math.max(MIN_H, Math.min(MAX_H, logoNaturalHeight));
+  })();
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
   const { installState, dismiss } = useInstallTracker(game.appId);
@@ -1151,7 +1162,12 @@ export default function LibraryGameDetails({
                 alt={`${detailTitle} logo`}
                 loading="lazy"
                 decoding="async"
-                className="mb-2 max-h-14 max-w-[180px] object-contain drop-shadow-2xl lg:max-h-20 lg:max-w-[300px]"
+                onLoad={handleLogoLoad}
+                className="mb-2 object-contain drop-shadow-2xl w-auto"
+                style={logoDisplayHeight != null
+                  ? { height: `${logoDisplayHeight}px` }
+                  : { maxHeight: '200px' }
+                }
               />
             ) : (
               <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
