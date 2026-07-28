@@ -20,6 +20,9 @@ export type JobTier =
   | "P5-achievement"       // Schema parse, image checks, migration
   | "P6-cleanup";          // Old cache cleanup, path migration, legacy data
 
+/** Set to true to see job queue diagnostics in console. */
+const ENABLE_JOB_QUEUE_LOGS = false;
+
 // Legacy priority — kept for backward compat with existing queue
 export type JobPriority = "high" | "normal" | "low";
 
@@ -109,10 +112,10 @@ function checkIdleReady(): void {
   const ready = isIdleReady();
   if (ready && !_idleAcknowledged) {
     _idleAcknowledged = true;
-    console.log("[IDLE][READY] condition met — idle processing acknowledged");
+    if (ENABLE_JOB_QUEUE_LOGS) console.log("[IDLE][READY] condition met — idle processing acknowledged");
   } else if (ready && !_idleReadyLogged) {
     _idleReadyLogged = true;
-    console.log("[IDLE][READY] condition met");
+    if (ENABLE_JOB_QUEUE_LOGS) console.log("[IDLE][READY] condition met");
   }
   if (!ready) {
     const reasons: string[] = [];
@@ -122,7 +125,7 @@ function checkIdleReady(): void {
     if (typeof window !== "undefined" && window.location.hash.startsWith("#/store")) reasons.push("store-active");
     if (activeJobs.size >= MAX_CONCURRENT) reasons.push("max-concurrent-active");
     if (reasons.length > 0) {
-      console.log(`[IDLE][DEFER] reasons=${reasons.join(",")}`);
+      if (ENABLE_JOB_QUEUE_LOGS) console.log(`[IDLE][DEFER] reasons=${reasons.join(",")}`);
     }
   }
 }
@@ -144,7 +147,7 @@ export const backgroundJobQueue = {
     if (recentlyCompleted.has(key)) {
       const elapsed = Date.now() - (recentlyCompleted.get(key) ?? 0);
       if (elapsed < COMPLETED_TTL_MS) {
-        console.log(`[JOB] skipped duplicate key=${key} (completed ${elapsed}ms ago)`);
+        if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] skipped duplicate key=${key} (completed ${elapsed}ms ago)`);
         return key;
       }
       recentlyCompleted.delete(key);
@@ -152,20 +155,20 @@ export const backgroundJobQueue = {
 
     // Dedup: recently failed
     if (recentlyFailed.has(key)) {
-      console.log(`[JOB] skipped duplicate key=${key} (failed, in cooldown)`);
+      if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] skipped duplicate key=${key} (failed, in cooldown)`);
       return key;
     }
 
     // Dedup: already in queue
     const alreadyQueued = queue.some((j) => j.id === key && j.status === "queued");
     if (alreadyQueued) {
-      console.log(`[JOB] skipped duplicate key=${key} (already queued)`);
+      if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] skipped duplicate key=${key} (already queued)`);
       return key;
     }
 
     // Dedup: already running
     if (activeJobs.has(key)) {
-      console.log(`[JOB] skipped duplicate key=${key} (already running)`);
+      if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] skipped duplicate key=${key} (already running)`);
       return key;
     }
 
@@ -183,7 +186,7 @@ export const backgroundJobQueue = {
     queue.push(job);
     sortQueue();
     notifyListeners(job);
-    console.log(`[JOB] queued key=${key} tier=${tier ?? priority} priority=${priority}`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] queued key=${key} tier=${tier ?? priority} priority=${priority}`);
     countJobQueued();
 
     scheduleDrain();
@@ -205,7 +208,7 @@ export const backgroundJobQueue = {
     });
     const removed = before - queue.length;
     if (removed > 0) {
-      console.log(`[JOB] cancelled ${removed} jobs filter=${JSON.stringify(filter)}`);
+      if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] cancelled ${removed} jobs filter=${JSON.stringify(filter)}`);
     }
   },
 
@@ -214,12 +217,12 @@ export const backgroundJobQueue = {
   // -----------------------------------------------------------------------
   pause(): void {
     paused = true;
-    console.log("[JOB] paused");
+    if (ENABLE_JOB_QUEUE_LOGS) console.log("[JOB] paused");
   },
 
   resume(): void {
     paused = false;
-    console.log("[JOB] resumed");
+    if (ENABLE_JOB_QUEUE_LOGS) console.log("[JOB] resumed");
     scheduleDrain();
   },
 
@@ -328,7 +331,7 @@ async function processNext(): Promise<void> {
   if (queue.length === 0) {
     // Only log drain complete when there are active jobs or recently completed (not on idle polls)
     if (activeJobs.size > 0 || recentlyCompleted.size > 0) {
-      console.log(`[JOB] drain complete — queued=${queue.length} running=${activeJobs.size} recent=${recentlyCompleted.size}`);
+      if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] drain complete — queued=${queue.length} running=${activeJobs.size} recent=${recentlyCompleted.size}`);
     }
     return;
   }
@@ -350,7 +353,7 @@ async function processNext(): Promise<void> {
           if (Date.now() - _lastNavigationChange <= 5000) reasons.push("recent-navigation");
           if (typeof window !== "undefined" && window.location.hash.startsWith("#/store")) reasons.push("store-active");
           if (reasons.length > 0) {
-            console.log(`[IDLE][DEFER] tier=${deferredTier} reasons=${reasons.join(",")}`);
+            if (ENABLE_JOB_QUEUE_LOGS) console.log(`[IDLE][DEFER] tier=${deferredTier} reasons=${reasons.join(",")}`);
           }
         }
         // Skip the front job to process lower tiers underneath
@@ -358,7 +361,7 @@ async function processNext(): Promise<void> {
         if (front) queue.push(front);
         // If all remaining jobs are also P4+, drain is done for now
         if (queue.every((j) => j.tier && ["P4-background-repair", "P5-achievement", "P6-cleanup"].includes(j.tier))) {
-          console.log(`[IDLE][DONE] queued=${queue.length} running=${activeJobs.size} — all remaining jobs are idle-tier, deferring`);
+          if (ENABLE_JOB_QUEUE_LOGS) console.log(`[IDLE][DONE] queued=${queue.length} running=${activeJobs.size} — all remaining jobs are idle-tier, deferring`);
           scheduleDrain();
           return;
         }
@@ -384,7 +387,7 @@ async function processNext(): Promise<void> {
 
   // Double-check dedup
   if (activeJobs.has(job.id)) {
-    console.log(`[JOB] skip key=${job.id} (already active via race)`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] skip key=${job.id} (already active via race)`);
     scheduleDrain();
     return;
   }
@@ -396,11 +399,11 @@ async function processNext(): Promise<void> {
       // Re-enqueue with "queued" status (don't reuse the same object with "running")
       const alreadyQueued = queue.some((j) => j.id === job.id && j.status === "queued");
       if (alreadyQueued) {
-        console.log(`[JOB][DEFER_SKIP] key=${job.id} reason=already-queued`);
+        if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB][DEFER_SKIP] key=${job.id} reason=already-queued`);
       } else {
         job.status = "queued";
         queue.push(job);
-        console.log(`[JOB][DEFER] key=${job.id} reason=store-active retryMs=2000`);
+        if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB][DEFER] key=${job.id} reason=store-active retryMs=2000`);
       }
       scheduleDrain();
       return;
@@ -412,9 +415,9 @@ async function processNext(): Promise<void> {
   activeJobs.set(job.id, job);
   notifyListeners(job);
   if (job.tier && ["P4-background-repair", "P5-achievement", "P6-cleanup"].includes(job.tier)) {
-    console.log(`[IDLE][RUN] key=${job.id} tier=${job.tier}`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[IDLE][RUN] key=${job.id} tier=${job.tier}`);
   } else {
-    console.log(`[JOB] started key=${job.id}`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] started key=${job.id}`);
   }
 
   try {
@@ -430,14 +433,14 @@ async function processNext(): Promise<void> {
     const elapsed = job.finishedAt - job.startedAt;
     recentlyCompleted.set(job.id, job.finishedAt);
     notifyListeners(job);
-    console.log(`[JOB] complete key=${job.id} elapsed=${elapsed}ms`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] complete key=${job.id} elapsed=${elapsed}ms`);
   } catch (err) {
     job.status = "failed";
     job.finishedAt = Date.now();
     job.error = String(err);
     recentlyFailed.set(job.id, { time: job.finishedAt, error: String(err) });
     notifyListeners(job);
-    console.log(`[JOB] failed key=${job.id} error=${String(err)}`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[JOB] failed key=${job.id} error=${String(err)}`);
   } finally {
     activeJobs.delete(job.id);
     scheduleDrain();
@@ -484,7 +487,7 @@ async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
 
   // Skip system/tool apps (Steamworks Redistributables, Proton, etc.)
   if (isSystemToolApp(job.appId)) {
-    console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${job.appId} reason=system-tool`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_SKIP] appid=${job.appId} reason=system-tool`);
     return;
   }
 
@@ -495,7 +498,7 @@ async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
     return !diskPaths?.[pathKey];
   });
   if (missingRoles.length === 0) {
-    console.log(`[MEDIA][REPAIR_SKIP] appid=${job.appId} reason=complete`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[MEDIA][REPAIR_SKIP] appid=${job.appId} reason=complete`);
     return;
   }
 
@@ -572,7 +575,7 @@ async function executeRepairGameMedia(job: BackgroundJob): Promise<void> {
   const queued = results.filter((r) => r.status === "fulfilled").length;
   const failed = results.filter((r) => r.status === "rejected").length;
 
-  console.log(`[MEDIA][REPAIR_DONE] appid=${job.appId} missing=${missingRoles.length} queued=${queued} skipped=${skipped} failed=${failed}`);
+  if (ENABLE_JOB_QUEUE_LOGS) console.log(`[MEDIA][REPAIR_DONE] appid=${job.appId} missing=${missingRoles.length} queued=${queued} skipped=${skipped} failed=${failed}`);
   // Generate media manifest after repair
   try {
     const { generateMediaManifest } = await import("./gameCacheService");
@@ -608,7 +611,7 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
   const achievementStoreMod = await import("./achievementStore");
   const summary = achievementStoreMod.achievementStore.getSummary(job.appId);
   if (!summary) {
-    console.log(`[ACH][IMG_JOB] skipped appid=${job.appId} reason=no-summary`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[ACH][IMG_JOB] skipped appid=${job.appId} reason=no-summary`);
     return;
   }
 
@@ -657,23 +660,25 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
   }
   const mode = job.priority === "low" ? "preload" : "full";
   if (items.length > 0) {
-    console.log(`[ACH][IMG_JOB] queued appid=${job.appId} mode=${mode} limit=${maxIcons} missing=${items.length}`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[ACH][IMG_JOB] queued appid=${job.appId} mode=${mode} limit=${maxIcons} missing=${items.length}`);
     await achievementImageQueue.enqueue(items);
   } else {
-    console.log(`[ACH][IMG_JOB] skipped appid=${job.appId} reason=already-cached`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[ACH][IMG_JOB] skipped appid=${job.appId} reason=already-cached`);
   }
 }
 
 async function executeValidatePortablePaths(_job: BackgroundJob): Promise<void> {
   const { validatePortablePaths: validate } = await import("./tauri");
   const result = await validate();
-  console.log("[VALIDATE] absolutePaths=", result.absolutePaths);
-  console.log("[VALIDATE] assetUrlsPersisted=", result.assetUrlsPersisted);
-  console.log("[VALIDATE] remoteIconFields=", result.remoteIconFields);
-  console.log("[VALIDATE] providerlessAchievementFolders=", result.providerlessAchievementFolders);
-  if (result.details.length > 0) {
-    for (const d of result.details) {
-      console.log("[VALIDATE]", d);
+  if (ENABLE_JOB_QUEUE_LOGS) {
+    console.log("[VALIDATE] absolutePaths=", result.absolutePaths);
+    console.log("[VALIDATE] assetUrlsPersisted=", result.assetUrlsPersisted);
+    console.log("[VALIDATE] remoteIconFields=", result.remoteIconFields);
+    console.log("[VALIDATE] providerlessAchievementFolders=", result.providerlessAchievementFolders);
+    if (result.details.length > 0) {
+      for (const d of result.details) {
+        console.log("[VALIDATE]", d);
+      }
     }
   }
 }

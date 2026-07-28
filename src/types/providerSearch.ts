@@ -28,7 +28,7 @@ export type ProviderProgressCallback = (result: {
 }) => void;
 
 export type ProviderSearchProviderReport = {
-  providerId: ApiProviderId;
+  providerId: string;
   providerName: string;
   status: ProviderSearchStatus;
   resultCount: number;
@@ -38,7 +38,7 @@ export type ProviderSearchProviderReport = {
 export type ProviderSearchResult = {
   query: string;
   provider: ProviderFilter;
-  searchedProviders: ApiProviderId[];
+  searchedProviders: string[];
   providerReports: ProviderSearchProviderReport[];
   results: PackageGame[];
   totalResults: number;

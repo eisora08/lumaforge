@@ -114,7 +114,6 @@ export type ConsoleSettings = {
   /* ── System bar indicators ── */
   showNetworkIndicator: boolean;
   showControllerIndicator: boolean;
-  showJobIndicator: boolean;
 };
 
 const STORAGE_KEY = "lumaforge-console-settings-v1";
@@ -185,7 +184,6 @@ export const DEFAULT_CONSOLE_SETTINGS: ConsoleSettings = {
   disableUpdate: false,
   showNetworkIndicator: true,
   showControllerIndicator: true,
-  showJobIndicator: true,
 };
 
 export const WIDTH_PRESETS: { label: string; value: number; description: string }[] = [
@@ -443,12 +441,11 @@ export function resetConsoleStartupSettings(): ConsoleSettings {
 }
 
 export const SYSTEM_BAR_DEFAULTS: Pick<ConsoleSettings,
-  "showClock" | "showNetworkIndicator" | "showControllerIndicator" | "showJobIndicator" | "showProfileHud"
+  "showClock" | "showNetworkIndicator" | "showControllerIndicator" | "showProfileHud"
 > = {
   showClock: true,
   showNetworkIndicator: true,
   showControllerIndicator: true,
-  showJobIndicator: true,
   showProfileHud: true,
 };
 

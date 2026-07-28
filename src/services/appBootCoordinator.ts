@@ -311,7 +311,7 @@ export async function runBootTasks(): Promise<void> {
                         game.appId, meta.name,
                         { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
                         null, undefined, "bootStage35Enrichment",
-                      ).catch(() => {});
+                      ).catch((err) => console.warn(err));
                       console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=metadata`);
                     } catch { /* non-critical */ }
                     continue;
@@ -334,7 +334,7 @@ export async function runBootTasks(): Promise<void> {
                           game.appId, sdData.name,
                           { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
                           null, undefined, "bootStage35Enrichment",
-                        ).catch(() => {});
+                        ).catch((err) => console.warn(err));
                         console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=store`);
                       } catch { /* non-critical */ }
                     }
@@ -342,7 +342,7 @@ export async function runBootTasks(): Promise<void> {
                 }
                 if (enrichedCount > 0) {
                   const { saveStartupSnapshot } = await import("./startupSnapshotService");
-                  await saveStartupSnapshot(_snapshotLoaded).catch(() => {});
+                  await saveStartupSnapshot(_snapshotLoaded).catch((err) => console.warn(err));
                   logBoot(`enriched ${enrichedCount}/${placeholderGames.length} snapshot titles`);
                 }
               }
@@ -451,7 +451,7 @@ export async function runBootTasks(): Promise<void> {
                   // Persist reconciled list to SQLite cache so next boot is instant
                   if (result.games.length > 0) {
                     const { saveCachedGames } = await import("./gameDetectionCache");
-                    await saveCachedGames(result.games, result.warnings).catch(() => {});
+                    await saveCachedGames(result.games, result.warnings).catch((err) => console.warn(err));
                     logBoot(`saved reconciled games to cache`);
 
                     // Also queue background SQLite upsert for the games table
@@ -470,7 +470,7 @@ export async function runBootTasks(): Promise<void> {
                             updatedAt: Math.floor(Date.now() / 1000),
                           }));
                         if (entries.length > 0) {
-                          await batchUpsertGames(entries).catch(() => {});
+                          await batchUpsertGames(entries).catch((err) => console.warn(err));
                           logBoot(`sqlite upserted ${entries.length} games in background`);
                         }
                       } catch { /* non-critical */ }
@@ -636,7 +636,7 @@ export async function runBootTasks(): Promise<void> {
                           null,
                           undefined,
                           "bootStage45Enrichment",
-                        ).catch(() => {});
+                        ).catch((err) => console.warn(err));
                       } else {
                         console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
                       }
@@ -658,7 +658,7 @@ export async function runBootTasks(): Promise<void> {
                         }
                       }
                       if (snapChanged) {
-                        await saveStartupSnapshot(cachedSnap).catch(() => {});
+                        await saveStartupSnapshot(cachedSnap).catch((err) => console.warn(err));
                         logBoot(`snapshot titles updated count=${emptyTitleGames.filter(g => g.appId && !isPlaceholderSteamTitle(g.title, g.appId)).length}`);
                       }
                     }

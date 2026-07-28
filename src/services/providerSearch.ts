@@ -1,6 +1,6 @@
-import { mockPackages } from "../data/mockPackages";
 import { defaultApiProviders } from "../data/providers";
 import { checkProviderAvailability, hubcapAppStatus } from "./tauri";
+import { querySearch } from "./steamCatalogService";
 import {
   shouldSkipProvider,
   getHealthyProviders,
@@ -89,11 +89,9 @@ export async function searchPackagesByProviders(
     );
   }
 
-  return searchMockCatalog(
+  return await searchLocalCatalog(
     normalizedQuery,
     params,
-    settings,
-    targetProviders
   );
 }
 
@@ -375,60 +373,39 @@ async function searchRealProviderAvailability(
   };
 }
 
-function searchMockCatalog(
+async function searchLocalCatalog(
   query: string,
   params: ProviderSearchParams,
-  settings: AppSettings,
-  targetProviders: ApiProviderDefinition[]
-): ProviderSearchResult {
+): Promise<ProviderSearchResult> {
   const providerReports: ProviderSearchProviderReport[] = [];
-  const collectedGames = new Map<string, PackageGame>();
+  const catalogResult = await querySearch(query, 24);
 
-  for (const provider of targetProviders) {
-    const userSettings = settings.providers?.[provider.id];
+  const results: PackageGame[] = catalogResult.games.map((game) => ({
+    appId: String(game.appId),
+    title: game.name,
+    developer: game.developers?.[0] ?? "Steam",
+    imageUrl: game.headerImage || game.capsuleImage || `https://cdn.cloudflare.steamstatic.com/steam/apps/${game.appId}/header.jpg`,
+    platforms: ["Windows"],
+    sources: [],
+  }));
 
-    if (provider.requiresApiKey && !userSettings?.apiKey) {
-      providerReports.push({
-        providerId: provider.id,
-        providerName: provider.name,
-        status: "error",
-        resultCount: 0,
-        message: "API key requerida",
-      });
-
-      continue;
-    }
-
-    const providerResults = mockPackages
-      .map((game) => filterGameByProvider(game, provider.id, settings))
-      .filter((game): game is PackageGame => Boolean(game))
-      .filter((game) => matchesQuery(game, query));
-
-    providerReports.push({
-      providerId: provider.id,
-      providerName: provider.name,
-      status: providerResults.length > 0 ? "found" : "not-found",
-      resultCount: providerResults.length,
-      message:
-        providerResults.length > 0
-          ? "Resultados encontrados"
-          : "No disponible en este provider",
-    });
-
-    mergeProviderResults(collectedGames, providerResults);
-  }
+  providerReports.push({
+    providerId: "catalog",
+    providerName: "Steam Catalog",
+    status: results.length > 0 ? "found" : "not-found",
+    resultCount: results.length,
+    message: results.length > 0 ? `${results.length} resultados encontrados` : "Sin resultados en el catálogo local",
+  });
 
   const disabledReports = getDisabledProviderReports(
     params.provider,
-    params.enabledProviderIds
+    params.enabledProviderIds,
   );
-
-  const results = Array.from(collectedGames.values());
 
   return {
     query: params.query,
     provider: params.provider,
-    searchedProviders: targetProviders.map((provider) => provider.id),
+    searchedProviders: ["catalog"],
     providerReports: [...providerReports, ...disabledReports],
     results,
     totalResults: results.length,
@@ -470,103 +447,6 @@ function getDisabledProviderReports(
       resultCount: 0,
       message: "Provider deshabilitado en configuración",
     }));
-}
-
-function filterGameByProvider(
-  game: PackageGame,
-  providerId: ApiProviderId,
-  settings: AppSettings
-): PackageGame | null {
-  const provider = defaultApiProviders.find((item) => item.id === providerId);
-
-  if (!provider) {
-    return null;
-  }
-
-  const sources = game.sources
-    .filter((source) => source.providerId === providerId)
-    .map((source) => {
-      const authHeaders = buildProviderAuthHeaders(provider, settings);
-
-      return {
-        ...source,
-        downloadUrl:
-          source.downloadUrl ??
-          buildProviderDownloadUrl(
-            provider,
-            game.appId,
-            settings,
-            source.fileType
-          ),
-        authHeaders,
-
-        providerMessage:
-          source.providerMessage ??
-          (source.available ? "Mock disponible" : source.error ?? "No disponible"),
-        checkedAt: source.checkedAt ?? new Date().toISOString(),
-
-        requiresApiKey: provider.requiresApiKey,
-        authType: provider.authType,
-        hasAuth: Boolean(authHeaders),
-      };
-    });
-
-  if (sources.length === 0) {
-    return null;
-  }
-
-  return {
-    ...game,
-    sources,
-  };
-}
-
-function matchesQuery(game: PackageGame, query: string) {
-  if (!query) {
-    return true;
-  }
-
-  return (
-    game.title.toLowerCase().includes(query) ||
-    game.appId.includes(query) ||
-    game.developer?.toLowerCase().includes(query) ||
-    game.sources.some((source) =>
-      source.providerName.toLowerCase().includes(query)
-    )
-  );
-}
-
-function mergeProviderResults(
-  collectedGames: Map<string, PackageGame>,
-  providerResults: PackageGame[]
-) {
-  providerResults.forEach((game) => {
-    const existingGame = collectedGames.get(game.appId);
-
-    if (!existingGame) {
-      collectedGames.set(game.appId, game);
-      return;
-    }
-
-    collectedGames.set(game.appId, {
-      ...existingGame,
-      sources: mergeSources(existingGame.sources, game.sources),
-    });
-  });
-}
-
-function mergeSources(
-  existingSources: PackageSource[],
-  newSources: PackageSource[]
-): PackageSource[] {
-  const sourceMap = new Map<string, PackageSource>();
-
-  [...existingSources, ...newSources].forEach((source) => {
-    const key = `${source.providerId}-${source.fileType}`;
-    sourceMap.set(key, source);
-  });
-
-  return Array.from(sourceMap.values());
 }
 
 function buildProviderAvailabilityUrl(
@@ -696,6 +576,6 @@ function getAppIdFromQuery(query: string): string | null {
   return null;
 }
 
-function getKnownGameTitle(appId: string): string | undefined {
-  return mockPackages.find((game) => game.appId === appId)?.title;
+function getKnownGameTitle(_appId: string): string | undefined {
+  return undefined;
 }

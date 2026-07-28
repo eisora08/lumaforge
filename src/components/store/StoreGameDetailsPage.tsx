@@ -303,7 +303,7 @@ export default function StoreGameDetailsPage({
       sourceCount: 0,
       totalProviderCount: 0,
       updatedAt: Math.floor(Date.now() / 1000),
-    }).catch(() => {});
+    }).catch((err) => console.warn(err));
 
     // Invalidate overlay cache so retry actually calls providers instead of returning stale cached data
     invalidateOverlayCacheForAppId(appId);
@@ -334,15 +334,15 @@ export default function StoreGameDetailsPage({
           const existing = getSourceAvailability(appId);
           if (existing && existing.availableSources.length > 0) {
             sourceLog("preserve", { appId, previousSources: existing.availableSources.length });
-            updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) }).catch((err) => console.warn(err));
           } else if (existing) {
-            updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            updateSourceAvailability(appId, { ...existing, status: entry.status, updatedAt: Math.floor(Date.now() / 1000) }).catch((err) => console.warn(err));
           }
           return;
         }
         sourceLog("saved (internal)", { appId, sourceCount: entry.sourceCount });
         setInternalSourceStatus(entry.status);
-        updateSourceAvailability(appId, entry).catch(() => {});
+        updateSourceAvailability(appId, entry).catch((err) => console.warn(err));
       })
       .catch((error: unknown) => {
         if (requestId !== sourceResolveReqRef.current) return;
@@ -354,7 +354,7 @@ export default function StoreGameDetailsPage({
           const existing = getSourceAvailability(appId);
           if (existing && existing.availableSources.length > 0) {
             sourceLog("timeout-preserve", { appId, previousSources: existing.availableSources.length });
-            updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+            updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch((err) => console.warn(err));
             return;
           }
           sourceLog("timeout-nocache", { appId });
@@ -368,7 +368,7 @@ export default function StoreGameDetailsPage({
             sourceCount: 0,
             totalProviderCount: 0,
             updatedAt: Math.floor(Date.now() / 1000),
-          }).catch(() => {});
+          }).catch((err) => console.warn(err));
           return;
         }
         setInternalSourceStatus("error");
@@ -381,7 +381,7 @@ export default function StoreGameDetailsPage({
           sourceCount: 0,
           totalProviderCount: 0,
           updatedAt: Math.floor(Date.now() / 1000),
-        }).catch(() => {});
+        }).catch((err) => console.warn(err));
       })
       .finally(() => {
         if (requestId !== sourceResolveReqRef.current) return;

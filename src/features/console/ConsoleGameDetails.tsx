@@ -39,7 +39,6 @@ import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 
 const DEBUG = false;
 const DEBUG_CONSOLE_PLAY = false;
-const DEBUG_CONSOLE_ACTIONS = false;
 const DEBUG_CONSOLE_DETAILS_ACTION = false;
 
 function getBlockedReason(action: string): string {
@@ -372,7 +371,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
       setInstallModalOpen(true);
       return;
     }
-    if (DEBUG_CONSOLE_ACTIONS) {
+    if (DEBUG_CONSOLE_DETAILS_ACTION) {
       console.log(`[CONSOLE_ACTION_CLICK] appid=${game.appId} action=${action} enabled=${actionModel?.enabled ?? false}`);
     }
     handleConsolePrimaryAction(game, action, {
@@ -543,7 +542,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             console.log(`[CONSOLE_DETAILS_ACTION][KEY_ACTIVATE] appid=${game?.appId ?? "?"} subIndex=${leftActionSubIndex} action=${actionLabel}`);
           }
           activateFocusedLeftAction();
-          if (DEBUG_CONSOLE_GAMEPAD) {
+          if (DEBUG_CONSOLE_DETAILS_ACTION) {
             console.log(`[INSTALL_MODAL][OPEN_FROM_ACTION] key=${e.key} stopped=true`);
           }
         }
@@ -693,7 +692,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [focusZone]);
 
   useEffect(() => {
-    if (DEBUG) {
+    if (DEBUG_CONSOLE_DETAILS_ACTION) {
       console.log(`[CONSOLE][DETAILS] mount appId=${game?.appId} title="${game?.title}"`);
     }
     sheetRef.current?.focus();

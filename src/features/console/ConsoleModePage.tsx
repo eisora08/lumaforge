@@ -281,7 +281,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
         // Quick Menu (ConsoleSettingsPanelV2) owns ALL input while open.
         // Its window handler will preventDefault + stopImmediatePropagation for
         // every key it consumes. If we block here, the panel never receives events.
-        if (DEBUG_CONSOLE_GAMEPAD) {
+        if (DEBUG_CONSOLE_MODE) {
           console.log(`[CONSOLE_INPUT][IGNORED_BECAUSE_QUICK_MENU] key=${e.key}`);
         }
         return;

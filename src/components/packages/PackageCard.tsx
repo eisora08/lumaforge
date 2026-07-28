@@ -14,7 +14,6 @@ function logUrl(url: string | undefined | null, maxLen = 120): string {
 }
 
 import {
-  Download,
   Flame,
   Gamepad2,
   Link2,
@@ -27,22 +26,7 @@ import {
 import type { PackageGame, PackageSource } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
-import { useSettings } from "../../context/SettingsContext";
-import { useDownloadQueue } from "../../hooks/useDownloadQueue";
-import { downloadAndInstallPackage } from "../../services/tauri";
-import { getEffectiveProviderAuthHeaders } from "../../services/providerSearch";
-import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { useHoverPrefetch } from "../../hooks/useHoverPrefetch";
-
-import {
-  showError,
-  showSuccess,
-  showWarning,
-} from "../toast/GameToast";
-
-import { saveProviderStatusAfterInstall, saveProviderStatusAuthError, type ProviderStatusOptions } from "../../services/providerStatusService";
-
-import StoreSourceSelectorModal from "../store/StoreSourceSelectorModal";
 
 type StoreBadge = {
   type: string;
@@ -63,7 +47,6 @@ type PackageCardProps = {
   storeMetadata?: SteamAppMetadata;
   reviewSummary?: SteamReviewSummary;
   badges?: StoreBadge[];
-  onInstallComplete?: () => void;
   variant?: "landscape" | "poster";
   onOpenGame?: (game: PackageGame) => void;
   onDownload?: (game: PackageGame) => void;
@@ -130,12 +113,10 @@ function arePackageCardPropsEqual(
   const bBadges = b.badges?.map((b) => `${b.type}:${b.label}`).join(",") ?? "";
   if (aBadges !== bBadges) return false;
   // Handler identity (stable if callbacks are useCallback-ed)
-  if (a.onInstallComplete !== b.onInstallComplete) return false;
   if (a.onOpenDetails !== b.onOpenDetails) return false;
   if (a.onOpenSourceSelector !== b.onOpenSourceSelector) return false;
   if (a.onDownload !== b.onDownload) return false;
   if (a.onOpenGame !== b.onOpenGame) return false;
-  if (a.onDownloadSource !== b.onDownloadSource) return false;
   // Store metadata relevant display fields
   const aMeta = a.storeMetadata;
   const bMeta = b.storeMetadata;
@@ -189,19 +170,12 @@ function PackageCardRaw({
   game,
   storeMetadata,
   badges,
-  onInstallComplete,
   variant = "landscape",
   onOpenGame,
-  onDownload,
   onOpenDetails,
-  onOpenSourceSelector,
-  onDownloadSource,
 }: PackageCardProps) {
   countRender("PackageCard");
-  const { settings } = useSettings();
-  const { addJob, updateJob } = useDownloadQueue();
 
-  const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [imageFallbackIndex, setImageFallbackIndex] = useState(0);
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
@@ -212,9 +186,6 @@ function PackageCardRaw({
     return () => { _mountedRef.current = false; };
   }, []);
 
-  const availableSources = game.sources.filter((source) => source.available);
-  const bestSource = useMemo(() => getBestAvailableSource(game), [game]);
-
   const displayTitle = getStoreTitle(game, storeMetadata);
   const displayDeveloper = getStoreDeveloper(game, storeMetadata);
   const imageFallbackChain = useMemo(
@@ -223,8 +194,6 @@ function PackageCardRaw({
   );
   const displayImageUrl: string | undefined = imageFallbackChain[imageFallbackIndex];
   const hasMoreFallbacks = imageFallbackIndex + 1 < imageFallbackChain.length;
-
-  const hasLuaReady = availableSources.length > 0;
 
   function handleOpenDetails(event?: React.MouseEvent) {
     event?.stopPropagation();
@@ -235,219 +204,6 @@ function PackageCardRaw({
       onOpenGame(game);
     }
   }
-
-  function handleSourceButton(event?: React.MouseEvent) {
-    event?.stopPropagation();
-
-    if (onOpenSourceSelector) {
-      onOpenSourceSelector(game);
-    } else {
-      setSourceSelectorOpen(true);
-    }
-  }
-
-  function handleDownloadAction(event?: React.MouseEvent) {
-    event?.stopPropagation();
-
-    if (onDownload) {
-      onDownload(game);
-      return;
-    }
-
-    const source = bestSource;
-
-    if (!source || !source.available) {
-      showWarning("No hay fuentes disponibles para este juego.", {
-        title: "Sin fuentes",
-      });
-      return;
-    }
-
-    internalDownload(source);
-  }
-
-  async function internalDownload(source: PackageSource) {
-    if (!_mountedRef.current) return;
-
-    if (!source.downloadUrl) {
-      showError("Esta fuente no tiene una URL de descarga válida.", {
-        title: "URL inválida",
-      });
-      return;
-    }
-
-    if (!settings.luaPath || !settings.depotcachePath) {
-      showWarning("Configura o detecta las rutas de Steam antes de instalar.", {
-        title: "Rutas requeridas",
-      });
-      return;
-    }
-
-    // Check HubcapDB API key before attempting download
-    const hubcapId = "hubcapdb";
-    const isHubcapProvider = source.providerId === hubcapId || source.providerName === "HubcapDB";
-    if (isHubcapProvider) {
-      const hubcapSettings = settings.providers?.hubcapdb;
-      if (!hubcapSettings?.apiKey) {
-        console.log(`[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=false authMode=bearer action=blocked`);
-        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "missing-api-key");
-        showWarning("HubcapDB API key required.", { title: "Auth required" });
-        return;
-      }
-    }
-
-    // Rebuild auth headers from settings at request time (never from cache — overlay strips authHeaders)
-    const effectiveHeaders = source.authHeaders ?? getEffectiveProviderAuthHeaders(source.providerId, settings);
-    const sourceHadHeaders = Boolean(source.authHeaders);
-    const rebuiltHeaders = !sourceHadHeaders && Boolean(effectiveHeaders);
-    if (isHubcapProvider) {
-      console.log(
-        `[HUBCAP][DOWNLOAD_AUTH] appid=${game.appId} provider=HubcapDB hasApiKey=true` +
-        ` authMode=bearer sourceHadHeaders=${sourceHadHeaders} rebuiltHeaders=${rebuiltHeaders}`
-      );
-    }
-
-    const job = addJob({
-      appId: game.appId,
-      gameTitle: displayTitle,
-      providerId: source.providerId,
-      providerName: source.providerName,
-      fileType: source.fileType,
-      downloadUrl: source.downloadUrl,
-    });
-
-    try {
-      const result = await downloadAndInstallPackage({
-        jobId: job.id,
-        downloadUrl: source.downloadUrl,
-        luaTarget: settings.luaPath,
-        depotcacheTarget: settings.depotcachePath,
-        createBackups: settings.createBackups,
-        headers: effectiveHeaders,
-        tempFolder: settings.tempFolder,
-      });
-
-      if (!_mountedRef.current) {
-        console.log(`[CARD][ASYNC_CANCELLED] appid=${game.appId} stage=after-download`);
-        return;
-      }
-
-      updateJob(job.id, {
-        status: "done",
-        progress: 100,
-        bytesRead: result.bytes_read,
-        totalBytes: result.total_bytes,
-      });
-
-      showSuccess(result.message, {
-        title: "Paquete instalado",
-        id: `pkg-installed-${job.id}`,
-      });
-
-      const hubcapConfig = (settings.providers?.hubcapdb?.baseUrl && settings.providers?.hubcapdb?.apiKey)
-        ? { baseUrl: settings.providers.hubcapdb.baseUrl, apiKey: settings.providers.hubcapdb.apiKey }
-        : undefined;
-      const providerOpts: ProviderStatusOptions = {
-        luaDir: settings.luaPath || undefined,
-        steamRoot: settings.steamRoot || undefined,
-      };
-      await saveProviderStatusAfterInstall(game.appId, source.providerId, hubcapConfig, providerOpts);
-
-      console.log(`[LUA][INSTALL_COMPLETE] appid=${game.appId} provider=${source.providerName} title="${displayTitle}"`);
-      onInstallComplete?.();
-    } catch (error) {
-      if (!_mountedRef.current) {
-        console.log(`[CARD][ASYNC_CANCELLED] appid=${game.appId} stage=error`);
-        return;
-      }
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : typeof error === "string"
-            ? error
-            : "No se pudo instalar el paquete.";
-
-      updateJob(job.id, {
-        status: "failed",
-        progress: 0,
-        error: message,
-      });
-
-      const statusMatch = message.match(/Status:\s*(\d+)/);
-      const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
-
-      if (statusCode === 401) {
-        console.log(`[HUBCAP][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=401 reason=unauthorized`);
-        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "unauthorized");
-        showError(
-          source.providerName === "HubcapDB"
-            ? "HubcapDB rejected the request. Check your API key."
-            : `${source.providerName} rechazó la descarga. Verifica la API key o permisos. (HTTP 401)`,
-          { title: "Descarga fallida" }
-        );
-      } else if (statusCode === 403) {
-        console.log(`[HUBCAP][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=403 reason=forbidden`);
-        await saveProviderStatusAuthError(game.appId, source.providerId, "auth-required", "forbidden");
-        showError(
-          "Your HubcapDB account does not have access to this package.",
-          { title: "Acceso denegado" }
-        );
-      } else if (statusCode === 429) {
-        console.log(`[HUBCAP][DOWNLOAD_AUTH_ERROR] appid=${game.appId} provider=${source.providerName} status=429 reason=rate-limited`);
-        await saveProviderStatusAuthError(game.appId, source.providerId, "rate-limited", "rate-limited");
-        showError(
-          "HubcapDB rate limit reached. Try again later.",
-          { title: "Rate limited" }
-        );
-      } else {
-        console.log(`[CARD][PROVIDER_DOWNLOAD_FAILED] appid=${game.appId} provider=${source.providerName} status=${statusCode} title="${displayTitle}"`);
-        showError(message, {
-          title: "Instalación fallida",
-        });
-      }
-    }
-  }
-
-  function handleSourceDownload(source: PackageSource) {
-    if (onDownloadSource) {
-      onDownloadSource(game, source);
-    } else {
-      internalDownload(source);
-    }
-  }
-
-  const actionButtons = (
-    <div className="flex flex-col items-center gap-2">
-      <button
-        type="button"
-        onClick={handleOpenDetails}
-        className="w-32 cursor-pointer rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/15"
-      >
-        Details
-      </button>
-
-      {hasLuaReady && (
-        <button
-          type="button"
-          onClick={handleDownloadAction}
-          className="flex w-32 cursor-pointer items-center justify-center gap-1 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90"
-        >
-          <Download className="h-3 w-3" />
-          Download
-        </button>
-      )}
-
-      <button
-        type="button"
-        onClick={handleSourceButton}
-        className="w-32 cursor-pointer rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed"
-        disabled={game.sources.length === 0}
-      >
-        Source
-      </button>
-    </div>
-  );
 
   if (variant === "poster") {
     return (
@@ -515,9 +271,7 @@ function PackageCardRaw({
               </div>
             )}
 
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/75 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
-              {actionButtons}
-            </div>
+            <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
           </div>
 
           <div className="flex min-h-[60px] flex-col justify-center p-2.5">
@@ -532,21 +286,6 @@ function PackageCardRaw({
             )}
           </div>
         </article>
-
-        {/* Phase 11: Only render StoreSourceSelectorModal when open AND
-            parent doesn't provide onOpenSourceSelector (meaning Store.tsx
-            already handles modals at page level). This avoids mounting
-            hundreds of closed modal components per card. */}
-        {!onOpenSourceSelector && sourceSelectorOpen && (
-          <StoreSourceSelectorModal
-            open={sourceSelectorOpen}
-            game={game}
-            selectedSource={bestSource}
-            onClose={() => setSourceSelectorOpen(false)}
-            onDownloadSource={handleSourceDownload}
-            onOpenDetails={onOpenDetails || onOpenGame}
-          />
-        )}
       </>
     );
   }
@@ -623,23 +362,8 @@ function PackageCardRaw({
           </h3>
         </div>
 
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/82 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
-          {actionButtons}
-        </div>
+        <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
       </article>
-
-      {/* Phase 11: Only render StoreSourceSelectorModal when open AND parent
-          doesn't handle source selector at page level. */}
-      {!onOpenSourceSelector && sourceSelectorOpen && (
-        <StoreSourceSelectorModal
-          open={sourceSelectorOpen}
-          game={game}
-          selectedSource={bestSource}
-          onClose={() => setSourceSelectorOpen(false)}
-          onDownloadSource={handleSourceDownload}
-          onOpenDetails={onOpenDetails || onOpenGame}
-        />
-      )}
     </>
   );
 }

@@ -557,7 +557,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   useEffect(() => {
     if (sourceCacheLoadedRef.current) return;
     sourceCacheLoadedRef.current = true;
-    loadSourceAvailabilityIndex().catch(() => {});
+    loadSourceAvailabilityIndex().catch((err) => console.warn(err));
     // Auto-import bundled catalog if not in SQLite, then pre-fetch genre groups + featured/new&noteworthy
     if (!isLocalCatalogReady()) {
       ensureCatalogImported()
@@ -573,7 +573,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             if (newNoteworthy.games.length > 0) setCatalogNewNoteworthyGames(newNoteworthy.games);
           } catch { /* non-critical */ }
         })
-        .catch(() => {});
+        .catch((err) => console.warn(err));
     }
   }, []);
 
@@ -697,7 +697,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       if (loaded && DEBUG_STORE_RENDER_VERBOSE) {
         console.log(`[STORE][DISCOVERY_INDEX_DISK_LOAD] version=${loaded.version} topPicks=${loaded.sections.topPicks.length} featured=${loaded.sections.featured.length}`);
       }
-    }).catch(() => {});
+    }).catch((err) => console.warn(err));
   }, []);
 
   // On mount, consume any pending store detail appId set before Store mounted
@@ -1035,7 +1035,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (indexContentRef.current === contentFp) return;
     indexSaveRef.current = compiledDiscoveryIndex.builtAt;
     indexContentRef.current = contentFp;
-    saveDiscoveryIndexToDisk(compiledDiscoveryIndex).catch(() => {});
+    saveDiscoveryIndexToDisk(compiledDiscoveryIndex).catch((err) => console.warn(err));
   }, [compiledDiscoveryIndex]);
 
   const trendingScoreByAppId = useMemo(() => {
@@ -1697,8 +1697,25 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // ── "More to Explore" games for Discover tab ──
   // Uses discoverMoreVisibleCount (independent of catalogGames' visibleCount).
   // Show More affects only discoverMoreVisibleCount, not Browse.
+  const _moreToExploreCacheRef = useRef<{ fp: string; result: PackageGame[] } | null>(null);
   const moreToExploreGames = useMemo(() => {
     const effectiveDiscoverCount = discoverMoreVisibleCount > 0 ? discoverMoreVisibleCount : INITIAL_VISIBLE_COUNT;
+
+    // Lightweight input fingerprint — avoids expensive scoreLookup/excludeFp
+    // when nothing semantically changed (only reference identity).
+    const inputFp = [
+      catalogFingerprint,
+      effectiveDiscoverCount,
+      featuredGames.length + ":" + featuredGames.slice(0, 3).map(g => g.appId).join(","),
+      sectionModels.length + ":" + sectionModels.map(s => s.id + ":" + s.games.length).join("|"),
+      highQualityPool.length,
+      Object.keys(storeMetadataByAppId).length,
+      rankedSteamCatalog.length,
+    ].join("|");
+
+    if (_moreToExploreCacheRef.current?.fp === inputFp) {
+      return _moreToExploreCacheRef.current.result;
+    }
 
     // Build score lookup from highQualityPool for sorting More to Explore
     const scoreLookup = new Map<string, number>();
@@ -1756,6 +1773,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       console.log(`[STORE][MORE_RENDER] logicalVisible=${effectiveDiscoverCount} mounted=${mounted} totalPool=${pool.length} rendered=${games.length}`);
       console.log(`[STORE][MORE_WINDOW] logicalVisible=${effectiveDiscoverCount} mounted=${mounted} start=${windowStart} end=${windowEnd}`);
     }
+    _moreToExploreCacheRef.current = { fp: inputFp, result: games };
     return games;
   }, [rankedSteamCatalog, discoverMoreVisibleCount, featuredGames, sectionModels, storeMetadataByAppId, highQualityPool, catalogFingerprint]);
 
@@ -2312,7 +2330,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     const ids = Array.from(appIds);
     // Phase 9: Cap metadata fetch scope — 100 covers hero + sections + preload IDs.
     // Detail game gets its own effect; section games beyond the cap load on scroll.
-    const METADATA_WINDOW_MAX = 100;
+    const METADATA_WINDOW_MAX = 200;
     const capped = ids.length > METADATA_WINDOW_MAX ? ids.slice(0, METADATA_WINDOW_MAX) : ids;
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][METADATA_WINDOW_LOAD] requested=${ids.length} capped=${capped.length}`);
     return capped;
@@ -2922,7 +2940,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         sourceCount: 0,
         totalProviderCount: 0,
         updatedAt: Math.floor(Date.now() / 1000),
-      }).catch(() => {});
+      }).catch((err) => console.warn(err));
 
       const foregroundStartedAt = Date.now();
       const onEarlyResult: ProviderProgressCallback = (result) => {
@@ -2952,7 +2970,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         // Only save partial results when at least one source is available, or status is meaningful
         // Prevents onEarlyResult from overwriting "checking" with transient empty results
         if (entry.status === "ready" || entry.status === "needs-configuration" || entry.status === "error" || entry.status === "timeout") {
-          updateSourceAvailability(appId, entry).catch(() => {});
+          updateSourceAvailability(appId, entry).catch((err) => console.warn(err));
         } else {
           log("store-search", `early-skip-empty { appId: "${appId}", provider: "${result.providerName}", availability: ${result.source.available} }`);
         }
@@ -3015,13 +3033,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
 
             // Part 8: Use classifyProviderOutcomes result instead of hardcoded "none"
-            updateSourceAvailability(appId, entry).catch(() => {});
+            updateSourceAvailability(appId, entry).catch((err) => console.warn(err));
             return;
           }
           console.log(`[STORE][SOURCE_SAVE] appid=${appId} provider=${savedProvider} hasPreview=${hasPreview}`);
           log("store-search", `saved { appId: "${appId}", sourceCount: ${entry.sourceCount} }`);
 
-          updateSourceAvailability(appId, entry).catch(() => {});
+          updateSourceAvailability(appId, entry).catch((err) => console.warn(err));
         })
         .catch((error: unknown) => {
           if (requestId !== sourceResolveReqRef.current) return;
@@ -3035,7 +3053,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             const existing = getSourceAvailability(appId);
             if (existing && existing.availableSources.length > 0) {
               log("store-search", `timeout-preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
-              updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+              updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch((err) => console.warn(err));
               return;
             }
             log("store-search", `timeout-nocache { appId: "${appId}" }`);
@@ -3050,7 +3068,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
               sourceCount: 0,
               totalProviderCount: 0,
               updatedAt: Math.floor(Date.now() / 1000),
-            }).catch(() => {});
+            }).catch((err) => console.warn(err));
             return;
           }
           updateSourceAvailability(appId, {
@@ -3062,7 +3080,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             sourceCount: 0,
             totalProviderCount: 0,
             updatedAt: Math.floor(Date.now() / 1000),
-          }).catch(() => {});
+          }).catch((err) => console.warn(err));
         })
         .finally(() => {
           // Part 10: Always clean up — regardless of requestId.
@@ -3250,7 +3268,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           storeMetadata={storeMetadataByAppId[Number(game.appId)]}
           reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
           badges={badges}
-          onInstallComplete={refreshInstalledScripts}
           onOpenDetails={openDetailsForGame}
           onOpenSourceSelector={openSourceSelectorForGame}
           onDownload={handleGameDownload}
@@ -3403,7 +3420,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
               sourceCount: 0,
               totalProviderCount: 0,
               updatedAt: Math.floor(Date.now() / 1000),
-            }).catch(() => {});
+            }).catch((err) => console.warn(err));
 
             // Invalidate overlay cache so retry actually calls providers instead of returning stale cached data
             invalidateOverlayCacheForAppId(appId);
@@ -3434,7 +3451,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
               const retryEntry = buildSourceAvailabilityFromProviders(appId, game.title, result.allSources, result.totalEnabled);
               if (retryEntry.status === "ready" || retryEntry.status === "needs-configuration" || retryEntry.status === "error" || retryEntry.status === "timeout") {
-                updateSourceAvailability(appId, retryEntry).catch(() => {});
+                updateSourceAvailability(appId, retryEntry).catch((err) => console.warn(err));
               } else {
                 log("store-search", `retry-early-skip-empty { appId: "${appId}", provider: "${result.providerName}", availability: ${result.source.available} }`);
               }
@@ -3492,10 +3509,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                   console.log(`[PACKAGE][CHECK_BLOCKED] appid=${appId} reason=missing-provider-selection`);
 
                   // Part 8: Use classifyProviderOutcomes result instead of hardcoded "none"
-                  updateSourceAvailability(appId, entry).catch(() => {});
+                  updateSourceAvailability(appId, entry).catch((err) => console.warn(err));
                   return;
                 }
-                updateSourceAvailability(appId, entry).catch(() => {});
+                updateSourceAvailability(appId, entry).catch((err) => console.warn(err));
               })
               .catch((error: unknown) => {
                 if (requestId !== sourceResolveReqRef.current) return;
@@ -3506,7 +3523,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                   const existing = getSourceAvailability(appId);
                   if (existing && existing.availableSources.length > 0) {
                     log("store-search", `timeout-preserve { appId: "${appId}", previousSources: ${existing.availableSources.length} }`);
-                    updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch(() => {});
+                    updateSourceAvailability(appId, { ...existing, status: "timeout", updatedAt: Math.floor(Date.now() / 1000) }).catch((err) => console.warn(err));
                     return;
                   }
                   log("store-search", `timeout-nocache { appId: "${appId}" }`);
@@ -3519,7 +3536,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                     sourceCount: 0,
                     totalProviderCount: 0,
                     updatedAt: Math.floor(Date.now() / 1000),
-                  }).catch(() => {});
+                  }).catch((err) => console.warn(err));
                   return;
                 }
                 updateSourceAvailability(appId, {
@@ -3531,7 +3548,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                   sourceCount: 0,
                   totalProviderCount: 0,
                   updatedAt: Math.floor(Date.now() / 1000),
-                }).catch(() => {});
+                }).catch((err) => console.warn(err));
               })
               .finally(() => {
                 // Part 10: Always clean up — regardless of requestId
@@ -3711,7 +3728,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                                   storeMetadata={storeMetadataByAppId[Number(game.appId)]}
                                   reviewSummary={reviewSummaryByAppId[Number(game.appId)]}
                                   badges={getBadgesForGame(game.appId)}
-                                onInstallComplete={refreshInstalledScripts}
                                 onOpenDetails={openDetailsForGame}
                                 onOpenSourceSelector={openSourceSelectorForGame}
                                 onDownload={handleGameDownload}

@@ -407,7 +407,6 @@ const SETTING_ROWS_SYSTEM_BAR: SettingRowDef[] = [
   { id: "showClock", type: "toggle", label: "Show Clock", description: "Display the clock in the top bar", getValue: (s) => s.showClock, onAction: (s) => ({ showClock: !s.showClock }) },
   { id: "showNetworkIndicator", type: "toggle", label: "Network Indicator", description: "Show online/offline status in the top bar", getValue: (s) => s.showNetworkIndicator, onAction: (s) => ({ showNetworkIndicator: !s.showNetworkIndicator }) },
   { id: "showControllerIndicator", type: "toggle", label: "Controller Indicator", description: "Show connected controller status in the top bar", getValue: (s) => s.showControllerIndicator, onAction: (s) => ({ showControllerIndicator: !s.showControllerIndicator }) },
-  { id: "showJobIndicator", type: "toggle", label: "Jobs Indicator", description: "Show pending background job count in the top bar", getValue: (s) => s.showJobIndicator, onAction: (s) => ({ showJobIndicator: !s.showJobIndicator }) },
   { id: "resetSystemBar", type: "button", label: "Reset System Bar to Defaults", getValue: () => "", onAction: () => resetConsoleSystemBarSettings() },
 ];
 

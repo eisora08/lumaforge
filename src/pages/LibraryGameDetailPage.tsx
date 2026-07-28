@@ -36,6 +36,7 @@ import { importExternalPlaytime } from "../services/playtimeService";
 import type { LibraryGame } from "../types/libraryGame";
 const DEBUG_MEDIA_CACHE = false;
 const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = DEBUG_MEDIA_CACHE;
+const DEBUG_ACTIVITY = false;
 const DEBUG_LUA_DELETE = false;
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import type { AppPage } from "../types/navigation";
@@ -374,7 +375,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             const key = `${role}Path` as keyof GameMediaPaths;
             const resolvedPath = resolvedManifestPaths[key] ?? null;
             const manifestPath = (manifest as any)?.files?.[role]?.path ?? "(no-manifest)";
-            console.log(`[MEDIA][MANIFEST_RESOLVE] appid=${appId} role=${role} manifestPath=${manifestPath} resolvedPath=${resolvedPath ?? "(null)"} exists=${!!resolvedPath}`);
+            if (DEBUG_ACTIVITY) console.log(`[MEDIA][MANIFEST_RESOLVE] appid=${appId} role=${role} manifestPath=${manifestPath} resolvedPath=${resolvedPath ?? "(null)"} exists=${!!resolvedPath}`);
           });
         }
       }
@@ -390,7 +391,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           const existsKey = `${roleKey.replace("Path", "Exists")}` as keyof typeof diskState;
           const fileActuallyExists = diskState?.[existsKey] as boolean | undefined;
           if (fileActuallyExists === false && merged[roleKey]) {
-            console.log(`[MEDIA_STALE][DETECTED] appid=${appId} role=${roleKey} path=${merged[roleKey]} reason=file-missing`);
+            if (DEBUG_ACTIVITY) console.log(`[MEDIA_STALE][DETECTED] appid=${appId} role=${roleKey} path=${merged[roleKey]} reason=file-missing`);
             (merged as any)[roleKey] = null;
             changed = true;
           }
@@ -404,7 +405,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const logDisplay = (role: string) => {
           const key = `${role}Path` as keyof GameMediaPaths;
           const path = mergedInfo.media?.[key] ?? null;
-          console.log(`[MEDIA][DISPLAY_PATH] appid=${appId} role=${role} finalPath=${path ?? "(null)"}`);
+          if (DEBUG_ACTIVITY) console.log(`[MEDIA][DISPLAY_PATH] appid=${appId} role=${role} finalPath=${path ?? "(null)"}`);
         };
         logDisplay("background");
         logDisplay("logo");
@@ -621,7 +622,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       const { detectAndQueueMissingMedia } = await import("../services/gameCacheService");
       const queued = await detectAndQueueMissingMedia(appIdStr);
       if (queued.length > 0) {
-        console.log(`[MEDIA][DETAILS_REPAIR] appid=${appIdStr} missing=${queued.join(",")} queued=true`);
+        if (DEBUG_ACTIVITY) console.log(`[MEDIA][DETAILS_REPAIR] appid=${appIdStr} missing=${queued.join(",")} queued=true`);
       }
     };
     checkMedia();
@@ -639,7 +640,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     if (selectedGame?.source === "manual") return;
     if (!fallbackBundle) return;
     if (fallbackBundle.appId && fallbackBundle.appId !== appId) {
-      console.log(`[MEDIA][MATERIALIZE_GUARD] skip appId=${appId} bundleAppId=${fallbackBundle.appId} reason=cross-app-contamination`);
+      if (DEBUG_ACTIVITY) console.log(`[MEDIA][MATERIALIZE_GUARD] skip appId=${appId} bundleAppId=${fallbackBundle.appId} reason=cross-app-contamination`);
       setFallbackBundle(null);
       return;
     }
@@ -665,7 +666,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       // Re-materialize to pick up newly-downloaded files on disk (use ref for latest bundle)
       const bundle = _fallbackBundleRef.current;
       if (bundle && bundle.appId && bundle.appId !== appId) {
-        console.log(`[MEDIA][MATERIALIZE_GUARD] skip-subscription appId=${appId} bundleAppId=${bundle.appId} reason=cross-app-contamination`);
+        if (DEBUG_ACTIVITY) console.log(`[MEDIA][MATERIALIZE_GUARD] skip-subscription appId=${appId} bundleAppId=${bundle.appId} reason=cross-app-contamination`);
         return;
       }
       if (bundle) {
@@ -789,7 +790,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
     // ── Set bundle so materialize effect can apply localPath on download ──
     if (_refreshInitiatorRef.current !== appIdStr) {
-      console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-refresh`);
+      if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-refresh`);
       return;
     }
     setFallbackBundle(bundle);
@@ -859,7 +860,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       if (asset?.url) {
         hasAnyUrl = true;
         const logLabel = asset.source ? `source=${asset.source}` : "";
-        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} role=${role} url=${asset.url} ${logLabel}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} role=${role} url=${asset.url} ${logLabel}`);
       }
     }
 
@@ -873,10 +874,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       if (!asset?.url) {
         const candidates = getRoleCandidates(role);
         if (candidates.length > 0) {
-          console.log(`[ARTWORK_REFRESH][FALLBACK_DIRECT] appid=${appIdStr} role=${role} reason=resolver-no-url candidates=${candidates.length} firstUrl=${candidates[0]}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][FALLBACK_DIRECT] appid=${appIdStr} role=${role} reason=resolver-no-url candidates=${candidates.length} firstUrl=${candidates[0]}`);
           // Skip the resolver's "no-url" — fallback candidates will be tried below
         } else {
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=no-url`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=no-url`);
           continue;
         }
       }
@@ -893,10 +894,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const roleMatches = rolePattern.test(filename);
 
         if (!fileExists || !roleMatches) {
-          console.log(`[ARTWORK_REFRESH][LOCAL_STALE] appid=${appIdStr} role=${role} path=${asset.url} reason=${!fileExists ? "file-missing" : "wrong-role"} fileExists=${!!fileExists} roleMatches=${roleMatches}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][LOCAL_STALE] appid=${appIdStr} role=${role} path=${asset.url} reason=${!fileExists ? "file-missing" : "wrong-role"} fileExists=${!!fileExists} roleMatches=${roleMatches}`);
           // Fall through to try remote candidates below
         } else {
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=local-source-valid path=${asset.url}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_SKIP] appid=${appIdStr} role=${role} reason=local-source-valid path=${asset.url}`);
           continue;
         }
       }
@@ -943,9 +944,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             candidates.push(deferredStorePageBg);
             seen.add(deferredStorePageBg);
           }
-          console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} role=background storepagebackground=last-resort`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} role=background storepagebackground=last-resort`);
         } else {
-          console.log(`[ARTWORK_BACKGROUND_SKIP] appid=${appIdStr} source=storepagebackground reason=better-header-or-screenshot-exists`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_SKIP] appid=${appIdStr} source=storepagebackground reason=better-header-or-screenshot-exists`);
         }
       }
       // For non-background roles, append any remaining storepagebackground
@@ -957,16 +958,16 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
       if (candidates.length === 0) {
         if (role === "background") {
-          console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} reason=no-candidates`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} reason=no-candidates`);
         }
         continue;
       }
 
       if (role === "background") {
-        console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} candidates=${candidates.length}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_CANDIDATES] appid=${appIdStr} candidates=${candidates.length}`);
         candidates.forEach((c, ci) => {
           const label = isStorePageBackground(c) ? " ambient=true" : "";
-          console.log(`  candidate=${ci} url=${c}${label}`);
+          if (DEBUG_ACTIVITY) console.log(`  candidate=${ci} url=${c}${label}`);
         });
       }
 
@@ -980,10 +981,10 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         const attemptLabel = isFirst ? "" : ` fallback=${ci}`;
 
         if (!isFirst) {
-          console.log(`[ARTWORK_REFRESH][FALLBACK_NEXT] appid=${appIdStr} role=${role} candidate=${ci} url=${url}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][FALLBACK_NEXT] appid=${appIdStr} role=${role} candidate=${ci} url=${url}`);
         }
 
-        console.log(`[ARTWORK_REFRESH][ENQUEUE_START] appid=${appIdStr} role=${role} url=${url} target=media/${role}.jpg${attemptLabel}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_START] appid=${appIdStr} role=${role} url=${url} target=media/${role}.jpg${attemptLabel}`);
         const enqResult = await enqueueMediaDownload({
           id: `refresh-${appIdStr}-${role}-${isFirst ? "0" : String(ci)}-${Date.now()}`,
           appId: appIdStr,
@@ -995,24 +996,24 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           forceRefresh: true,
         }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=false reason=error elapsedMs=${Date.now() - enqueueStart} error=${msg}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=false reason=error elapsedMs=${Date.now() - enqueueStart} error=${msg}`);
           return null;
         });
         if (enqResult) {
-          console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=${enqResult.success} elapsedMs=${Date.now() - enqueueStart} localPath=${enqResult.localPath ?? "(none)"}`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ENQUEUE_RESULT] appid=${appIdStr} role=${role} candidate=${ci} queued=${enqResult.success} elapsedMs=${Date.now() - enqueueStart} localPath=${enqResult.localPath ?? "(none)"}`);
           if (enqResult.success) {
             downloadSucceeded = true;
             if (role === "background") {
-              console.log(`[ARTWORK_BACKGROUND_SELECTED] appid=${appIdStr} source=${asset?.source ?? "fallback"} url=${url}`);
+              if (DEBUG_ACTIVITY) console.log(`[ARTWORK_BACKGROUND_SELECTED] appid=${appIdStr} source=${asset?.source ?? "fallback"} url=${url}`);
             }
             break;
           }
-          console.log(`[ARTWORK_REFRESH][DOWNLOAD_FAIL] appid=${appIdStr} role=${role} candidate=${ci} url=${url} reason=failed`);
+          if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][DOWNLOAD_FAIL] appid=${appIdStr} role=${role} candidate=${ci} url=${url} reason=failed`);
         }
       }
 
       if (!downloadSucceeded) {
-        console.log(`[ARTWORK_REFRESH][ALL_CANDIDATES_FAILED] appid=${appIdStr} role=${role} candidates=${candidates.length}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][ALL_CANDIDATES_FAILED] appid=${appIdStr} role=${role} candidates=${candidates.length}`);
       }
     }
 
@@ -1020,9 +1021,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       showWarning(`Artwork refresh queued (${hasQueued} roles).`, { title: "Artwork" });
     } else {
       if (!hasAnyUrl) {
-        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=no-urls meta=${meta ? "resolved" : "null"} metaResolved=${meta?.resolved ?? "n/a"}`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=no-urls meta=${meta ? "resolved" : "null"} metaResolved=${meta?.resolved ?? "n/a"}`);
       } else {
-        console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=all-urls-skipped after-queued-check`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH] appid=${appIdStr} reason=all-urls-skipped after-queued-check`);
       }
       showWarning("No artwork available for this game.", { title: "Artwork" });
     }
@@ -1035,7 +1036,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       await clearGameMediaCacheForGame({ appId: appIdStr }).catch(() => {});
       const result = await resolveArtworkForAppIds([appIdNum], settings.steamGridDbApiKey);
       if (_refreshInitiatorRef.current !== appIdStr) {
-        console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-sgdb`);
+        if (DEBUG_ACTIVITY) console.log(`[ARTWORK_REFRESH][STALE_RESULT_IGNORED] resultAppId=${appIdStr} currentAppId=${selectedGame?.appId ?? "(null)"} reason=stale-sgdb`);
         return;
       }
       if (result[appIdStr]) {

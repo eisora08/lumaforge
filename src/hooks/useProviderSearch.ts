@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
 import { useSettings } from "../context/SettingsContext";
-import { ApiProviderId } from "../types/provider";
 import { PackageGame } from "../types/package";
 import {
   ProviderFilter,
@@ -21,7 +20,7 @@ export function useProviderSearch() {
 
   const [results, setResults] = useState<PackageGame[]>([]);
   const [loading, setLoading] = useState(false);
-  const [searchedProviders, setSearchedProviders] = useState<ApiProviderId[]>(
+  const [searchedProviders, setSearchedProviders] = useState<string[]>(
     []
   );
   const [providerReports, setProviderReports] = useState<

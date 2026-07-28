@@ -1099,7 +1099,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   exeName: resolved.exeName,
                   provider: "local",
                   lastValidated: Date.now(),
-                }).catch(() => {});
+                }).catch((err) => console.warn(err));
               }
 
               // Update session with discovered executable info
@@ -1450,7 +1450,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
           // Discover and register executable for Steam games without exe info
           if (curSession.source === "steam" && !curSession.executablePath && curSession.installDir) {
-            discoverAndRegister(key, curSession.installDir, curSession.title, "steam").catch(() => {});
+            discoverAndRegister(key, curSession.installDir, curSession.title, "steam").catch((err) => console.warn(err));
           }
 
           const mediaInfo = sessionMediaRef.current[key];
@@ -1627,7 +1627,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                 console.log(`[ACTIVITY][PLAYTIME_UPDATED] appid=${stoppedAppId} external=${ptEntry.externalPlaytimeSeconds} local=${ptEntry.localPlaytimeSeconds} total=${ptEntry.totalPlaytimeSeconds} source=${ptEntry.playtimeSource}`);
               }
               // Schedule snapshot for playtime change
-              notifyMediaUpdated(stoppedAppId, { source: "playtime-changed" }).catch(() => {});
+              notifyMediaUpdated(stoppedAppId, { source: "playtime-changed" }).catch((err) => console.warn(err));
               console.log(`[BootSnapshot][SCHEDULE] reason=playtime-changed appid=${stoppedAppId}`);
             } catch (snapErr) {
               console.warn("[PLAYTIME] snapshot schedule failed", String(snapErr));
@@ -1637,13 +1637,13 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           // Retry 2: after 5 seconds
           setTimeout(() => {
             console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=5000`);
-            attemptAchievementRefresh(stoppedAppId).catch(() => {});
+            attemptAchievementRefresh(stoppedAppId).catch((err) => console.warn(err));
           }, 5000);
 
           // Retry 3: after 20 seconds
           setTimeout(() => {
             console.log(`[ACH][SESSION_STOP_REFRESH_RETRY] appid=${stoppedAppId} delayMs=20000`);
-            attemptAchievementRefresh(stoppedAppId).catch(() => {});
+            attemptAchievementRefresh(stoppedAppId).catch((err) => console.warn(err));
           }, 20000);
         } else if (stoppedAppId && durationSeconds < 15) {
           console.log(`[PLAYTIME][SESSION_DURATION_SKIP] appid=${stoppedAppId} seconds=${durationSeconds} threshold=15 lastPlayedKept=true`);

@@ -24,6 +24,8 @@ import type { PackageInstallStatus } from "../types/packageInstall";
 import type { SourceCheckStatus } from "../services/sourceAvailabilityCacheService";
 import type { AppPage } from "../types/navigation";
 
+const DEBUG_GAME_DETAILS = false;
+
 function DetailsShell({ onBack }: { onBack: () => void }) {
   return (
     <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7">
@@ -92,7 +94,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     : "not-installed";
 
   const lookupLua = ownershipLookup.isLuaActive(currentAppId);
-  console.log(
+  if (DEBUG_GAME_DETAILS) console.log(
     `[GAME_DETAILS][DETAIL_PROPS] appid=${currentAppId} localLuaInstalled=${localLuaInstalled} lookupLua=${lookupLua} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} installStatus=${installStatus}`,
   );
 
@@ -132,12 +134,12 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     let cancelled = false;
 
     async function hydrate() {
-      console.log(`[GLOBAL_SEARCH][OPEN_STORE_DETAILS] appid=${appId} title=${title}`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][OPEN_STORE_DETAILS] appid=${appId} title=${title}`);
 
       // Step 1: Restore saved provider/source from store details state (module-level, instant)
       const detailsState = getStoreDetailsState(appId);
       if (detailsState) {
-        console.log(
+        if (DEBUG_GAME_DETAILS) console.log(
           `[STORE][DETAILS_STATE_RESTORE] appid=${appId} selectedProvider=${detailsState.selectedProvider} status=${detailsState.status}`,
         );
       }
@@ -158,7 +160,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
         if (!cancelled) {
           setHydratedSources(sources);
           setHydratedStatus("ready");
-          console.log(`[STORE][SOURCE_RESTORE_FROM_CACHE] appid=${appId} found=${sources.length}`);
+          if (DEBUG_GAME_DETAILS) console.log(`[STORE][SOURCE_RESTORE_FROM_CACHE] appid=${appId} found=${sources.length}`);
         }
       } else {
         // Cache miss or stale — run parent-controlled source resolution
@@ -166,7 +168,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
 
         // Owned or non-installed Lua games should not trigger provider resolution.
         if (steamOwned || (!isSteamInstalled && luaInstalled)) {
-          console.log(`[GLOBAL_SEARCH][SOURCE_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
+          if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
           setHydratedSources([]);
           setHydratedStatus("idle");
           return;
@@ -177,7 +179,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
           : cached.availableSources.length === 0
             ? "no-sources"
             : `status=${cached.status}`;
-        console.log(`[GLOBAL_SEARCH][SOURCE_RESOLUTION] appid=${appId} reason=${reason} — starting provider discovery`);
+        if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RESOLUTION] appid=${appId} reason=${reason} — starting provider discovery`);
 
         try {
           const overlayMap = await resolveProviderOverlaysForStoreGames(
@@ -197,7 +199,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
             totalProviders,
           );
 
-          console.log(
+          if (DEBUG_GAME_DETAILS) console.log(
             `[GLOBAL_SEARCH][SOURCE_RESOLUTION_DONE] appid=${appId} total=${totalProviders} successes=${successes} status=${entry.status}`,
           );
 
@@ -208,7 +210,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
           if (cancelled) return;
           const message = err instanceof Error ? err.message : String(err);
           const isTimeout = message.toLowerCase().includes("timeout");
-          console.log(
+          if (DEBUG_GAME_DETAILS) console.log(
             `[GLOBAL_SEARCH][SOURCE_RESOLUTION_FAIL] appid=${appId} timeout=${isTimeout} error=${message}`,
           );
           setHydratedSources([]);
@@ -281,7 +283,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     const appId = selectedGame?.appId;
     if (!appId) return;
     const inLib = steamOwned ? !isSteamInstalled : luaInstalled;
-    console.log(
+    if (DEBUG_GAME_DETAILS) console.log(
       `[STORE][OWNERSHIP_STATE] appid=${appId} owned=${steamOwned} installed=${isSteamInstalled} luaInstalled=${luaInstalled} inLibrary=${inLib}`,
     );
   }, [selectedGame?.appId, steamOwned, isSteamInstalled, luaInstalled]);
@@ -292,14 +294,14 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     if (!currentAppId || !settings.luaPath) return;
     let cancelled = false;
     (async () => {
-      console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId}`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId}`);
       try {
         const scripts = await scanInstalledLuaScripts(settings.luaPath!);
         if (cancelled) return;
         const numAppId = Number(currentAppId);
         const match = scripts.find((s) => s.app_id === numAppId);
         const active = !!match && !match.is_disabled;
-        console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
+        if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
         setLocalLuaInstalled(active);
       } catch {
         if (!cancelled) setLocalLuaInstalled(false);
@@ -334,13 +336,13 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
 
     // Owned or non-installed Lua games should not trigger provider resolution.
     if (steamOwned || (!isSteamInstalled && luaInstalled)) {
-      console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_SKIP_NO_PROVIDER_NEEDED] appid=${appId} owned=${steamOwned} luaOnly=${!isSteamInstalled && luaInstalled}`);
       return;
     }
 
     const title = sg.title;
     const imageUrl = sg.imageUrl;
-    console.log(`[GLOBAL_SEARCH][SOURCE_RETRY] appid=${appId}`);
+    if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY] appid=${appId}`);
     setHydratedStatus("checking");
     try {
       const overlayMap = await resolveProviderOverlaysForStoreGames(
@@ -353,14 +355,14 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
       const entry = buildSourceAvailabilityFromProviders(
         appId, title, resolvedSources, totalProviders,
       );
-      console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_DONE] appid=${appId} status=${entry.status} total=${totalProviders}`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_DONE] appid=${appId} status=${entry.status} total=${totalProviders}`);
       setHydratedSources(resolvedSources);
       setHydratedStatus(entry.status === "ready" ? "ready" : "error");
       await updateSourceAvailability(appId, entry).catch(() => {});
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       const isTimeout = message.toLowerCase().includes("timeout");
-      console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_FAIL] appid=${appId} timeout=${isTimeout}`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GLOBAL_SEARCH][SOURCE_RETRY_FAIL] appid=${appId} timeout=${isTimeout}`);
       setHydratedSources([]);
       setHydratedStatus(isTimeout ? "timeout" : "error");
     }
@@ -380,13 +382,13 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
     };
     const result = await downloadFromSource(game, source, deps);
     if (result.success && currentAppId && settings.luaPath) {
-      console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId} reason=post-download`);
+      if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_START] appid=${currentAppId} reason=post-download`);
       try {
         const scripts = await scanInstalledLuaScripts(settings.luaPath);
         const numAppId = Number(currentAppId);
         const match = scripts.find((s) => s.app_id === numAppId);
         const active = !!match && !match.is_disabled;
-        console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
+        if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][LUA_SCAN_RESULT] appid=${currentAppId} found=${!!match} active=${active} path=${match?.path ?? "none"}`);
         setLocalLuaInstalled(active);
       } catch {
         // localLuaInstalled stays as-is
@@ -403,13 +405,13 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
   // Source key selection handler
   const handleSelectSourceKey = useCallback((sourceKey: string) => {
     const appId = displayGame?.appId;
-    console.log(`[STORE][SOURCE_CHANGE] appid=${appId} from=${selectedSourceKey ?? "null"} to=${sourceKey}`);
+    if (DEBUG_GAME_DETAILS) console.log(`[STORE][SOURCE_CHANGE] appid=${appId} from=${selectedSourceKey ?? "null"} to=${sourceKey}`);
     setSelectedSourceKey(sourceKey);
   }, [displayGame?.appId, selectedSourceKey]);
 
   // View in Library handler — called from install success modal
   const handleViewInLibrary = useCallback((appId: string, title: string) => {
-    console.log(`[GAME_DETAILS][VIEW_IN_LIBRARY] appid=${appId} title="${title}"`);
+    if (DEBUG_GAME_DETAILS) console.log(`[GAME_DETAILS][VIEW_IN_LIBRARY] appid=${appId} title="${title}"`);
     setQuery("");
     setPendingLibraryFocus(appId, title);
     onNavigate?.("library");

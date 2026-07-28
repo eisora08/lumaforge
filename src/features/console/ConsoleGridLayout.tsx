@@ -19,9 +19,7 @@ import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
 import { setScrollTarget } from "./useConsoleGamepadInput";
 
-const DEBUG_CONSOLE_MODE = false;
 const DEBUG_CONSOLE_GRID_NAV = false;
-const DEBUG_CONSOLE_PREVIEW_AUTO = false;
 const DEBUG_FORCE_TEST_MP4 = false;
 
 type Props = {
@@ -194,14 +192,14 @@ export default function ConsoleGridLayout({
 
     if (!appId) return;
 
-    if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+    if (DEBUG_CONSOLE_GRID_NAV) {
       console.log(`[CONSOLE_PREVIEW_AUTO][FOCUS] appid=${appId}`);
       console.log(`[CONSOLE_PREVIEW_AUTO][TIMER_START] appid=${appId} delay=3000`);
     }
 
     artworkTimerRef.current = setTimeout(() => {
       if (focusedAppIdRef.current !== appId || previewGame?.appId !== appId) {
-        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+        if (DEBUG_CONSOLE_GRID_NAV) {
           console.log(`[CONSOLE_PREVIEW_AUTO][TIMER_CANCEL] appid=${appId} reason=focus-changed`);
         }
         return;
@@ -211,7 +209,7 @@ export default function ConsoleGridLayout({
 
       // Resolve trailer source for current appId (use ref to avoid stale closure)
       const td = trailerDataRef.current;
-      if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+      if (DEBUG_CONSOLE_GRID_NAV) {
         console.log(`[CONSOLE_PREVIEW_AUTO][TRAILER_SOURCE] appid=${appId} type=${td?.playableType ?? "none"} url=${td?.playableUrl?.substring(0, 80) ?? "null"}`);
         if (td) {
           console.log(`[CONSOLE_PREVIEW_AUTO][TRAILER_DATA] appid=${appId} id=${td.movieCount > 0 ? "primary" : "none"} name=${td.movieCount > 0 ? td.movieCount + " movies" : "none"} mp4_max=${td.mp4Url ?? "null"} webm_max=${td.webmUrl ?? "null"} hls_h264=${td.hls_h264 ?? "null"} dash_h264=${td.dash_h264 ?? "null"} dash_av1=${td.dash_av1 ?? "null"}`);
@@ -221,22 +219,22 @@ export default function ConsoleGridLayout({
       if (td?.playableUrl && settings.showTrailerPreview) {
         // Playable source exists — autoplay (direct mp4/webm or HLS via hls.js)
         const src = DEBUG_FORCE_TEST_MP4 ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" : td.playableUrl;
-        if (DEBUG_CONSOLE_PREVIEW_AUTO) console.log(`[PREVIEW_PIPE][SET_SRC] appid=${appId} src=${src.substring(0, 80)}`);
+        if (DEBUG_CONSOLE_GRID_NAV) console.log(`[PREVIEW_PIPE][SET_SRC] appid=${appId} src=${src.substring(0, 80)}`);
         setThumbnailAutoplaySrc(src);
         setPreviewMode("trailer");
-        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+        if (DEBUG_CONSOLE_GRID_NAV) {
           console.log(`[CONSOLE_PREVIEW_AUTO][AUTOPLAY_START] appid=${appId} type=${td.playableType} url=${src.substring(0, 80)}`);
         }
       } else if (td?.hasTrailer) {
         // Has trailer metadata but no playable URL (DASH only or corrupt)
         setPreviewMode("unsupported");
-        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+        if (DEBUG_CONSOLE_GRID_NAV) {
           console.log(`[CONSOLE_PREVIEW_AUTO][SHOW_UNSUPPORTED] appid=${appId} type=${td.playableType}`);
         }
       } else {
         // No trailer — stay on artwork
         setPreviewMode("trailer");
-        if (DEBUG_CONSOLE_PREVIEW_AUTO) {
+        if (DEBUG_CONSOLE_GRID_NAV) {
           console.log(`[CONSOLE_PREVIEW_AUTO][SHOW_ARTWORK] appid=${appId} reason=no-trailer`);
         }
       }
@@ -259,15 +257,15 @@ export default function ConsoleGridLayout({
 
   /* ── Debug log for preview mode changes ── */
   useEffect(() => {
-    if (DEBUG_CONSOLE_PREVIEW_AUTO && previewGame?.appId) {
+    if (DEBUG_CONSOLE_GRID_NAV && previewGame?.appId) {
       console.log(`[CONSOLE_PREVIEW_AUTO] appid=${previewGame.appId} showArtworkFirst=${showArtworkFirst} mode=${previewMode} autoplay=${!!thumbnailAutoplaySrc}`);
     }
-    if (DEBUG_CONSOLE_PREVIEW_AUTO && thumbnailAutoplaySrc && previewGame?.appId) {
+    if (DEBUG_CONSOLE_GRID_NAV && thumbnailAutoplaySrc && previewGame?.appId) {
       console.log(`[PREVIEW_PIPE][PASS_PROP] appid=${previewGame.appId} src=${thumbnailAutoplaySrc.substring(0, 80)}`);
     }
   }, [showArtworkFirst, previewMode, thumbnailAutoplaySrc, previewGame?.appId]);
 
-  if (DEBUG_CONSOLE_MODE) {
+  if (DEBUG_CONSOLE_GRID_NAV) {
     if (focusedGame) {
       console.log(`[CONSOLE][GRID_PREVIEW] appid=${focusedGame.appId} title=${focusedGame.title}`);
     } else {

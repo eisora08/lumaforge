@@ -24,27 +24,7 @@ export const EPIC_LAUNCH_ENABLED = true;
 export const EPIC_DIRECT_LAUNCH_ENABLED = false;
 
 /** Diagnostics gate. Set to true for verbose console logging. */
-export const DEBUG_EPIC_LIBRARY = true;
+export const DEBUG_EPIC_LIBRARY = false;
 
 /** Diagnostics gate for Epic launch path. */
-export const DEBUG_EPIC_LAUNCH = true;
-
-/**
- * Debug flag for Epic Desktop integration details —
- * provider-aware rendering, media adapter, override store, GameEditDialog mode.
- * Set to true for verbose console logging during development.
- */
-export const EPIC_DESKTOP = true;
-
-// ── Temporary startup diagnostic (remove after runtime validation) ──
-console.log(
-  "[EPIC_BOOT][ACTIVE_FLAGS]",
-  JSON.stringify({
-    module: "epicFeatureFlag.ts",
-    libraryEnabled: EPIC_LIBRARY_ENABLED,
-    launchEnabled: EPIC_LAUNCH_ENABLED,
-    directEnabled: EPIC_DIRECT_LAUNCH_ENABLED,
-    mode: import.meta.env.MODE ?? "unknown",
-    timestamp: Date.now(),
-  })
-);
+export const DEBUG_EPIC_LAUNCH = false;

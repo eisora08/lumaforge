@@ -363,7 +363,13 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       console.log(`[LIBRARY_CONTEXT][APPLY_GAMES] source=${source} previous=${current.length} incoming=${withManual.length} merged=${merged.length} deduped=${deduped.length}`);
     }
     countLibraryApplied();
-    setGames(filterEnabledGames(stable));
+    const filtered = filterEnabledGames(stable);
+    const filteredFp = computeLibraryFingerprint(filtered);
+    if (filteredFp !== (currentFp ?? computeLibraryFingerprint(gamesRef.current))) {
+      setGames(filtered);
+    } else {
+      console.log(`[LIBRARY_CONTEXT][APPLY_GAMES_SKIP] reason=unchanged-filtered source=${source}`);
+    }
     hasInitialData.current = true;
 
     // Phase 1: Update runtime status based on source
@@ -532,7 +538,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         logo_path: entry?.logo_path ?? null,
         icon_path: entry?.icon_path ?? null,
         updated_at: now,
-      }).catch(() => {});
+      }).catch((err) => console.warn(err));
       console.log(`[LIBRARY_CONTEXT][APPINFO_UPDATE_SAFE] appid=${game.appId} preserveMedia=true`);
     }
   }
@@ -671,7 +677,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
               if (count > 0) {
                 console.debug(`[LibraryGamesContext] Full dataset scan complete: ${count} games indexed`);
               }
-            }).catch(() => {});
+            }).catch((err) => console.warn(err));
           } catch (error) {
             console.error("[LibraryGamesContext] scan error:", error);
             reportLibraryProgress({ phase: "error", source: "steam", errors: [String(error)] });
@@ -758,7 +764,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
     // Trigger initial Epic scan (fire-and-forget) only when scanOnStartup is enabled
     if (isIntegrationScanOnStartup("epic")) {
-      refreshEpicGames(settings.steamRoot || undefined).catch(() => {});
+      refreshEpicGames(settings.steamRoot || undefined).catch((err) => console.warn(err));
     }
 
     // Subscribe to override changes (media/metadata writes from GameEditDialog)
@@ -783,7 +789,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (appInfoLoaded.current) return;
     appInfoLoaded.current = true;
-    loadLibraryAppInfo().then(setAppInfoMap).catch(() => {});
+    loadLibraryAppInfo().then(setAppInfoMap).catch((err) => console.warn(err));
   }, []);
 
   // Step 9: Snapshot writes only from stable state
@@ -958,7 +964,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
       applyGamesSafely(enriched, "manual-refresh", { allowReplace: true });
       setWarnings(result.warnings);
-      await updateAppInfoFromGames(enriched).catch(() => {});
+      await updateAppInfoFromGames(enriched).catch((err) => console.warn(err));
       reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
     } catch (error) {
       console.error("[LibraryGamesContext] refresh error:", error);
@@ -1229,7 +1235,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     const handler = () => {
       console.log("[LIBRARY][LUA_CHANGED] Extension toggled, refreshing Lua state");
-      refresh({ force: true }).catch(() => {});
+      refresh({ force: true }).catch((err) => console.warn(err));
     };
     window.addEventListener("lumaforge-lua-changed", handler);
     return () => window.removeEventListener("lumaforge-lua-changed", handler);
