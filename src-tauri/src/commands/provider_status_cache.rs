@@ -24,6 +24,8 @@ pub struct ProviderStatusSnapshotEntryLocal {
     pub file_size_at_install: Option<i64>,
     pub file_modified_at_install: Option<String>,
     pub version_at_install: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

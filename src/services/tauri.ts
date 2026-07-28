@@ -2511,6 +2511,7 @@ export interface ProviderStatusSnapshotEntryLocal {
   fileSizeAtInstall?: number | null;
   fileModifiedAtInstall?: string | null;
   versionAtInstall?: string | null;
+  metadataSource?: string | null;
 }
 
 export interface ProviderStatusSnapshotEntryRemote {

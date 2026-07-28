@@ -257,6 +257,18 @@ function computeResult(
     return { status: "up-to-date", reason: "local-lua-not-older" };
   }
 
+  // Unknown metadata source (null/lost) - skip fileSize comparison
+  if (!local.metadataSource || local.metadataSource === "unknown") {
+    if (remote.fileModified && local.fileModifiedAtInstall) {
+      const remoteTs = new Date(remote.fileModified).getTime();
+      const localTs = new Date(local.fileModifiedAtInstall).getTime();
+      if (!isNaN(remoteTs) && !isNaN(localTs) && remoteTs > localTs) {
+        return { status: "update-available", reason: "remote-newer-than-unknown-local" };
+      }
+    }
+    return { status: "up-to-date", reason: "unknown-local-not-older" };
+  }
+
   // Local metadata from remote/package baseline â€” compare both modified + size
   if (remote.fileModified && local.fileModifiedAtInstall) {
     const remoteTs = new Date(remote.fileModified).getTime();

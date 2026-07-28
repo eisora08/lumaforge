@@ -661,9 +661,16 @@ export default function StoreGameDetailsPage({
 
       // Seed local package metadata for comparison
       if (statusFile.local) {
+        const rawSource = statusFile.local.metadataSource;
+        const metadataSource: "local-lua" | "remote" | "auto-baseline" | "unknown" =
+          rawSource === "local-lua-file" ? "local-lua"
+          : rawSource === "auto-baseline" ? "auto-baseline"
+          : rawSource === "remote" ? "remote"
+          : "unknown";
         setLocalPackageMetadata(appId, {
           fileModifiedAtInstall: statusFile.local.fileModifiedAtInstall ?? undefined,
           fileSizeAtInstall: statusFile.local.fileSizeAtInstall ?? undefined,
+          metadataSource,
         });
       }
     }
@@ -696,9 +703,12 @@ export default function StoreGameDetailsPage({
         setProviderRemoteFileSize(statusFile.remote?.fileSize ?? undefined);
 
         if (statusFile.local) {
-          const resultReason = statusFile.result?.reason ?? "";
-          const localLuaReasons = ["local-lua-file", "local-lua-not-older", "remote-newer-than-local-lua"];
-          const metadataSource = localLuaReasons.includes(resultReason) ? "local-lua" as const : ("remote" as const);
+          const rawSource = statusFile.local.metadataSource;
+          const metadataSource: "local-lua" | "remote" | "auto-baseline" | "unknown" =
+            rawSource === "local-lua-file" ? "local-lua"
+            : rawSource === "auto-baseline" ? "auto-baseline"
+            : rawSource === "remote" ? "remote"
+            : "unknown";
           setLocalPackageMetadata(appId, {
             fileModifiedAtInstall: statusFile.local.fileModifiedAtInstall ?? undefined,
             fileSizeAtInstall: statusFile.local.fileSizeAtInstall ?? undefined,
@@ -898,10 +908,12 @@ export default function StoreGameDetailsPage({
     setProviderRemoteFileModified(statusFile.remote?.fileModified ?? undefined);
     setProviderRemoteFileSize(statusFile.remote?.fileSize ?? undefined);
     if (statusFile.local) {
-      // Determine metadataSource from result reason
-      const resultReason = statusFile.result?.reason ?? "";
-      const localLuaReasons = ["local-lua-file", "local-lua-not-older", "remote-newer-than-local-lua"];
-      const metadataSource = localLuaReasons.includes(resultReason) ? "local-lua" as const : ("remote" as const);
+      const rawSource = statusFile.local.metadataSource;
+      const metadataSource: "local-lua" | "remote" | "auto-baseline" | "unknown" =
+        rawSource === "local-lua-file" ? "local-lua"
+        : rawSource === "auto-baseline" ? "auto-baseline"
+        : rawSource === "remote" ? "remote"
+        : "unknown";
       setLocalPackageMetadata(appId, {
         fileModifiedAtInstall: statusFile.local.fileModifiedAtInstall ?? undefined,
         fileSizeAtInstall: statusFile.local.fileSizeAtInstall ?? undefined,

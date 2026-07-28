@@ -441,7 +441,7 @@ export interface HubcapAppUpdateResult {
 export interface LocalPackageMetadata {
   fileModifiedAtInstall?: string;
   fileSizeAtInstall?: number;
-  metadataSource?: "local-lua" | "remote" | "unknown";
+  metadataSource?: "local-lua" | "remote" | "auto-baseline" | "unknown";
 }
 
 // --- In-memory caches ---
@@ -519,6 +519,10 @@ export function getCachedHubcapAppStatus(appId: string): HubcapAppStatusRemote |
  *      a. remote fileModified > local   → update-available / remote-newer-than-local-lua
  *      b. remote fileModified <= local  → up-to-date / local-lua-not-older
  *      c. fileSize skipped (Lua file size != package ZIP size)
+ *   6b. metadata source unknown (null/lost):
+ *      a. remote fileModified > local   → update-available / remote-newer-than-unknown-local
+ *      b. Otherwise                     → up-to-date / unknown-local-not-older
+ *      c. fileSize skipped (we don't know if local is Lua or package)
  *   7. local metadata from remote/package:
  *      a. remote fileModified > local   → update-available / remote-newer
  *      b. remote fileSize !== local     → update-available / size-differs
@@ -566,7 +570,7 @@ export function checkHubcapAppUpdate(
     return result;
   }
 
-  const source = localMeta.metadataSource ?? "remote";
+  const source = localMeta.metadataSource ?? "unknown";
 
   // Rule 6 — local metadata came from a local Lua file
   if (source === "local-lua") {
@@ -581,6 +585,23 @@ export function checkHubcapAppUpdate(
     }
     // fileSize comparison skipped — Lua file size != package ZIP size
     const result: HubcapAppUpdateResult = { status: "up-to-date", reason: "local-lua-not-older", remote };
+    logResult(appId, result);
+    return result;
+  }
+
+  // Rule 6b — unknown metadata source (metadataSource was null/lost)
+  // Skip fileSize comparison — we don't know if local file is Lua or package
+  if (source === "unknown") {
+    if (remote.fileModified && localMeta.fileModifiedAtInstall) {
+      const remoteTs = new Date(remote.fileModified).getTime();
+      const localTs = new Date(localMeta.fileModifiedAtInstall).getTime();
+      if (!isNaN(remoteTs) && !isNaN(localTs) && remoteTs > localTs) {
+        const result: HubcapAppUpdateResult = { status: "update-available", reason: "remote-newer-than-unknown-local", remote };
+        logResult(appId, result);
+        return result;
+      }
+    }
+    const result: HubcapAppUpdateResult = { status: "up-to-date", reason: "unknown-local-not-older", remote };
     logResult(appId, result);
     return result;
   }

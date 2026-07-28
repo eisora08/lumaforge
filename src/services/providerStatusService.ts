@@ -222,7 +222,7 @@ function snapshotEntryToProviderStatusFile(
           fileSizeAtInstall: entry.local.fileSizeAtInstall ?? null,
           fileModifiedAtInstall: entry.local.fileModifiedAtInstall ?? null,
           fileCreatedAtInstall: null,
-          metadataSource: null,
+          metadataSource: entry.local.metadataSource ?? null,
           providerTimestampAtInstall: null,
           checksumAtInstall: null,
           versionAtInstall: entry.local.versionAtInstall ?? null,

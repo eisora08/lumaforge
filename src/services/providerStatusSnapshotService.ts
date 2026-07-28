@@ -114,6 +114,7 @@ export function toSnapshotEntry(
           fileSizeAtInstall: statusFile.local.fileSizeAtInstall,
           fileModifiedAtInstall: statusFile.local.fileModifiedAtInstall,
           versionAtInstall: statusFile.local.versionAtInstall,
+          metadataSource: statusFile.local.metadataSource,
         }
       : undefined,
     remote: statusFile.remote
