@@ -318,7 +318,7 @@ pub fn resolve_steam_app_metadata(
             .unwrap_or_default();
 
         let parsed_movies = movies.len();
-        if parsed_movies > 0 {
+        if parsed_movies > 0 && DEBUG_STEAM_MEDIA {
             let names: Vec<String> = movies.iter().map(|m| format!("\"{}\"", m.name.clone())).collect();
             println!("[STORE][MOVIES_PARSED] appid={} count={} names={}", app_id, parsed_movies, names.join(", "));
         }

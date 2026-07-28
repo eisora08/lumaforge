@@ -1,4 +1,5 @@
-import { resolveSteamAppMetadata, readStoreGameDetails, writeStoreGameDetails } from "./tauri";
+import { resolveSteamAppMetadata, getStoreDetails } from "./tauri";
+import { persistStoreDetails } from "./gameCacheService";
 import type { SteamAppMetadata, SteamMovie } from "../types/gameMetadata";
 import type { ResolvedGameTrailer } from "../types/gameMedia";
 
@@ -21,7 +22,7 @@ export function loadMetadataCache(): Record<string, SteamAppMetadata> {
 
 async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null> {
   try {
-    const cached = await readStoreGameDetails(appId);
+    const cached = await getStoreDetails(String(appId));
     if (cached && cached.data) {
       const meta = cached.data as SteamAppMetadata;
       if (DEBUG_CACHE_MOVIES_LOG) {
@@ -59,11 +60,11 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
 
 async function saveToAppCache(appId: number, data: SteamAppMetadata): Promise<void> {
   try {
-    await writeStoreGameDetails(appId, {
-      app_id: appId,
+    await persistStoreDetails(String(appId), {
+      app_id: String(appId),
+      source: "metadata-resolver",
+      updated_at: Math.floor(Date.now() / 1000),
       data,
-      updated_at: Date.now(),
-      version: 1,
     });
   } catch {
     // non-critical
@@ -197,10 +198,10 @@ export async function resolveGameMetadata(
     }
   }
 
-  // Clean up per-appId in-flight entries
-  for (const appId of trulyNeedsFetch) {
-    metadataInFlightByAppId.delete(appId);
-  }
+  // Intentionally do NOT delete from metadataInFlightByAppId here.
+  // Keeping resolved entries ensures concurrent callers that miss inMemoryCache
+  // (due to parallel disk reads) still find the in-flight promise and dedup.
+  // The map is bounded by unique appIds loaded per session (few hundred at most).
 
   return result;
 }

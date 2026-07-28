@@ -62,11 +62,7 @@ pub fn run() {
             commands::steam_grid_db::resolve_steamgriddb_artwork,
             commands::steam_grid_db::search_steamgriddb_games,
             commands::steam_grid_db::resolve_steamgriddb_artwork_by_game_id,
-            commands::artwork_cache::read_artwork_cache_index,
-            commands::artwork_cache::write_artwork_cache_index,
-            commands::artwork_cache::cache_remote_artwork,
-            commands::artwork_cache::clear_artwork_cache_for_game,
-            commands::artwork_cache::clear_all_artwork_cache,
+
             commands::sync::compute_file_hash,
             commands::sync::read_sync_index,
             commands::sync::write_sync_index,

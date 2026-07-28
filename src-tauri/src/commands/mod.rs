@@ -11,7 +11,6 @@ pub mod reviews;
 pub mod store;
 pub mod store_search;
 pub mod steam_grid_db;
-pub mod artwork_cache;
 pub mod steam_achievements;
 pub mod sync;
 pub mod process;

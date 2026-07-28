@@ -2,7 +2,6 @@
     readLibraryAppinfo,
     updateLibraryAppinfoEntry,
     readLibraryGameDetails,
-    writeLibraryGameDetails,
     getGameMediaCache,
     saveGameMediaCache,
     clearGameMediaCache,
@@ -97,18 +96,6 @@
       return await readLibraryGameDetails(appId);
     } catch {
       return null;
-    }
-  }
-
-  export async function saveLibraryGameDetails(
-    appId: string,
-    metadata: LibraryGameDetailsEntry
-  ): Promise<boolean> {
-    try {
-      await writeLibraryGameDetails(appId, metadata);
-      return true;
-    } catch {
-      return false;
     }
   }
 

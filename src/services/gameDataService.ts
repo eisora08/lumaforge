@@ -21,6 +21,7 @@ import { resolveGameMediaPaths, getMediaCacheSqlite, getMetadataCacheSqlite, che
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type {
   StoreAppInfoEntry,
+  GameStoreDetails,
   StoreGameDetailsEntry,
   SqliteMediaCacheEntry,
   SqliteMetadataCacheEntry,
@@ -75,7 +76,7 @@ export type NormalizedGameMetadata = {
 
 export type StoreDataResult = {
   appInfo: StoreAppInfoEntry | null;
-  details: StoreGameDetailsEntry | null;
+  details: GameStoreDetails | null;
   reviews: StoreGameDetailsEntry | null;
   metadata: SteamAppMetadata | null;
 };

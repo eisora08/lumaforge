@@ -2286,18 +2286,42 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }
     });
 
+    // Fold preload IDs directly into the single metadata batch — eliminates the race condition
+    // from 3 concurrent useEffects all calling resolveGameMetadata simultaneously.
+    // Effect 3 (smart preload) and Effect 4 (curated preload) are removed; their IDs live here.
+
+    // High-quality pool: top-scored catalog entries for "More to Explore" + hero candidates
+    for (const entry of highQualityPool.slice(0, 12)) {
+      const id = Number(entry.appId);
+      if (Number.isFinite(id)) appIds.add(id);
+    }
+
+    // Featured games — ensures hero images are available on first paint
+    for (const game of featuredGames) {
+      const id = Number(game.appId);
+      if (Number.isFinite(id)) appIds.add(id);
+    }
+
+    // First items of each section — ensures section headers render with metadata
+    for (const section of allStoreSections) {
+      for (const game of section.games.slice(0, 3)) {
+        const id = Number(game.appId);
+        if (Number.isFinite(id)) appIds.add(id);
+      }
+    }
+
     // NOTE: selectedDetailGame excluded from this batch — handled by dedicated detail effect below (line ~2383)
 
     const ids = Array.from(appIds);
-    // Phase 8: Cap metadata fetch scope — 80 covers hero + sections (8×8=64) + browse page.
+    // Phase 9: Cap metadata fetch scope — 100 covers hero + sections + preload IDs.
     // Detail game gets its own effect; section games beyond the cap load on scroll.
-    const METADATA_WINDOW_MAX = 80;
+    const METADATA_WINDOW_MAX = 100;
     const capped = ids.length > METADATA_WINDOW_MAX ? ids.slice(0, METADATA_WINDOW_MAX) : ids;
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][METADATA_WINDOW_LOAD] requested=${ids.length} capped=${capped.length}`);
     return capped;
     // NOTE: storeMetadataByAppId intentionally NOT in deps to avoid render loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalogGames, results, allStoreSections, steamSearchItems, steamSubmittedSearchGames, activeStoreTab, browsePage]);
+  }, [catalogGames, results, allStoreSections, steamSearchItems, steamSubmittedSearchGames, activeStoreTab, browsePage, highQualityPool, featuredGames]);
 
   const visibleAppIdsKey = visibleAppIds.join(",");
 
@@ -2430,89 +2454,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDetailGameWithOverlay?.appId]);
-
-  // Smart preload: proactively load metadata for upcoming items
-  useEffect(() => {
-    if (!storeFirstPaintDone) return;
-    const preloadIds: number[] = [];
-
-    // Top scored games from high quality pool — Phase 8: reduced from 30→12 (covers hero + top of first sections)
-    for (const entry of highQualityPool.slice(0, 12)) {
-      const id = Number(entry.appId);
-      if (Number.isFinite(id)) preloadIds.push(id);
-    }
-
-    // Featured games
-    for (const game of featuredGames) {
-      const id = Number(game.appId);
-      if (Number.isFinite(id)) preloadIds.push(id);
-    }
-
-    // First items of each discover section
-    for (const section of allStoreSections) {
-      for (const game of section.games.slice(0, 3)) {
-        const id = Number(game.appId);
-        if (Number.isFinite(id)) preloadIds.push(id);
-      }
-    }
-
-    if (preloadIds.length === 0) return;
-
-    const unique = Array.from(new Set(preloadIds));
-    const missing = unique.filter((id) => !storeMetadataByAppId[id]);
-
-    if (missing.length === 0) return;
-
-    resolveGameMetadata(missing)
-      .then((metadata) => {
-        if (!_mountedRef.current) return;
-        setStoreMetadataByAppId((prev) => ({ ...prev, ...metadata }));
-      })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highQualityPool, featuredGames, allStoreSections, steamCatalog.length]);
-
-  // Curated metadata preload — ensures images are available for curated games on first paint
-  const curatedPreloadedRef = useRef(false);
-  useEffect(() => {
-    if (!storeFirstPaintDone) return;
-    if (curatedPreloadedRef.current) return;
-    curatedPreloadedRef.current = true;
-
-    const curatedAppIds: number[] = [];
-    for (const section of _curatedBaseline) {
-      for (const game of section.games) {
-        const id = Number(game.steamAppId);
-        if (Number.isFinite(id)) curatedAppIds.push(id);
-      }
-    }
-    const uniqueIds = [...new Set(curatedAppIds)];
-    if (uniqueIds.length === 0) return;
-
-    const unloaded = uniqueIds.filter((id) => !storeMetadataByAppId[id]);
-    if (unloaded.length === 0) return;
-
-    let cancelled = false;
-    batchedLoad(unloaded, resolveGameMetadata, METADATA_CONCURRENCY)
-      .then((metadata) => {
-        if (cancelled || !_mountedRef.current) return;
-        const count = Object.keys(metadata).length;
-        if (count > 0) {
-          setStoreMetadataByAppId((prev) => {
-            const merged = { ...prev };
-            for (const [key, value] of Object.entries(metadata)) {
-              if (!merged[Number(key)]) merged[Number(key)] = value;
-            }
-            return merged;
-          });
-          if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][CURATED_PRELOAD] loaded=${count} games from ${unloaded.length} curated`);
-        }
-      })
-      .catch(() => {});
-
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeFirstPaintDone]);
 
   // Pre-populate Store image cache for visible app IDs (display-only, no local media index)
   // Re-runs when metadata loads so URLs become available for cached Discover sections.

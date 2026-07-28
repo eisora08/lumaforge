@@ -1,8 +1,7 @@
 import {
   readStoreAppinfo,
   updateStoreAppinfoEntry,
-  readStoreGameDetails,
-  writeStoreGameDetails,
+  getStoreDetails,
   readStoreReviewSummary,
   writeStoreReviewSummary,
 } from "./tauri";
@@ -10,7 +9,7 @@ import {
   persistStoreDetails,
 } from "./gameCacheService";
 
-import type { StoreAppInfoEntry, StoreAppInfoMap, StoreGameDetailsEntry } from "./tauri";
+import type { StoreAppInfoEntry, StoreAppInfoMap, GameStoreDetails, StoreGameDetailsEntry } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
 // ---------------------------------------------------------------------------
@@ -55,9 +54,9 @@ export async function updateStoreAppInfo(appId: string, entry: StoreAppInfoEntry
   }
 }
 
-export async function getStoreGameDetails(appId: number): Promise<StoreGameDetailsEntry | null> {
+export async function getStoreGameDetails(appId: number): Promise<GameStoreDetails | null> {
   try {
-    return await readStoreGameDetails(appId);
+    return await getStoreDetails(String(appId));
   } catch {
     return null;
   }
@@ -65,19 +64,13 @@ export async function getStoreGameDetails(appId: number): Promise<StoreGameDetai
 
 export async function saveStoreGameDetails(appId: number, metadata: SteamAppMetadata): Promise<boolean> {
   try {
-    await writeStoreGameDetails(appId, {
-      app_id: appId,
-      data: metadata as unknown,
-      updated_at: Date.now(),
-      version: 1,
-    });
-    // Also save to canonical cache
-    persistStoreDetails(String(appId), {
+    // Single canonical write — no more dual-write to store/details/
+    await persistStoreDetails(String(appId), {
       app_id: String(appId),
       source: "steam-store",
-      updated_at: Date.now(),
+      updated_at: Math.floor(Date.now() / 1000),
       data: metadata as unknown,
-    }).catch(() => {});
+    });
     return true;
   } catch {
     return false;
@@ -137,36 +130,24 @@ export function saveStoreMetadataToStoreCache(metadata: SteamAppMetadata): void 
 export async function promoteStoreCacheToLibrary(appId: string): Promise<boolean> {
   try {
     const appInfo = await getStoreAppInfo(appId);
-    const details = await readStoreGameDetails(Number(appId));
 
-    if (!appInfo && !details) {
+    if (!appInfo) {
       return false;
     }
 
-    const { updateLibraryAppinfoEntry, writeLibraryGameDetails } = await import("./tauri");
+    const { updateLibraryAppinfoEntry } = await import("./tauri");
 
-    if (appInfo) {
-      await updateLibraryAppinfoEntry(appId, {
-        app_id: appId,
-        name: appInfo.name,
-        header_image: appInfo.header_image,
-        cover_path: null,
-        grid_path: null,
-        hero_path: null,
-        logo_path: null,
-        icon_path: null,
-        updated_at: nowTimestamp(),
-      });
-    }
-
-    if (details) {
-      await writeLibraryGameDetails(appId, {
-        app_id: appId,
-        source: "steam-store",
-        updated_at: nowTimestamp(),
-        data: details.data,
-      });
-    }
+    await updateLibraryAppinfoEntry(appId, {
+      app_id: appId,
+      name: appInfo.name,
+      header_image: appInfo.header_image,
+      cover_path: null,
+      grid_path: null,
+      hero_path: null,
+      logo_path: null,
+      icon_path: null,
+      updated_at: nowTimestamp(),
+    });
 
     return true;
   } catch {
