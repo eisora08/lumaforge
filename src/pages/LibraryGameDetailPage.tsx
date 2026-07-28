@@ -1131,7 +1131,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   return (
-    <>
+    <div className="lf-page-in h-full">
       <LibraryGameDetails
         key={`library:game-details:${selectedGame.source ?? "unknown"}:${selectedGame.appId || selectedGame.id}`}
         game={displayGame}
@@ -1167,6 +1167,6 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         onMarkStopped={handleMarkAsStopped}
         onFindProcess={handleFindProcess}
       />
-    </>
+    </div>
   );
 }

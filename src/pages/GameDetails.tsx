@@ -28,7 +28,7 @@ const DEBUG_GAME_DETAILS = false;
 
 function DetailsShell({ onBack }: { onBack: () => void }) {
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7">
+    <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7 lf-page-in">
       <button
         onClick={onBack}
         className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
@@ -425,7 +425,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
 
   if (!displayGame) {
     return (
-      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
+      <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7 lf-page-in">
         <p className="text-(--color-muted)">No game selected.</p>
       </div>
     );
@@ -436,7 +436,7 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7">
+    <div className="mx-auto w-full max-w-[1440px] p-5 lg:p-7 lf-page-in">
       <StoreGameDetailsPage
         game={displayGame}
         metadata={metadata}

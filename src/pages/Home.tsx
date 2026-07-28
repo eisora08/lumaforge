@@ -295,7 +295,7 @@ export default function Home({ onNavigate }: Props) {
   }, [deferredRendering, initialVisibleSections]);
 
   return (
-    <div className="mx-auto w-full px-6 py-6 lg:px-8 xl:px-10 lf-fade-in" style={{ maxWidth: maxWidth ? `${maxWidth}px` : undefined }}>
+    <div className="mx-auto w-full px-6 py-6 lg:px-8 xl:px-10 lf-page-in" style={{ maxWidth: maxWidth ? `${maxWidth}px` : undefined }}>
       <div className="space-y-8">
         {/* ── Hero ──────────────────────────────────────────────── */}
         {heroEnabled && <GameHero onNavigate={onNavigate} />}

@@ -397,7 +397,7 @@ html {
 ========================= */
 
 .lf-page-in {
-  animation: lfPageIn 240ms cubic-bezier(.2,.8,.2,1) both;
+  animation: lfPageIn 400ms cubic-bezier(.2,.8,.2,1) both;
 }
 
 @keyframes lfPageIn {
@@ -409,6 +409,27 @@ html {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* =========================
+   HERO FADE-IN (blur layer reveals first, sharp image follows)
+   Gives a sense of depth — the ambient blur fades in 200ms sooner
+   than the sharp foreground image.
+========================= */
+
+@keyframes heroBlurIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes heroSharpIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-hero-blur-in {
+  animation: heroBlurIn 800ms cubic-bezier(.2,.8,.2,1) both;
+}
+.animate-hero-sharp-in {
+  animation: heroSharpIn 1000ms cubic-bezier(.2,.8,.2,1) both;
 }
 
 /* =========================

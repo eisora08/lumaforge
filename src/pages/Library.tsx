@@ -4,7 +4,10 @@ import {
   ChevronRight,
   FileCode2,
   FolderSearch,
+  Gamepad2,
+  Grid3X3,
   Library,
+  List,
   Plus,
   RefreshCcw,
   Settings,
@@ -136,6 +139,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
+  const [layout, setLayout] = useState<"grid" | "list">("grid");
   const queuedMediaRef = useRef<Set<string>>(new Set());
   const { confirm } = useConfirm();
 
@@ -205,25 +209,29 @@ export default function LibraryPage({ onNavigate }: Props) {
   }, [displayGames, filter, sort, searchQuery]);
 
   const PAGE_SIZES = [22, 34, 44] as const;
+  const SHOW_ALL = -1;
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(22);
 
+  const isShowAll = pageSize === SHOW_ALL;
+
   useEffect(() => {
-    setCurrentPage(1);
+    if (!isShowAll) setCurrentPage(1);
   }, [filter, sort, searchQuery]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredGames.length / pageSize));
+  const totalPages = isShowAll ? 1 : Math.max(1, Math.ceil(filteredGames.length / pageSize));
 
   useEffect(() => {
-    if (currentPage > totalPages) {
+    if (!isShowAll && currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [currentPage, totalPages]);
+  }, [currentPage, totalPages, isShowAll]);
 
   const paginatedGames = useMemo(() => {
+    if (isShowAll) return filteredGames;
     const start = (currentPage - 1) * pageSize;
     return filteredGames.slice(start, start + pageSize);
-  }, [filteredGames, currentPage, pageSize]);
+  }, [filteredGames, currentPage, pageSize, isShowAll]);
 
   // Resolve artwork/cache for visible games — queued, throttled, cache-first
   // Intentionally does NOT depend on mediaCacheMap to avoid re-enqueue loops.
@@ -287,6 +295,25 @@ export default function LibraryPage({ onNavigate }: Props) {
       }
     }
   }, [paginatedGames, settings.steamGridDbApiKey, settings.steamGridDbArtworkEnabled]);
+
+  // Progressive render for large grids — render in chunks to avoid blocking the UI
+  const PROGRESSIVE_CHUNK = 44;
+  const [renderedCardCount, setRenderedCardCount] = useState(PROGRESSIVE_CHUNK);
+
+  useEffect(() => {
+    if (isShowAll && filteredGames.length > PROGRESSIVE_CHUNK) {
+      setRenderedCardCount(PROGRESSIVE_CHUNK);
+      const timer = setTimeout(() => {
+        setRenderedCardCount(filteredGames.length);
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+    setRenderedCardCount(filteredGames.length);
+  }, [isShowAll, filteredGames.length]);
+
+  const visibleGames = useMemo(() => {
+    return paginatedGames.slice(0, isShowAll ? renderedCardCount : paginatedGames.length);
+  }, [paginatedGames, isShowAll, renderedCardCount]);
 
   // Viewport-based data loading is handled per-card in GameLauncherTile
   // using useInViewport hook — items request data when they enter the viewport.
@@ -483,7 +510,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   }
 
   return (
-    <div className="flex h-full flex-col lf-fade-in">
+    <div className="flex h-full flex-col lf-page-in">
       <div className="flex min-w-0 flex-1 flex-col">
         {showLuaSetup ? (
           <div className="flex flex-1 items-center justify-center p-5 lg:p-7">
@@ -614,7 +641,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                     )}
                   </div>
 
-                  {paginatedGames.length === 0 ? (
+                    {visibleGames.length === 0 ? (
                     <div className="flex flex-1 items-center justify-center rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-12 text-center">
                       {filter === "lua" ? (
                         <>
@@ -649,24 +676,59 @@ export default function LibraryPage({ onNavigate }: Props) {
                     </div>
                   ) : (
                     <div className="flex-1">
-                      <div
-                        className="grid lf-card-stagger"
-                        style={{
-                          gridTemplateColumns: `repeat(auto-fill, minmax(${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeCardSize : settings.libraryCardSize}px, 1fr))`,
-                          gap: `${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeGap : settings.libraryGridGap}px`,
-                        }}>
-                        {paginatedGames.map((game) => (
-                          <GameLauncherTile
-                            key={game.id}
-                            game={game}
-                            appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
-                            onSelect={handleOpenGame}
-                            onPlay={handlePlay}
-                            onInstall={handleInstall}
-                            onDeleteScript={handleDeleteScript}
-                          />
-                        ))}
-                      </div>
+                      {layout === "grid" ? (
+                        <div
+                          className="grid lf-card-stagger"
+                          style={{
+                            gridTemplateColumns: `repeat(auto-fill, minmax(${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeCardSize : settings.libraryCardSize}px, 1fr))`,
+                            gap: `${settings.libraryCardArtworkMode === "landscape" ? settings.libraryLandscapeGap : settings.libraryGridGap}px`,
+                          }}>
+                          {visibleGames.map((game) => (
+                            <GameLauncherTile
+                              key={game.id}
+                              game={game}
+                              appInfoEntry={game.appId ? (appInfoMap[game.appId] ?? null) : null}
+                              onSelect={handleOpenGame}
+                              onPlay={handlePlay}
+                              onInstall={handleInstall}
+                              onDeleteScript={handleDeleteScript}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          {visibleGames.map((game) => (
+                            <button
+                              key={game.id}
+                              type="button"
+                              onClick={() => handleOpenGame(game)}
+                              className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-(--color-accent)/30 lf-press-effect"
+                            >
+                              <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-white/5">
+                                {game.imageUrl ? (
+                                  <img src={game.imageUrl} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center">
+                                    <Gamepad2 className="h-4 w-4 text-(--color-muted)" />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-[13px] font-medium text-(--color-text)">{game.title}</p>
+                                <p className="truncate text-[11px] text-(--color-muted)">
+                                  {game.metadata?.developer || game.source || ""}
+                                  {game.sizeOnDisk ? ` · ${(game.sizeOnDisk / 1073741824).toFixed(1)} GB` : ""}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {game.hasLua && <span className="rounded bg-(--color-accent)/10 px-1.5 py-0.5 text-[9px] text-(--color-accent)">Lua</span>}
+                                {game.source === "epic" && <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-400">Epic</span>}
+                                {game.steamInstalled && <span className="hidden text-[10px] text-(--color-muted)/50 sm:inline">Installed</span>}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -688,11 +750,39 @@ export default function LibraryPage({ onNavigate }: Props) {
               </div>
             </PageContainer>
 
-            {paginatedGames.length > 0 && (
+            {visibleGames.length > 0 && (
               <div className="shrink-0 bg-(--color-bg)/60">
                 <div className={`mx-auto flex w-full items-center justify-between px-6 py-2.5 lg:px-8 xl:px-10 ${settings.libraryUseFullWidth ? "" : "max-w-[1900px]"}`}>
                   <div className="flex items-center gap-2 text-sm text-(--color-muted)">
-                    <span className="text-xs font-medium uppercase tracking-wider text-(--color-muted)/60">Grid</span>
+                    {/* Layout toggle */}
+                    <div className="mr-2 flex items-center overflow-hidden rounded-lg border border-(--surface-active-border)/30 bg-(--color-surface)">
+                      <button
+                        type="button"
+                        onClick={() => setLayout("grid")}
+                        className={`inline-flex cursor-pointer items-center gap-1 px-2.5 py-1.5 text-[11px] transition ${
+                          layout === "grid"
+                            ? "bg-(--color-accent)/15 text-(--color-accent)"
+                            : "text-(--color-muted) hover:text-(--color-text)"
+                        }`}
+                        title="Grid view"
+                      >
+                        <Grid3X3 className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLayout("list")}
+                        className={`inline-flex cursor-pointer items-center gap-1 px-2.5 py-1.5 text-[11px] transition ${
+                          layout === "list"
+                            ? "bg-(--color-accent)/15 text-(--color-accent)"
+                            : "text-(--color-muted) hover:text-(--color-text)"
+                        }`}
+                        title="List view"
+                      >
+                        <List className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    <span className="text-xs font-medium uppercase tracking-wider text-(--color-muted)/60">{layout === "grid" ? "Grid" : "List"}</span>
                     <select
                       value={pageSize}
                       onChange={(e) => {
@@ -704,6 +794,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                       {PAGE_SIZES.map((s) => (
                         <option key={s} value={s}>{s}</option>
                       ))}
+                      <option value={SHOW_ALL}>Show All</option>
                     </select>
                   </div>
 

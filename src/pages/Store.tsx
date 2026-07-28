@@ -15,6 +15,7 @@ import type { StoreSearchDropdownItem } from "../components/packages/PackagesToo
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
+import LazySectionWrapper from "../components/store/LazySectionWrapper";
 import StoreNewsFeed from "../components/store/StoreNewsFeed";
 import type { StoreNewsItem } from "../components/store/StoreNewsFeed";
 import StoreGameDetailsPage from "../components/store/StoreGameDetailsPage";
@@ -3841,7 +3842,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                 </div>
               </div>
             </div>
-          ) : discoverSections.map((section) => {
+          ) : discoverSections.map((section, idx) => {
             const desc = section.id === "for-you"
               ? "Personalized picks based on your activity."
               : section.id === "top-picks"
@@ -3857,7 +3858,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                         : section.id.startsWith("genre-")
                         ? `Popular ${section.title} games.`
                         : "";
-            return (
+            const sectionEl = (
               <StoreHorizontalSection
                 key={section.id}
                 sectionKey={section.id}
@@ -3871,17 +3872,28 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                 })}
               </StoreHorizontalSection>
             );
+            return (
+              <LazySectionWrapper
+                key={section.id}
+                sectionId={section.id}
+                immediate={idx < 2}
+              >
+                {sectionEl}
+              </LazySectionWrapper>
+            );
           })}
 
           {moreToExploreGames.length > 0 && (
-            <StoreHorizontalSection
-              key="more-to-explore"
-              sectionKey="more-to-explore"
-              title="More to Explore"
-              description={`${moreToExploreGames.length} games from the catalog`}
-            >
-              {moreToExploreGames.slice(0, MORE_TO_EXPLORE_MOUNT_LIMIT).map(renderStoreCard)}
-            </StoreHorizontalSection>
+            <LazySectionWrapper sectionId="more-to-explore">
+              <StoreHorizontalSection
+                key="more-to-explore"
+                sectionKey="more-to-explore"
+                title="More to Explore"
+                description={`${moreToExploreGames.length} games from the catalog`}
+              >
+                {moreToExploreGames.slice(0, MORE_TO_EXPLORE_MOUNT_LIMIT).map(renderStoreCard)}
+              </StoreHorizontalSection>
+            </LazySectionWrapper>
           )}
 
           {providerReports.length > 0 && (

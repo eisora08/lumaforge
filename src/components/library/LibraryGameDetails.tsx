@@ -17,7 +17,6 @@ import {
   ExternalLink,
   FileCode2,
   FolderOpen,
-  Gamepad2,
   HardDrive,
   LifeBuoy,
   Loader2,
@@ -249,6 +248,7 @@ export default function LibraryGameDetails({
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editDialogTab, setEditDialogTab] = useState<"general" | "media">("general");
   const [heroImgError, setHeroImgError] = useState(false);
+  const [heroImageLoaded, setHeroImageLoaded] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const favoriteId = game.appId || game.id;
   const favorite = isFavorite(favoriteId);
@@ -332,9 +332,10 @@ export default function LibraryGameDetails({
   const rawImageUrl = getHeroImageUrl(game, artwork, appInfoEntry, mediaEntry, canonicalAppInfo, canonicalDiskFallback, fallbackBundle);
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
 
-  // Reset hero image error when a new URL is resolved
+  // Reset hero image states when a new URL is resolved
   useEffect(() => {
     setHeroImgError(false);
+    setHeroImageLoaded(false);
   }, [rawImageUrl]);
 
   useEffect(() => {
@@ -1061,7 +1062,9 @@ export default function LibraryGameDetails({
   if (loading) {
     return (
       <div className="flex h-full flex-col overflow-y-auto">
-        <div className="aspect-[21/9] min-h-[340px] max-h-[520px] animate-pulse bg-white/5" />
+        <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] overflow-hidden bg-black">
+          <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-black/40" />
+        </div>
         <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
           <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
             <div className="mb-2 h-9 w-24 animate-pulse rounded-xl bg-white/10" />
@@ -1115,15 +1118,15 @@ export default function LibraryGameDetails({
         <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
           {canonicalLoaded && imageUrl && !heroImgError ? (
             <img
+              key={imageUrl}
               src={imageUrl}
               alt=""
               onError={() => setHeroImgError(true)}
-              className="h-full w-full scale-105 object-cover blur-2xl"
+              onLoad={() => setHeroImageLoaded(true)}
+              className={`h-full w-full scale-105 object-cover blur-2xl opacity-0 ${heroImageLoaded ? "animate-hero-blur-in" : ""}`}
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center bg-black/40">
-              <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
-            </div>
+            <div className="h-full w-full bg-gradient-to-b from-white/[0.03] to-black/40" />
           )}
         </div>
 
@@ -1133,15 +1136,15 @@ export default function LibraryGameDetails({
         <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
           {canonicalLoaded && imageUrl && !heroImgError ? (
             <img
+              key={imageUrl}
               src={imageUrl}
               alt={detailTitle}
               onError={() => setHeroImgError(true)}
-              className="block h-full w-auto max-w-none shrink-0 [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]"
+              onLoad={() => setHeroImageLoaded(true)}
+              className={`block h-full w-auto max-w-none shrink-0 opacity-0 ${heroImageLoaded ? "animate-hero-sharp-in" : ""} [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <Gamepad2 className="h-20 w-20 text-(--color-muted)" />
-            </div>
+            <div className="h-full w-full" />
           )}
         </div>
 

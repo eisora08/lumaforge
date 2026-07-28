@@ -144,7 +144,7 @@ export default function Achievements() {
   }, [selectedGame, settings]);
 
   return (
-    <div className="flex h-full flex-col lf-fade-in">
+    <div className="flex h-full flex-col lf-page-in">
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         <div className="p-5 lg:p-7 max-w-5xl mx-auto space-y-6">
           {/* Header */}

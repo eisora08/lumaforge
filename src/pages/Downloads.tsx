@@ -70,7 +70,7 @@ export default function Downloads({ onNavigate }: Props) {
   ), [jobs]);
 
   return (
-    <div className="space-y-6 p-5 lg:p-7">
+    <div className="space-y-6 p-5 lg:p-7 lf-page-in">
       {/* ── Header ── */}
       <header>
         <span className="mb-3 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 py-1 text-xs text-(--color-accent)">

@@ -56,7 +56,7 @@ export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col lf-page-in">
       <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02] px-5 py-3 lg:px-7">
         <button
           onClick={onBack}
