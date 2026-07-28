@@ -22,7 +22,7 @@ import type { SteamAppMetadata } from "../types/gameMetadata";
 import type {
   StoreAppInfoEntry,
   GameStoreDetails,
-  StoreGameDetailsEntry,
+  StoreReviewEntry,
   SqliteMediaCacheEntry,
   SqliteMetadataCacheEntry,
 } from "./tauri";
@@ -77,7 +77,7 @@ export type NormalizedGameMetadata = {
 export type StoreDataResult = {
   appInfo: StoreAppInfoEntry | null;
   details: GameStoreDetails | null;
-  reviews: StoreGameDetailsEntry | null;
+  reviews: StoreReviewEntry | null;
   metadata: SteamAppMetadata | null;
 };
 
@@ -623,7 +623,7 @@ export async function getStoreData(appId: string): Promise<StoreDataResult | nul
   }
 
   try {
-    result.reviews = await getStoreReviewSummary(numericAppId) as unknown as StoreGameDetailsEntry | null;
+    result.reviews = await getStoreReviewSummary(numericAppId) as unknown as StoreReviewEntry | null;
   } catch {
     // non-critical
   }

@@ -973,13 +973,6 @@ export type StoreAppInfoEntry = {
 
 export type StoreAppInfoMap = Record<string, StoreAppInfoEntry>;
 
-export type StoreGameDetailsEntry = {
-  app_id: number;
-  data: unknown;
-  updated_at: number;
-  version: number;
-};
-
 export type StoreReviewEntry = {
   app_id: number;
   data: unknown;
@@ -1009,19 +1002,6 @@ export async function updateStoreAppinfoEntry(
   entry: StoreAppInfoEntry
 ): Promise<void> {
   return await invoke<void>("update_store_appinfo_entry", { appId, entry });
-}
-
-export async function readStoreGameDetails(
-  appId: number
-): Promise<StoreGameDetailsEntry | null> {
-  return await invoke<StoreGameDetailsEntry | null>("read_store_game_details", { appId });
-}
-
-export async function writeStoreGameDetails(
-  appId: number,
-  entry: StoreGameDetailsEntry
-): Promise<void> {
-  return await invoke<void>("write_store_game_details", { appId, entry });
 }
 
 export async function readStoreReviewSummary(
@@ -2325,6 +2305,14 @@ export async function readAllGames(): Promise<GameEntry[]> {
     return await invoke<GameEntry[]>("read_all_games");
   } catch {
     return [];
+  }
+}
+
+export async function updateGameMetadataJson(appId: string, metadataJson: string): Promise<void> {
+  try {
+    await invoke("update_game_metadata_json", { appId, metadataJson });
+  } catch {
+    // silent — best-effort sync
   }
 }
 

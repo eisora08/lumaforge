@@ -25,18 +25,29 @@ export default function StoreGameDlcSection({
   );
 
   const hasCards = validDlcItems.length > 0;
+  const _lastDlcScrollUpdate = useRef(0);
+
+  function checkScroll() {
+    const now = Date.now();
+    if (now - _lastDlcScrollUpdate.current < 100) return;
+    _lastDlcScrollUpdate.current = now;
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 4);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
+  }
 
   useEffect(() => {
     const id = setTimeout(checkScroll, 100);
     return () => clearTimeout(id);
   }, [validDlcItems.length]);
 
-  function checkScroll() {
+  useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    setCanScrollLeft(el.scrollLeft > 4);
-    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
-  }
+    el.addEventListener("scroll", checkScroll, { passive: true });
+    return () => el.removeEventListener("scroll", checkScroll);
+  }, [validDlcItems.length]);
 
   function scrollRight() {
     const el = scrollRef.current;
@@ -95,7 +106,6 @@ export default function StoreGameDlcSection({
 
           <div
             ref={scrollRef}
-            onScroll={checkScroll}
             className="flex gap-3 overflow-x-auto pb-2 scrollbar-none"
           >
             {validDlcItems.map((dlc) => (

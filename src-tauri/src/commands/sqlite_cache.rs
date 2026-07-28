@@ -8,6 +8,12 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 // ---------------------------------------------------------------------------
+// Debug flags
+// ---------------------------------------------------------------------------
+
+const ENABLE_VERBOSE_SQLITE_LOGS: bool = false;
+
+// ---------------------------------------------------------------------------
 // State: lazily initialized SQLite connection
 // ---------------------------------------------------------------------------
 
@@ -468,6 +474,32 @@ pub fn read_all_games(
     }
 
     Ok(games)
+}
+
+#[tauri::command]
+pub fn update_game_metadata_json(
+    app_id: String,
+    metadata_json: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    guard
+        .execute(
+            "UPDATE games SET metadata_json = ?1, updated_at = ?2 WHERE appId = ?3",
+            rusqlite::params![metadata_json, now, app_id],
+        )
+        .map_err(|e| format!("Update metadata_json error: {}", e))?;
+    if ENABLE_VERBOSE_SQLITE_LOGS {
+        println!("[SQLite] metadata_json updated for appId={}", app_id);
+    }
+    Ok(())
 }
 
 #[tauri::command]

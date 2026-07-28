@@ -87,7 +87,11 @@ export default function StoreGameMediaGallery({
   const currentPrefSrc = currentIsTrailer ? getPreferredSrc(currentItem) : undefined;
   const currentBestType = currentIsTrailer ? getBestType(currentItem) : "unknown";
 
+  const _lastMediaScrollUpdate = useRef(0);
   function updateScrollState() {
+    const now = Date.now();
+    if (now - _lastMediaScrollUpdate.current < 150) return;
+    _lastMediaScrollUpdate.current = now;
     const el = railRef.current;
     if (!el) return;
     const left = el.scrollLeft > 4;

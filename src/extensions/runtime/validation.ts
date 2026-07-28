@@ -15,6 +15,7 @@
 
 import type { ExtensionManifestV1, PermissionEntry, CapabilityEntry } from "../types";
 import { VALIDATION_PATTERNS, MAX_LENGTHS } from "../types";
+import { VALID_SURFACES } from "../contributions/types";
 
 // =============================================================================
 // Types
@@ -179,7 +180,6 @@ function validateContributionSurfaces(
       errors.push("metadata.surfaces must be an array");
       return;
     }
-    const { VALID_SURFACES } = require("../contributions/types");
     for (const s of surfaces) {
       if (typeof s !== "string" || !VALID_SURFACES.has(s)) {
         errors.push(`Unknown surface "${s}"`);

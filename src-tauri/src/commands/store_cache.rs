@@ -26,15 +26,6 @@ pub struct StoreAppInfoEntry {
 pub type StoreAppInfoMap = HashMap<String, StoreAppInfoEntry>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoreGameDetailsEntry {
-    pub app_id: u32,
-    #[serde(flatten)]
-    pub data: serde_json::Value,
-    pub updated_at: u64,
-    pub version: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoreReviewEntry {
     pub app_id: u32,
     #[serde(flatten)]
@@ -83,12 +74,6 @@ fn get_store_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(store_dir)
 }
 
-fn get_details_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    let dir = get_store_dir(app_handle)?.join("details");
-    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create details dir: {}", e))?;
-    Ok(dir)
-}
-
 fn get_media_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let dir = get_store_dir(app_handle)?.join("media");
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create media dir: {}", e))?;
@@ -111,10 +96,6 @@ fn get_discovery_index_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
 
 fn get_catalog_sections_cache_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(get_store_dir(app_handle)?.join("catalog-sections-cache.json"))
-}
-
-fn get_details_path(app_handle: &AppHandle, app_id: u32) -> Result<PathBuf, String> {
-    Ok(get_details_dir(app_handle)?.join(format!("{}.json", app_id)))
 }
 
 fn get_review_path(app_handle: &AppHandle, app_id: u32) -> Result<PathBuf, String> {
@@ -213,71 +194,6 @@ pub fn update_store_appinfo_entry(
         .map_err(|e| format!("Failed to write store appinfo: {}", e))?;
 
     log_store("appinfo entry updated");
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Store game details  —  app_data/store/details/{appid}.json
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn read_store_game_details(
-    app_handle: AppHandle,
-    app_id: u32,
-) -> Result<Option<StoreGameDetailsEntry>, String> {
-    let path = get_details_path(&app_handle, app_id)?;
-
-    if !path.exists() {
-        log_store(&format!("details miss for {}", app_id));
-        return Ok(None);
-    }
-
-    let content = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            log_store(&format!("details read error for {}: {}", app_id, e));
-            return Ok(None);
-        }
-    };
-
-    let entry: StoreGameDetailsEntry = match serde_json::from_str(&content) {
-        Ok(e) => e,
-        Err(_) => {
-            log_store(&format!("details corrupt for {}", app_id));
-            return Ok(None);
-        }
-    };
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-
-    if entry.version != 1 || now - entry.updated_at > 24 * 60 * 60 * 1000 {
-        let _ = fs::remove_file(&path);
-        log_store(&format!("details expired for {}", app_id));
-        return Ok(None);
-    }
-
-    log_store(&format!("details hit for {}", app_id));
-    Ok(Some(entry))
-}
-
-#[tauri::command]
-pub fn write_store_game_details(
-    app_handle: AppHandle,
-    app_id: u32,
-    entry: StoreGameDetailsEntry,
-) -> Result<(), String> {
-    let path = get_details_path(&app_handle, app_id)?;
-
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize store game details: {}", e))?;
-
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write store game details: {}", e))?;
-
-    log_store(&format!("details saved for {}", app_id));
     Ok(())
 }
 

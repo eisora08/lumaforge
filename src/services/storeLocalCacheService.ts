@@ -9,7 +9,7 @@ import {
   persistStoreDetails,
 } from "./gameCacheService";
 
-import type { StoreAppInfoEntry, StoreAppInfoMap, GameStoreDetails, StoreGameDetailsEntry } from "./tauri";
+import type { StoreAppInfoEntry, StoreAppInfoMap, GameStoreDetails, StoreReviewEntry } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 
 // ---------------------------------------------------------------------------
@@ -77,10 +77,9 @@ export async function saveStoreGameDetails(appId: number, metadata: SteamAppMeta
   }
 }
 
-export async function getStoreReviewSummary(appId: number): Promise<StoreGameDetailsEntry | null> {
+export async function getStoreReviewSummary(appId: number): Promise<StoreReviewEntry | null> {
   try {
-    const entry = await readStoreReviewSummary(appId);
-    return entry as unknown as StoreGameDetailsEntry | null;
+    return await readStoreReviewSummary(appId);
   } catch {
     return null;
   }

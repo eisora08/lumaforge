@@ -17,8 +17,12 @@ export default function ConsoleMediaGallery({ items, selectedIndex, onSelect, fo
 
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const _lastConsoleScrollUpdate = useRef(0);
 
   const updateRailScrollState = useCallback(() => {
+    const now = Date.now();
+    if (now - _lastConsoleScrollUpdate.current < 100) return;
+    _lastConsoleScrollUpdate.current = now;
     const el = railRef.current;
     if (!el) return;
     setCanScrollLeft(el.scrollLeft > 4);
@@ -28,7 +32,7 @@ export default function ConsoleMediaGallery({ items, selectedIndex, onSelect, fo
   useEffect(() => {
     const el = railRef.current;
     if (!el) return;
-    el.addEventListener("scroll", updateRailScrollState);
+    el.addEventListener("scroll", updateRailScrollState, { passive: true });
     const ro = new ResizeObserver(updateRailScrollState);
     ro.observe(el);
     updateRailScrollState();

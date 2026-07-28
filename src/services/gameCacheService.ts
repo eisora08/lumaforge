@@ -3,6 +3,7 @@ import {
   saveGameAppInfo,
   getStoreDetails,
   saveStoreDetails,
+  updateGameMetadataJson,
   getGameArtwork,
   saveGameArtwork,
   cacheLandscapeImage,
@@ -1259,6 +1260,10 @@ export async function loadStoreDetails(appId: string): Promise<GameStoreDetails 
 
 export async function persistStoreDetails(appId: string, entry: GameStoreDetails): Promise<void> {
   await saveStoreDetails(appId, entry);
+  if (entry.data) {
+    const metadataJson = typeof entry.data === "string" ? entry.data : JSON.stringify(entry.data);
+    updateGameMetadataJson(appId, metadataJson);
+  }
 }
 
 export async function loadGameArtwork(appId: string): Promise<GameArtwork | null> {

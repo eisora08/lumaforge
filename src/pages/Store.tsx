@@ -178,7 +178,7 @@ let _lastGenreGroupsLog: string | null = null;
 
 // Phase 8: Module-level cache for the filtered "more to explore" pool.
 // Avoids re-filtering 162k catalog entries on every render when only visibleCount changes.
-let _cachedMorePool: { catalogFp: string; excludeFp: string; pool: { appid: number; name: string }[] } | null = null;
+let _cachedMorePool: { catalogFp: string; excludeFp: string; scoreFp: string; pool: { appid: number; name: string }[] } | null = null;
 function computeExcludeFingerprint(games: { appId: string }[], sections: { games: { appId: string }[] }[]): string {
   const ids: string[] = [];
   for (const g of games) ids.push(g.appId);
@@ -1706,10 +1706,14 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       scoreLookup.set(hq.appId, hq.score);
     }
 
+    // Lightweight score fingerprint (O(5)) to detect meaningful score changes
+    const scoreFp = highQualityPool.length + ":" +
+      highQualityPool.slice(0, 5).map(h => h.appId.slice(0, 8) + ":" + Math.round(h.score)).join(",");
+
     // Phase 8: Use module-level cached pool to avoid re-filtering 162k entries.
-    // Only rebuild pool when catalog or exclusions change.
+    // Only rebuild pool when catalog, exclusions, or scores change.
     const excludeFp = computeExcludeFingerprint(featuredGames, sectionModels);
-    if (!_cachedMorePool || _cachedMorePool.catalogFp !== catalogFingerprint || _cachedMorePool.excludeFp !== excludeFp) {
+    if (!_cachedMorePool || _cachedMorePool.catalogFp !== catalogFingerprint || _cachedMorePool.excludeFp !== excludeFp || _cachedMorePool.scoreFp !== scoreFp) {
       const excludeIds = new Set<string>();
       featuredGames.forEach((g) => excludeIds.add(g.appId));
       sectionModels.forEach((s) => s.games.forEach((g) => excludeIds.add(g.appId)));
@@ -1727,16 +1731,9 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         const sb = scoreLookup.get(String(b.appid)) ?? 0;
         return sb - sa;
       });
-      _cachedMorePool = { catalogFp: catalogFingerprint, excludeFp, pool };
-    } else {
-      // Re-sort if scoreLookup changed (e.g., reviews loaded)
-      const pool = _cachedMorePool.pool;
-      pool.sort((a, b) => {
-        const sa = scoreLookup.get(String(a.appid)) ?? 0;
-        const sb = scoreLookup.get(String(b.appid)) ?? 0;
-        return sb - sa;
-      });
+      _cachedMorePool = { catalogFp: catalogFingerprint, excludeFp, scoreFp, pool };
     }
+    // else: pool is already sorted correctly, skip re-sort
     const pool = _cachedMorePool.pool;
 
     const games = pool.slice(0, effectiveDiscoverCount).map((entry) => {
