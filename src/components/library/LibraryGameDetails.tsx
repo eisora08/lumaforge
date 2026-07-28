@@ -95,6 +95,7 @@ type LibraryGameDetailsProps = {
   localDetailsData?: unknown;
   fallbackBundle?: ResolvedGameMediaBundle | null;
   loading?: boolean;
+  canonicalLoaded?: boolean;
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
   onSync?: (game: LibraryGame) => void;
@@ -225,6 +226,7 @@ export default function LibraryGameDetails({
   canonicalDiskFallback,
   localDetailsData,
   loading = false,
+  canonicalLoaded = true,
   onPlay,
   onInstall,
   onDeleteScript,
@@ -1100,7 +1102,7 @@ export default function LibraryGameDetails({
         {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
             object-position: center ensures the same crop region as the sharp image. */}
         <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
-          {imageUrl && !heroImgError ? (
+          {canonicalLoaded && imageUrl && !heroImgError ? (
             <img
               src={imageUrl}
               alt=""
@@ -1118,7 +1120,7 @@ export default function LibraryGameDetails({
         {/* 0-4% transparent buffer → 4-12% linear fade-in → 12-88% full opacity → 88-96% fade-out → 96-100% transparent.
             Wider 8% transition zone creates a smooth, invisible seam with the blurred backdrop. */}
         <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
-          {imageUrl && !heroImgError ? (
+          {canonicalLoaded && imageUrl && !heroImgError ? (
             <img
               src={imageUrl}
               alt={detailTitle}
@@ -1140,6 +1142,7 @@ export default function LibraryGameDetails({
         <div className="absolute inset-x-0 bottom-0 z-20 h-[clamp(80px,15vh,180px)] bg-linear-to-t from-black/60 via-black/5 to-transparent pointer-events-none" />
 
         {/* Bottom content: logo + title */}
+        {canonicalLoaded && (
         <div className="absolute bottom-0 left-0 right-0 z-30">
           <div className="mx-auto w-full max-w-[1440px] px-5 pb-4 lg:pb-5">
             {logoUrl ? (
@@ -1163,9 +1166,8 @@ export default function LibraryGameDetails({
             )}
           </div>
         </div>
+        )}
       </div>
-
-      {/* Compact action/stats row with gradient transition */}
       <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
         <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">

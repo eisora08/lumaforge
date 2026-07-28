@@ -66,6 +66,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [canonicalDiskFallback, setCanonicalDiskFallback] = useState<string | null>(null);
   const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
   const [fallbackBundle, setFallbackBundle] = useState<ResolvedGameMediaBundle | null>(null);
+  const [canonicalLoaded, setCanonicalLoaded] = useState(false);
   const currentRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
   const _prevAppIdRef = useRef<string | null>(null);
@@ -187,6 +188,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setLocalDetailsData(null);
     setFallbackBundle(null);
     setArtwork(null);
+    setCanonicalLoaded(false);
     _refreshInitiatorRef.current = null;
 
     // ── Manual games: load from manualGameStore ──
@@ -220,6 +222,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
               iconPath: icUrl,
             },
           } as any);
+          setCanonicalLoaded(true);
 
           // localDetailsData: all manual fields including linkedSteamAppId
           setLocalDetailsData({
@@ -280,6 +283,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             iconPath: icUrl,
           },
         } as any);
+        setCanonicalLoaded(true);
 
         // localDetailsData from metadata (synthetic SteamAppMetadata built by mergeEpicOverrides)
         const meta = selectedGame.metadata;
@@ -305,7 +309,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       return () => { cancelled = true; };
     }
 
-    if (!selectedGame?.appId) return;
+    if (!selectedGame?.appId) { setCanonicalLoaded(true); return; }
 
     let cancelled = false;
     const appId = selectedGame.appId;
@@ -406,6 +410,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         logDisplay("logo");
       }
       setCanonicalAppInfo(mergedInfo);
+      setCanonicalLoaded(true);
       if (!mergedInfo?.media?.landscapePath && !mergedInfo?.media?.coverPath) {
         resolveGameMediaImageSrc(appId).then((src) => {
           if (!cancelled && src) setCanonicalDiskFallback(src);
@@ -459,7 +464,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           }
         }).catch(() => {});
       }
-    }).catch(() => { if (!cancelled) setCanonicalAppInfo(null); });
+    }).catch(() => { if (!cancelled) { setCanonicalAppInfo(null); setCanonicalLoaded(true); } });
 
     getLibraryGameDetails(appId).then((entry) => {
       if (entry?.data) setLocalDetailsData(entry.data);
@@ -1108,7 +1113,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     );
   }
 
-  const displayGame = selectedGame;
+  const sgdbActive = !!(settings.steamGridDbArtworkEnabled && settings.steamGridDbApiKey);
+  const displayGame = sgdbActive ? selectedGame : (resolvedGame || selectedGame);
   const currentSession = session.getSession(gameKey);
   const appInfoEntry = displayGame.appId ? (appInfoMap[displayGame.appId] ?? null) : null;
   const detailTitle = resolveCanonicalDisplayTitle(
@@ -1126,7 +1132,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   return (
     <>
       <LibraryGameDetails
-        key={`library:game-details:${displayGame.source ?? "unknown"}:${displayGame.appId || displayGame.id}`}
+        key={`library:game-details:${selectedGame.source ?? "unknown"}:${selectedGame.appId || selectedGame.id}`}
         game={displayGame}
         artwork={artwork}
         appInfoEntry={appInfoEntry}
@@ -1136,6 +1142,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         localDetailsData={localDetailsData}
         fallbackBundle={fallbackBundle}
         loading={metadataLoading}
+        canonicalLoaded={canonicalLoaded}
         onPlay={handlePlay}
         onInstall={handleInstall}
         onOpenSteam={handleOpenSteamStore}
