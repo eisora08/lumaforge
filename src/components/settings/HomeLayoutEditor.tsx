@@ -72,7 +72,8 @@ const DASHBOARD_SECTIONS: SectionMeta[] = [
   { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from catalog", heroSourceId: "recommended" },
   { id: "top-played", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time", heroSourceId: "topPlayed" },
   { id: "featured-picks", label: "Featured Picks", icon: <Store className="h-4 w-4" />, color: "text-purple-400", description: "Curated games from global catalog", heroSourceId: "featured" },
-  { id: "trending-right-now", label: "Trending Right Now", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Currently trending games (coming soon)" },
+  { id: "top-picks", label: "Top Picks", icon: <Trophy className="h-4 w-4" />, color: "text-yellow-400", description: "Highly rated games from the catalog", heroSourceId: "topPicks" },
+  { id: "trending-right-now", label: "Trending Right Now", icon: <Zap className="h-4 w-4" />, color: "text-orange-400", description: "Recent releases and new arrivals" },
   { id: "store-highlights", label: "Store Highlights", icon: <Store className="h-4 w-4" />, color: "text-cyan-400", description: "Quick link to the store" },
 ];
 
@@ -81,8 +82,9 @@ const DEFAULT_LIMITS: Record<string, number> = {
   "favorites": 12,
   "recommended": 12,
   "top-played": 12,
-  "featured-picks": 12,
-  "trending-right-now": 12,
+  "featured-picks": 8,
+  "top-picks": 8,
+  "trending-right-now": 8,
   "store-highlights": 4,
 };
 
@@ -432,7 +434,7 @@ export default function HomeLayoutEditor() {
                   </div>
 
                   {/* Limit control — only for non-boolean/static sections */}
-                  {visible && section.id !== "store-highlights" && section.id !== "trending-right-now" && (
+                  {visible && section.id !== "store-highlights" && (
                     <div className="mt-3 flex items-center gap-3 border-t border-(--surface-active-border) pt-3">
                       <span className="text-xs text-(--color-muted)">Max items:</span>
                       <div className="flex items-center gap-1">

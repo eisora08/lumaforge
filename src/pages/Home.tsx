@@ -362,7 +362,7 @@ export default function Home({ onNavigate }: Props) {
 
         {dashboardDiscoveryReady && isSectionVisible("trending-right-now", sectionVisibility) && (
           <SectionWrap deferred={deferredRendering} eager={eagerSections.has("trending-right-now")}>
-            <TrendingRightNowSection onNavigate={onNavigate} />
+            <TrendingRightNowSection onNavigate={onNavigate} maxItems={getSectionLimit("trending-right-now", sectionLimits, 8)} />
           </SectionWrap>
         )}
 
