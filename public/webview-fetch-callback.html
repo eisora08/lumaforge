@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bridge</title>
+  <script>
+    (function() {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var callbackId = params.get('cb');
+        var content = window.name || '';
+        window.name = '';
+        if (callbackId && content) {
+          window.__TAURI_INTERNALS__.invoke('webview_fetch_callback', {
+            callbackId: callbackId,
+            content: content
+          }).catch(function(err) {
+            console.error('[FETCH_CALLBACK] invoke error:', err);
+          });
+        }
+      } catch(e) {
+        console.error('[FETCH_CALLBACK] error:', e);
+      }
+    })();
+  </script>
+</head>
+<body></body>
+</html>

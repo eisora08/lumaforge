@@ -26,6 +26,9 @@ export type AppSettings = {
   igdbClientId: string;
   igdbClientSecret: string;
 
+  debridProviders: DebridProviderConfig;
+  debridEndpoint: string;
+
   googleSearchApiKey: string;
   googleSearchCx: string;
   bingSearchApiKey: string;
@@ -43,7 +46,6 @@ export type AppSettings = {
   overlayNotificationPosition: "top-right" | "top-left" | "bottom-right" | "bottom-left" | "top-center" | "bottom-center";
   achievementAutoSyncEnabled: boolean;
   achievementAutoSyncIntervalSeconds: number;
-
   libraryCardArtworkMode: "landscape" | "poster";
   libraryCardSize: number;
   libraryGridGap: number;
@@ -87,6 +89,20 @@ export type AppSettings = {
   closeToTray: boolean;
   showDashboardOnStartup: boolean;
   disableAutoUpdates: boolean;
+};
+
+export type DebridProviderConfig = {
+  torboxApiKey: string;
+  realDebridApiKey: string;
+  allDebridApiKey: string;
+  premiumizeApiKey: string;
+};
+
+export const DEFAULT_DEBRID_PROVIDER_CONFIG: DebridProviderConfig = {
+  torboxApiKey: "",
+  realDebridApiKey: "",
+  allDebridApiKey: "",
+  premiumizeApiKey: "",
 };
 
 export type AppSettingsKey = keyof AppSettings;

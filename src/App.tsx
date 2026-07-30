@@ -33,6 +33,7 @@ import ModeSwitchSplash from "./components/splash/ModeSwitchSplash";
 import type { ModeSwitchMode } from "./components/splash/ModeSwitchSplash";
 import LibraryLoadProgressCard from "./components/loading/LibraryLoadProgressCard";
 import AchievementWatcherInit from "./components/achievements/AchievementWatcherInit";
+import DebridCompletionModal from "./components/common/DebridCompletionModal";
 
 import { runBootTasks } from "./services/appBootCoordinator";
 import AppRouteTransition from "./components/common/AppRouteTransition";
@@ -290,6 +291,7 @@ function App() {
     <ConfirmProvider>
       <GameSessionProvider>
       <SessionOverlayWrapper />
+      <DebridCompletionModal onNavigateToLibrary={() => handleNavigate("library")} />
       <AchievementWatcherInit />
       <GameDetailsProvider>
         <GameSessionHUD onNavigate={handleNavigate} />

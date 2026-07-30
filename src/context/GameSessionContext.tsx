@@ -130,7 +130,7 @@ export type ActiveGameState = Exclude<GameSessionState, "idle" | "error">;
 
 export type TrackingConfidence = "high" | "medium" | "low" | "none";
 
-export type GameSessionSource = "steam" | "epic" | "local" | "manual" | "unknown";
+export type GameSessionSource = "steam" | "epic" | "debrid" | "local" | "manual" | "unknown";
 
 export type RunningGameSession = {
   gameKey: string;
@@ -264,7 +264,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             console.debug("[GameSession] hydrate: soft session expired", { gameKey: key, age });
             changed = true;
           }
-        } else if (s.source === "steam" || s.source === "epic") {
+        } else if (s.source === "steam" || s.source === "epic" || s.source === "debrid") {
           const age = Date.now() - s.updatedAt;
           if (age < STEAM_SOFT_TTL_MS) {
             console.debug("[GameSession] hydrate: soft session kept", { gameKey: key, age });
@@ -815,7 +815,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           // Epic detection diagnostics — always log for debugging
           if (launchStateRef.current.token === token) {
             const source = sessionsRef.current[computedKey]?.source;
-            if (source === "epic" || candidates.length > 0) {
+            if (source === "epic" || source === "debrid" || candidates.length > 0) {
               console.debug("[Launch][EPIC_SCAN]", {
                 gameKey: computedKey,
                 processCount: processes.length,
@@ -925,7 +925,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           gameId: game.id,
           appId: game.appId,
           title: game.title,
-          source: game.source === "steam" ? "steam" : game.source === "epic" ? "epic" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : "unknown",
+          source: game.source === "steam" ? "steam" : game.source === "epic" ? "epic" : game.source === "debrid" ? "debrid" : game.source === "local" ? "local" : game.source === "manual" ? "manual" : "unknown",
           state: "launching",
           executablePath: game.executablePath,
           installDir: game.installDir,
@@ -983,6 +983,20 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       iconUrl = resolvedIcon ?? resolvedCover ?? resolvedLandscape ?? resolvedBackground;
       heroUrl = resolvedBackground ?? resolvedLandscape ?? resolvedCover;
       imageUrl = resolvedCover ?? resolvedLandscape ?? resolvedBackground;
+    } else if (game.source === "debrid") {
+      // Debrid games: use Steam CDN / metadata (always have Steam appId) plus repack screenshot
+      const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
+      imageUrl = await resolveUrl(rawBestUrl);
+      heroUrl = imageUrl;
+      iconUrl = await resolveUrl(game.iconPath);
+      // Try repack screenshot as hero fallback (more cinematic)
+      if (!imageUrl && game.metadata?.screenshots?.[0]) {
+        const ssUrl = await resolveUrl(game.metadata.screenshots[0]);
+        if (ssUrl) {
+          heroUrl = ssUrl;
+          imageUrl = ssUrl;
+        }
+      }
     } else {
       // Steam / Local: existing behavior — single imageUrl from game metadata
       const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
@@ -991,7 +1005,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       iconUrl = await resolveUrl(game.iconPath);
     }
 
-    const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : "Unknown";
+    const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "debrid" ? "Debrid" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : "Unknown";
     sessionMediaRef.current[computedKey] = { imageUrl, heroUrl, iconUrl, title: game.title, provider: providerLabel };
 
     // Timeout guard — prevents infinite launching
@@ -1032,7 +1046,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     }, guardTimeoutMs);
 
     // Delayed dispatch so Cancel can abort
-    const dispatchDelayMs = game.source === "steam" ? 1500 : game.source === "epic" ? 1500 : 800;
+    const dispatchDelayMs = game.source === "steam" ? 1500 : game.source === "epic" ? 1500 : game.source === "debrid" ? 800 : 800;
     ls.dispatchTimer = setTimeout(async () => {
       ls.dispatchTimer = null;
           if (ls.cancelled || ls.token !== token) return;
@@ -1222,6 +1236,66 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
               ls.inFlight = false;
             }
           }
+        } else if (game.source === "debrid") {
+          // Debrid games: direct executable launch (no protocol)
+          const result = await dispatchProviderLaunch(game);
+          if (ls.cancelled || ls.token !== token) return;
+
+          if (result.dispatched) {
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] debrid dispatched", { gameKey: computedKey, method: result.method });
+            }
+
+            // Scan for process with simple delays (direct executable, fast launch)
+            const DEBRID_SCAN_DELAYS = [2000, 3000, 5000];
+            ls.launchTimeout = setTimeout(async () => {
+              ls.launchTimeout = null;
+              if (ls.token !== token || ls.cancelled) return;
+
+              for (const delayMs of DEBRID_SCAN_DELAYS) {
+                if (ls.token !== token || ls.cancelled) return;
+                await scanForProcessAfterLaunch(computedKey, game, token, delayMs);
+                if (sessionsRef.current[computedKey]?.state === "running") {
+                  return; // process detected — done
+                }
+              }
+
+              // No process detected — fall back to soft session
+              if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+                if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+                  console.debug("[Launch] no debrid process detected, marking soft session", { gameKey: computedKey });
+                }
+                setSessions((prev) => {
+                  const existing = prev[computedKey];
+                  if (!existing || existing.state !== "launching") return prev;
+                  return {
+                    ...prev,
+                    [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                  };
+                });
+                ls.inFlight = false;
+              }
+            }, 2000);
+          } else {
+            // Launch failed — set error state so UI can display message
+            if (ENABLE_VERBOSE_LAUNCH_LOGS) {
+              console.debug("[Launch] debrid failed", { gameKey: computedKey, error: result.error });
+            }
+            setSessions((prev) => {
+              const existing = prev[computedKey];
+              if (!existing) return prev;
+              return {
+                ...prev,
+                [computedKey]: {
+                  ...existing,
+                  state: "error" as ActiveGameState,
+                  errorMessage: result.error ?? "Cannot launch this Debrid game.",
+                  updatedAt: Date.now(),
+                },
+              };
+            });
+            ls.inFlight = false;
+          }
         } else if (game.source === "epic") {
           // Epic protocol or direct executable launch
           // Extended scan window: Epic Launcher needs time to authenticate + start game
@@ -1235,11 +1309,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             }
 
             // Cold-launch retry: if no process found after 10s, re-dispatch once
-            // Handles case where Epic Launcher was cold and first URI was lost
             let retriedColdLaunch = false;
 
-            // Extended scan for process after launch — Epic Launcher needs
-            // time to authenticate, check for updates, and start the game
             ls.launchTimeout = setTimeout(async () => {
               ls.launchTimeout = null;
               if (ls.token !== token || ls.cancelled) return;
@@ -1248,9 +1319,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                 if (ls.token !== token || ls.cancelled) return;
                 await scanForProcessAfterLaunch(computedKey, game, token, delayMs);
                 if (sessionsRef.current[computedKey]?.state === "running") {
-                  return; // process detected — done
+                  return;
                 }
-                // Cold-launch retry at 10s mark: re-dispatch protocol URI once
                 if (!retriedColdLaunch && delayMs >= 10000 && sessionsRef.current[computedKey]?.state === "launching") {
                   retriedColdLaunch = true;
                   if (ENABLE_VERBOSE_LAUNCH_LOGS) {
@@ -1259,13 +1329,11 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                   try {
                     await dispatchProviderLaunch(game);
                   } catch {
-                    // Non-critical — original dispatch already happened
+                    // Non-critical
                   }
                 }
               }
 
-              // No process detected after all scan attempts — error, not soft session
-              // The Epic Launcher may need re-authentication or the game may not be installed correctly
               if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
                 if (ENABLE_VERBOSE_LAUNCH_LOGS) {
                   console.debug("[Launch] no epic process detected after extended scan", { gameKey: computedKey });
@@ -1287,7 +1355,6 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
               }
             }, 2000);
           } else {
-            // Launch failed — set error state so UI can display message
             if (ENABLE_VERBOSE_LAUNCH_LOGS) {
               console.debug("[Launch] epic failed", { gameKey: computedKey, error: result.error });
             }
@@ -1466,7 +1533,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           });
 
           // Start playtime session
-          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "epic" ? "epic" : curSession.source === "local" ? "local" : curSession.source === "manual" ? "manual" : "unknown";
+          const ptProvider = curSession.source === "steam" ? "steam" : curSession.source === "epic" ? "epic" : curSession.source === "debrid" ? "debrid" : curSession.source === "local" ? "local" : curSession.source === "manual" ? "manual" : "unknown";
           startPlaySession({
             gameKey: key,
             appId: curSession.appId,
@@ -1555,7 +1622,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             });
 
             // Persist session record to local history
-            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "epic" ? "epic" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "manual" : "system";
+            const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "epic" ? "epic" : prevSession.source === "debrid" ? "debrid" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "manual" : "system";
             const sessionRecord = createSessionRecord({
               appId: prevSession.appId || key,
               title: prevSession.title || "Unknown Game",

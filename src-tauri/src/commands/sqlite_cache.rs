@@ -94,6 +94,11 @@ fn init_tables(conn: &Connection) -> Result<(), String> {
         eprintln!("[SqliteCache] catalog table init failed (non-fatal): {}", e);
     }
 
+    // Repack catalog tables — Hydra-compatible game repack index
+    if let Err(e) = super::repack_catalog::create_repack_tables(conn) {
+        eprintln!("[SqliteCache] repack catalog table init failed (non-fatal): {}", e);
+    }
+
     Ok(())
 }
 

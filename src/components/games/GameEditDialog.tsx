@@ -41,6 +41,7 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { getManualGame, saveManualGame, updateManualGame } from "../../services/manualGameStore";
 import { readEpicOverrides, writeEpicOverrides } from "../../services/epicOverrideStore";
+import { updateDebridGamePath } from "../../services/debridGameStore";
 import GameImageSearchDialog from "./GameImageSearchDialog";
 import GameMediaRoleRow from "./GameMediaRoleRow";
 import { SourceOption } from "./GameMediaRoleRow";
@@ -56,6 +57,7 @@ export type GameEditDialogProps = {
   appId?: string;
   manualGameId?: string; // raw UUID — normalized internally
   epicProviderGameId?: string; // Epic provider game ID (e.g. "Fortnite" or "AppName")
+  debridProviderGameId?: string; // Debrid provider game ID (from repack catalog)
   open: boolean;
   onClose: () => void;
   initialTab?: TabId;
@@ -158,6 +160,7 @@ export default function GameEditDialog({
   appId,
   manualGameId,
   epicProviderGameId,
+  debridProviderGameId,
   open,
   onClose,
   initialTab = "general",
@@ -167,11 +170,12 @@ export default function GameEditDialog({
   const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Mode detection — manual games use manualGameId, Steam games use appId, Epic uses epicProviderGameId
-  const isManualMode = !!manualGameId && !appId && !epicProviderGameId;
-  const isEpicMode = !!epicProviderGameId && !appId && !manualGameId;
-  const isCreateMode = !appId && !manualGameId && !epicProviderGameId;
-  const effectiveId = manualGameId ?? epicProviderGameId ?? appId ?? "";
+  // Mode detection — manual games use manualGameId, Steam games use appId, Epic uses epicProviderGameId, Debrid uses debridProviderGameId
+  const isManualMode = !!manualGameId && !appId && !epicProviderGameId && !debridProviderGameId;
+  const isEpicMode = !!epicProviderGameId && !appId && !manualGameId && !debridProviderGameId;
+  const isDebridMode = !!debridProviderGameId; // can coexist with appId (Steam appId for media)
+  const isCreateMode = !appId && !manualGameId && !epicProviderGameId && !debridProviderGameId;
+  const effectiveId = manualGameId ?? epicProviderGameId ?? debridProviderGameId ?? appId ?? "";
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
@@ -375,6 +379,14 @@ export default function GameEditDialog({
         setManualEntry(entry);
         loadDraftsFromManualEntry(entry);
       }
+      setLoading(false);
+      loadRolePreviews();
+      return;
+    }
+
+    // Debrid edit mode — pre-fill install dir from game data
+    if (isDebridMode && debridProviderGameId) {
+      if (game?.installDir) setInstallDirDraft(game.installDir);
       setLoading(false);
       loadRolePreviews();
       return;
@@ -853,6 +865,20 @@ export default function GameEditDialog({
 
         setHasEdits(false);
         showSuccess("Epic game details saved");
+        setSaving(false);
+        return;
+      }
+
+      // ── Debrid game save (install path) ──
+      if (isDebridMode && debridProviderGameId) {
+        const dir = installDirDraft.trim().replace(/^["']|["']$/g, "");
+        const ok = updateDebridGamePath(debridProviderGameId, dir);
+        if (ok) {
+          showSuccess("Debrid install path saved");
+        } else {
+          showError("Could not save debrid path");
+        }
+        setHasEdits(false);
         setSaving(false);
         return;
       }
@@ -1954,11 +1980,81 @@ export default function GameEditDialog({
 
   function renderInstallationTab() {
     const isManual = isManualMode || isCreateMode;
+    const isDebridInstall = isDebridMode && debridProviderGameId;
     const hasExe = !!executablePathDraft.trim();
 
     return (
       <div className="space-y-5">
-        {isManual ? (
+        {isDebridInstall ? (
+          <>
+            {/* ── Section: Debrid Install Info ── */}
+            <div>
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+                Debrid / Repack Installation
+              </h4>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Steam App ID</span>
+                  <span className="text-xs text-(--color-muted)">{appId ?? "—"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Installed</span>
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${game?.installDir ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-500/15 text-zinc-400"}`}>
+                    {game?.installDir ? "Yes" : "No"}
+                  </span>
+                </div>
+
+                {/* Install Directory */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Install Directory
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={installDirDraft}
+                      onChange={(e) => { setInstallDirDraft(e.target.value); setHasEdits(true); }}
+                      placeholder="C:\Games\My Game"
+                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const folder = await pickFolder("Select Install Folder");
+                        if (folder) { setInstallDirDraft(folder); setHasEdits(true); }
+                      }}
+                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                </div>
+
+                {/* Open Install Folder */}
+                {installDirDraft.trim() && (
+                  <button
+                    type="button"
+                    onClick={handleOpenInstallFolder}
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                  >
+                    <FolderOpen className="h-4 w-4 text-(--color-muted)" />
+                    Open Install Folder
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleOpenMediaFolder}
+                  disabled={!appId}
+                  className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <FolderOpen className="h-4 w-4 text-(--color-muted)" />
+                  Open Media Folder
+                </button>
+              </div>
+            </div>
+          </>
+        ) : isManual ? (
           <>
             {/* ── Section: Game Configuration ── */}
             <div>

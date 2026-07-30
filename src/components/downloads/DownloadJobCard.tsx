@@ -8,6 +8,7 @@ import {
   FileCode2,
   FileText,
   FolderOpen,
+  Package,
   Trash2,
 } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -53,6 +54,7 @@ function formatEta(seconds?: number): string {
 
 function getTypeIcon(job: DownloadJob) {
   if (job.type === "steam-install") return DownloadCloud;
+  if (job.type === "debrid-install") return Package;
   if (job.fileType === "zip") return FileArchive;
   if (job.fileType === "lua") return FileCode2;
   return FileText;
@@ -61,6 +63,9 @@ function getTypeIcon(job: DownloadJob) {
 function getProviderBadge(job: DownloadJob): { label: string; className: string } {
   if (job.type === "steam-install") {
     return { label: "Steam", className: "bg-blue-500/15 text-blue-300 border-blue-500/20" };
+  }
+  if (job.type === "debrid-install") {
+    return { label: "Debrid", className: "bg-cyan-500/15 text-cyan-300 border-cyan-500/20" };
   }
   if (job.providerId === "lua") {
     return { label: "Lua", className: "bg-purple-500/15 text-purple-300 border-purple-500/20" };
@@ -104,6 +109,7 @@ export default function DownloadJobCard({
   const providerBadge = getProviderBadge(job);
   const progressMode = job.progressMode ?? "determinate";
   const isSteamInstall = job.type === "steam-install";
+  const isDebridInstall = job.type === "debrid-install";
 
   const snapshotGame = useMemo(() => {
     const snapshot = getBootSnapshot();
@@ -137,6 +143,96 @@ export default function DownloadJobCard({
     if (!isSteamInstall) return null;
     return snapshotGame?.installPath ?? null;
   }, [isSteamInstall, snapshotGame?.installPath]);
+
+  /* ── Debrid completed — compact card ── */
+  if (isDebridInstall && job.status === "done") {
+    return (
+      <article className="lf-surface rounded-2xl border p-4 transition hover:border-(--color-accent)/20">
+        <div className="flex items-start gap-3">
+          {displayArtworkUrl ? (
+            <img
+              src={displayArtworkUrl}
+              alt=""
+              className="h-14 w-14 flex-shrink-0 rounded-xl object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl bg-white/5">
+              <TypeIcon className="h-6 w-6 text-(--color-accent)" />
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate font-semibold text-(--color-text)">
+                {displayTitle}
+              </h3>
+              <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium bg-cyan-500/15 text-cyan-300 border-cyan-500/20">
+                Debrid
+              </span>
+              {job.repacker && (
+                <span className="inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-400">
+                  {job.repacker.toUpperCase()}
+                </span>
+              )}
+              <DownloadStatusBadge status={job.status} />
+            </div>
+
+            <p className="mt-0.5 text-sm text-(--color-muted)">
+              {job.message || "Instalado \u00b7 Listo para jugar"}
+            </p>
+
+            {job.installedSize != null && job.installedSize > 0 && (
+              <p className="mt-1 text-xs text-(--color-muted)">
+                Tama\u00f1o instalado:{" "}
+                <span className="font-medium text-(--color-text)">
+                  {formatBytes(job.installedSize)}
+                </span>
+              </p>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onRemove(job.id)}
+            className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            title="Quitar"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-3 flex items-center gap-2">
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-(--color-accent)" style={{ width: "100%" }} />
+          </div>
+          <span className="text-[10px] text-(--color-muted)">100%</span>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenDetails(job.appId)}
+            className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-medium text-(--color-accent-text) transition hover:opacity-90"
+          >
+            <Eye className="h-4 w-4" />
+            Ver detalles
+          </button>
+
+          {job.installDir && (
+            <button
+              type="button"
+              onClick={() => { revealItemInDir(job.installDir!); }}
+              className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              Abrir carpeta
+            </button>
+          )}
+        </div>
+      </article>
+    );
+  }
 
   /* ── Steam completed — compact card ── */
   if (isSteamInstall && job.status === "done") {
@@ -259,6 +355,11 @@ export default function DownloadJobCard({
               >
                 {providerBadge.label}
               </span>
+              {job.type === "debrid-install" && job.repacker && (
+                <span className="inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-400">
+                  {job.repacker.toUpperCase()}
+                </span>
+              )}
             </div>
 
             {job.message ? (

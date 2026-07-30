@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 
-import { AppSettings, AppSettingsKey } from "../types/settings";
+import { AppSettings, AppSettingsKey, DEFAULT_DEBRID_PROVIDER_CONFIG } from "../types/settings";
 import { defaultProviderSettings } from "../data/providers";
 
 type SettingsContextValue = {
@@ -41,6 +41,8 @@ export const defaultSettings: AppSettings = {
   rawgApiKey: "",
   igdbClientId: "",
   igdbClientSecret: "",
+  debridProviders: { ...DEFAULT_DEBRID_PROVIDER_CONFIG },
+  debridEndpoint: "https://hydra.luffy.pp.ua",
   googleSearchApiKey: "",
   googleSearchCx: "",
   bingSearchApiKey: "",

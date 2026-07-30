@@ -91,9 +91,16 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
           </div>
         )}
 
+        {/* Repacker badge (Debrid) */}
+        {game.source === "debrid" && game.repacker && (
+          <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-medium text-cyan-400 backdrop-blur-sm ring-1 ring-cyan-500/30">
+            {game.repacker.toUpperCase()}
+          </div>
+        )}
+
         {/* Favorite heart */}
         {fav && (
-          <div className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 backdrop-blur-sm">
+          <div className="absolute right-2 top-9 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 backdrop-blur-sm">
             <Heart className="h-3.5 w-3.5 fill-rose-400 text-rose-400" />
           </div>
         )}
@@ -113,6 +120,11 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
           {game.hasUpdate && (
             <span className="rounded-md bg-amber-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
               Update
+            </span>
+          )}
+          {game.source === "debrid" && (
+            <span className="rounded-md bg-cyan-500/80 px-2 py-0.5 text-[10px] font-medium text-black backdrop-blur-sm">
+              Debrid
             </span>
           )}
         </div>

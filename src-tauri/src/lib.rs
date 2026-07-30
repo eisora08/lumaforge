@@ -12,6 +12,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Future: Achievement overlay notification window
             // - create transparent always-on-top window
@@ -260,6 +261,35 @@ pub fn run() {
             commands::store_catalog::query_catalog_game,
             commands::store_catalog::query_catalog_featured,
             commands::store_catalog::query_catalog_new_noteworthy,
+            commands::repack_catalog::get_repack_catalog_meta,
+            commands::repack_catalog::import_repack_catalog,
+            commands::repack_catalog::query_repack_catalog_fuzzy,
+            commands::repack_catalog::query_repack_catalog_by_app_id,
+            commands::repack_catalog::query_repack_catalog_all,
+            commands::repack_catalog::query_repack_catalog_by_repacker,
+            commands::debrid_games::read_debrid_games,
+            commands::debrid_games::write_debrid_games,
+            commands::debrid_games::backup_debrid_games,
+            commands::debrid_installer::cancel_debrid_download,
+            commands::debrid_installer::download_debrid_package,
+            commands::debrid_installer::setup_debrid_game,
+            commands::debrid_installer::verify_debrid_installation,
+            commands::debrid_installer::launch_debrid_game,
+            commands::debrid_installer::check_installer_status,
+            commands::debrid_installer::run_installer_again,
+            commands::debrid_installer::detect_install_path_from_registry,
+            commands::hydra_source::fetch_and_import_hydra_source,
+            commands::hydra_source::validate_hydra_source_url,
+            commands::hydra_source::list_hydra_sources,
+            commands::hydra_source::add_hydra_source,
+            commands::hydra_source::remove_hydra_source,
+            commands::hydra_source::toggle_hydra_source,
+            commands::hydra_source::refresh_all_hydra_sources,
+            commands::hydra_source::clear_hydra_cache,
+            commands::hydra_source::webview_fetch_callback,
+            commands::hydra_source::fetch_url_via_webview,
+            commands::debrid_resolver::resolve_debrid_download_url,
+            commands::debrid_resolver::check_debrid_provider_status,
             commands::backup::write_backup_archive,
             commands::backup::read_backup_archive,
             commands::backup::list_backup_archives,

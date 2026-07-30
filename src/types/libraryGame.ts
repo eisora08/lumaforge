@@ -12,11 +12,12 @@ import type { PackageSource } from "./package";
  * - "manual": source="manual", providerId="manual", providerGameId=UUID,          appId=undefined,    libraryId="manual:<uuid>"
  * - "epic":   source="epic",   providerId="epic",   providerGameId=stable native, appId=undefined,    libraryId="epic:<providerGameId>"
  * - "gog":    source="gog",    providerId="gog",    providerGameId=GOG productId, appId=undefined,    libraryId="gog:<productId>"
+ * - "debrid": source="debrid", providerId="debrid", providerGameId=repackId,     appId=Steam appId, libraryId="debrid:<repackId>"
  *
  * appId is Steam-only. External providers use providerId + providerGameId.
  * Cross-provider duplicates (same title on Steam + Epic + GOG) are NEVER deduped.
  */
-export type LibraryGameSource = "steam" | "local" | "lua" | "manual" | "epic" | "gog";
+export type LibraryGameSource = "steam" | "local" | "lua" | "manual" | "epic" | "gog" | "debrid";
 
 /**
  * Unified game model for all providers.
@@ -53,6 +54,8 @@ export type LibraryGame = {
   launchArguments?: string;
   installDir?: string;
   libraryPath?: string;
+  /** Repack group name for Debrid-sourced games (e.g. "fitgirl", "dodi"). */
+  repacker?: string;
   imageUrl?: string;
   /** Cover art path (relative provider path, e.g. games/epic/<id>/media/cover.jpg). Set by Epic/manual overrides. */
   coverPath?: string;
@@ -98,7 +101,9 @@ export type LibraryGame = {
   achievementsSupported?: boolean;
   /** User-defined favorite flag */
   isFavorite?: boolean;
+  /** Debrid-specific install status: "waiting-installer" | "installing" | "needs-path" | "ready" */
+  debridStatus?: string;
 };
 
-export type LibraryFilter = "all" | "steam" | "local" | "lua" | "epic" | "gog" | "installed" | "uninstalled" | "lua-ready" | "disabled" | "updates";
+export type LibraryFilter = "all" | "steam" | "local" | "lua" | "epic" | "gog" | "debrid" | "installed" | "uninstalled" | "lua-ready" | "disabled" | "updates";
 export type LibrarySort = "name" | "appid" | "modified" | "size" | "recent";

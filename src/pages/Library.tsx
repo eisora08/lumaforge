@@ -26,6 +26,7 @@ import { GridSkeleton, LibrarySectionSkeleton } from "../components/common/Skele
 import { useSettings } from "../context/SettingsContext";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useGameSession } from "../context/GameSessionContext";
+import { useDownloadQueueContext } from "../context/DownloadQueueContext";
 import { installTrackerService } from "../services/installTrackingService";
 import {
   installSteamApp,
@@ -43,6 +44,9 @@ import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownload
 import { isSidebarInstalledGame } from "../services/gameCacheService";
 import { consumePendingLibraryFocus } from "../services/libraryNavigationService";
 
+import DebridSourceSelectorModal from "../components/debrid/DebridSourceSelectorModal";
+import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
+import type { RepackQueryResult } from "../services/tauri";
 import type { LibraryGame } from "../types/libraryGame";
 import type { PackageGame, PackageSource } from "../types/package";
 import type { SyncIndexItem } from "../types/syncIndex";
@@ -123,6 +127,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const { settings } = useSettings();
   const { games, warnings, loading, initialLoading, setSelectedGame, refresh, appInfoMap } = useLibraryGames();
   const session = useGameSession();
+  const downloadQueue = useDownloadQueueContext();
   const hasLuaPath = Boolean(settings.luaPath);
   const [, startTransition] = useTransition();
 
@@ -136,6 +141,8 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
   const [addGameOpen, setAddGameOpen] = useState(false);
+  const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
+  const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
@@ -346,6 +353,60 @@ export default function LibraryPage({ onNavigate }: Props) {
   }
 
   async function handleInstall(game: LibraryGame) {
+    if (game.source === "debrid" && DEBRID_INSTALL_ENABLED && DEBRID_LIBRARY_ENABLED) {
+      if (game.appId) {
+        const { getRepacksForAppId } = await import("../services/repackCatalogService");
+        const repacks = await getRepacksForAppId(Number(game.appId));
+        if (repacks.length > 1) {
+          if (DEBUG_DEBRID_INSTALL) console.log(`[DEBRID][INSTALL_SELECTOR] appId=${game.appId} title="${game.title}" repacks=${repacks.length}`);
+          setDebridRepacks(repacks);
+          setDebridInstallGame(game);
+          return;
+        }
+        if (repacks.length === 1) {
+          const rawEntry = repacks[0];
+          const downloadUri = rawEntry.downloadUris?.[0] || "";
+          if (!downloadUri) {
+            showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+            return;
+          }
+          downloadQueue.addDebridInstallJob(
+            rawEntry.id,
+            game.title,
+            downloadUri,
+            rawEntry.installerType || "zip",
+            game.appId ?? "",
+            undefined,
+            rawEntry.repacker,
+          );
+          return;
+        }
+      }
+      const { getDebridRepackEntry } = await import("../services/debridGameStore");
+      const providerGameId = game.providerGameId ?? game.id;
+      const rawEntry = getDebridRepackEntry(providerGameId);
+      if (!rawEntry) {
+        showWarning("Debrid game entry not found.", { title: "Not available" });
+        return;
+      }
+      const downloadUri = rawEntry.downloadUris?.[0] || "";
+      const installerType = rawEntry.installerType || "zip";
+      if (!downloadUri) {
+        showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+        return;
+      }
+      downloadQueue.addDebridInstallJob(
+        providerGameId,
+        game.title,
+        downloadUri,
+        installerType,
+        game.appId ?? "",
+        undefined,
+        game.repacker,
+      );
+      return;
+    }
+
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
@@ -723,6 +784,11 @@ export default function LibraryPage({ onNavigate }: Props) {
                               <div className="flex items-center gap-1.5 shrink-0">
                                 {game.hasLua && <span className="rounded bg-(--color-accent)/10 px-1.5 py-0.5 text-[9px] text-(--color-accent)">Lua</span>}
                                 {game.source === "epic" && <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-400">Epic</span>}
+                                {game.source === "debrid" && (
+                                  <span className="rounded bg-cyan-500/10 px-1.5 py-0.5 text-[9px] text-cyan-400">
+                                    {game.repacker ? game.repacker.toUpperCase() : "Debrid"}
+                                  </span>
+                                )}
                                 {game.steamInstalled && <span className="hidden text-[10px] text-(--color-muted)/50 sm:inline">Installed</span>}
                               </div>
                             </button>
@@ -866,6 +932,32 @@ export default function LibraryPage({ onNavigate }: Props) {
         )}
       </div>
 
+      <DebridSourceSelectorModal
+        open={debridRepacks.length > 0 && Boolean(debridInstallGame)}
+        repacks={debridRepacks}
+        gameTitle={debridInstallGame?.title ?? ""}
+        appId={debridInstallGame?.appId}
+        onInstallSource={(repack: RepackQueryResult) => {
+          const downloadUri = repack.downloadUris?.[0] || "";
+          if (!downloadUri || !debridInstallGame) {
+            showWarning("No download URI available for this Debrid source.", { title: "Not available" });
+            return;
+          }
+          downloadQueue.addDebridInstallJob(
+            repack.id,
+            debridInstallGame.title,
+            downloadUri,
+            repack.installerType || "zip",
+            debridInstallGame.appId ?? "",
+            undefined,
+            debridInstallGame.repacker,
+          );
+        }}
+        onClose={() => {
+          setDebridRepacks([]);
+          setDebridInstallGame(null);
+        }}
+      />
       <StoreSourceSelectorModal
         open={Boolean(sourceSelectorGame)}
         game={sourceSelectorGame ? {

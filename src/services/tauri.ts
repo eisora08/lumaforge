@@ -1151,6 +1151,222 @@ export async function queryCatalogNewNoteworthy(
   return await invoke<CatalogGameResult[]>("query_catalog_new_noteworthy", { limit });
 }
 
+// --- Repack catalog ---
+
+export type RepackQueryResult = {
+  id: string;
+  title: string;
+  appId: number;
+  repacker: string;
+  installerType: string;
+  fileSize: number;
+  installSize: number | null;
+  languages: string[];
+  downloadUris: string[];
+  sourceUrl: string;
+  checksum: string | null;
+  updatedAt: string;
+  tags: string[];
+};
+
+export type RepackCatalogMeta = {
+  hasCatalog: boolean;
+  schemaVersion: number;
+  recordCount: number;
+  gamesWithAppId: number;
+  checksum: string;
+  importedAt: string;
+};
+
+/** Get repack catalog metadata (counts, version, checksum). */
+export async function getRepackCatalogMeta(): Promise<RepackCatalogMeta> {
+  return await invoke<RepackCatalogMeta>("get_repack_catalog_meta");
+}
+
+/** Import a repack catalog artifact JSON blob into SQLite. Returns number of records inserted. */
+export async function importRepackCatalog(
+  artifactJson: string,
+  checksum: string,
+): Promise<number> {
+  return await invoke<number>("import_repack_catalog", { artifactJson, checksum });
+}
+
+/** Query repack catalog by fuzzy title match (case-insensitive). */
+export async function queryRepackCatalogFuzzy(
+  query: string,
+  limit: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_fuzzy", { query, limit });
+}
+
+/** Query repack catalog by Steam app ID — returns all repacks for that app. */
+export async function queryRepackCatalogByAppId(
+  appId: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_by_app_id", { appId });
+}
+
+/** Query all repack catalog entries. */
+export async function queryRepackCatalogAll(): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_all");
+}
+
+/** Query repack catalog by repacker name, with pagination. */
+export async function queryRepackCatalogByRepacker(
+  repacker: string,
+  limit: number,
+  offset: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_by_repacker", {
+    repacker, limit, offset,
+  });
+}
+
+// --- Debrid Installer ---
+
+/** Result from download_debrid_package — download + extract or save installer. */
+export type DebridDownloadResult = {
+  success: boolean;
+  status: "ready" | "needs-setup" | "installing";
+  installDir: string;
+  executablePath: string | null;
+  installerPath: string | null;
+  installerPid: number | null;
+  message: string;
+};
+
+/** Result from setup_debrid_game — run the already-extracted installer. */
+export type DebridSetupResult = {
+  success: boolean;
+  status: "ready" | "installing";
+  installDir: string;
+  executablePath: string | null;
+  installerPath: string | null;
+  installerPid: number | null;
+  message: string;
+};
+
+/** Result from check_installer_status — poll an installer process. */
+export type InstallerCheckResult = {
+  status: "running" | "ready" | "needs-path";
+  executablePath: string | null;
+  error: string | null;
+};
+
+/** Result from verify_debrid_installation — check if game .exe exists. */
+export type DebridVerifyResult = {
+  installed: boolean;
+  installDir: string;
+  executablePath: string | null;
+};
+
+/** Download a Debrid repack: download + extract (ZIP/RAR) or save installer (EXE/SFX). */
+export async function downloadDebridPackage(params: {
+  jobId: string;
+  downloadUri: string;
+  destDir: string;
+}): Promise<DebridDownloadResult> {
+  return await invoke<DebridDownloadResult>("download_debrid_package", params);
+}
+
+/**
+ * Run a previously-downloaded repack installer (setup.exe) in the foreground.
+ * This is the second phase for `needs-setup` results — no download, no extraction.
+ */
+export async function setupDebridGame(params: {
+  installerPath: string;
+  installDir: string;
+}): Promise<DebridSetupResult> {
+  return await invoke<DebridSetupResult>("setup_debrid_game", params);
+}
+
+/** Abort an in-flight debrid download by job ID. */
+export async function cancelDebridDownload(jobId: string): Promise<void> {
+  await invoke("cancel_debrid_download", { jobId });
+}
+
+/** Check whether a Debrid install directory has a game executable. */
+export async function verifyDebridInstallation(params: {
+  installDir: string;
+}): Promise<DebridVerifyResult> {
+  return await invoke<DebridVerifyResult>("verify_debrid_installation", params);
+}
+
+export type DebridLaunchResult = {
+  success: boolean;
+  method: string;
+  error?: string | null;
+};
+
+export async function launchDebridGame(params: {
+  executablePath: string;
+  launchArguments?: string | null;
+}): Promise<DebridLaunchResult> {
+  return await invoke<DebridLaunchResult>("launch_debrid_game", params);
+}
+
+/** Poll an installer process status by PID. */
+export async function checkInstallerStatus(params: {
+  pid: number;
+  installDir: string;
+}): Promise<InstallerCheckResult> {
+  return await invoke<InstallerCheckResult>("check_installer_status", params);
+}
+
+/** Re-run the installer (detached) after a previous run failed or was cancelled. */
+export async function runInstallerAgain(params: {
+  installerPath: string;
+  installDir: string;
+}): Promise<DebridDownloadResult> {
+  return await invoke<DebridDownloadResult>("run_installer_again", params);
+}
+
+/** Result from scanning Windows Uninstall registry for a game. */
+export type RegistryMatch = {
+  installLocation: string;
+  displayIcon: string | null;
+  displayName: string | null;
+  confidence: number;
+};
+
+/** Scan Windows Uninstall registry for a game matching the given title. */
+export async function detectInstallPathFromRegistry(gameTitle: string): Promise<RegistryMatch | null> {
+  return await invoke<RegistryMatch | null>("detect_install_path_from_registry", { gameTitle });
+}
+
+// --- Debrid Games Registry ---
+
+export type DebridGameEntryJson = {
+  id: string;
+  appId?: number | null;
+  title: string;
+  status: string; // "not-downloaded" | "downloading" | "needs-install" | "waiting-installer" | "ready"
+  installDir?: string | null;
+  executablePath?: string | null;
+  installerPath?: string | null;
+  launchArguments?: string[] | null;
+  repacker?: string | null;
+  fileSize?: number | null;
+  installSize?: number | null;
+  installedAt: number;
+  updatedAt: number;
+};
+
+/** Read all installed Debrid game entries from `games/debrid/debrid-games.json`. */
+export async function readDebridGames(): Promise<DebridGameEntryJson[]> {
+  return await invoke<DebridGameEntryJson[]>("read_debrid_games");
+}
+
+/** Atomically write the full Debrid games array to `games/debrid/debrid-games.json`. */
+export async function writeDebridGames(entries: DebridGameEntryJson[]): Promise<void> {
+  return await invoke<void>("write_debrid_games", { entries });
+}
+
+/** Create a timestamped backup of `debrid-games.json`. Returns backup filename. */
+export async function backupDebridGames(): Promise<string> {
+  return await invoke<string>("backup_debrid_games");
+}
+
 // --- Library cache ---
 
 export type LibraryAppInfoEntry = {

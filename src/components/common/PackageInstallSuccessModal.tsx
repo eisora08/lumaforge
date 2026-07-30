@@ -43,6 +43,8 @@ type Props = {
   jobId?: string;
   imageUrl?: string;
   providerName?: string;
+  /** Override the primary button label (default: "View in Library") */
+  primaryButtonLabel?: string;
   onViewInLibrary: () => void;
   onContinueBrowsing: () => void;
 };
@@ -55,6 +57,7 @@ export default function PackageInstallSuccessModal({
   jobId,
   imageUrl,
   providerName,
+  primaryButtonLabel = "View in Library",
   onViewInLibrary,
   onContinueBrowsing,
 }: Props) {
@@ -293,7 +296,7 @@ export default function PackageInstallSuccessModal({
             }`}
           >
             <Library className="h-4 w-4" />
-            View in Library
+            {primaryButtonLabel}
             <ArrowRight className="h-3.5 w-3.5 opacity-60 transition-transform group-hover:translate-x-0.5" />
           </button>
 

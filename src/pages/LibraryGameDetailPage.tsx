@@ -28,6 +28,7 @@ import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession, computeGameKey } from "../context/GameSessionContext";
+import { useDownloadQueueContext } from "../context/DownloadQueueContext";
 import { useGameLaunchState } from "../hooks/useGameLaunchState";
 import { useGameActivity } from "../context/GameActivityContext";
 import { useGamePlayStats } from "../services/gamePlayStats";
@@ -38,6 +39,9 @@ const DEBUG_MEDIA_CACHE = false;
 const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = DEBUG_MEDIA_CACHE;
 const DEBUG_ACTIVITY = false;
 const DEBUG_LUA_DELETE = false;
+import DebridSourceSelectorModal from "../components/debrid/DebridSourceSelectorModal";
+import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
+import type { RepackQueryResult } from "../services/tauri";
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
 import type { AppPage } from "../types/navigation";
 
@@ -58,6 +62,7 @@ type Props = {
 export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   countRender("LibraryGameDetailPage");
   const { selectedGame, setSelectedGame, appInfoMap, refresh } = useLibraryGames();
+  const downloadQueue = useDownloadQueueContext();
   const { settings } = useSettings();
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
@@ -79,6 +84,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const { addActivity } = useGameActivity();
   const { recordSessionEnd } = useGamePlayStats(selectedGame?.id || "");
   const [showStopModal, setShowStopModal] = useState(false);
+  const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
+  const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
   const { confirm } = useConfirm();
 
   // Playtime tracking: when session transitions from running to idle/cleared
@@ -108,6 +115,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     if (game.source === "steam" && game.appId) {
       await launchGame(game);
     } else if (game.source === "epic") {
+      await launchGame(game);
+    } else if (game.source === "debrid" && game.isPlayable) {
       await launchGame(game);
     } else if ((game.source === "local" || game.source === "manual") && game.executablePath) {
       await launchGame(game);
@@ -1075,6 +1084,60 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   ]);
 
   async function handleInstall(game: LibraryGame) {
+    if (game.source === "debrid" && DEBRID_INSTALL_ENABLED && DEBRID_LIBRARY_ENABLED) {
+      if (game.appId) {
+        const { getRepacksForAppId } = await import("../services/repackCatalogService");
+        const repacks = await getRepacksForAppId(Number(game.appId));
+        if (repacks.length > 1) {
+          if (DEBUG_DEBRID_INSTALL) console.log(`[DEBRID][INSTALL_SELECTOR] appId=${game.appId} title="${game.title}" repacks=${repacks.length}`);
+          setDebridRepacks(repacks);
+          setDebridInstallGame(game);
+          return;
+        }
+        if (repacks.length === 1) {
+          const rawEntry = repacks[0];
+          const downloadUri = rawEntry.downloadUris?.[0] || "";
+          if (!downloadUri) {
+            showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+            return;
+          }
+          downloadQueue.addDebridInstallJob(
+            rawEntry.id,
+            game.title,
+            downloadUri,
+            rawEntry.installerType || "zip",
+            game.appId ?? "",
+            undefined,
+            rawEntry.repacker,
+          );
+          return;
+        }
+      }
+      const { getDebridRepackEntry } = await import("../services/debridGameStore");
+      const providerGameId = game.providerGameId ?? game.id;
+      const rawEntry = getDebridRepackEntry(providerGameId);
+      if (!rawEntry) {
+        showWarning("Debrid game entry not found.", { title: "Not available" });
+        return;
+      }
+      const downloadUri = rawEntry.downloadUris?.[0] || "";
+      const installerType = rawEntry.installerType || "zip";
+      if (!downloadUri) {
+        showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+        return;
+      }
+      downloadQueue.addDebridInstallJob(
+        providerGameId,
+        game.title,
+        downloadUri,
+        installerType,
+        game.appId ?? "",
+        undefined,
+        game.repacker,
+      );
+      return;
+    }
+
     if (game.appId) {
       try {
         await installSteamApp(Number(game.appId));
@@ -1155,6 +1218,32 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         launchInfo={launchInfo}
         onCancelLaunch={cancelLaunch}
         onOpenStopModal={handleOpenStopModal}
+      />
+      <DebridSourceSelectorModal
+        open={debridRepacks.length > 0 && Boolean(debridInstallGame)}
+        repacks={debridRepacks}
+        gameTitle={debridInstallGame?.title ?? ""}
+        appId={debridInstallGame?.appId}
+        onInstallSource={(repack: RepackQueryResult) => {
+          const downloadUri = repack.downloadUris?.[0] || "";
+          if (!downloadUri || !debridInstallGame) {
+            showWarning("No download URI available for this Debrid source.", { title: "Not available" });
+            return;
+          }
+          downloadQueue.addDebridInstallJob(
+            repack.id,
+            debridInstallGame.title,
+            downloadUri,
+            repack.installerType || "zip",
+            debridInstallGame.appId ?? "",
+            undefined,
+            debridInstallGame.repacker,
+          );
+        }}
+        onClose={() => {
+          setDebridRepacks([]);
+          setDebridInstallGame(null);
+        }}
       />
       <StopGameModal
         open={showStopModal}

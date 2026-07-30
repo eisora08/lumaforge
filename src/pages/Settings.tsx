@@ -39,6 +39,7 @@ import { detectSteamPaths } from "../services/tauri";
 
 import ProviderSettingsCard from "../components/settings/ProviderSettingsCard";
 import HubcapProviderBadges from "../components/settings/HubcapProviderBadges";
+import DebridProvidersCard from "../components/settings/DebridProvidersCard";
 import SettingsSection from "../components/settings/SettingsSection";
 import CardLayoutEditor from "../components/settings/CardLayoutEditor";
 import HomeLayoutEditor from "../components/settings/HomeLayoutEditor";
@@ -672,6 +673,15 @@ export default function Settings() {
                   </div>
                 </SettingsSection>
                 <IntegrationsSection />
+
+                <div className="mt-6">
+                  <DebridProvidersCard
+                    config={settings.debridProviders}
+                    onChange={(patch) => {
+                      if (patch.debridProviders) updateSetting("debridProviders", patch.debridProviders);
+                    }}
+                  />
+                </div>
               </>
             )}
 

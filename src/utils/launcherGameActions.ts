@@ -1,13 +1,30 @@
 import type { LibraryGame } from "../types/libraryGame";
 import { EPIC_LAUNCH_ENABLED, EPIC_LIBRARY_ENABLED } from "../services/epicFeatureFlag";
+import { DEBRID_LIBRARY_ENABLED } from "../features/debrid/debridFeatureFlag";
 
 const DEBUG_LUA_ACTIONS = false;
 
-export type PrimaryAction = "play" | "install" | "uninstalling" | "missing-path" | "details" | "open-steam" | "open-lua-folder";
+export type PrimaryAction = "play" | "install" | "uninstalling" | "missing-path" | "details" | "open-steam" | "open-lua-folder" | "installing" | "select-exe";
 
 export function getLauncherGamePrimaryAction(game: LibraryGame): PrimaryAction {
   const hasLuaScripts = game.luaScripts && game.luaScripts.length > 0;
   const isEpicLaunchable = game.source === "epic" && EPIC_LAUNCH_ENABLED && EPIC_LIBRARY_ENABLED;
+
+  // Debrid-specific status handling — standalone entries (no longer merged into Steam).
+  if (DEBRID_LIBRARY_ENABLED) {
+    if (game.debridStatus === "waiting-installer") {
+      return "installing";
+    }
+    if (game.debridStatus === "needs-path") {
+      return "select-exe";
+    }
+    if (game.source === "debrid" && game.isPlayable) {
+      return "play";
+    }
+    if (game.source === "debrid" && game.isInstallable) {
+      return "install";
+    }
+  }
 
   let action: PrimaryAction;
   if (game.source === "manual" && game.executablePath) {

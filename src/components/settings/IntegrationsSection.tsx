@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   Clock,
   Hash,
+  Cloud,
 } from "lucide-react";
 
 import {
@@ -66,6 +67,7 @@ const INTEGRATION_ICONS: Record<IntegrationId, React.ReactNode> = {
   epic: <Zap className="h-5 w-5" />,
   manual: <BookOpen className="h-5 w-5" />,
   lua: <Code className="h-5 w-5" />,
+  debrid: <Cloud className="h-5 w-5" />,
 };
 
 const INTEGRATION_COLORS: Record<IntegrationId, string> = {
@@ -73,6 +75,7 @@ const INTEGRATION_COLORS: Record<IntegrationId, string> = {
   epic: "text-violet-400 bg-violet-400/15",
   manual: "text-amber-400 bg-amber-400/15",
   lua: "text-emerald-400 bg-emerald-400/15",
+  debrid: "text-cyan-400 bg-cyan-400/15",
 };
 
 const REFRESH_LABELS: Record<IntegrationId, string> = {
@@ -80,6 +83,7 @@ const REFRESH_LABELS: Record<IntegrationId, string> = {
   epic: "Refresh Epic games",
   manual: "Reload manual games",
   lua: "Scan Lua packages",
+  debrid: "Refresh Debrid catalog",
 };
 
 const DISABLE_CONFIRM: Record<IntegrationId, { title: string; description: string }> = {
@@ -87,6 +91,7 @@ const DISABLE_CONFIRM: Record<IntegrationId, { title: string; description: strin
   epic: { title: "Disable Epic integration?", description: "Epic games will be hidden from Library, Sidebar and Console. All installed game data is preserved. You can re-enable anytime." },
   manual: { title: "Disable Manual Games?", description: "Manually added games will be hidden from Library, Sidebar and Console. Your entries are preserved. You can re-enable anytime." },
   lua: { title: "Disable Lua integration?", description: "Lua script packages will be hidden from Library, Sidebar and Console. Package files are preserved. You can re-enable anytime." },
+  debrid: { title: "Disable Debrid Repacks?", description: "Debrid repack entries will be hidden from Library, Sidebar and Console. Your catalog is preserved. You can re-enable anytime." },
 };
 
 type RefreshState = {
@@ -340,7 +345,7 @@ export default function IntegrationsSection() {
 
   return (
     <>
-      {(["steam", "epic", "manual", "lua"] as IntegrationId[]).map((id) => (
+      {(["steam", "epic", "manual", "lua", "debrid"] as IntegrationId[]).map((id) => (
         <IntegrationCard
           key={id}
           integrationId={id}

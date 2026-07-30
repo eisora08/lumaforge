@@ -522,23 +522,31 @@ export function getSidebarLabel(game: LibraryGame): string {
 export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
   if (games.length <= 1) return games;
   const before = games.length;
-  const byAppId = new Map<string, LibraryGame>();
+  // Composite key: "appId:source" — entries with same appId but DIFFERENT source
+  // are kept as separate entries (Steam, Debrid, Manual, Epic all coexist).
+  // Merge only happens when both appId AND source match (e.g. Steam + Lua).
+  const byKey = new Map<string, LibraryGame>();
   const noAppId: LibraryGame[] = [];
 
+  function dedupKey(game: LibraryGame): string {
+    return game.appId ? `${game.appId}:${game.source || "unknown"}` : "";
+  }
+
   for (const game of games) {
-    if (!game.appId) {
+    const key = dedupKey(game);
+    if (!key) {
       // Games without appId — keep as-is but dedup by id
       if (!noAppId.find((g) => g.id === game.id)) {
         noAppId.push(game);
       }
       continue;
     }
-    const existing = byAppId.get(game.appId);
+    const existing = byKey.get(key);
     if (!existing) {
-      byAppId.set(game.appId, { ...game });
+      byKey.set(key, { ...game });
       continue;
     }
-    // Merge: Steam + Lua for same appId into one richer object
+    // Merge happens only for same appId AND same source (Steam + Lua, etc.)
     const merged = { ...existing };
 
     // Boolean flags: true wins
@@ -561,18 +569,18 @@ export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
     const seenScripts = new Set(existing.luaScripts.map((s) => `${s.app_id}:${s.path}:${s.file_name}`));
     merged.luaScripts = [...existing.luaScripts];
     for (const s of game.luaScripts || []) {
-      const key = `${s.app_id}:${s.path}:${s.file_name}`;
-      if (!seenScripts.has(key)) {
-        seenScripts.add(key);
+      const scriptKey = `${s.app_id}:${s.path}:${s.file_name}`;
+      if (!seenScripts.has(scriptKey)) {
+        seenScripts.add(scriptKey);
         merged.luaScripts.push(s);
       }
     }
     const seenSources = new Set(existing.sources.map((s) => `${s.providerId}:${s.fileType}:${s.downloadUrl}`));
     merged.sources = [...existing.sources];
     for (const s of game.sources || []) {
-      const key = `${s.providerId}:${s.fileType}:${s.downloadUrl}`;
-      if (!seenSources.has(key)) {
-        seenSources.add(key);
+      const sourceKey = `${s.providerId}:${s.fileType}:${s.downloadUrl}`;
+      if (!seenSources.has(sourceKey)) {
+        seenSources.add(sourceKey);
         merged.sources.push(s);
       }
     }
@@ -626,10 +634,10 @@ export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
     if (!merged.sizeOnDisk && game.sizeOnDisk) merged.sizeOnDisk = game.sizeOnDisk;
     if (!merged.lastUpdated && game.lastUpdated) merged.lastUpdated = game.lastUpdated;
 
-    byAppId.set(game.appId, merged);
+    byKey.set(key, merged);
   }
 
-  const result = [...byAppId.values(), ...noAppId].sort((a, b) =>
+  const result = [...byKey.values(), ...noAppId].sort((a, b) =>
     a.title.localeCompare(b.title),
   );
   const after = result.length;

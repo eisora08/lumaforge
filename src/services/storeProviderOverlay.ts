@@ -107,7 +107,7 @@ function mergeSteamGameWithProviderGame(
         ? steamGame.platforms
         : providerGame.platforms,
 
-    sources: providerGame.sources,
+    sources: Array.isArray(providerGame.sources) ? providerGame.sources : [],
   };
 }
 
@@ -138,7 +138,7 @@ export async function resolveProviderOverlaysForStoreGames(
   );
 
   const candidates = uniqueGames
-    .filter((game) => game.sources.length === 0)
+    .filter((game) => (game.sources ?? []).length === 0)
     .slice(0, MAX_OVERLAY_CHECKS);
 
   console.log(`[STORE][PROVIDER_DISCOVERY_START] games=${games.length} unique=${uniqueGames.length} candidates=${candidates.length} providers=[${enabledProviderIds.join(",")}]`);
@@ -149,7 +149,7 @@ export async function resolveProviderOverlaysForStoreGames(
     const cacheKey = getCacheKey(game.appId, enabledProviderIds);
     const cached = cache[cacheKey];
 
-    if (isCacheValid(cached)) {
+    if (isCacheValid(cached) && Array.isArray(cached.game.sources)) {
       const availableSources = cached.game.sources.filter(s => s.available).length;
       console.log(`[STORE][PROVIDER_DISCOVERY_CACHE] appid=${game.appId} sources=${cached.game.sources.length} available=${availableSources}`);
       output[game.appId] = cached.game;
@@ -203,9 +203,10 @@ export async function resolveProviderOverlaysForStoreGames(
             };
           }
 
-          const totalSources = providerGame.sources.length;
-          const successes = providerGame.sources.filter(s => s.available).length;
-          const timedOut = providerGame.sources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
+          const safeSources = providerGame.sources ?? [];
+          const totalSources = safeSources.length;
+          const successes = safeSources.filter(s => s.available).length;
+          const timedOut = safeSources.filter(s => !s.available && s.error?.toLowerCase().includes("timeout")).length;
           const failures = totalSources - successes - timedOut;
           console.log(`[STORE][PROVIDER_DISCOVERY_PARTIAL] appid=${game.appId} successes=${successes} failures=${failures} timedOut=${timedOut} total=${totalSources}`);
 

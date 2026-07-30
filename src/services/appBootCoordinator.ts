@@ -8,6 +8,7 @@ import type { SteamGameIndexEntry } from "./fullSteamGameIndex";
 import { initPerfCounters, setBootPhaseLabel } from "./perfCounters";
 import { reportLibraryProgress } from "./libraryProgressService";
 import { isIntegrationScanOnStartup, isIntegrationEnabled } from "./integrationSettingsService";
+import { DEBRID_LIBRARY_ENABLED } from "../features/debrid/debridFeatureFlag";
 
 export type BootStatus =
   | "booting"
@@ -20,6 +21,7 @@ export type BootTaskId =
   | "migrate-portable-paths"
   | "load-startup-snapshot"
   | "load-manual-games"
+  | "load-debrid-games"
   | "enrich-snapshot-titles"
   | "load-local-game-index"
   | "reconcile-lua-games"
@@ -28,6 +30,7 @@ export type BootTaskId =
   | "start-achievement-watcher"
   | "start-background-job-queue"
   | "load-playtime-store"
+  | "import-catalogs"
   | "schedule-background-repair"
   | "confirm-mounted";
 
@@ -270,6 +273,23 @@ export async function runBootTasks(): Promise<void> {
               console.error("[BOOT][MANUAL_GAMES] load failed:", e);
             }
             logBoot("load manual games end");
+          });
+
+          // Stage 3.35: Load Debrid games install state from disk
+          await track("load-debrid-games", async () => {
+            if (!DEBRID_LIBRARY_ENABLED) {
+              logBoot("debrid games skip: feature disabled");
+              return;
+            }
+            logBoot("load debrid games start");
+            try {
+              const { loadDebridGamesFromDisk } = await import("./debridGameStore");
+              const entries = await loadDebridGamesFromDisk();
+              logBoot(`debrid games loaded: ${entries.length} entries from JSON`);
+            } catch (e) {
+              console.error("[BOOT][DEBRID_GAMES] load failed:", e);
+            }
+            logBoot("load debrid games end");
           });
 
           // Stage 3.5: Enrich snapshot game titles (resolve placeholders via metadata/store)
@@ -905,6 +925,35 @@ export async function runBootTasks(): Promise<void> {
           await track("confirm-mounted", async () => {
             logBoot("route shell ready");
             setBootPhaseLabel("post-shell-done");
+          });
+
+          // Stage 11: Pre-import catalogs (Steam + repack) for fast Store/Debrid startup
+          await track("import-catalogs", async () => {
+            try {
+              const { ensureCatalogImported } = await import("./steamCatalogService");
+              const [steamOk] = await Promise.all([
+                ensureCatalogImported(),
+                (async () => {
+                  try {
+                    const { isIntegrationEnabled } = await import("./integrationSettingsService");
+                    if (isIntegrationEnabled("debrid")) {
+                      const { ensureRepackCatalogImported } = await import("./repackCatalogService");
+                      const ok = await ensureRepackCatalogImported();
+                      if (ok) logBoot(`repack catalog imported`);
+                      else logBoot(`repack catalog unavailable`);
+                    } else {
+                      logBoot("repack catalog skipped (debrid integration disabled)");
+                    }
+                  } catch {
+                    logBoot("repack catalog check failed");
+                  }
+                })(),
+              ]);
+              if (steamOk) logBoot("steam catalog imported");
+              else logBoot("steam catalog unavailable");
+            } catch (err) {
+              logBoot(`catalog import failed: ${String(err)}`);
+            }
           });
 
           // Performance summary: aggregate metrics from boot stages

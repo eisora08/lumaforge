@@ -3,7 +3,7 @@ import type { PackageGame, PackageSource } from "../types/package";
 export function getBestAvailableSource(
   game: PackageGame
 ): PackageSource | undefined {
-  const available = game.sources.filter((s) => s.available);
+  const available = (game.sources ?? []).filter((s) => s.available);
 
   const hubcap = available.find((s) => s.providerId === "hubcapdb");
   if (hubcap) return hubcap;

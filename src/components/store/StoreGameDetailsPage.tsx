@@ -1,7 +1,7 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Languages, Puzzle, Star, ShieldAlert } from "lucide-react";
 
-import type { PackageGame, PackageSource } from "../../types/package";
+import type { PackageGame, PackageSource, RepackEntry } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import { extractStoreDrmInfo } from "../../features/drm/storeDrmInfo";
@@ -11,11 +11,13 @@ import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SourceCheckStatus } from "../../services/sourceAvailabilityCacheService";
 import type { StoreDetailsSourceState } from "../../services/storeDetailsSourceState";
 import { openExternalUrl } from "../../services/externalLinks";
-import { openSteamLibrary } from "../../services/tauri";
+import { openSteamLibrary, queryRepackCatalogByAppId } from "../../services/tauri";
 import {
   getSteamDbUrl,
   getSteamStoreUrl,
 } from "../../utils/steamLinks";
+import { DEBRID_INSTALL_ENABLED, DEBRID_STORE_ENABLED } from "../../features/debrid/debridFeatureFlag";
+import { getRepacksForGameName, subscribeRepackIndex } from "../../services/repackTitleMatcher";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata, resolveGameMetadataForMedia } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
@@ -34,12 +36,13 @@ import {
   loadSourceAvailabilityIndex,
 } from "../../services/sourceAvailabilityCacheService";
 import { useSettings } from "../../context/SettingsContext";
+import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { loadProviderStatus, normalizeProviderId, updateProviderRemoteStatus, type ProviderStatusOptions } from "../../services/providerStatusService";
 import { getCachedProviderStatus, subscribeUpdateStatus } from "../../services/providerStatusStore";
 import { fetchHubcapAppStatus, checkHubcapAppUpdate, setLocalPackageMetadata, refreshHubcapStatus } from "../../services/hubcapApiService";
 import type { ProviderCheckState } from "./details/StoreGameSummaryPanel";
 
-import { showError } from "../toast/GameToast";
+import { showError, showSuccess, showWarning } from "../toast/GameToast";
 import PackageInstallSuccessModal from "../common/PackageInstallSuccessModal";
 
 import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
@@ -48,6 +51,7 @@ import StoreGameDlcSection from "./details/StoreGameDlcSection";
 import StoreGameTechnicalSection from "./details/StoreGameTechnicalSection";
 import StoreGameSummaryPanel from "./details/StoreGameSummaryPanel";
 import StoreSourceSelectorModal from "./StoreSourceSelectorModal";
+import StoreRepackSelectorModal from "./StoreRepackSelectorModal";
 import { InfoBlock } from "./details/StoreGameDetailPrimitives";
 
 import StoreMoreLikeThisSection from "./StoreMoreLikeThisSection";
@@ -266,6 +270,41 @@ export default function StoreGameDetailsPage({
   const _checkRequestIdRef = useRef(0);
   const _checkInFlightRef = useRef(false);
 
+  // Repack catalog state — populated from SQLite repack index when DEBRID_STORE_ENABLED
+  const [repackEntries, setRepackEntries] = useState<RepackEntry[]>([]);
+  const [repacksLoading, setRepacksLoading] = useState(false);
+  const [repackSelectorOpen, setRepackSelectorOpen] = useState(false);
+
+  const downloadQueue = useDownloadQueueContext();
+
+  const handleInstallRepack = useCallback(async (entry: RepackEntry) => {
+    if (!DEBRID_INSTALL_ENABLED) {
+      showWarning("Debrid install is not enabled in settings.", { title: "Not available" });
+      return;
+    }
+    const downloadUri = entry.downloadUris?.[0];
+    if (!downloadUri) {
+      showWarning("No download URI available for this repack.", { title: "Not available" });
+      return;
+    }
+    try {
+      downloadQueue.addDebridInstallJob(
+        entry.id,
+        entry.title,
+        downloadUri,
+        entry.installerType || "zip",
+        game.appId ?? "",
+        game.imageUrl,
+        entry.repacker,
+      );
+      setRepackSelectorOpen(false);
+      showSuccess(`Install started: ${entry.title}`, { title: "Debrid" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showError(`Failed to start install: ${msg}`, { title: "Debrid" });
+    }
+  }, [downloadQueue, game.appId, game.imageUrl]);
+
   // Internal source checking â€” used when parent does not provide sourceStatus/onRefreshSources
   const [internalSourceStatus, setInternalSourceStatus] = useState<SourceCheckStatus | undefined>();
   const [internalSources, setInternalSources] = useState<PackageSource[]>(game.sources);
@@ -396,6 +435,7 @@ export default function StoreGameDetailsPage({
 
     const appId = game.appId;
     let cancelled = false;
+    let unsubRepackIndex: (() => void) | null = null;
     sourceLog("origin-independent check", { appId, title: game.title });
 
     async function checkSources() {
@@ -551,18 +591,71 @@ export default function StoreGameDetailsPage({
           updatedAt: Math.floor(Date.now() / 1000),
         });
       }
+
+      // Step 3: Discover repack catalog entries for this appId (independent of provider sources)
+      if (DEBRID_STORE_ENABLED) {
+        try {
+          setRepacksLoading(true);
+          const repacks = await queryRepackCatalogByAppId(Number(appId));
+          if (!cancelled) {
+            // Fallback: if SQLite catalog has no matches, try runtime title matcher against raw JSON
+            if (repacks.length === 0) {
+              const gameName = metadata?.name || game.title || "";
+              const matched = await getRepacksForGameName(Number(appId), gameName);
+              if (!cancelled && matched.length > 0) {
+                setRepackEntries(matched);
+                const repackerNames = [...new Set(matched.map((r) => r.repacker))];
+                console.log(`[STORE][REPACK_MATCH] appid=${appId} title="${gameName}" matches=${matched.length} repackers=${repackerNames.join(",")}`);
+              } else if (!cancelled) {
+                setRepackEntries(repacks);
+              }
+            } else {
+              setRepackEntries(repacks);
+              const repackerNames = [...new Set(repacks.map((r) => r.repacker))];
+              console.log(`[STORE][REPACK_DISCOVERY] appid=${appId} repacks=${repacks.length} repackers=${repackerNames.join(",")}`);
+            }
+          }
+        } catch (err: unknown) {
+          if (!cancelled) {
+            console.warn(`[STORE][REPACK_DISCOVERY_FAIL] appid=${appId} err=${String(err)}`);
+          }
+        } finally {
+          if (!cancelled) {
+            setRepacksLoading(false);
+          }
+        }
+      }
+
+      // Step 4: Subscribe to repack index updates (FitGirl background loading)
+      // When fitgirl.json finishes, re-run matching to pick up new entries.
+      if (DEBRID_STORE_ENABLED) {
+        try {
+          unsubRepackIndex = subscribeRepackIndex(async () => {
+            if (cancelled) return;
+            const gameName = metadata?.name || game.title || "";
+            const matched = await getRepacksForGameName(Number(appId), gameName);
+            if (cancelled) return;
+            if (matched.length > 0) {
+              setRepackEntries(matched);
+              const repackerNames = [...new Set(matched.map((r) => r.repacker))];
+              console.log(`[STORE][REPACK_DEFERRED] appid=${appId} title="${gameName}" matches=${matched.length} repackers=${repackerNames.join(",")}`);
+            }
+          });
+        } catch { /* subscription setup is infallible */ }
+      }
     }
 
     checkSources();
     return () => {
       cancelled = true;
+      unsubRepackIndex?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.appId]);
 
   const metadataLoading = !metadata?.resolved;
 
-  // Safety timeout: if metadata never resolves, show error after 15s instead of infinite skeleton
+  // Safety timeout: if metadata never resolves, show error after 30s instead of infinite skeleton
   const [metadataTimedOut, setMetadataTimedOut] = useState(false);
   const _timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -574,7 +667,7 @@ export default function StoreGameDetailsPage({
     _timeoutRef.current = setTimeout(() => {
       setMetadataTimedOut(true);
       console.warn(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${game.appId} timeout=true loadingCleared=false finalRenderedState=error`);
-    }, 15_000);
+    }, 30_000);
     return () => {
       if (_timeoutRef.current) { clearTimeout(_timeoutRef.current); _timeoutRef.current = null; }
     };
@@ -585,8 +678,8 @@ export default function StoreGameDetailsPage({
   const imageUrl = getBestImage(game, metadata);
 
   const isChecking = (effectiveSourceStatus === "checking" || effectiveSourceStatus === "idle") && !isBackgroundChecking;
-  const providerResults = game.sources.length;
-  const availableSourceCount = effectiveSources.filter(s => s.available).length;
+  const providerResults = game.sources?.length ?? 0;
+  const availableSourceCount = (effectiveSources ?? []).filter(s => s.available).length;
   console.log(`[STORE][SOURCE_CHECK_STATE] appid=${game.appId} checking=${isChecking} sourceStatus=${effectiveSourceStatus} providerResults=${providerResults} available=${availableSourceCount}`);
 
   // Resolve preview image independent of checking state
@@ -621,12 +714,12 @@ export default function StoreGameDetailsPage({
 
   // Diagnostic â€” source state on mount/change (change-only)
   useEffect(() => {
-    const hasSavedSource = !!(effectiveSelectedSource || (game.sources && game.sources.length > 0));
-    const key = `${game.appId}|${isChecking}|${hasSavedSource}|${effectiveSelectedSource?.providerName || "null"}|${game.sources.length}|${!!imageUrl}`;
+    const hasSavedSource = !!(effectiveSelectedSource || ((game.sources?.length ?? 0) > 0));
+    const key = `${game.appId}|${isChecking}|${hasSavedSource}|${effectiveSelectedSource?.providerName || "null"}|${game.sources?.length ?? 0}|${!!imageUrl}`;
     if (diagLogRef.current !== key) {
       diagLogRef.current = key;
       console.log(
-        `[STORE][SOURCE_STATE] appid=${game.appId} checking=${isChecking} backgroundChecking=${isBackgroundChecking} savedSelected=${hasSavedSource} selectedProvider=${effectiveSelectedSource?.providerName || "null"} providerResults=${game.sources.length} hasPreview=${!!imageUrl}`,
+        `[STORE][SOURCE_STATE] appid=${game.appId} checking=${isChecking} backgroundChecking=${isBackgroundChecking} savedSelected=${hasSavedSource} selectedProvider=${effectiveSelectedSource?.providerName || "null"} providerResults=${game.sources?.length ?? 0} hasPreview=${!!imageUrl}`,
       );
       if (ENABLE_VERBOSE_SOURCE_LOGS) {
         logDetailsMedia(game.appId, previewResult, isChecking);
@@ -728,30 +821,31 @@ export default function StoreGameDetailsPage({
   // Update source state cache when effective state changes
   useEffect(() => {
     if (!game.appId) return;
+    const sources = game.sources ?? [];
     const status: StoreDetailsSourceState["status"] =
       isChecking ? "checking"
-        : game.sources.some(s => s.available) ? "ready"
-        : game.sources.length > 0 ? "missing"
+        : sources.some(s => s.available) ? "ready"
+        : sources.length > 0 ? "missing"
         : "idle";
     const prevState = getStoreDetailsState(game.appId);
     const currentSelectedName = effectiveSelectedSource?.providerName
-      || game.sources.find(s => s.available)?.providerName
+      || sources.find(s => s.available)?.providerName
       || null;
-    const currentSavedName = (effectiveSelectedSource && game.sources.length > 0)
+    const currentSavedName = (effectiveSelectedSource && sources.length > 0)
       ? effectiveSelectedSource.providerName
-      : (game.sources.length > 0 && prevState?.savedSelectedProvider)
+      : (sources.length > 0 && prevState?.savedSelectedProvider)
         ? prevState.savedSelectedProvider
         : null;
     setStoreDetailsState(game.appId, buildStoreDetailsState(game.appId, {
       selectedProvider: currentSelectedName,
       savedSelectedProvider: currentSavedName,
-      providerResults: game.sources.length,
+      providerResults: sources.length,
       hasCatalogMedia: !!imageUrl,
       hasSelectedMedia: !!previewResult.url,
       status,
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.appId, effectiveSelectedSource?.providerName, game.sources.length, imageUrl, previewResult.url, isChecking]);
+  }, [game.appId, effectiveSelectedSource?.providerName, game.sources?.length ?? 0, imageUrl, previewResult.url, isChecking]);
   const mediaItems = useMemo(() => {
     const mediaMeta = (englishMovies && metadata)
       ? { ...metadata, movies: englishMovies }
@@ -851,8 +945,8 @@ export default function StoreGameDetailsPage({
     load();
   }, [dlcAppIds]);
 
-  const availableSources = effectiveSources.filter((source) => source.available);
-  const bestSource = effectiveSelectedSource ?? getBestAvailableSource({ ...game, sources: effectiveSources });
+  const availableSources = (effectiveSources ?? []).filter((source) => source.available);
+  const bestSource = effectiveSelectedSource ?? getBestAvailableSource({ ...game, sources: effectiveSources ?? [] });
 
   async function handleOpenSteam() {
     try {
@@ -1177,7 +1271,7 @@ export default function StoreGameDetailsPage({
               developer={developer}
               platforms={platforms}
               availableSources={availableSources.length}
-              totalSources={effectiveSources.length}
+              totalSources={(effectiveSources ?? []).length}
               selectedSource={effectiveSelectedSource ?? bestSource}
               sourceStatus={effectiveSourceStatus}
               isBackgroundChecking={isBackgroundChecking}
@@ -1197,6 +1291,50 @@ export default function StoreGameDetailsPage({
               isProviderChecking={isProviderChecking}
               onCheckForUpdates={handleCheckForUpdates}
             />
+
+            {/* Repack catalog card */}
+            {DEBRID_STORE_ENABLED && (repackEntries.length > 0 || repacksLoading) && (
+              <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400">
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                        <line x1="12" y1="22.08" x2="12" y2="12" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-medium text-(--color-text)">
+                      Repacks
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRepackSelectorOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-lg bg-cyan-500/10 px-2.5 py-1 text-xs font-medium text-cyan-400 transition hover:bg-cyan-500/20"
+                  >
+                    {repacksLoading ? (
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-400/30 border-t-cyan-400" />
+                    ) : (
+                      <>
+                        {repackEntries.length} available
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="9 18 15 12 9 6" />
+                        </svg>
+                      </>
+                    )}
+                  </button>
+                </div>
+                {!repacksLoading && repackEntries.length > 0 && (
+                  <p className="mt-1.5 text-xs text-(--color-muted)">
+                    {repackEntries.length === 1
+                      ? "1 repack installer available from the Debrid catalog"
+                      : `${repackEntries.length} repack installers available from the Debrid catalog`
+                    }
+                  </p>
+                )}
+              </div>
+            )}
           </aside>
         </div>
       </section>
@@ -1220,6 +1358,14 @@ export default function StoreGameDetailsPage({
         onSelectSource={onSelectSourceKey}
         onDownloadSource={handleDownloadFromSource}
         onOpenDetails={onOpenGame}
+      />
+
+      <StoreRepackSelectorModal
+        open={repackSelectorOpen}
+        game={game}
+        repackEntries={repackEntries}
+        onClose={() => setRepackSelectorOpen(false)}
+        onInstall={handleInstallRepack}
       />
 
       <PackageInstallSuccessModal

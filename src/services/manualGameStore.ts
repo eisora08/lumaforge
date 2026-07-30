@@ -42,6 +42,9 @@ export type ManualGameEntry = {
   linkedSteamAppId?: string;
   linkedIgdbId?: string;
 
+  /** Steam appId for metadata resolution in GameDetails. */
+  appId?: string;
+
   sizeOnDisk?: number;
   isFavorite?: boolean;
 

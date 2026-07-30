@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useCallback, useRef, useState } from "react";
 import {
   ArrowLeft, Trophy, Heart, Gamepad2, Play, Square, Clock, HardDrive, CheckCircle2,
-  Star, Languages, Layers, Download, RefreshCw, Search,
+  Star, Languages, Layers, Download, RefreshCw, Search, FileSearch, Loader2,
 } from "lucide-react";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -1039,6 +1039,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                         Favorite
                       </span>
                     )}
+                    {game.source === "debrid" && game.repacker && (
+                      <span className="rounded-md bg-cyan-500/80 px-1.5 py-0.5 text-[10px] font-medium text-black">
+                        {game.repacker.toUpperCase()}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1220,6 +1225,12 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                       <div>
                         <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Publisher</span>
                         <p className="text-xs text-(--color-text)">{publisher}</p>
+                      </div>
+                    )}
+                    {game?.source === "debrid" && game?.repacker && (
+                      <div>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-(--color-muted)/50">Repacker</span>
+                        <p className="text-xs text-(--color-text)">{game.repacker}</p>
                       </div>
                     )}
                     {game?.metadata?.release_date && (
@@ -1584,6 +1595,8 @@ function ActionIcon({ action, className }: { action: ConsolePrimaryAction; class
     case "update": return <RefreshCw className={cls} />;
     case "check-update": return <Search className={cls} />;
     case "up-to-date": return <CheckCircle2 className={cls} />;
+    case "installing": return <Loader2 className={`${cls} animate-spin`} />;
+    case "select-exe": return <FileSearch className={cls} />;
     default: return <Play className={cls} />;
   }
 }

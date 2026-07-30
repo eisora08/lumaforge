@@ -44,3 +44,8 @@ pub mod external_files;
 pub mod steam_achievement_sources;
 pub mod extension;
 pub mod extension_lifecycle;
+pub mod repack_catalog;
+pub mod debrid_games;
+pub mod debrid_installer;
+pub mod hydra_source;
+pub mod debrid_resolver;

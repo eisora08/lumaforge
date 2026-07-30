@@ -6,7 +6,7 @@
  * Settings control scan behavior and subscriptions.
  */
 
-export type IntegrationId = "steam" | "epic" | "manual" | "lua";
+export type IntegrationId = "steam" | "epic" | "manual" | "lua" | "debrid";
 
 export type IntegrationSurface =
   | "library"
@@ -32,7 +32,7 @@ export type IntegrationSettingsState = {
 
 export const INTEGRATION_SCHEMA_VERSION = 1;
 
-export const ALL_INTEGRATION_IDS: IntegrationId[] = ["steam", "epic", "manual", "lua"];
+export const ALL_INTEGRATION_IDS: IntegrationId[] = ["steam", "epic", "manual", "lua", "debrid"];
 export const ALL_SURFACES: IntegrationSurface[] = ["library", "sidebar", "home", "console", "store", "search"];
 
 export const DEFAULT_INTEGRATION_SETTINGS: IntegrationSettingsState = {
@@ -98,6 +98,21 @@ export const DEFAULT_INTEGRATION_SETTINGS: IntegrationSettingsState = {
       },
       updatedAt: Date.now(),
     },
+    debrid: {
+      id: "debrid",
+      enabled: true,
+      scanOnStartup: true,
+      backgroundScan: false,
+      surfaces: {
+        library: true,
+        sidebar: true,
+        home: true,
+        console: true,
+        store: false,
+        search: true,
+      },
+      updatedAt: Date.now(),
+    },
   },
 };
 
@@ -106,6 +121,7 @@ export const INTEGRATION_DISPLAY_NAMES: Record<IntegrationId, string> = {
   epic: "Epic Games",
   manual: "Manual Games",
   lua: "Lua Packages",
+  debrid: "Debrid Repacks",
 };
 
 export const INTEGRATION_DISPLAY_DESCRIPTIONS: Record<IntegrationId, string> = {
@@ -113,4 +129,5 @@ export const INTEGRATION_DISPLAY_DESCRIPTIONS: Record<IntegrationId, string> = {
   epic: "Epic Games local library import and launch",
   manual: "Manually added non-Steam games",
   lua: "Lua packages and scripts from the Steam Workshop ecosystem",
+  debrid: "Debrid/Hydra streaming games from the repack catalog",
 };

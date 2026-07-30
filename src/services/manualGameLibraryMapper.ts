@@ -124,6 +124,7 @@ export function manualGameToLibraryGame(entry: ManualGameEntry): LibraryGame {
     libraryId,
     providerId: "manual",
     providerGameId: entry.id,
+    appId: entry.appId ?? entry.linkedSteamAppId,
 
     executablePath: entry.executablePath,
     workingDirectory: entry.workingDirectory,

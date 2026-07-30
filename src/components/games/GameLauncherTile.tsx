@@ -3,6 +3,7 @@ import { countRender } from "../../services/perfCounters";
 import {
   Download,
   ExternalLink,
+  FileSearch,
   FileText,
   FolderOpen,
   Gamepad2,
@@ -64,6 +65,8 @@ import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import GameEditDialog from "./GameEditDialog";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { updateDebridGame } from "../../services/debridGameStore";
+import { open } from "@tauri-apps/plugin-dialog";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -504,6 +507,30 @@ function GameLauncherTileInner({
             Update
           </span>
         )}
+        {game.source === "debrid" && game.repacker && (
+          <span className="absolute right-2 top-2 rounded-full bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-cyan-400 ring-1 ring-cyan-500/30">
+            {game.repacker.toUpperCase()}
+          </span>
+        )}
+        {(() => {
+          const srcBadge = game.hasLua
+            ? { label: "LUA", cls: "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30" }
+            : game.source === "epic"
+              ? { label: "EPIC", cls: "bg-purple-500/30 text-purple-300 ring-1 ring-purple-500/40" }
+              : game.source === "debrid"
+                ? { label: "DEBRID", cls: "bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/30" }
+                : game.source === "manual"
+                  ? { label: "MANUAL", cls: "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30" }
+                  : game.source === "steam"
+                    ? { label: "STEAM", cls: "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30" }
+                    : null;
+          if (!srcBadge) return null;
+          return (
+            <span className={`absolute bottom-2 left-2 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${srcBadge.cls}`}>
+              {srcBadge.label}
+            </span>
+          );
+        })()}
       </div>
 
       {/* Title + actions row */}
@@ -639,6 +666,38 @@ function GameLauncherTileInner({
                 {action === "missing-path" && (
                   <span className="text-[10px] text-(--color-muted)/50">Missing Path</span>
                 )}
+                {action === "installing" && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-(--color-muted)/50">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Installing
+                  </span>
+                )}
+                {action === "select-exe" && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleActionClick(e, async () => {
+                      try {
+                        const selected = await open({
+                          title: "Select game executable",
+                          filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
+                          defaultPath: game.installDir || "C:\\",
+                          multiple: false,
+                        });
+                        if (selected && game.providerGameId) {
+                          updateDebridGame(game.providerGameId, game.installDir || "", selected);
+                          showSuccess("Game executable set. Ready to play!");
+                        }
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        showError(`File picker failed: ${msg}`);
+                      }
+                    })}
+                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-(--color-accent)/80 transition hover:text-(--color-accent)"
+                  >
+                    <FileSearch className="h-3 w-3" />
+                    Select EXE
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -696,6 +755,37 @@ function GameLauncherTileInner({
                   }
                 }}
               />
+            ) : action === "installing" ? (
+              <MenuItem
+                label="Installing"
+                icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                disabled
+              />
+            ) : action === "select-exe" ? (
+              <MenuItem
+                label="Select Executable"
+                icon={<FileSearch className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  setMenuOpen(false);
+                  (async () => {
+                    try {
+                      const selected = await open({
+                        title: "Select game executable",
+                        filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
+                        defaultPath: game.installDir || "C:\\",
+                        multiple: false,
+                      });
+                      if (selected && game.providerGameId) {
+                        updateDebridGame(game.providerGameId, game.installDir || "", selected);
+                        showSuccess("Game executable set. Ready to play!");
+                      }
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      showError(`File picker failed: ${msg}`);
+                    }
+                  })();
+                }}
+              />
             ) : !hasActiveInstall ? (
               <MenuItem
                 label="Install"
@@ -726,7 +816,7 @@ function GameLauncherTileInner({
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
               onClick={() => { const fk = game.appId || (game.source === "manual" ? game.libraryId : null) || game.id; if (fk) toggleFavorite(fk); setMenuOpen(false); }}
             />
-            {game.appId && game.source !== "epic" && (
+            {game.appId && game.source !== "epic" && game.source !== "debrid" && (
               <MenuItem
                 label="Open in Steam"
                 icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -860,8 +950,19 @@ function GameLauncherTileInner({
                       console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(String(game.appId))}`);
                     },
                   }]
-                    : game.source !== "manual" && game.source !== "epic"
+                    : game.source === "debrid"
                       ? [{
+                        label: "Remove from Library",
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        onClick: () => {
+                          setMenuOpen(false);
+                          if (DEBUG_MANUAL_REMOVE) console.log(`[DEBRID][TILE_REMOVE] providerGameId=${game.providerGameId} title="${game.title}"`);
+                          showInfo("Debrid catalog entries are managed by the repack catalog. Remove the game from the provider list in Integrations settings.", { title: "Debrid" });
+                        },
+                      }]
+                      : game.source !== "manual" && game.source !== "epic"
+                        ? [{
                         label: "Uninstall in Steam",
                         icon: <ExternalLink className="h-3.5 w-3.5" />,
                         disabled: !game.steamInstalled,
@@ -904,11 +1005,12 @@ function GameLauncherTileInner({
           </CardActionMenu>
         </div>
 
-        {(game.appId || game.source === "manual" || game.source === "epic") && (
+        {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
           <GameEditDialog
             appId={game.appId}
             manualGameId={game.source === "manual" ? game.providerGameId : undefined}
             epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
+            debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editInitialTab}

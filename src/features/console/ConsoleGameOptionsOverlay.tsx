@@ -9,7 +9,7 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamep
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { focusGameWindow } from "../../services/tauri";
-import { showError, showSuccess } from "../../components/toast/GameToast";
+import { showError, showSuccess, showInfo } from "../../components/toast/GameToast";
 import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
@@ -277,6 +277,18 @@ export default function ConsoleGameOptionsOverlay({
         showToast(game.appId ? "App ID copied!" : "Game ID copied!");
       },
     });
+
+    if (game.source === "debrid") {
+      list.push({
+        id: "debrid-remove",
+        label: "Remove from Library",
+        icon: Trash2,
+        action: () => {
+          showInfo("Debrid catalog entries managed by the repack catalog. Disable the Debrid integration in Settings > Integrations to remove all entries.", { title: "Debrid" });
+          onClose();
+        },
+      });
+    }
 
     if (game.source === "manual" && !isRunning) {
       if (confirmDelete) {

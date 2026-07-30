@@ -19,16 +19,14 @@ export default function InstallerProgressListener() {
           updateJob(payload.job_id, {
             status: payload.status,
             progress: payload.progress,
-
-            // Importante:
-            // No sobrescribimos los bytes con 0 en eventos como extracting,
-            // installing o done.
-            ...(payload.bytes_read > 0
-              ? { bytesRead: payload.bytes_read }
-              : {}),
+            message: payload.message,
 
             ...(payload.total_bytes > 0
-              ? { totalBytes: payload.total_bytes }
+              ? { progressMode: "determinate", totalBytes: payload.total_bytes }
+              : {}),
+
+            ...(payload.bytes_read > 0
+              ? { bytesRead: payload.bytes_read }
               : {}),
           });
         }

@@ -43,6 +43,7 @@ import {
 import { loadManualGames, subscribeManualGames } from "../services/manualGameStore";
 import { manualGameToLibraryGame } from "../services/manualGameLibraryMapper";
 import { EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LIBRARY } from "../services/epicFeatureFlag";
+import { DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_LIBRARY } from "../features/debrid/debridFeatureFlag";
 import { isIntegrationEnabled, isIntegrationScanOnStartup } from "../services/integrationSettingsService";
 import { filterEnabledGames } from "../services/providerSurfaceFilter";
 import {
@@ -51,6 +52,12 @@ import {
   refreshEpicGames,
   initOverrideSubscription,
 } from "../services/epicGameStore";
+import {
+  getAllDebridGames,
+  isDebridGameInLibrary,
+  subscribeDebridGames,
+  refreshDebridGames,
+} from "../services/debridGameStore";
 
 // â”€â”€ Library runtime state machine â”€â”€
 
@@ -125,6 +132,21 @@ function getEpicLibraryGames(): LibraryGame[] {
   if (!EPIC_LIBRARY_ENABLED) return [];
   try {
     return getAllEpicGames();
+  } catch {
+    return [];
+  }
+}
+
+/** Sync read from the in-memory Debrid store. Returns [] when feature is disabled.
+ *  Returns games that the user has added to their library (downloaded + extracted,
+ *  including needs-setup, not just fully-ready). */
+function getDebridLibraryGames(): LibraryGame[] {
+  if (!DEBRID_LIBRARY_ENABLED) return [];
+  try {
+    const all = getAllDebridGames();
+    return all.filter((g) => {
+      return isDebridGameInLibrary(g.providerGameId!);
+    });
   } catch {
     return [];
   }
@@ -256,9 +278,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     options?: { allowReplace?: boolean },
   ): void {
     const current = gamesRef.current;
-    // Append manual games from manualGameStore and Epic games from epicGameStore
-    // so they appear in the Library grid. Both are never written to BootSnapshot, gameStore, SQLite, or appinfo.
-    const withManual = [...nextGames, ...getManualLibraryGames(), ...getEpicLibraryGames()];
+    // Append manual games from manualGameStore, Epic games from epicGameStore,
+    // and Debrid games from debridGameStore so they appear in the Library grid.
+    // All three are never written to BootSnapshot, gameStore, SQLite, or appinfo.
+    // dedupeLibraryGames now uses composite key "appId:source", so entries from
+    // different providers with the same appId coexist as separate Library rows.
+    const withManual = [...nextGames, ...getManualLibraryGames(), ...getEpicLibraryGames(), ...getDebridLibraryGames()];
     // Phase 2: Block empty replacement of valid data unless explicit
     if (withManual.length === 0 && current.length > 0 && !options?.allowReplace) {
       countLibraryEmptyBlocked();
@@ -782,6 +807,31 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         console.log(`[EPIC_STORE][LIBRARY_SUB] prevEpic=${prevEpicCount} freshEpic=${freshEpicCount} prevTotal=${current.length} nonEpic=${nonEpic.length}`);
       }
       applyGamesSafely(nonEpic, "epic-update");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Subscribe to Debrid game store changes — re-apply with fresh Debrid entries
+  useEffect(() => {
+    if (!DEBRID_LIBRARY_ENABLED || !isIntegrationEnabled("debrid")) return;
+
+    // Trigger initial Debrid refresh (fire-and-forget) only when scanOnStartup is enabled
+    if (isIntegrationScanOnStartup("debrid")) {
+      refreshDebridGames().catch((err) => console.warn("[DEBRID] initial refresh:", err));
+    }
+
+    return subscribeDebridGames(() => {
+      const current = gamesRef.current;
+      if (current.length === 0) return; // not loaded yet
+      // Strip Debrid games — applyGamesSafely re-adds fresh ones from store.
+      // This avoids stale Debrid objects surviving through mergeGames.
+      const nonDebrid = current.filter((g) => g.source !== "debrid");
+      if (DEBUG_DEBRID_LIBRARY) {
+        const prevDebridCount = current.filter((g) => g.source === "debrid").length;
+        const freshDebridCount = getDebridLibraryGames().length;
+        console.log(`[DEBRID_STORE][LIBRARY_SUB] prevDebrid=${prevDebridCount} freshDebrid=${freshDebridCount} prevTotal=${current.length} nonDebrid=${nonDebrid.length}`);
+      }
+      applyGamesSafely(nonDebrid, "debrid-update");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

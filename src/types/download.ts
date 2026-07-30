@@ -22,7 +22,7 @@ export type DownloadJob = {
   downloadUrl?: string;
 
   /** Broad category for display/grouping */
-  type?: "steam-install" | "lua-package" | "zip" | "manifest" | "media" | "other";
+  type?: "steam-install" | "lua-package" | "zip" | "manifest" | "media" | "debrid-install" | "other";
   /** Indeterminate when reliable percentage is unavailable */
   progressMode?: "determinate" | "indeterminate";
   speedBytesPerSec?: number;
@@ -35,6 +35,10 @@ export type DownloadJob = {
   parentId?: string;
   /** Installed size in bytes (populated when Steam install completes) */
   installedSize?: number;
+  /** Repacker name for Debrid installs (e.g., "FitGirl", "DODI") */
+  repacker?: string;
+  /** Install directory on disk (populated when install completes) */
+  installDir?: string;
 
   status: DownloadStatus;
   progress: number;

@@ -374,6 +374,9 @@ export default function ConsoleGridLayout({
                   {focusedGame.metadata?.legal_notice?.toLowerCase().includes("denuvo") && (
                     <span className="rounded-md bg-red-500/70 px-2.5 py-0.5 text-xs font-medium text-white">Denuvo</span>
                   )}
+                  {focusedGame.source === "debrid" && focusedGame.repacker && (
+                    <span className="rounded-md bg-cyan-500/80 px-2.5 py-0.5 text-xs font-medium text-black">{focusedGame.repacker.toUpperCase()}</span>
+                  )}
                 </div>
 
                 {/* Info grid: 2-col stats */}
@@ -431,6 +434,12 @@ export default function ConsoleGridLayout({
                         <p className="mt-0.5 font-medium text-(--color-text)">{focusedGame.metadata.publishers.join(", ")}</p>
                       </div>
                     )}
+                    {focusedGame.source === "debrid" && focusedGame.repacker && (
+                      <div>
+                        <span className="text-[10px] uppercase tracking-widest text-(--color-muted)">Repacker</span>
+                        <p className="mt-0.5 font-medium text-(--color-text)">{focusedGame.repacker}</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -449,6 +458,11 @@ export default function ConsoleGridLayout({
                   {isManualGame && (
                     <span className="text-(--color-muted)/50">
                       Source: <span className="font-medium text-(--color-muted)/70">manual</span>
+                    </span>
+                  )}
+                  {focusedGame.source === "debrid" && (
+                    <span className="text-(--color-muted)/50">
+                      Source: <span className="font-medium text-(--color-muted)/70">debrid</span>
                     </span>
                   )}
                 </div>

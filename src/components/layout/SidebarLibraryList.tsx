@@ -773,7 +773,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                   handleMenuClose();
                 }}
               />
-              {menuGame.appId && (
+              {menuGame.appId && menuGame.source !== "epic" && menuGame.source !== "debrid" && (
                 <MenuItem
                   label="Open in Steam"
                   icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -898,6 +898,16 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                         console.log(`[UNINSTALL_PENDING] appid=${menuGame.appId} phase=manual-cancel after=${isPendingUninstall(String(menuGame.appId))}`);
                       },
                     }]
+                    : menuGame.source === "debrid"
+                      ? [{
+                        label: "Remove from Library",
+                        icon: <Trash2 className="h-3.5 w-3.5" />,
+                        destructive: true as const,
+                        onClick: () => {
+                          handleMenuClose();
+                          showInfo("Debrid catalog entries are managed by the repack catalog. Disable the Debrid integration in Settings > Integrations to remove all entries.", { title: "Debrid" });
+                        },
+                      }]
                     : menuGame.source !== "manual" && menuGame.source !== "epic"
                       ? [{
                         label: "Uninstall in Steam",
@@ -951,9 +961,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         {renderMenu()}
         {editDialogOpen && (
           <GameEditDialog
-            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" ? editDialogGame?.appId : undefined}
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
             manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
             epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
+            debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editDialogInitialTab}
@@ -987,9 +998,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         {renderMenu()}
         {editDialogOpen && (
           <GameEditDialog
-            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" ? editDialogGame?.appId : undefined}
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
             manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
             epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
+            debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame.providerGameId : undefined}
             open={editDialogOpen}
             onClose={() => setEditDialogOpen(false)}
             initialTab={editDialogInitialTab}
@@ -1014,22 +1026,23 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       {renderGameList()}
       {renderMenu()}
       {editDialogOpen && (
-        <GameEditDialog
-          appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" ? editDialogGame?.appId : undefined}
-          manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
-          epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
-          open={editDialogOpen}
-          onClose={() => setEditDialogOpen(false)}
-          initialTab={editDialogInitialTab}
-          game={editDialogGame ?? undefined}
-          settings={{
-            rawgApiKey: appSettings?.rawgApiKey ?? "",
-            igdbClientId: appSettings?.igdbClientId ?? "",
-            igdbClientSecret: appSettings?.igdbClientSecret ?? "",
-            steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
-            steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
-          }}
-        />
+          <GameEditDialog
+            appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
+            manualGameId={editDialogGame?.source === "manual" ? editDialogGame.providerGameId : undefined}
+            epicProviderGameId={editDialogGame?.source === "epic" ? editDialogGame.providerGameId : undefined}
+            debridProviderGameId={editDialogGame?.source === "debrid" ? editDialogGame.providerGameId : undefined}
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            game={editDialogGame ?? undefined}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
       )}
     </div>
   );

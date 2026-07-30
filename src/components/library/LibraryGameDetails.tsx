@@ -16,6 +16,7 @@ import {
   Download,
   ExternalLink,
   FileCode2,
+  FileSearch,
   FolderOpen,
   HardDrive,
   LifeBuoy,
@@ -49,6 +50,8 @@ import {
   getSteamDbUrl,
 } from "../../utils/steamLinks";
 import toast from "react-hot-toast";
+import { open } from "@tauri-apps/plugin-dialog";
+import { updateDebridGame } from "../../services/debridGameStore";
 
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
@@ -1183,6 +1186,30 @@ export default function LibraryGameDetails({
                 {(localDetailsData as any)?.developer || game.metadata?.developer}
               </p>
             )}
+            {game.source === "debrid" && game.repacker && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-medium text-cyan-400 ring-1 ring-cyan-500/25">
+                {game.repacker.toUpperCase()}
+              </span>
+            )}
+            {(() => {
+              const srcBadge = game.hasLua
+                ? { label: "LUA", cls: "bg-emerald-500/15 text-emerald-400 ring-emerald-500/25" }
+                : game.source === "epic"
+                  ? { label: "EPIC", cls: "bg-purple-500/15 text-purple-400 ring-purple-500/25" }
+                  : game.source === "debrid"
+                    ? { label: "DEBRID", cls: "bg-cyan-500/15 text-cyan-400 ring-cyan-500/25" }
+                    : game.source === "manual"
+                      ? { label: "MANUAL", cls: "bg-amber-500/15 text-amber-300 ring-amber-500/25" }
+                      : game.source === "steam"
+                        ? { label: "STEAM", cls: "bg-blue-500/15 text-blue-400 ring-blue-500/25" }
+                        : null;
+              if (!srcBadge) return null;
+              return (
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${srcBadge.cls}`}>
+                  {srcBadge.label}
+                </span>
+              );
+            })()}
           </div>
         </div>
         )}
@@ -1417,6 +1444,38 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                       Missing Path
                     </span>
                   )}
+                  {action === "installing" && (
+                    <span className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-bold text-(--color-muted)/50">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Installing
+                    </span>
+                  )}
+                  {action === "select-exe" && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const selected = await open({
+                            title: "Select game executable",
+                            filters: [{ name: "Executables", extensions: ["exe", "com", "bat"] }],
+                            defaultPath: game.installDir || "C:\\",
+                            multiple: false,
+                          });
+                          if (selected && game.providerGameId) {
+                            updateDebridGame(game.providerGameId, game.installDir || "", selected);
+                            toast.success("Game executable set. Ready to play!");
+                          }
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : String(err);
+                          toast.error(`File picker failed: ${msg}`);
+                        }
+                      }}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
+                    >
+                      <FileSearch className="h-4 w-4" />
+                      Select Executable
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -1465,6 +1524,15 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                             clearPendingUninstall(game.appId);
                             showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
                             console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
+                          }}
+                        />
+                      ) : game.source === "debrid" ? (
+                        <DropdownItem
+                          label="Remove from Library"
+                          destructive
+                          onClick={() => {
+                            setShowActions(false);
+                            showInfo("Debrid catalog entries are managed by the repack catalog. Disable the Debrid integration in Settings > Integrations to remove all entries.", { title: "Debrid" });
                           }}
                         />
                       ) : game.steamInstalled && game.source !== "epic" ? (
@@ -2320,11 +2388,12 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
         />
       )}
 
-      {(game.appId || game.source === "manual" || game.source === "epic") && (
+      {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
         <GameEditDialog
           appId={game.appId}
           manualGameId={game.source === "manual" ? game.providerGameId : undefined}
           epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
+          debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab={editDialogTab}

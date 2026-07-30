@@ -8,6 +8,8 @@ import {
 
 import { DownloadJob, DownloadStatus } from "../types/download";
 import { useSteamInstallSync } from "../hooks/useSteamInstallSync";
+import { useDebridInstallSync, type DebridInstallHandle } from "../hooks/useDebridInstallSync";
+import { cancelDebridDownload } from "../services/tauri";
 
 type CreateDownloadJobInput = {
   appId: string;
@@ -40,6 +42,7 @@ type DownloadQueueContextValue = {
   jobs: DownloadJob[];
   addJob: (input: CreateDownloadJobInput) => DownloadJob;
   addSteamInstallJob: (appId: string, title: string, artworkUrl?: string) => string;
+  addDebridInstallJob: (providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string) => string;
   updateJob: (jobId: string, update: UpdateDownloadJobInput) => void;
   cancelJob: (jobId: string) => void;
   removeJob: (jobId: string) => void;
@@ -68,6 +71,10 @@ function createJobId(input: CreateDownloadJobInput) {
 
 function createSteamJobId(appId: string): string {
   return `steam-install-${appId}`;
+}
+
+function createDebridJobId(providerGameId: string): string {
+  return `debrid-install-${providerGameId}`;
 }
 
 function persistJobs(jobs: DownloadJob[]) {
@@ -135,6 +142,11 @@ export function DownloadQueueProvider({
     updateJob: (jobId, update) => syncRef.current.updateJob(jobId, update as any),
     removeJob: (jobId) => syncRef.current.removeJob(jobId),
   });
+
+  // Bridge Debrid install into the download queue
+  const debridInstallRef = useRef<DebridInstallHandle>({ startInstall: async () => {} });
+  const debridHandle = useDebridInstallSync(updateJob);
+  debridInstallRef.current = debridHandle;
 
   function addJob(input: CreateDownloadJobInput) {
     const now = new Date().toISOString();
@@ -205,6 +217,48 @@ export function DownloadQueueProvider({
     return jobId;
   }
 
+  function addDebridInstallJob(providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string): string {
+    const jobId = createDebridJobId(providerGameId);
+    const existing = jobs.find((j) => j.id === jobId);
+    if (existing && activeStatuses.includes(existing.status)) {
+      return jobId;
+    }
+
+    const now = new Date().toISOString();
+
+    const job: DownloadJob = {
+      id: jobId,
+      appId: appId ?? "",
+      gameTitle: title,
+      providerId: "debrid",
+      providerName: "Debrid",
+      fileType: "zip",
+      type: "debrid-install",
+      progressMode: "indeterminate",
+      message: "Starting Debrid install\u2026",
+      downloadUrl: downloadUri,
+      artworkUrl: artworkUrl,
+      repacker: repacker,
+
+      status: "queued",
+      progress: 0,
+      bytesRead: 0,
+      totalBytes: 0,
+
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const filtered = jobs.filter((j) => j.id !== jobId);
+    const nextJobs = [job, ...filtered];
+    commitJobs(nextJobs);
+
+    // Start install asynchronously
+    debridInstallRef.current.startInstall(jobId, providerGameId, downloadUri, installerType, title);
+
+    return jobId;
+  }
+
   function updateJob(jobId: string, update: UpdateDownloadJobInput) {
     setJobs((currentJobs) => {
       const nextJobs = currentJobs.map((job) =>
@@ -223,11 +277,17 @@ export function DownloadQueueProvider({
     });
   }
 
-  function cancelJob(jobId: string) {
+  async function cancelJob(jobId: string) {
     updateJob(jobId, {
       status: "cancelled",
       error: "Cancelled by user",
     });
+    // Bug 4 fix: also abort the in-flight Rust download
+    try {
+      await cancelDebridDownload(jobId);
+    } catch (e) {
+      console.warn("[DOWNLOAD][CANCEL] Failed to abort Rust download:", e);
+    }
   }
 
   function removeJob(jobId: string) {
@@ -262,6 +322,7 @@ export function DownloadQueueProvider({
       jobs,
       addJob,
       addSteamInstallJob,
+      addDebridInstallJob,
       updateJob,
       cancelJob,
       removeJob,

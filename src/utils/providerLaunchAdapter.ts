@@ -8,6 +8,7 @@
 
 import type { LibraryGame } from "../types/libraryGame";
 import { EPIC_LAUNCH_ENABLED, EPIC_DIRECT_LAUNCH_ENABLED, EPIC_LIBRARY_ENABLED, DEBUG_EPIC_LAUNCH } from "../services/epicFeatureFlag";
+import { DEBRID_LAUNCH_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_LAUNCH } from "../features/debrid/debridFeatureFlag";
 
 export type LaunchDispatchResult = {
   dispatched: boolean;
@@ -66,6 +67,43 @@ export async function dispatchProviderLaunch(game: LibraryGame): Promise<LaunchD
     }
   }
 
-  // Not an Epic game or Epic launch not enabled
+  // ── Debrid games: direct executable launch ──
+  if (game.source === "debrid" && DEBRID_LAUNCH_ENABLED && DEBRID_LIBRARY_ENABLED) {
+    if (!game.executablePath) {
+      if (DEBUG_DEBRID_LAUNCH) {
+        console.warn("[DEBRID_LAUNCH] no executablePath", { providerGameId: game.providerGameId });
+      }
+      return { dispatched: false, error: "No executable path for Debrid game" };
+    }
+
+    const { launchDebridGame } = await import("../services/tauri");
+
+    if (DEBUG_DEBRID_LAUNCH) {
+      console.log("[DEBRID_LAUNCH] dispatching", { executablePath: game.executablePath, providerGameId: game.providerGameId });
+    }
+
+    try {
+      const result = await launchDebridGame({
+        executablePath: game.executablePath,
+        launchArguments: game.launchArguments ?? null,
+      });
+
+      if (DEBUG_DEBRID_LAUNCH) {
+        console.log("[DEBRID_LAUNCH] result", result);
+      }
+
+      return {
+        dispatched: result.success,
+        method: result.method,
+        error: result.error ?? undefined,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[DEBRID_LAUNCH] failed", msg);
+      return { dispatched: false, error: msg };
+    }
+  }
+
+  // Not an Epic/Debrid game or launch not enabled
   return { dispatched: false };
 }

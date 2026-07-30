@@ -3583,10 +3583,42 @@ Replace runtime-enriched genre sections (which depend on remote Steam appdetails
 - `src/pages/Store.tsx` — mount auto-import + featured/noteworthy pre-fetch, DISPLAY_GENRES module constant, catalogGameToStoreGame helper, catalogFeaturedGames/catalogNewNoteworthyGames state, discoverSections with catalog-primary/fallback logic, View All pagination
 
 ### Build
-- `tsc --noEmit` ✅ (0 errors)
-- `vite build` ✅ (0 errors, only pre-existing chunk warnings)
+- `tsc --noEmit` ✅ (0 new errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ✅ (0 errors)
-- `vitest` ✅ 16/16 tests pass
+
+## Session — Gofile.io resolver: gofile page URL → direct download link via public API
+
+### Problem
+`install_debrid_package` descargaba desde URLs de gofile.io (`https://gofile.io/d/ABC123`), pero `reqwest` obtenía el HTML de la página, no el binario. Gofile.io requiere resolver vía su API pública para obtener el link directo.
+
+### Fix
+- **`debrid_installer.rs`**: Nueva función `resolve_gofile_url(gofile_url)` que:
+  1. Extrae el `contentId` del URL (`/d/ABC123` → `ABC123`)
+  2. Hace GET a `https://api.gofile.io/contents/{contentId}` (público, sin auth)
+  3. Parsea el JSON y extrae el `link` del primer child en `data.children`
+  4. Sin API keys, sin cookies, sin configuración extra
+- **`install_debrid_package`**: Antes de Step 1 (download), detecta si el URI es gofile.io, lo resuelve a link directo, y pasa el link resuelto a `download_file_to_dest()`
+- `reqwest` ya tenía feature `json` habilitado, `serde_json` ya era dependencia — cero cambios en Cargo.toml
+
+### Repack JSON
+- ContentIds verificados contra `steamrip.json`: GTA V=`O9qOj0`, RE2=`5QtuGG`, Palworld=`ukwugv` — todos correctos
+
+### Flujo final
+```
+install_debrid_package("https://gofile.io/d/O9qOj0", ...)
+  → detecta gofile.io
+  → GET https://api.gofile.io/contents/O9qOj0
+  → extrae link directo: "https://gofile.io/dl/abc123"
+  → download_file_to_dest("https://gofile.io/dl/abc123", ...)
+  → extract zip / run installer
+  → find_largest_exe
+```
+
+### Build
+- `cargo check` ✅ (0 new errors)
+- `tsc --noEmit` ✅ (pre-existing only)
+- `vite build` ✅ (pre-existing chunk warnings only)
 
 ## Session — Phase 2: Criteria Evaluator + ToolManager Integration
 
@@ -3629,6 +3661,56 @@ Wire `criteria.detection` from extension manifests into the runtime so extension
 - `tsc --noEmit` ✅ 0 new errors (23 pre-existing)
 - `vitest run` ✅ 826 passed, 22 failed (all pre-existing)
 - `vite build` ✅ (7.16s, only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)
+
+## Session — Webview bypass fix + curated Debrid repack catalog
+
+### Goal
+Fix Steam Store webview HTML fetch (Cloudflare challenge), then test the Debrid/Hydra repack download/install pipeline end-to-end with manually-curated JSON entries.
+
+### Part 1: Webview bypass
+- Increased initial delay from 15s → 30s with modal notification
+- Still errors with Cloudflare/Safeguard — deferred
+- Modal text updated to inform user about expected Cloudflare interaction
+
+### Part 2: Repack catalog format investigation
+- Discovered `steamrip.json` uses `{ downloads: [...] }` format with string fileSizes and no appIds — incompatible with expected `RepackCatalogArtifact` (`{ records: [...] }`)
+- Same issue with `fitgirl.json`
+- Raw scraper output cannot be read directly by the importer
+
+### Part 3: Curated repack-catalog-v1.json
+- Created new `repack-catalog-v1.json` in correct `RepackCatalogArtifact` format with 6 curated entries:
+  - GTA V (271590) — steamrip, gofile.io URI
+  - Resident Evil 2 (883710) — steamrip, gofile.io URI
+  - Palworld (1623730) — steamrip, gofile.io URI
+  - Armored Core VI (1971650) — fitgirl, no download URI
+  - Alan Wake 2 (1269530) — dodi, no download URI
+  - Armored Core VI v2 (1971650) — fitgirl, magnet URI
+- All entries have proper numeric `appId`, numeric `fileSize`, and `downloadUris[]`
+- Updated `repack-catalog-v1.manifest.json` with correct SHA256 checksum
+
+### Part 4: Checksum re-import detection
+- Modified `ensureRepackCatalogImported()` to compare `status.checksum` against `manifest.checksum`
+- When checksums differ, re-imports from bundled JSON (instead of skipping because `hasCatalog` is true)
+- Logs `[REPACK][AUTO_IMPORT] checksum changed (old... → new...)` on re-import
+- Debrid library subscription effect picks up new entries on boot
+
+### Part 5: Status
+- Feature flags are `true`: `DEBRID_LIBRARY_ENABLED = true`, `DEBRID_INSTALL_ENABLED = true`
+- `debrid` integration defaults to `enabled: true` in `DEFAULT_INTEGRATION_SETTINGS`
+- Boot Stage 11 automatically imports repack catalog
+- `LibraryGamesContext` subscription appends Debrid games to Library
+- **Download will fail**: gofile.io URIs return HTML pages (not binary files) — need direct HTTP links or a configured debrid provider for magnet URIs
+- Webview bypass still blocked by Cloudflare — deferred
+
+### Key Files Changed
+- `src/services/repackCatalogService.ts` — `ensureRepackCatalogImported()` checksum comparison + re-import
+- `public/data/repacks/repack-catalog-v1.json` — replaced with 6 curated entries in `RepackCatalogArtifact` format
+- `public/data/repacks/repack-catalog-v1.manifest.json` — updated SHA256 checksum
+
+### Build
+- `tsc --noEmit` ✅ (0 new errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ✅ (0 errors)
 
 ## Session — GRAND PHASE 2 (Rust): Lua Engine Wrapper + Generic Extension Lifecycle
@@ -3795,3 +3877,89 @@ Two flaws prevented `extension.lua` from being loaded:
 ### Build
 - `tsc --noEmit` ✅ (2 pre-existing errors only: PackageCard.tsx `onInstallComplete`, ExtensionsSection.tsx `Puzzle`)
 - `vite build` ✅ pending (no structural changes expected to fail)
+
+## Session — Debrid/Hydra F2: Library Provider Integration
+
+### Goal
+Integrate Debrid/Hydra repack catalog entries into the Library grid as a first-class game source, following the same memory-first provider store pattern as Epic F1B. This is F2 of the 6-phase Debrid plan.
+
+### Parts Implemented
+
+#### Part 1: Types
+- `"debrid"` added to `LibraryGameSource` and `LibraryFilter` unions in `libraryGame.ts`
+- `"debrid"` added to `IntegrationId`, `ALL_INTEGRATION_IDS`, `DEFAULT_INTEGRATION_SETTINGS.integrations`, and `INTEGRATION_DISPLAY_DESCRIPTIONS` / `INTEGRATION_DISPLAY_NAMES` in `integrations.ts`
+- `INTEGRATION_ICONS`, `INTEGRATION_COLORS`, `REFRESH_LABELS`, `DISABLE_CONFIRM` updated in `IntegrationsSection.tsx` (Cloud icon, cyan color)
+- `LibraryRail.tsx` `computeCounts` — added `debrid: 0` counter
+- `PROVIDER_CAPABILITIES` in `gameProviderCapabilities.ts` — added conservative `debrid` entry (all false except `canRemoveFromLibrary: true`)
+
+#### Part 2: Feature flag (`debridFeatureFlag.ts`)
+- 5 flags: `DEBRID_LIBRARY_ENABLED = false`, `DEBRID_LAUNCH_ENABLED = false`, `DEBRID_STORE_ENABLED = false`, `DEBUG_DEBRID_LIBRARY = false`, `DEBUG_DEBRID_LAUNCH = false`
+- All defaults OFF for production
+
+#### Part 3: Pure mapper (`debridGameLibraryMapper.ts`)
+- `repackEntryToDebridGame(entry)` — maps `RepackQueryResult` → `LibraryGame`
+- `computeDebridFingerprint(games)` — deterministic fingerprint (appId + repacker + fileSize combination)
+- `isDebridEntryEligible(entry)` — strict filter (valid appId, non-empty title, non-empty repacker)
+- Identity: `providerGameId = entry.id`, `libraryId = "debrid:<id>"`
+- `appId = String(entry.appId)` — Steam appId for cross-provider dedup
+- `source = "debrid"`, `isInstalled = false`, `isInstallable = true`, `isPlayable = false`
+- Fields populated from repack catalog: `title`, `lastUpdated`, `sizeOnDisk` (installSize > fileSize), `gameSize` (fileSize)
+
+#### Part 4: Memory-first provider store (`debridGameStore.ts`)
+- Module-level state: `_debridGames: LibraryGame[]`, `_debridFingerprint`, `_scanWarning`, `_scanState`
+- `refreshDebridGames()` — calls `getAllRepackEntries()`, filters eligible, maps to LibraryGame, replaces state, notifies on fingerprint change
+- `getAllDebridGames()`, `getDebridGame()`, `getDebridGameByAppId()`, `getDebridFingerprint()`, `getDebridScanState()`, `getDebridScanWarning()`
+- `subscribeDebridGames(listener)` — returns cleanup function
+- `resetDebridGameCache()` — clears state + notifies
+- Scanner failure: retains previous valid entries, sets warning, notifies once
+- Successful empty scan: replaces with empty (stale entries removed)
+
+#### Part 5: Rust catalog query
+- `src-tauri/src/commands/repack_catalog.rs` — added `query_all()` internal fn + `query_repack_catalog_all` Tauri command
+- `src-tauri/src/lib.rs` — registered new command
+- `src/services/tauri.ts` — `queryRepackCatalogAll()` TS binding + `RepackQueryResult` type
+
+#### Part 6: Catalog service
+- `src/services/repackCatalogService.ts` — added `getAllRepackEntries()` with 5-min TTL cache (module-level Map), wraps `queryRepackCatalogAll`
+- `resetRepackCatalogCache()` exported for testing
+
+#### Part 7: LibraryGamesContext merge boundary
+- Imports: `DEBRID_LIBRARY_ENABLED`, `DEBUG_DEBRID_LIBRARY`, `getAllDebridGames`, `subscribeDebridGames`, `refreshDebridGames`
+- `getDebridLibraryGames()` — sync read from in-memory Debrid store
+- `applyGamesSafely` now appends `...getDebridLibraryGames()` alongside manual + Epic
+- Debrid subscription `useEffect` — strips Debrid games from current, re-applies fresh from store on Debrid store change
+- Fingerprint change detection prevents duplicate notifications
+- Feature-flag gated: subscription returns immediately when `DEBRID_LIBRARY_ENABLED = false`
+
+### Merge behavior
+- `dedupeLibraryGames` dedups by appId — Debrid entries with Steam appIds are deduped against Steam games (first occurrence wins, so real Steam games take priority)
+- Debrid without appId go through `noAppId` array
+
+### Key Files Created/Changed
+- `src/features/debrid/debridFeatureFlag.ts` — **new** — feature flags
+- `src/services/debridGameLibraryMapper.ts` — **new** — pure mapper, eligibility, fingerprint
+- `src/services/debridGameStore.ts` — **new** — memory-first store with subscriptions
+- `src-tauri/src/commands/repack_catalog.rs` — added `query_all()` + `query_repack_catalog_all`
+- `src-tauri/src/lib.rs` — registered command
+- `src/services/tauri.ts` — `queryRepackCatalogAll` binding + `RepackQueryResult` type
+- `src/services/repackCatalogService.ts` — `getAllRepackEntries()` with 5-min TTL
+- `src/context/LibraryGamesContext.tsx` — Debrid merge boundary + subscription effect
+- `src/types/libraryGame.ts` — `"debrid"` source/filter
+- `src/types/integrations.ts` — `"debrid"` IntegrationId + display names + defaults
+- `src/types/gameProviderCapabilities.ts` — debrid capabilities entry
+- `src/components/library/LibraryRail.tsx` — debrid count
+- `src/components/settings/IntegrationsSection.tsx` — Debrid card icon/color/label/confirm/render loop
+
+### What was NOT changed (F2 boundary)
+- No launch — `isPlayable = false` for all Debrid entries
+- No Store integration — `DEBRID_STORE_ENABLED = false`
+- No Console Mode Debrid exposure
+- No install/uninstall via LumaForge
+- No metadata API, no artwork resolution
+- No cross-provider dedup configuration
+- No changes to: gameStore, GameSessionContext, Home, Sidebar, GameDetails, GameEditDialog, Store, Console Mode, Steam launch, Epic, manual games, Hubcap
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ✅ (0 errors)

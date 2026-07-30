@@ -15,6 +15,7 @@ import type { StoreSearchDropdownItem } from "../components/packages/PackagesToo
 import ProviderSearchReport from "../components/packages/ProviderSearchReport";
 import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
 import StoreHorizontalSection from "../components/store/StoreHorizontalSection";
+import DebridCatalogSection from "../components/store/DebridCatalogSection";
 import LazySectionWrapper from "../components/store/LazySectionWrapper";
 import StoreNewsFeed from "../components/store/StoreNewsFeed";
 import type { StoreNewsItem } from "../components/store/StoreNewsFeed";
@@ -103,6 +104,7 @@ import {
   getStoreImageCacheSize,
   getStoreImageCacheVersion,
 } from "../services/storeImageCache";
+import { getAllDebridGames } from "../services/debridGameStore";
 import { downloadFromSource as sharedDownloadFromSource } from "../features/download/downloadFromSource";
 import {
   ensureCatalogImported,
@@ -215,7 +217,7 @@ import type { SteamReviewSummary } from "../types/gameReview";
 import type { AppPage } from "../types/navigation";
 import { SkeletonBox, SkeletonHero, GridSkeleton } from "../components/common/Skeleton";
 
-type StoreTab = "discover" | "browse" | "lua-ready" | "news";
+type StoreTab = "discover" | "browse" | "lua-ready" | "news" | "repacks";
 type StoreProps = { onNavigate?: (page: AppPage) => void };
 
 const VIRTUAL_CARD_STYLE: React.CSSProperties = { contentVisibility: "auto", containIntrinsicSize: "280px" };
@@ -224,6 +226,7 @@ const STORE_TABS: { id: StoreTab; label: string }[] = [
   { id: "browse", label: "Browse" },
   { id: "lua-ready", label: "Lua Ready" },
   { id: "news", label: "News" },
+  { id: "repacks", label: "Repacks" },
 ];
 
 type StoreSectionModel = import("../services/storeDiscoverCache").StoreSectionModel;
@@ -2825,7 +2828,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       const overlayCache = loadStoreProviderOverlayCache();
       const cacheKey = `${appId}::${enabledProviderIds.slice().sort().join(",")}`;
       const cached = overlayCache[cacheKey];
-      if (cached && cached.game && cached.game.sources.length > 0) {
+      if (cached && cached.game && Array.isArray(cached.game.sources) && cached.game.sources.length > 0) {
         const overlayHasImage = !!cached.game.imageUrl;
         const overlaySourceReady = cached.game.sources.some((s) => s.available);
         log("store-search", `overlay cache hit { appId: "${appId}", hasImage: ${overlayHasImage}, sourceReady: ${overlaySourceReady} }`);
@@ -2856,7 +2859,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     setActiveSectionId(null);
 
     // Fast path: hydrate from cache if possible
-    if (cached && cached.status === "ready" && game.sources.length === 0) {
+    if (cached && cached.status === "ready" && (game.sources ?? []).length === 0) {
       const hydratedGame: PackageGame = {
         ...game,
         sources: cached.availableSources.map((s) => ({
@@ -3210,7 +3213,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }
 
     // 2. Trending: high interaction or has sources + not every game
-    if (interaction >= 2 || (overlay && overlay.sources.some((s) => s.available) && (interaction >= 1))) {
+    if (interaction >= 2 || (overlay && (overlay.sources ?? []).some((s) => s.available) && (interaction >= 1))) {
       candidates.push({ type: "trending", label: "Trending", score: 5 });
     }
 
@@ -3293,12 +3296,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       : cachedEntry
         ? cachedEntry.status
         : selectedDetailGameWithOverlay &&
-            selectedDetailGameWithOverlay.sources.some((s) => s.available)
+            (selectedDetailGameWithOverlay.sources ?? []).some((s) => s.available)
           ? "ready"
           : "idle";
 
   if (selectedAppId) {
-    log("store-search", `final status { appId: "${selectedAppId}", status: "${sourceStatus}", backgroundChecking: ${isBackgroundChecking}, sourceCount: ${selectedDetailGameWithOverlay?.sources.length ?? 0} }`);
+    log("store-search", `final status { appId: "${selectedAppId}", status: "${sourceStatus}", backgroundChecking: ${isBackgroundChecking}, sourceCount: ${(selectedDetailGameWithOverlay?.sources ?? []).length} }`);
   }
 
 
@@ -3799,6 +3802,29 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             </div>
           </div>
         </section></div>
+      ) : activeStoreTab === "repacks" ? (
+        <div className="lf-tab-panel-in">
+          <DebridCatalogSection onNavigateToGame={(appId) => {
+            const entry = rankedSteamCatalog.find((g: any) => String(g.appid || g.appId) === appId);
+            if (entry) {
+              openDetailsForGame(entry as any);
+            } else {
+              const debridGame = getAllDebridGames().find(g => g.appId === appId);
+              if (debridGame) {
+                const numId = Number(appId);
+                if (numId > 0 && !storeMetadataByAppId[numId]) {
+                  resolveGameMetadata([numId]);
+                }
+                openDetailsForGame({
+                  appId: debridGame.appId || appId,
+                  title: debridGame.title,
+                  platforms: [],
+                  sources: [],
+                });
+              }
+            }
+          }} />
+        </div>
       ) : activeStoreTab === "lua-ready" ? (
         <div className="lf-tab-panel-in">
           {luaReadyGames.length === 0 ? (
