@@ -546,6 +546,43 @@ export async function runBootTasks(): Promise<void> {
                       reconciledGames = index.map((e) => indexEntryToLibraryGame(e, luaOverlay));
                     }
                   }
+                  // [LUA_IDENTITY] Lua-only games (script present, not a Steam install)
+                  // keep a single identity across boot paths. Cold boot stores them as
+                  // `lua-<appId>` (source "lua"); warm boot must produce the same shape so
+                  // dedupeLibraryGames' "appId:source" key collapses them into one row
+                  // instead of rendering a duplicate `steam-<appId>` alongside `lua-<appId>`.
+                  if (reconciledGames && reconciledGames.length > 0) {
+                    const luaOnlyAppIds = new Set<string>();
+                    for (const id of luaAppIds) {
+                      if (!steamAppIds.has(id)) luaOnlyAppIds.add(id);
+                    }
+                    if (luaOnlyAppIds.size > 0) {
+                      const scriptsByAppId = new Map<string, Awaited<ReturnType<typeof scanInstalledLuaScripts>>>();
+                      for (const s of luaScripts) {
+                        const key = String(s.app_id);
+                        const arr = scriptsByAppId.get(key);
+                        if (arr) arr.push(s);
+                        else scriptsByAppId.set(key, [s]);
+                      }
+                      reconciledGames = reconciledGames.map((g) => {
+                        if (g.appId && luaOnlyAppIds.has(g.appId)) {
+                          const scripts = scriptsByAppId.get(g.appId) ?? [];
+                          return {
+                            ...g,
+                            id: `lua-${g.appId}`,
+                            source: "lua" as const,
+                            steamInstalled: false,
+                            luaScripts: scripts,
+                            hasLua: true,
+                            isLuaActive: scripts.some((s) => !s.is_disabled),
+                            isLuaDisabled: scripts.every((s) => s.is_disabled),
+                          };
+                        }
+                        return g;
+                      });
+                      console.log(`[BOOT][LUA_IDENTITY] converted lua-only games=${luaOnlyAppIds.size}`);
+                    }
+                  }
                   // Persist to gameStore so validateStartupCacheHealth shows correct count
                   // Always call setReconciledGames; empty-overwrite guard in gameStore prevents wipe
                   if (reconciledGames) {

@@ -436,8 +436,8 @@ export default function LibraryPage({ onNavigate }: Props) {
     try {
       const deleteResult = await deleteLuaScript({ luaPath: settings.luaPath, fileName: script.file_name });
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][RUST_RESULT] appid=${game.appId} file="${script.file_name}" success=${deleteResult.success} message="${deleteResult.message}"`);
-      // Verify file is actually gone from disk
-      const remaining = await scanInstalledLuaScripts(settings.luaPath);
+      // Verify file is actually gone from disk (force bypasses the 30s scan cache)
+      const remaining = await scanInstalledLuaScripts(settings.luaPath, { force: true });
       const stillPresent = remaining.some((s) => s.file_name === script.file_name);
       if (DEBUG_LUA_DELETE) console.log(`[LUA_DELETE][VERIFY] appid=${game.appId} file="${script.file_name}" stillPresent=${stillPresent}`);
       if (stillPresent) {

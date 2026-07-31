@@ -619,11 +619,25 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         if (reconciled.length > 0) {
           const reconciledById = new Map(reconciled.map((g) => [g.id, g]));
           const existingIds = new Set(loadedGames.map((g) => g.id));
+          // appId-aware dedup: cached and reconciled may use different id prefixes
+          // for the same game (lua-<appId> vs steam-<appId>). Skip a reconciled
+          // entry whose appId already exists under any id so one row per appId is
+          // guaranteed (matches mergeGames + console stableId dedup).
+          const existingAppIds = new Set(
+            loadedGames.map((g) => g.appId).filter((id): id is string => Boolean(id))
+          );
+          const cachedIdByAppId = new Map<string, string>();
+          for (const g of loadedGames) {
+            if (g.appId && !cachedIdByAppId.has(g.appId)) cachedIdByAppId.set(g.appId, g.id);
+          }
           const added: LibraryGame[] = [];
           for (const [id, game] of reconciledById) {
-            if (!existingIds.has(id)) {
-              added.push(game);
+            if (existingIds.has(id)) continue;
+            if (game.appId && existingAppIds.has(game.appId)) {
+              console.log(`[LIBRARY_CONTEXT][RECONCILE_SKIP] appid=${game.appId} existingId=${cachedIdByAppId.get(game.appId) ?? "unknown"} reconciledId=${id}`);
+              continue;
             }
+            added.push(game);
           }
           if (added.length > 0) {
             loadedGames = [...loadedGames, ...added].sort((a, b) =>

@@ -60,12 +60,49 @@ export async function checkProviderAvailability(params: {
 }
 
 
+const LUA_SCAN_TTL_MS = 30_000;
+let _luaScanCache: { luaPath: string; result: InstalledLuaScript[]; ts: number } | null = null;
+let _luaScanInFlight: { luaPath: string; promise: Promise<InstalledLuaScript[]> } | null = null;
+
+function invalidateLuaScanCache(): void {
+  // Null both the cached result and the in-flight scan so an orphaned boot scan
+  // that completes later cannot re-populate stale (pre-mutation) state.
+  _luaScanCache = null;
+  _luaScanInFlight = null;
+}
+
 export async function scanInstalledLuaScripts(
-  luaPath: string
+  luaPath: string,
+  options?: { force?: boolean }
 ): Promise<InstalledLuaScript[]> {
-  return await invoke<InstalledLuaScript[]>("scan_installed_lua_scripts", {
-    luaPath,
-  });
+  const force = options?.force === true;
+  if (
+    !force &&
+    _luaScanCache &&
+    _luaScanCache.luaPath === luaPath &&
+    Date.now() - _luaScanCache.ts < LUA_SCAN_TTL_MS
+  ) {
+    return _luaScanCache.result;
+  }
+  if (!force && _luaScanInFlight && _luaScanInFlight.luaPath === luaPath) {
+    return _luaScanInFlight.promise;
+  }
+  let wrapped: Promise<InstalledLuaScript[]>;
+  const raw = invoke<InstalledLuaScript[]>("scan_installed_lua_scripts", { luaPath });
+  wrapped = raw
+    .then((result) => {
+      if (_luaScanInFlight && _luaScanInFlight.promise === wrapped) {
+        _luaScanCache = { luaPath, result, ts: Date.now() };
+      }
+      return result;
+    })
+    .finally(() => {
+      if (_luaScanInFlight && _luaScanInFlight.promise === wrapped) {
+        _luaScanInFlight = null;
+      }
+    });
+  _luaScanInFlight = { luaPath, promise: wrapped };
+  return await wrapped;
 }
 
 
@@ -74,6 +111,7 @@ export async function setLuaScriptEnabled(params: {
   fileName: string;
   enabled: boolean;
 }): Promise<LuaActionResult> {
+  invalidateLuaScanCache();
   return await invoke<LuaActionResult>("set_lua_script_enabled", {
     luaPath: params.luaPath,
     fileName: params.fileName,
@@ -85,6 +123,7 @@ export async function deleteLuaScript(params: {
   luaPath: string;
   fileName: string;
 }): Promise<LuaActionResult> {
+  invalidateLuaScanCache();
   return await invoke<LuaActionResult>("delete_lua_script", {
     luaPath: params.luaPath,
     fileName: params.fileName,
