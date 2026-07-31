@@ -283,7 +283,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     // All three are never written to BootSnapshot, gameStore, SQLite, or appinfo.
     // dedupeLibraryGames now uses composite key "appId:source", so entries from
     // different providers with the same appId coexist as separate Library rows.
-    const withManual = [...nextGames, ...getManualLibraryGames(), ...getEpicLibraryGames(), ...getDebridLibraryGames()];
+    // Manual games with an appId that already exists in the main list are duplicates — skip them
+    const existingAppIds = new Set(nextGames.map(g => g.appId).filter(Boolean));
+    const freshManual = getManualLibraryGames().filter(m => !m.appId || !existingAppIds.has(m.appId));
+    const withManual = [...nextGames, ...freshManual, ...getEpicLibraryGames(), ...getDebridLibraryGames()];
     // Phase 2: Block empty replacement of valid data unless explicit
     if (withManual.length === 0 && current.length > 0 && !options?.allowReplace) {
       countLibraryEmptyBlocked();

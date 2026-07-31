@@ -1706,8 +1706,8 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                 </section>
               )}
 
-              {/* About This Game (only if longer than short intro, hidden for manual games) */}
-              {!isManualGame && longDescText && !descriptionsMatch && (
+              {/* About This Game (only if longer than short intro, hidden for manual games without appId) */}
+              {(!isManualGame || !!appIdStr) && longDescText && !descriptionsMatch && (
                 <section>
                   <h2 className="mb-3 text-base font-bold text-(--color-text)">
                     <BookOpen className="mr-2 inline h-4 w-4 text-(--color-accent)" />

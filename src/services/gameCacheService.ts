@@ -348,8 +348,9 @@ export function getLibraryGameStableId(game: { libraryId?: string; appId?: strin
  * Consistent with `LibraryGameDetails.tsx` which uses `game.appId || game.id`.
  */
 export function getFavoriteKey(game: { appId?: string | null; libraryId?: string | null; id?: string; source?: string }): string | null {
-  if (game.appId) return game.appId;
+  // Manual games always use their stable libraryId so the key never changes when appId is set later
   if (game.source === "manual" && game.libraryId) return game.libraryId;
+  if (game.appId) return game.appId;
   if (game.libraryId) return game.libraryId;
   if (game.id) return game.id;
   return null;

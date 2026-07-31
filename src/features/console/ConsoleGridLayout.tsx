@@ -18,6 +18,7 @@ import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
 import { setScrollTarget } from "./useConsoleGamepadInput";
+import { deduplicateByStableId } from "../../services/gameCacheService";
 
 const DEBUG_CONSOLE_GRID_NAV = false;
 const DEBUG_FORCE_TEST_MP4 = false;
@@ -66,6 +67,7 @@ export default function ConsoleGridLayout({
   const gridCardVariant: "landscape" | "poster" = settings.gridCardStyle.useLandscapeCards ? "landscape" : "poster";
   const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
+  const dedupedRail = useMemo(() => deduplicateByStableId(currentRail), [currentRail]);
 
   /* ── Preview uses settledFocusedGame (debounced) to avoid heavy work during held navigation ── */
   const previewGame = settledFocusedGame ?? focusedGame;
@@ -293,7 +295,7 @@ export default function ConsoleGridLayout({
                paddingRight: "32px",
                paddingTop: "clamp(24px, 3vh, 40px)",
              }}>
-          {currentRail.length > 0 ? (
+          {dedupedRail.length > 0 ? (
             <div
               ref={gridRef}
               className="grid"
@@ -302,7 +304,7 @@ export default function ConsoleGridLayout({
                 gap: `${settings.gridGap}px`,
               }}
             >
-              {currentRail.map((game, i) => (
+              {dedupedRail.map((game, i) => (
                 <ConsoleGameCard
                   key={"grid:" + (game.appId || game.id)}
                   game={game}
