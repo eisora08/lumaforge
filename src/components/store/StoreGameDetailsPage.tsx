@@ -11,6 +11,7 @@ import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SourceCheckStatus } from "../../services/sourceAvailabilityCacheService";
 import type { StoreDetailsSourceState } from "../../services/storeDetailsSourceState";
 import { openExternalUrl } from "../../services/externalLinks";
+import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
 import { openSteamLibrary, queryRepackCatalogByAppId } from "../../services/tauri";
 import {
   getSteamDbUrl,
@@ -216,6 +217,14 @@ export default function StoreGameDetailsPage({
   const [refinedDrmInfo, setRefinedDrmInfo] = useState<StoreDrmInfo | null>(null);
   const _drmResolveReqRef = useRef(0);
   const _mediaEnrichReqRef = useRef(0);
+
+  // Feed the ambient background with the hero gallery's current media. Follows
+  // the carousel via onMediaSelect and clears on unmount so the store-hero feed
+  // / context fallback can take over. Covers both Store and Global Search routes.
+  const handleAmbientMedia = useCallback((imageUrl: string | null) => {
+    setAmbientSource("store-details", imageUrl);
+  }, []);
+  useEffect(() => () => clearAmbientSource("store-details"), []);
 
   // Success modal state â€” shown after package download completes
   const [successModalOpen, setSuccessModalOpen] = useState(false);
@@ -1220,6 +1229,7 @@ export default function StoreGameDetailsPage({
           appId={game.appId}
           developer={developer}
           platforms={platforms}
+          onMediaSelect={handleAmbientMedia}
         />
 
         <div className="grid grid-cols-1 gap-6 p-5 lg:grid-cols-[1fr_360px] lg:p-6">

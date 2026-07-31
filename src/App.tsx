@@ -43,6 +43,10 @@ import { setAppFullscreen, toggleAppFullscreen } from "./services/windowModeServ
 import { useSettings } from "./context/SettingsContext";
 import { setConsoleMode } from "./features/console/consoleInputHints";
 import { bootstrapExtensions } from "./extensions/bootstrap";
+import { useGameDetails } from "./context/GameDetailsContext";
+import { setPageContextSource } from "./services/ambientBackgroundStore";
+import { getBootSnapshot } from "./services/appBootCoordinator";
+import { localPathToUrl, isLocalPath } from "./services/gameCacheService";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -106,6 +110,44 @@ function SessionOverlayWrapper() {
   }
 
   return <GameSessionOverlay event={overlayEvent} onDismiss={clearOverlay} />;
+}
+
+// Navigation-level ambient fallback. On every page change it feeds the ambient store
+// with a "page-context" background so transitions never show the previous page's stale
+// art nor a blank backdrop on pages without a dedicated feed. Detail pages (dashboard
+// hero, library details, console details) override it with their own scope while mounted;
+// when they unmount the store falls back to this context automatically.
+function AmbientNavFallback({ activePage }: { activePage: AppPage }) {
+  const { selectedGame } = useGameDetails();
+
+  useEffect(() => {
+    const selectedUrl = selectedGame?.imageUrl;
+    if (selectedUrl) {
+      setPageContextSource(selectedUrl);
+      return;
+    }
+    const snapshot = getBootSnapshot();
+    const hero =
+      snapshot?.library?.games?.find((g) => g.media?.backgroundPath)
+      ?? snapshot?.library?.games?.find((g) => g.media?.landscapePath)
+      ?? snapshot?.library?.games?.find((g) => g.media?.coverPath)
+      ?? snapshot?.library?.games?.[0]
+      ?? null;
+    const heroPath = hero?.media?.backgroundPath ?? hero?.media?.landscapePath ?? hero?.media?.coverPath ?? null;
+    if (
+      heroPath &&
+      !heroPath.startsWith("media/") &&
+      !heroPath.startsWith("img/") &&
+      !heroPath.startsWith("games/")
+    ) {
+      const url = isLocalPath(heroPath) ? (localPathToUrl(heroPath) ?? undefined) : heroPath;
+      setPageContextSource(url ?? null);
+    } else {
+      setPageContextSource(null);
+    }
+  }, [activePage, selectedGame?.imageUrl]);
+
+  return null;
 }
 
 function App() {
@@ -295,6 +337,7 @@ function App() {
       <AchievementWatcherInit />
       <GameDetailsProvider>
         <GameSessionHUD onNavigate={handleNavigate} />
+        <AmbientNavFallback activePage={activePage} />
         <AppLayout activePage={activePage} onNavigate={handleNavigate} isConsoleMode={activePage === "console"}>
           <AppRouteTransition routeKey={activePage}>
             {renderPage() ?? (

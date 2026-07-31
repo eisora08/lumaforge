@@ -349,6 +349,40 @@ html {
   background: none !important;
 }
 
+/* Fluent: neutral Mica-like backdrop so Liquid Glass reads as neutral glass */
+:root[data-theme="fluent"] body,
+:root[data-theme="fluent"] .lf-backdrop {
+  background:
+    radial-gradient(
+      circle at 50% 18%,
+      rgba(120, 140, 170, 0.10),
+      transparent 45%
+    ),
+    radial-gradient(
+      circle at 82% 88%,
+      rgba(80, 110, 150, 0.08),
+      transparent 40%
+    ),
+    linear-gradient(
+      160deg,
+      #23252a,
+      var(--color-bg) 72%
+    );
+}
+
+:root[data-theme="fluent"][data-surface="liquid-glass"] {
+  --shell-border: rgba(255, 255, 255, 0.14);
+  --surface-active-shadow: 0 20px 50px rgba(0, 0, 0, 0.30);
+}
+
+/* Ambient background: translucent shell/page so active game art shows through */
+:root[data-ambient="on"] {
+  --page-bg: transparent;
+  --shell-bg: color-mix(in srgb, var(--color-bg) 55%, transparent);
+  --shell-blur: blur(24px);
+  --shell-border: color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
 /* =========================
    LIGHTWEIGHT TRANSITIONS
 ========================= */
@@ -365,6 +399,80 @@ html {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* Ambient background layered crossfade (old layer fades out, new fades in) */
+@keyframes ambientIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ambientOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.animate-ambient-in {
+  animation: ambientIn 600ms ease-out both;
+}
+
+.animate-ambient-out {
+  animation: ambientOut 600ms ease-in forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ambient-in,
+  .animate-ambient-out {
+    animation: none;
+  }
+}
+
+/* =========================
+   HERO MEDIA TRANSITIONS (selectable via Settings → Animaciones)
+   Applied to the background/hero layers of every page (dashboard hero,
+   library game details hero, store discover carousel, console details).
+   "crossfade" = two-layer soft fade (default); the old layer fades out
+   while the new layer fades in. Duration 600ms matches the ambient
+   premium crossfade so all surfaces feel consistent.
+========================= */
+
+@keyframes heroCrossfadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-hero-crossfade-in {
+  animation: heroCrossfadeIn 600ms ease-out both;
+}
+
+@keyframes heroMediaOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.animate-hero-media-out {
+  animation: heroMediaOut 600ms ease-in forwards;
+}
+
+/* Ken Burns mode for single-image heroes: continuous slow zoom + mount fade-in */
+.animate-hero-kenburns-in {
+  animation:
+    heroKenburns 25s ease-in-out infinite alternate,
+    heroCrossfadeIn 600ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-crossfade-in,
+  .animate-hero-media-out,
+  .animate-hero-kenburns-in {
+    animation: none !important;
   }
 }
 

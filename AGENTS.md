@@ -4275,3 +4275,189 @@ Make the window title bar visually disappear — no border divider — and merge
 - `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
 - `vite build` ✅ (2.32s, Rolldown; only pre-existing chunk warnings)
 - `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Fluent theme + Ambient background
+
+### Goal
+Add a Windows 11-style "Fluent" theme (neutral Mica-like backdrop optimized for Liquid Glass) and a global ambient background: the active game's artwork shown blurred behind the whole UI, with translucent shell surfaces so the art shows through (acrylic effect) on every screen.
+
+### Part 1: Fluent theme
+- `src/theme/themes.ts` — new `fluent` theme added to the `themes` list + `themeVariables` (neutral dark grays: bg `#1f1f1f`, surface `#2b2b2b`, accent `#60cdff`); description "Estilo Windows 11 con acento azul y superficies de vidrio. Ideal con Liquid Glass."
+- `src/types/theme.ts` — `"fluent"` added to `ThemeId` union
+- `src/App.css` — neutral Mica-like backdrop for `:root[data-theme="fluent"] body` + `.lf-backdrop` (blue-tinted radial glows over a `#23252a → bg` linear gradient); `:root[data-theme="fluent"][data-surface="liquid-glass"]` gets `--shell-border: rgba(255,255,255,0.14)` + deeper `--surface-active-shadow`
+- Renders through the existing theme grid in Settings automatically (no new UI)
+
+### Part 2: Ambient background store (`src/services/ambientBackgroundStore.ts` — **new**)
+- Module-level store: `url`, `scope`, `enabled` + listener set; snapshot object consumed via `useSyncExternalStore`
+- localStorage key `lumaforge-ambient-background` (`"1"`/`"0"`), read once at module init
+- `setAmbientSource(scope, url)` — scoped writes, last-scope-wins, emits only on change; `clearAmbientSource(scope)`
+- `setAmbientEnabled(bool)` — persists + emits; `isAmbientEnabled()`, `subscribeAmbient()`, `getAmbientSnapshot()`
+- Syncs `document.documentElement.dataset.ambient = "on" | "off"` on every emit
+
+### Part 3: AmbientBackground component (`src/components/layout/AmbientBackground.tsx` — **new**)
+- `useSyncExternalStore` on the store; renders `null` when disabled or no URL
+- Fixed full-screen `pointer-events-none absolute inset-0 z-[1] overflow-hidden` layer, mounted in `AppLayout.tsx` right after `.lf-backdrop` in BOTH the Desktop layout and the Console Mode layout
+- Art `<img>`: `animate-ambient-in h-full w-full scale-110 object-cover blur-2xl` at `opacity-40`, crossfade handled by `key={url}` remount
+- Overlays: `bg-black/45` dim + `bg-linear-to-t from-(--color-bg)/75 via-transparent to-(--color-bg)/40` bottom blend into the UI background
+
+### Part 4: Translucent shell CSS (`src/App.css`)
+- `:root[data-ambient="on"]` makes the shell/page translucent so the art shows through: `--page-bg: transparent`, `--shell-bg: color-mix(in srgb, var(--color-bg) 55%, transparent)`, `--shell-blur: blur(24px)`, `--shell-border: color-mix(in srgb, var(--color-border) 60%, transparent)`
+- `ambientIn` keyframes (opacity 0→1) + `.animate-ambient-in` (500ms ease-out both); disabled under `prefers-reduced-motion`
+
+### Part 5: Source feeding (3 surfaces)
+- **GameHero.tsx (dashboard)** — every background resolution path now also calls `setAmbientSource("dashboard", url)` on success and `clearAmbientSource("dashboard")` on null/error; unmount effect clears
+- **LibraryGameDetails.tsx** — feeds the resolved `imageUrl` as scope `"library-details"`; clears on `game.appId` change + unmount
+- **ConsoleGameDetails.tsx** — feeds `heroSrc` as scope `"console-details"`; clears on game change + unmount
+
+### Part 6: Settings toggle
+- `src/pages/Settings.tsx` — "Fondo ambiental" `ToggleOption` in the Apariencia section ("Muestra el arte del juego activo (difuminado) detrás de la interfaz en todas las pantallas."), bound via `useSyncExternalStore` + `setAmbientEnabled`
+
+### Key Files Changed
+- `src/services/ambientBackgroundStore.ts` — **new** — ambient store + dataset sync
+- `src/components/layout/AmbientBackground.tsx` — **new** — ambient art layer component
+- `src/App.css` — fluent backdrop, `:root[data-ambient=on]` shell overrides, `ambientIn` keyframes
+- `src/components/layout/AppLayout.tsx` — AmbientBackground mounted (Desktop + Console)
+- `src/components/dashboard/GameHero.tsx` — ambient source feed for dashboard hero
+- `src/components/library/LibraryGameDetails.tsx` — ambient source feed for library details
+- `src/features/console/ConsoleGameDetails.tsx` — ambient source feed for console details
+- `src/pages/Settings.tsx` — "Fondo ambiental" toggle
+- `src/theme/themes.ts` + `src/types/theme.ts` — Fluent theme
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (Rolldown; verified in dist: `animate-ambient-in` + `ambientIn` keyframes, `:root[data-ambient=on]` overrides, `from-(--color-bg)` gradient utilities, AmbientBackground module + "Fondo ambiental" settings row all present)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+
+## Session � Ambient latency fix + editable accent + blur intensity + Fluent 2/Mica/Acrylic audit
+
+### Goal
+(1) Fix ambient background updating late/stale across page navigation, (2) make the theme accent color user-editable, (3) add subtle blur intensity levels, (4) audit a Fluent 2 + Mica/Acrylic + Dynamic Effect global theme overhaul (spec only � no UI overhaul executed).
+
+### Part 1: Ambient store � two-slot source model
+- `src/services/ambientBackgroundStore.ts` rewritten:
+  - **`_detail` slot** � active-page scoped source (`dashboard`, `library-details`, `console-details`) set via `setAmbientSource(scope, url)` while a surface is mounted; cleared on unmount.
+  - **`_context` slot** � navigation-level fallback set via `setPageContextSource(url)` on every page change (`page-context` scope); `clearPageContextSource()` resets it.
+  - `clearAmbientSource(scope)` now falls back to the context URL instead of nulling the ambient entirely � fixes the flash-to-black when navigating between games/pages while detail art is still resolving.
+  - Snapshot shape `{ url, enabled, intensity }`; same `subscribeAmbient`/`getAmbientSnapshot` contract (backward compatible).
+- **Sync first-paint feeds** (before async resolution):
+  - `LibraryGameDetails.tsx` � first effect feeds from `imageUrl` OR raw in-memory snapshot path (`game.backgroundPath ?? landscapePath ?? coverPath`) via `localPathToUrl`/`isLocalPath`, skipping relative `media/`/`img/`/`games/` prefixes (async effect upgrades those later).
+  - `GameHero.tsx` � parallel synchronous feed effect (deps: `runningLibGame, heroAppId, heroGame?.media.*, heroManualGame, heroEpicGame`); new imports `localPathToUrl`, `isLocalPath`.
+- **Nav fallback** (`App.tsx`): new `AmbientNavFallback({ activePage })` mounted inside `GameDetailsProvider` after `GameSessionHUD`; feeds `selectedGame.imageUrl` if present, else first snapshot game with `backgroundPath ? landscapePath ? coverPath`, else `games[0]`; skips relative provider paths; clears context otherwise.
+
+### Part 2: Editable accent color
+- `src/context/ThemeContext.tsx` � new `accentOverride: string | null` + `setAccentOverride(hex | null)`; storage key `lumaforge-accent` (validates `HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/`); theme effect applies `--color-accent` + derived `--color-accent-text` (luminance threshold 0.62 ? near-black vs white) after `themeVariables[theme]`; synced across windows via `lumaforge-data-changed`; `useMemo` value includes the new members.
+- `src/components/settings/AccentColorPicker.tsx` � **new** � native `<input type="color">` bound to `useTheme().accentOverride`/`setAccentOverride`, live hex display, "Restaurar" button clearing to null; `lf-surface rounded-2xl border p-4` styling; swatch shows theme accent (`themeVariables[selectedTheme]["--color-accent"]`) when no override.
+- `src/pages/Settings.tsx` � picker mounted in Apariencia section (below theme grid, above surface modes); `themeVariables` + `accentOverride`/`setAccentOverride` destructured.
+
+### Part 3: Ambient blur intensity
+- `ambientBackgroundStore.ts` � `AmbientIntensity = "sutil" | "equilibrado" | "vivido"` (default `equilibrado`), `setAmbientIntensity`/`getAmbientIntensity`, localStorage `lumaforge-ambient-intensity`.
+- `src/components/layout/AmbientBackground.tsx` � reads `intensity`; mapping: `sutil` ? `blur-xl` + art `opacity-30` + `bg-black/50`; `equilibrado` ? `blur-2xl` + `opacity-40` + `bg-black/45`; `vivido` ? `blur-3xl` + `opacity-55` + `bg-black/40`.
+- `src/pages/Settings.tsx` � 3-option segmented control (Sutil/Equilibrado/V�vido) under the ambient toggle, hidden when ambient disabled.
+
+### Part 4: Fluent 2 + Mica/Acrylic + Dynamic Effect audit (spec � no overhaul)
+Mapping of Windows 11 Fluent 2 concepts to existing LumaForge infrastructure:
+
+| Fluent 2 concept | Current LumaForge infra | Status |
+|---|---|---|
+| **Mica backdrop** (desktop wallpaper bleed) | `:root[data-theme="fluent"] .lf-backdrop` neutral radial glows; `data-ambient=on` makes shell translucent showing ambient art | Partial � Mica reads OS wallpaper, we use ambient art instead |
+| **Acrylic material** (translucent blur) | `--shell-blur: blur(24px)` + `--shell-bg: color-mix(... 55%, transparent)` when `data-ambient=on` | Present via CSS `backdrop-filter` |
+| **Reveal/Hover glow** | `--surface-active-border`, `hover:bg-white/10`, accent hovers | Partial � no dynamic pointer-lighting |
+| **Dynamic Effect** (accent flows through UI, but keep solid surfaces opaque) | `--color-accent` theming + new `accentOverride`; solid surface mode keeps `--shell-bg` opaque | Accent editable now; effect flow = theme+accent vars |
+| **Accent color picker** | Settings ? Apariencia ? AccentColorPicker | Implemented (Part 2) |
+| **Mica/acrylic tint** | `--color-bg` + `--shell-border: rgba(255,255,255,0.14)` for liquid-glass | Present |
+| **Window chrome** | `TopBar.tsx` merged window controls, `--shell-bg` header | Present |
+| **Dynamic Effect per-surface** | No per-surface accent derivation (e.g. buttons vs selected nav pill) | **Gap** � future: compute `--color-accent-soft`/`--color-accent-strong` variants |
+| **System accent detection** | None � accent always from theme | **Gap** � future: read `windows` registry accent via Rust |
+| **Mica OS wallpaper capture** | None � uses ambient art instead | **Gap** � future: Tauri `windows` crate capture |
+
+**No UI overhaul executed** � Parts 1-3 are the deliverable; Part 4 documents the roadmap (per-surface Dynamic Effect variants, system-accent detection, Mica OS capture) for a future session.
+
+### Key Files Changed
+- `src/services/ambientBackgroundStore.ts` � two-slot model, page-context API, intensity state/persistence
+- `src/components/layout/AmbientBackground.tsx` � intensity ? blur/dim/opacity mapping
+- `src/components/settings/AccentColorPicker.tsx` � **new** � accent picker + reset
+- `src/pages/Settings.tsx` � accent picker mount + intensity segmented control
+- `src/context/ThemeContext.tsx` � accentOverride apply/persist/sync
+- `src/App.tsx` � `AmbientNavFallback` component
+- `src/components/library/LibraryGameDetails.tsx` � synchronous ambient feed from snapshot path
+- `src/components/dashboard/GameHero.tsx` � synchronous ambient feed + `localPathToUrl`/`isLocalPath` imports
+
+### Build
+- `tsc --noEmit` ? (only 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ? (2.00s, Rolldown; verified `sutil/equilibrado/vivido` + "Color de acento" strings in bundle)
+- `cargo check` ?? skipped (no Rust changes)
+
+## Session � Ambient reactividad real + crossfade premium + feeds de Store
+
+### Goal
+Arreglar el fondo ambiental para que reaccione en tiempo real (antes solo cambiaba al navegar de página o al minimizar/maximizar), y hacer que la página Store alimente el fondo desde el carrusel hero de Discover y la galería de medios de detalles, con crossfade suave premium al cambiar de imagen.
+
+### Part 1: Root cause del no-re-render (fix cr�tico)
+- `src/services/ambientBackgroundStore.ts` � `emit()` mutaba el MISMO objeto `_snapshot` en cada llamada; `useSyncExternalStore` compara con `Object.is` y, al ser la misma referencia, jam�s re-renderizaba el componente. El refresh al minimizar/maximizar era un efecto secundario de un re-render por resize que rele�a el objeto mutado.
+- Fix: `_snapshot` pasa de `const` a `let`; `emit()` asigna un objeto NUEVO `{ url, enabled, intensity }` cada vez (con comentario explicando el bug de `Object.is`).
+
+### Part 2: Feeds de Store (nuevos scopes del slot `_detail`)
+- `StoreDiscoverHeroCarousel.tsx` � deriva `ambientImage = getGameImage(activeGame, storeMetadataByAppId)` y llama `setAmbientSource("store-hero", ambientImage ?? null)` en efecto por cambio de imagen; cleanup al unmount.
+- `StoreGameMediaGallery.tsx` � nueva prop opcional `onMediaSelect?: (imageUrl: string | null) => void`; reporta la imagen actualmente mostrada via ref (`onMediaSelectRef`) en efecto por `currentMediaImage` (screenshot ? `image`; trailer ? `thumbnail ?? poster`; null cuando no hay item).
+- `StoreGameDetailsPage.tsx` � wired: `handleAmbientMedia = useCallback((u) => setAmbientSource("store-details", u), [])` + cleanup al unmount; pasa `onMediaSelect` a la galer�a. Cubre AMBAS rutas que renderizan esta p�gina: `Store.tsx` (L3351) y `GameDetails.tsx` (L440, b�squeda global).
+
+### Part 3: Crossfade premium en AmbientBackground
+- `src/components/layout/AmbientBackground.tsx` � reemplaza el remount `key={url}` por dos capas apiladas: estado `prevUrl`; cuando `url` cambia, la capa anterior queda montada con `animate-ambient-out` (fade-out) mientras la nueva entra con `animate-ambient-in` (fade-in); ambas `absolute inset-0 scale-110 object-cover` bajo los overlays compartidos (dim + gradiente). `prevUrl` se limpia tras ~650ms (`CROSSFADE_MS`). Null-safe cuando `!enabled || !url`.
+- `src/App.css` � `@keyframes ambientOut` (to opacity 0) + `.animate-ambient-out` (600ms ease-in forwards); `ambientIn` pasa a 600ms ease-out; ambos dentro del guard `prefers-reduced-motion`.
+
+### Build
+- `tsc --noEmit` ? (solo los 23 errores preexistentes de extensions/tests; los errores temporales de `StoreMediaItem.image` en la galer?a se resolvieron con narrowing por tipo `trailer` vs `screenshot`)
+- `vite build` ? (2.19s, Rolldown; solo warnings preexistentes + INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `cargo check` ?? skipped (no Rust changes)
+
+## Session — Apartado "Animaciones": selector de transición de hero/fondo (crossfade default)
+
+### Goal
+Añadir el apartado **"Animaciones"** en Ajustes con un selector de transición de hero/fondo (3 opciones) y aplicarlo a los 4 heros: LibraryGameDetails, GameHero (dashboard), StoreDiscoverHeroCarousel y ConsoleGameDetails.
+
+### Decisiones (confirmadas por el usuario)
+- **Crossfade = default en todos los heros** (incluye dashboard; el Ken Burns deja de ser fijo y pasa a ser opción).
+- El **ambient global** siempre usa el crossfade premium — queda fuera del selector.
+- El apartado Animaciones contiene solo el selector (sin toggles globales de animaciones menores).
+
+### Part 1: `src/services/heroTransitionStore.ts` (nuevo)
+- `HeroTransitionId = "crossfade" | "kenburns" | "focus"`; `HERO_TRANSITION_OPTIONS` (label + description por opción).
+- localStorage `lumaforge-hero-transition`; `setHeroTransition` / `getHeroTransition` / `subscribeHeroTransition` / `getHeroTransitionSnapshot`.
+- `emit()` asigna snapshot NUEVO por llamada (lección aprendida del bug `Object.is` del ambient store).
+
+### Part 2: `src/hooks/useCrossfadeSrc.ts` (nuevo)
+- `CROSSFADE_HOLD_MS = 650`; dos capas `{ prevSrc, currentSrc }`; la capa previa se mantiene montada (fade-out) mientras la nueva hace fade-in, y se limpia tras `holdMs`.
+- `prevSrc` es `null` cuando no hay capa previa que conservar.
+
+### Part 3: CSS en App.css
+- `heroCrossfadeIn` (600ms ease-out both) → `.animate-hero-crossfade-in`
+- `heroMediaOut` (600ms ease-in forwards) → `.animate-hero-media-out`
+- `.animate-hero-kenburns-in` (combina `heroKenburns` 25s infinite alternate + `heroCrossfadeIn` 600ms)
+- Guard `prefers-reduced-motion` con `animation: none !important` para las tres.
+
+### Part 4: Aplicación en los 4 heros
+- **LibraryGameDetails.tsx**: suscripción `useSyncExternalStore`; `sharpHeroClass` (kenburns→`animate-hero-kenburns-in`, focus→`animate-hero-focus-in`, else→`animate-hero-crossfade-in`) en la capa nítida.
+- **GameHero.tsx** (dashboard): `heroBgClass` (kenburns→`animate-hero-kenburns`, focus→`animate-hero-focus-in`, else→`animate-hero-crossfade-in`) en el div `data-hero-bg-layer`.
+- **StoreDiscoverHeroCarousel.tsx**: crossfade real de dos capas con `useCrossfadeSrc(ambientImage)` — capa previa `animate-hero-media-out` + capa actual `animate-hero-crossfade-in`; modos kenburns/focus con clase única. Reactivo a clicks y auto-advance de 7s.
+- **ConsoleGameDetails.tsx**: `consoleHeroClass` (misma lógica) en el `<img>` del hero backdrop.
+
+### Part 5: Settings.tsx — sección "Animaciones"
+- Insertada justo después de la sección Apariencia (antes de Display).
+- Selector segmentado de 3 columnas (mismo patrón que "Intensidad del fondo ambiental") con label + descripción por opción.
+- Nota: "El fondo ambiental siempre usa la transición de fundido premium, independientemente de esta selección."
+
+### Key Files Changed
+- `src/services/heroTransitionStore.ts` — **nuevo** — store de la preferencia + opciones
+- `src/hooks/useCrossfadeSrc.ts` — **nuevo** — hook de dos capas para surfaces de imagen única
+- `src/App.css` — `heroCrossfadeIn`, `heroMediaOut`, `.animate-hero-kenburns-in`, reduced-motion guard
+- `src/components/library/LibraryGameDetails.tsx` — `sharpHeroClass` en capa nítida
+- `src/components/dashboard/GameHero.tsx` — `heroBgClass` en bg layer
+- `src/components/store/StoreDiscoverHeroCarousel.tsx` — crossfade de dos capas + modos
+- `src/features/console/ConsoleGameDetails.tsx` — `consoleHeroClass` en hero backdrop
+- `src/pages/Settings.tsx` — sección Animaciones + suscripción al store
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ✅ (1.97s, Rolldown; solo warnings preexistentes + INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `cargo check` ⏭️ skipped (no Rust changes)

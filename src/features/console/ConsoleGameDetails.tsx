@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useCallback, useRef, useState } from "react";
+import { useMemo, useEffect, useCallback, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowLeft, Trophy, Heart, Gamepad2, Play, Square, Clock, HardDrive, CheckCircle2,
   Star, Languages, Layers, Download, RefreshCw, Search, FileSearch, Loader2,
@@ -12,6 +12,8 @@ import { useTheme } from "../../context/ThemeContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getFavoriteKey } from "../../services/gameCacheService";
+import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { buildStoreMedia } from "../../services/storeMediaService";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
 import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
@@ -707,6 +709,28 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const heroSrc = mediaBundle?.background?.url ?? getConsoleHeroBackground(game);
   const coverSrc = mediaBundle?.cover?.url ?? getConsoleCardSrc(game, "poster");
   const isManualGame = game?.source === "manual";
+  // Selectable hero/background transition (Settings → Animaciones)
+  useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
+  const heroTransition = getHeroTransitionSnapshot().id;
+  const consoleHeroClass =
+    heroTransition === "kenburns"
+      ? "animate-hero-kenburns-in"
+      : heroTransition === "focus"
+        ? "animate-hero-focus-in"
+        : "animate-hero-crossfade-in";
+  /* ── Ambient background: feed console hero art ── */
+  useEffect(() => {
+    if (!heroSrc) return;
+    setAmbientSource("console-details", heroSrc);
+  }, [heroSrc]);
+
+  useEffect(() => {
+    clearAmbientSource("console-details");
+  }, [game?.appId]);
+
+  useEffect(() => {
+    return () => clearAmbientSource("console-details");
+  }, []);
   const logoSrc = useMemo(() => {
     const raw = mediaBundle?.logo?.url ?? getConsoleLogoSrc(game);
     if (!raw) return null;
@@ -919,7 +943,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             key={game.appId || game.id}
             src={heroSrc}
             alt=""
-            className="h-full w-full object-cover"
+            className={`h-full w-full object-cover ${consoleHeroClass}`}
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
         ) : (

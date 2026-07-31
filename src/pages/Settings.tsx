@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { setAmbientEnabled, setAmbientIntensity, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
+import { setHeroTransition, subscribeHeroTransition, getHeroTransitionSnapshot, HERO_TRANSITION_OPTIONS } from "../services/heroTransitionStore";
 import {
   Eye,
   EyeOff,
@@ -46,6 +48,7 @@ import HomeLayoutEditor from "../components/settings/HomeLayoutEditor";
 import CollectionsSection from "../components/settings/CollectionsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
+import AccentColorPicker from "../components/settings/AccentColorPicker";
 import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
 import BackupSectionUI from "../components/settings/BackupSection";
@@ -57,7 +60,7 @@ import ExtensionsSettings from "../extensions/ui/ExtensionsSettings";
 import { defaultApiProviders } from "../data/providers";
 import { ApiProviderUserSettings } from "../types/provider";
 
-import { themes, surfaceModes } from "../theme/themes";
+import { themes, surfaceModes, themeVariables } from "../theme/themes";
 import { useTheme } from "../context/ThemeContext";
 import { useSettings } from "../context/SettingsContext";
 import { clearIgdbTokenCache } from "../services/igdbAccessTokenService";
@@ -107,8 +110,10 @@ export default function Settings() {
   const {
     theme: selectedTheme,
     surfaceMode,
+    accentOverride,
     setTheme,
     setSurfaceMode,
+    setAccentOverride,
   } = useTheme();
 
   const {
@@ -116,6 +121,18 @@ export default function Settings() {
     updateSetting,
     resetSettings,
   } = useSettings();
+
+  const ambientState = useSyncExternalStore(
+    subscribeAmbient,
+    getAmbientSnapshot,
+    getAmbientSnapshot,
+  );
+
+  const heroTransitionState = useSyncExternalStore(
+    subscribeHeroTransition,
+    getHeroTransitionSnapshot,
+    getHeroTransitionSnapshot,
+  );
 
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
   const [showSgdbKey, setShowSgdbKey] = useState(false);
@@ -310,6 +327,99 @@ export default function Settings() {
                       ))}
                     </div>
                   </div>
+
+                  <div className="mt-6">
+                    <AccentColorPicker
+                      value={accentOverride}
+                      themeAccent={themeVariables[selectedTheme]["--color-accent"]}
+                      onChange={setAccentOverride}
+                    />
+                  </div>
+
+                  <div className="mt-6">
+                    <ToggleOption
+                      label="Fondo ambiental"
+                      description="Muestra el arte del juego activo (difuminado) detrás de la interfaz en todas las pantallas."
+                      enabled={ambientState.enabled}
+                      onChange={setAmbientEnabled}
+                    />
+                  </div>
+
+                  {ambientState.enabled && (
+                    <div className="lf-surface mt-4 rounded-2xl border p-4">
+                      <p className="text-sm font-medium text-(--color-text)">
+                        Intensidad del fondo ambiental
+                      </p>
+                      <p className="mt-1 text-xs text-(--color-muted)">
+                        Controla cuánto se ve y se difumina el arte de fondo.
+                      </p>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {(
+                          [
+                            { id: "sutil", label: "Sutil" },
+                            { id: "equilibrado", label: "Equilibrado" },
+                            { id: "vivido", label: "Vívido" },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setAmbientIntensity(opt.id)}
+                            className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                              ambientState.intensity === opt.id
+                                ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
+                                : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </SettingsSection>
+
+                <SettingsSection
+                  title="Animaciones"
+                  description="Controla la transición de los héroes y fondos de juegos."
+                >
+                  <div className="mb-3 flex items-center gap-2 text-sm text-(--color-muted)">
+                    <SlidersHorizontal className="h-4 w-4" />
+                    Transición de hero / fondo
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    {HERO_TRANSITION_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setHeroTransition(opt.id)}
+                        className={`rounded-xl border p-3 text-left transition ${
+                          heroTransitionState.id === opt.id
+                            ? "border-(--color-accent)/60 bg-(--color-accent)/15"
+                            : "border-(--surface-active-border) bg-white/5 hover:bg-white/10"
+                        }`}
+                      >
+                        <span
+                          className={`block text-sm font-medium ${
+                            heroTransitionState.id === opt.id
+                              ? "text-(--color-accent)"
+                              : "text-(--color-text)"
+                          }`}
+                        >
+                          {opt.label}
+                        </span>
+                        <span className="mt-1 block text-xs leading-relaxed text-(--color-muted)">
+                          {opt.description}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <p className="mt-4 text-xs text-(--color-muted)">
+                    El fondo ambiental siempre usa la transición de fundido
+                    premium, independientemente de esta selección.
+                  </p>
                 </SettingsSection>
 
                 <SettingsSection

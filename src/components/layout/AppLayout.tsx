@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
+import AmbientBackground from "./AmbientBackground";
 import { SearchProvider } from "../../context/SearchContext";
 import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
 import { GameActivityProvider } from "../../context/GameActivityContext";
@@ -44,6 +45,7 @@ export default function AppLayout({
     return (
       <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg) text-(--color-text)">
         <div className="lf-backdrop" />
+        <AmbientBackground />
         <LibraryGamesProvider>
           <GameActivityProvider>
             <RouteErrorBoundary>
@@ -123,6 +125,7 @@ export default function AppLayout({
       style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <div className="lf-backdrop" />
+      <AmbientBackground />
 
       <LibraryGamesProvider>
         <GameActivityProvider>

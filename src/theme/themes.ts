@@ -42,6 +42,16 @@ export const themes: ThemeOption[] = [
       accent: "#ffffff",
     },
   },
+  {
+    id: "fluent",
+    name: "Fluent",
+    description: "Estilo Windows 11 con acento azul y superficies de vidrio. Ideal con Liquid Glass.",
+    preview: {
+      background: "#1f1f1f",
+      surface: "#2b2b2b",
+      accent: "#60cdff",
+    },
+  },
 ];
 
 export const themeVariables: Record<ThemeId, Record<string, string>> = {
@@ -107,6 +117,22 @@ export const themeVariables: Record<ThemeId, Record<string, string>> = {
     "--color-warning": "#f59e0b",
     "--color-success": "#22c55e",
     "--color-info": "#ffffff",
+  },
+
+  "fluent": {
+    "--color-bg": "#1f1f1f",
+    "--color-sidebar": "#171717",
+    "--color-surface": "#2b2b2b",
+    "--color-surface-soft": "#232323",
+    "--color-border": "rgba(255,255,255,0.08)",
+    "--color-text": "#ffffff",
+    "--color-muted": "#a8a8a8",
+    "--color-accent": "#60cdff",
+    "--color-accent-text": "#002238",
+    "--color-destructive": "#ff6b6b",
+    "--color-warning": "#ffb340",
+    "--color-success": "#6ccb5f",
+    "--color-info": "#60cdff",
   },
 };
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -6,6 +6,9 @@ import {
   Gamepad2,
 } from "lucide-react";
 import AsyncImage from "../common/AsyncImage";
+import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
+import { useCrossfadeSrc } from "../../hooks/useCrossfadeSrc";
 
 import type { PackageGame } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
@@ -49,6 +52,28 @@ export default function StoreDiscoverHeroCarousel({
   const [isPaused, setIsPaused] = useState(false);
   const indexRef = useRef(activeIndex);
   indexRef.current = activeIndex;
+
+  const activeGame =
+    games.length > 0 ? games[Math.min(activeIndex, games.length - 1)] : undefined;
+  const ambientImage = activeGame
+    ? getGameImage(activeGame, storeMetadataByAppId)
+    : undefined;
+
+  // Selectable hero/background transition (Settings → Animaciones). Crossfade
+  // (default) uses the two-layer fade — the previous image stays mounted with
+  // fade-out while the new one fades in on each auto-advance/manual click.
+  useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
+  const heroTransition = getHeroTransitionSnapshot().id;
+  const { prevSrc } = useCrossfadeSrc(ambientImage);
+
+  // Feed the ambient background with the current hero artwork. Emitted on every
+  // image change (manual clicks + 7s auto-advance). The single _detail slot
+  // model means this wins while the carousel is mounted; it is cleared on
+  // unmount so the store-details feed / context fallback can take over.
+  useEffect(() => {
+    setAmbientSource("store-hero", ambientImage ?? null);
+  }, [ambientImage]);
+  useEffect(() => () => clearAmbientSource("store-hero"), []);
 
   useEffect(() => {
     if (onIndexChange) {
@@ -111,17 +136,46 @@ export default function StoreDiscoverHeroCarousel({
           }}
           className="relative aspect-[21/9] cursor-pointer overflow-hidden bg-white/5"
         >
-          <AsyncImage
-            src={currentImage}
-            alt={current.title}
-            className="h-full w-full"
-            loading="eager"
-            fallback={
-              <div className="flex h-full w-full items-center justify-center">
-                <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
-              </div>
-            }
-          />
+          {heroTransition === "crossfade" ? (
+            <>
+              {prevSrc && prevSrc !== currentImage && (
+                <AsyncImage
+                  src={prevSrc}
+                  alt=""
+                  className="absolute inset-0 animate-hero-media-out"
+                  loading="eager"
+                  fallback={<div className="h-full w-full" />}
+                />
+              )}
+              <AsyncImage
+                src={currentImage}
+                alt={current.title}
+                className="absolute inset-0 animate-hero-crossfade-in"
+                loading="eager"
+                fallback={
+                  <div className="flex h-full w-full items-center justify-center">
+                    <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
+                  </div>
+                }
+              />
+            </>
+          ) : (
+            <AsyncImage
+              src={currentImage}
+              alt={current.title}
+              className={`absolute inset-0 ${
+                heroTransition === "kenburns"
+                  ? "animate-hero-kenburns-in"
+                  : "animate-hero-focus-in"
+              }`}
+              loading="eager"
+              fallback={
+                <div className="flex h-full w-full items-center justify-center">
+                  <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
+                </div>
+              }
+            />
+          )}
 
           <div className="absolute inset-0 bg-linear-to-r from-black/75 via-black/35 to-transparent" />
           <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent" />

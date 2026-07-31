@@ -8,6 +8,9 @@ import type { GameSessionState, RunningGameSession } from "../../context/GameSes
 import { useFavorites } from "../../context/FavoritesContext";
 import { getPlaytimeEntryByAppId, getPlaytimeSecondsForAppId, resolvePlaytimeKey, getPlaytimeEntryByGameKey } from "../../services/playtimeService";
 import { resolveDashboardTitles, resolveGameMediaUrl, isPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
+import { localPathToUrl, isLocalPath } from "../../services/gameCacheService";
+import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import { showInfo, showWarning } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
@@ -490,6 +493,15 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const heroPendingUninstall = heroAppId ? isPendingUninstall(heroAppId) : false;
+  // Subscribe to the selectable hero/background transition (Settings → Animaciones)
+  useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
+  const heroTransition = getHeroTransitionSnapshot().id;
+  const heroBgClass =
+    heroTransition === "kenburns"
+      ? "animate-hero-kenburns"
+      : heroTransition === "focus"
+        ? "animate-hero-focus-in"
+        : "animate-hero-crossfade-in";
 
   // ─── FIX 4: libGame — running takes absolute priority ──────────────────
   const libGame = useMemo(() => {
@@ -537,7 +549,10 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         console.log(`[RUNNING_HERO_MEDIA] role=${role} raw=${bgPath}`);
 
         if (!bgPath) {
-          if (!cancelled) setBgUrl(null);
+          if (!cancelled) {
+            setBgUrl(null);
+            clearAmbientSource("dashboard");
+          }
           return;
         }
 
@@ -552,9 +567,15 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
             url = await resolveProviderMediaPreviewUrl(bgPath);
           }
           console.log(`[RUNNING_HERO_MEDIA] resolvedUrl=${url}`);
-          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(url);
+          if (!cancelled && generation === bgUrlGenerationRef.current) {
+            setBgUrl(url);
+            setAmbientSource("dashboard", url);
+          }
         } catch {
-          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(null);
+          if (!cancelled && generation === bgUrlGenerationRef.current) {
+            setBgUrl(null);
+            clearAmbientSource("dashboard");
+          }
         }
         return;
       }
@@ -572,15 +593,24 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         const rawPath = selected?.value ?? null;
 
         if (!rawPath) {
-          if (!cancelled) setBgUrl(null);
+          if (!cancelled) {
+            setBgUrl(null);
+            clearAmbientSource("dashboard");
+          }
           return;
         }
         try {
           const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
           const url = await resolveProviderMediaPreviewUrl(rawPath);
-          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(url);
+          if (!cancelled && generation === bgUrlGenerationRef.current) {
+            setBgUrl(url);
+            setAmbientSource("dashboard", url);
+          }
         } catch {
-          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(null);
+          if (!cancelled && generation === bgUrlGenerationRef.current) {
+            setBgUrl(null);
+            clearAmbientSource("dashboard");
+          }
         }
         return;
       }
@@ -590,14 +620,23 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         const m = heroGame.media;
         const imgPath = m?.backgroundPath ?? m?.landscapePath ?? m?.coverPath ?? null;
         if (!imgPath) {
-          if (!cancelled) setBgUrl(null);
+          if (!cancelled) {
+            setBgUrl(null);
+            clearAmbientSource("dashboard");
+          }
           return;
         }
         try {
           const url = await resolveGameMediaUrl(heroAppId, imgPath);
-          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(url);
+          if (!cancelled && generation === bgUrlGenerationRef.current) {
+            setBgUrl(url);
+            setAmbientSource("dashboard", url);
+          }
         } catch {
-          if (!cancelled && generation === bgUrlGenerationRef.current) setBgUrl(null);
+          if (!cancelled && generation === bgUrlGenerationRef.current) {
+            setBgUrl(null);
+            clearAmbientSource("dashboard");
+          }
         }
         return;
       }
@@ -607,6 +646,31 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
     resolveHeroBg();
     return () => { cancelled = true; };
+  }, [runningLibGame, heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame]);
+
+  // ─── Ambient background: feed resolved hero art + clear on unmount ──
+  useEffect(() => {
+    return () => clearAmbientSource("dashboard");
+  }, []);
+
+  // ─── Ambient: synchronous first-paint feed from raw in-memory media so the
+  // background never goes stale/blank during the async resolution window above.
+  // Relative provider paths (games/, media/, img/) are skipped — the async effect
+  // resolves those and upgrades the feed. ──
+  useEffect(() => {
+    const raw = runningLibGame
+      ? (runningLibGame.backgroundPath ?? runningLibGame.landscapePath ?? runningLibGame.coverPath ?? runningLibGame.imageUrl ?? null)
+      : (heroManualGame ?? heroEpicGame)
+        ? (heroManualGame?.backgroundPath ?? heroManualGame?.landscapePath ?? heroManualGame?.coverPath ?? heroManualGame?.imageUrl
+          ?? heroEpicGame?.backgroundPath ?? heroEpicGame?.landscapePath ?? heroEpicGame?.coverPath ?? heroEpicGame?.imageUrl
+          ?? null)
+        : heroGame
+          ? (heroGame.media?.backgroundPath ?? heroGame.media?.landscapePath ?? heroGame.media?.coverPath ?? null)
+          : null;
+    if (!raw) return;
+    if (raw.startsWith("games/") || raw.startsWith("media/") || raw.startsWith("img/")) return;
+    const url = isLocalPath(raw) ? (localPathToUrl(raw) ?? undefined) : raw;
+    if (url) setAmbientSource("dashboard", url);
   }, [runningLibGame, heroAppId, heroGame?.media?.backgroundPath, heroGame?.media?.landscapePath, heroGame?.media?.coverPath, heroManualGame, heroEpicGame]);
 
   const [heroTitle, setHeroTitle] = useState<string>("");
@@ -777,7 +841,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   return (
     <section ref={heroSectionRef} className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[340px]">
       {bgUrl ? (
-        <div data-hero-bg-layer="true" className="animate-hero-kenburns absolute inset-0">
+        <div data-hero-bg-layer="true" className={`${heroBgClass} absolute inset-0`}>
           <AsyncImage
             key={bgUrl}
             src={bgUrl}

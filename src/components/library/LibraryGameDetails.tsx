@@ -54,6 +54,8 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
 import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
+import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { showInfo } from "../toast/GameToast";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
@@ -424,6 +426,35 @@ export default function LibraryGameDetails({
     resolve();
   }, [rawImageUrl, game.appId, fallbackBundle, canonicalAppInfo, game.metadata?.background_image]);
 
+  // ─── Ambient background: feed hero art synchronously from in-memory snapshot media
+  // (first paint, no async), then upgrade to the resolved imageUrl. On game change/unmount
+  // the store falls back to the navigation-level page-context so the background never
+  // goes stale or blank during the canonical-resolution window. ──
+  useEffect(() => {
+    if (imageUrl) {
+      setAmbientSource("library-details", imageUrl);
+      return;
+    }
+    const syncPath = game.backgroundPath || game.landscapePath || game.coverPath;
+    if (
+      syncPath &&
+      !syncPath.startsWith("media/") &&
+      !syncPath.startsWith("img/") &&
+      !syncPath.startsWith("games/")
+    ) {
+      const url = isLocalPath(syncPath) ? (localPathToUrl(syncPath) ?? undefined) : syncPath;
+      if (url) setAmbientSource("library-details", url);
+    }
+  }, [imageUrl, game.appId, game.backgroundPath, game.landscapePath, game.coverPath]);
+
+  useEffect(() => {
+    clearAmbientSource("library-details");
+  }, [game.appId]);
+
+  useEffect(() => {
+    return () => clearAmbientSource("library-details");
+  }, []);
+
   // Resolve a fast colorful placeholder (snapshot media) so the hero never flashes black
   // while canonicalAppInfo/imageUrl load asynchronously for Steam/Lua games.
   const rawPlaceholder = game.backgroundPath || game.landscapePath || game.coverPath;
@@ -524,6 +555,17 @@ export default function LibraryGameDetails({
   // Subscribe to pending uninstall state changes so React re-renders when the module-level Map changes
   useSyncExternalStore(subscribePendingUninstall, getPendingUninstallVersion, getPendingUninstallVersion);
   const hasPendingUninstall = game.appId ? isPendingUninstall(game.appId) : false;
+  // Subscribe to the selectable hero/background transition (Settings → Animaciones)
+  useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
+  const heroTransition = getHeroTransitionSnapshot().id;
+  // Sharp-image animation per transition: crossfade (default, soft two-layer
+  // fade), focus (current blur→sharp reveal) or kenburns (continuous zoom).
+  const sharpHeroClass =
+    heroTransition === "kenburns"
+      ? "animate-hero-kenburns-in"
+      : heroTransition === "focus"
+        ? "animate-hero-focus-in"
+        : "animate-hero-crossfade-in";
   const effectiveAction = hasPendingUninstall
     ? "uninstalling"
     : hasActiveInstall
@@ -1229,7 +1271,7 @@ export default function LibraryGameDetails({
               alt={detailTitle}
               onError={() => { if (!loadedHeroUrl) setHeroImgError(true); }}
               onLoad={() => setLoadedHeroUrl(imageUrl)}
-              className={`block h-full w-auto max-w-none shrink-0 ${imageUrl === loadedHeroUrl ? "opacity-100 animate-hero-focus-in" : "opacity-0"} [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
+              className={`block h-full w-auto max-w-none shrink-0 ${imageUrl === loadedHeroUrl ? `opacity-100 ${sharpHeroClass}` : "opacity-0"} [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
             />
           ) : (
             <div className="h-full w-full" />
