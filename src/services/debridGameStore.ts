@@ -34,6 +34,9 @@ let _userLibraryAppIds: Set<string> = new Set();
 let _loadedFromDisk = false;
 const _listeners = new Set<() => void>();
 
+// User-overridden Steam appIds (survive catalog refresh)
+let _debridAppIdOverrides = new Map<string, string>();
+
 // Pending setup state: installerPath + installDir per providerGameId
 let _pendingSetup = new Map<string, { installerPath: string; installDir: string }>();
 
@@ -117,10 +120,11 @@ function toDiskEntries(): DebridGameEntryJson[] {
     const raw = _rawEntries.get(id);
 
     const diskEntry = _diskEntryById.get(id);
+    const override = _debridAppIdOverrides.get(id);
     const status = _debridGameStatuses.get(id) ?? (meta?.installDir ? "ready" : "not-downloaded");
     entries.push({
       id,
-      appId: raw?.appId ?? (game?.appId ? Number(game.appId) : null) ?? diskEntry?.appId ?? null,
+      appId: override ? Number(override) : raw?.appId ?? (game?.appId ? Number(game.appId) : null) ?? diskEntry?.appId ?? null,
       title: game?.title ?? raw?.title ?? diskEntry?.title ?? "Unknown",
       status,
       installDir: meta?.installDir ?? null,
@@ -243,6 +247,17 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
       const status = _debridGameStatuses.get(game.providerGameId!);
       if (status) {
         game.debridStatus = status;
+      }
+    }
+
+    // Apply user-overridden appIds from GameEditDialog (survive catalog refresh)
+    for (const game of mapped) {
+      const override = game.providerGameId ? _debridAppIdOverrides.get(game.providerGameId) : undefined;
+      if (override) {
+        game.appId = override;
+        if (DEBUG_DEBRID_LIBRARY) {
+          console.log(`[DEBRID_STORE] appId override applied providerGameId=${game.providerGameId} appId=${override}`);
+        }
       }
     }
 
@@ -702,6 +717,7 @@ export function resetDebridGameCache(): void {
   _debridGameStatuses = new Map();
   _pendingSetup = new Map();
   _pendingCompletion = null;
+  _debridAppIdOverrides = new Map();
   _userLibraryAppIds = new Set();
   _debridFingerprint = "";
   _scanWarning = null;
@@ -755,4 +771,45 @@ export function updateDebridGamePath(
   }
 
   return true;
+}
+
+/**
+ * Override or clear the Steam appId for a Debrid game.
+ *
+ * The override survives catalog refresh — entries rebuilt from SQLite's
+ * repack index will re-apply the stored override on next scan.
+ * Pass empty string to clear the override.
+ */
+export function updateDebridGameAppId(providerGameId: string, appId: string): void {
+  if (!DEBRID_LIBRARY_ENABLED) return;
+
+  const trimmed = appId.trim();
+  if (trimmed) {
+    _debridAppIdOverrides.set(providerGameId, trimmed);
+
+    // Update the in-memory LibraryGame immediately
+    const idx = _debridGames.findIndex((g) => g.providerGameId === providerGameId);
+    if (idx !== -1) {
+      _debridGames[idx] = { ..._debridGames[idx], appId: trimmed };
+    }
+  } else {
+    _debridAppIdOverrides.delete(providerGameId);
+
+    // Reset appId back to catalog value
+    const raw = _rawEntries.get(providerGameId);
+    const catalogAppId = raw?.appId ? String(raw.appId) : undefined;
+    const idx = _debridGames.findIndex((g) => g.providerGameId === providerGameId);
+    if (idx !== -1) {
+      _debridGames[idx] = { ..._debridGames[idx], appId: catalogAppId ?? "" };
+    }
+  }
+
+  _debridFingerprint = computeDebridFingerprint(_debridGames);
+
+  if (DEBUG_DEBRID_LIBRARY) {
+    console.log(`[DEBRID_STORE] appId override ${providerGameId}: ${trimmed || "(cleared)"}`);
+  }
+
+  persistToDisk();
+  notifyListeners();
 }

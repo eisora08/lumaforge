@@ -201,8 +201,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setCanonicalLoaded(false);
     _refreshInitiatorRef.current = null;
 
-    // ── Manual games: load from manualGameStore ──
-    if (selectedGame?.source === "manual" && selectedGame.providerGameId) {
+    // ── Manual games (no appId): load from manualGameStore ──
+    // Manual games WITH appId fall through to the Steam pipeline below
+    if (selectedGame?.source === "manual" && selectedGame.providerGameId && !selectedGame.appId) {
       let cancelled = false;
       import("../services/manualGameStore").then(({ getManualGame }) => {
         if (cancelled) return;
@@ -509,12 +510,18 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     currentRequest.current = requestId;
 
     setMetadataLoading(true);
-    setResolvedGame(selectedGame);
+    const alreadyResolved = resolvedGame?.metadata?.resolved === true && resolvedGame?.appId === selectedGame.appId;
+    if (!alreadyResolved) {
+      setResolvedGame(selectedGame);
+    }
     resolveGameMetadata([appIdNum])
       .then((result) => {
         if (currentRequest.current !== requestId) return;
         const resolvedMeta = result[appIdNum];
         if (resolvedMeta) {
+          if ((window as any).__DEBUG_MANUAL_META) {
+            console.log(`[MANUAL][META_RESOLVED] appId=${appIdNum} source=${selectedGame?.source} resolved=${resolvedMeta.resolved} name=${resolvedMeta.name} hasDescription=${!!resolvedMeta.short_description} hasAbout=${!!resolvedMeta.about_the_game}`);
+          }
           setResolvedGame({
             ...selectedGame,
             metadata: resolvedMeta,
@@ -646,7 +653,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   useEffect(() => {
     const appId = selectedGame?.appId;
     if (!appId) return;
-    if (selectedGame?.source === "manual") return;
+    if (selectedGame?.source === "manual" && !selectedGame.appId) return;
     if (!fallbackBundle) return;
     if (fallbackBundle.appId && fallbackBundle.appId !== appId) {
       if (DEBUG_ACTIVITY) console.log(`[MEDIA][MATERIALIZE_GUARD] skip appId=${appId} bundleAppId=${fallbackBundle.appId} reason=cross-app-contamination`);
@@ -666,7 +673,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   useEffect(() => {
     const appId = selectedGame?.appId;
     if (!appId) return;
-    if (selectedGame?.source === "manual") return;
+    if (selectedGame?.source === "manual" && !selectedGame.appId) return;
 
     const unsub = subscribeToMediaQueue((event) => {
       if (event.type !== "success" && event.type !== "partial") return;
@@ -735,7 +742,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       showWarning("No App ID available for this game.", { title: "Artwork" });
       return;
     }
-    if (isManual) {
+    if (isManual && !selectedGame?.appId) {
       showInfo("Artwork refresh for manual games is managed through Edit Game Details.", { title: "Manual Game" });
       return;
     }

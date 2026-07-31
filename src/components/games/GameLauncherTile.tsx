@@ -1007,7 +1007,7 @@ function GameLauncherTileInner({
 
         {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
           <GameEditDialog
-            appId={game.appId}
+            appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
             manualGameId={game.source === "manual" ? game.providerGameId : undefined}
             epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
             debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}

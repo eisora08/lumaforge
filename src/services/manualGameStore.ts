@@ -252,6 +252,7 @@ function normalizeEntry(entry: Record<string, unknown>): ManualGameEntry {
     completionStatus: entry.completionStatus ? String(entry.completionStatus) : undefined,
     linkedSteamAppId: entry.linkedSteamAppId ? String(entry.linkedSteamAppId) : undefined,
     linkedIgdbId: entry.linkedIgdbId ? String(entry.linkedIgdbId) : undefined,
+    appId: entry.appId ? String(entry.appId) : undefined,
     sizeOnDisk: typeof entry.sizeOnDisk === "number" ? entry.sizeOnDisk : undefined,
     isFavorite: entry.isFavorite === true,
     createdAt: typeof entry.createdAt === "number" ? entry.createdAt : now,

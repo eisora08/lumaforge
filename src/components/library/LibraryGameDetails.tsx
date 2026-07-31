@@ -1607,10 +1607,10 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                         }}
                       />
                       <DropdownItem
-                        label={game.source === "epic" || game.source === "manual" ? "Manage Artwork" : "Refresh Artwork"}
+                        label={game.source === "epic" || (game.source === "manual" && !game.appId) ? "Manage Artwork" : "Refresh Artwork"}
                         onClick={() => {
                           setShowActions(false);
-                          if (game.source === "epic") {
+                          if (game.source === "epic" || (game.source === "manual" && !game.appId)) {
                             setEditDialogTab("media");
                             setEditDialogOpen(true);
                           } else {
@@ -1706,8 +1706,8 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                 </section>
               )}
 
-              {/* About This Game (only if longer than short intro) */}
-              {longDescText && !descriptionsMatch && (
+              {/* About This Game (only if longer than short intro, hidden for manual games) */}
+              {!isManualGame && longDescText && !descriptionsMatch && (
                 <section>
                   <h2 className="mb-3 text-base font-bold text-(--color-text)">
                     <BookOpen className="mr-2 inline h-4 w-4 text-(--color-accent)" />
@@ -1736,8 +1736,8 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                 </p>
               )}
 
-              {/* Updates — Steam news only (hidden for manual and epic games) */}
-              {!isManualGame && !isEpicGame && (
+              {/* Updates — Steam news only (hidden for manual without appId and epic games) */}
+              {(!isManualGame || !!appIdStr) && !isEpicGame && (
               <section>
                 <h2 className="mb-3 text-base font-bold text-(--color-text)">
                   <RefreshCw className="mr-2 inline h-4 w-4 text-(--color-accent)" />
@@ -1817,7 +1817,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
 
             {/* Right: Side panel */}
             <aside className="mt-8 lg:mt-0">
-              {(!isManualGame || linkedSteamAppId) && (!isEpicGame || linkedSteamAppId) && (
+              {(!isManualGame || linkedSteamAppId || !!appIdStr) && (!isEpicGame || linkedSteamAppId) && (
               <div className="sticky top-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                   {isManualGame ? "Steam Links" : "Links"}
@@ -1919,8 +1919,8 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
               </div>
               )}
 
-              {/* Achievements — hidden for manual and epic games */}
-              {!isManualGame && !isEpicGame && (
+              {/* Achievements — hidden for manual without appId and epic games */}
+              {(!isManualGame || !!appIdStr) && !isEpicGame && (
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${isPerfected ? "text-amber-400/90" : "text-(--color-muted)"}`}>
                   <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
@@ -2390,7 +2390,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
 
       {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
         <GameEditDialog
-          appId={game.appId}
+          appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
           manualGameId={game.source === "manual" ? game.providerGameId : undefined}
           epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
           debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}

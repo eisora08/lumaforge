@@ -485,8 +485,10 @@ export default function ConsoleGameOptionsOverlay({
 
       {(game.appId || game.id) && (
         <GameEditDialog
-          appId={game.appId}
+          appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
           manualGameId={game.source === "manual" ? game.providerGameId : undefined}
+          epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
+          debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
           open={editDialogOpen}
           onClose={() => setEditDialogOpen(false)}
           initialTab="media"

@@ -2959,6 +2959,7 @@ export type ManualGameEntryJson = {
   completionStatus?: string;
   linkedSteamAppId?: string;
   linkedIgdbId?: string;
+  appId?: string;
   sizeOnDisk?: number;
   isFavorite?: boolean;
   createdAt: number;

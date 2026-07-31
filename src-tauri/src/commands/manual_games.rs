@@ -78,6 +78,8 @@ pub struct ManualGameEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub linked_igdb_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size_on_disk: Option<u64>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_favorite: bool,

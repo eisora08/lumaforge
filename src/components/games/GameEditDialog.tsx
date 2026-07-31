@@ -21,7 +21,6 @@ import {
   Eye,
   Globe,
   ChevronDown,
-  Download,
   ExternalLink,
   Video,
   Search,
@@ -41,7 +40,7 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { getManualGame, saveManualGame, updateManualGame } from "../../services/manualGameStore";
 import { readEpicOverrides, writeEpicOverrides } from "../../services/epicOverrideStore";
-import { updateDebridGamePath } from "../../services/debridGameStore";
+import { updateDebridGamePath, updateDebridGameAppId } from "../../services/debridGameStore";
 import GameImageSearchDialog from "./GameImageSearchDialog";
 import GameMediaRoleRow from "./GameMediaRoleRow";
 import { SourceOption } from "./GameMediaRoleRow";
@@ -167,7 +166,6 @@ export default function GameEditDialog({
   game,
   settings,
 }: GameEditDialogProps) {
-  const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Mode detection — manual games use manualGameId, Steam games use appId, Epic uses epicProviderGameId, Debrid uses debridProviderGameId
@@ -234,6 +232,9 @@ export default function GameEditDialog({
   // Linked IDs for manual games
   const [linkedIgdbIdDraft, setLinkedIgdbIdDraft] = useState<string | undefined>(undefined);
 
+  // Steam App ID draft (editable for manual/debrid, readonly for steam/epic/lua)
+  const [appIdDraft, setAppIdDraft] = useState("");
+
   // Download Metadata menu
   const [metadataMenuOpen, setMetadataMenuOpen] = useState(false);
   const [metadataDownloading, setMetadataDownloading] = useState(false);
@@ -266,6 +267,7 @@ export default function GameEditDialog({
           const refreshed = getManualGame(targetId);
           if (refreshed) {
             setManualEntry(refreshed);
+            loadDraftsFromManualEntry(refreshed);
             if (DEBUG_MANUAL_COVER) console.log(`[MANUAL_COVER][EDITOR_SET] manualId=${targetId} role=${role} savedPath=${refreshed[`${role}Path` as keyof ManualGameEntry]} entry=${JSON.stringify({ coverPath: refreshed.coverPath, landscapePath: refreshed.landscapePath, backgroundPath: refreshed.backgroundPath, logoPath: refreshed.logoPath, iconPath: refreshed.iconPath })}`);
           }
         }
@@ -286,6 +288,9 @@ export default function GameEditDialog({
 
   // Steam media adapter (created before early returns for hook safety)
   const mediaAdapter = useMemo(() => {
+    if (isManualMode && appIdDraft) {
+      return createMediaAdapter("steam", appIdDraft);
+    }
     if (isManualMode && manualGameId) {
       return createMediaAdapter("manual", manualGameId);
     }
@@ -296,7 +301,7 @@ export default function GameEditDialog({
       return createMediaAdapter("steam", appId);
     }
     return null;
-  }, [appId, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
+  }, [appId, appIdDraft, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
 
   // ── Load drafts from userData ──
   function loadDraftsFromUserData(info: GameAppInfo | null) {
@@ -351,6 +356,7 @@ export default function GameEditDialog({
     setWorkingDirectoryDraft(entry.workingDirectory ?? "");
     setLaunchArgsDraft(entry.launchArguments ?? "");
     setInstallDirDraft(entry.installDir ?? "");
+    setAppIdDraft(entry.appId ?? entry.linkedSteamAppId ?? "");
   }
 
   // ── Load appinfo or manual entry on mount ──
@@ -378,15 +384,29 @@ export default function GameEditDialog({
       if (entry) {
         setManualEntry(entry);
         loadDraftsFromManualEntry(entry);
+        // If manual game has an appId, resolve Steam metadata and fill form fields
+        if (entry.appId) {
+          const appIdNum = Number(entry.appId);
+          if (!isNaN(appIdNum)) {
+            resolveGameMetadata([appIdNum]).then((m) => {
+              const meta = m[appIdNum];
+              if (meta) {
+                fillDraftsFromMetadata(meta);
+                setMetadata(meta);
+              }
+            }).catch(() => {});
+          }
+        }
       }
       setLoading(false);
       loadRolePreviews();
       return;
     }
 
-    // Debrid edit mode — pre-fill install dir from game data
+    // Debrid edit mode — pre-fill install dir + appId from game data
     if (isDebridMode && debridProviderGameId) {
       if (game?.installDir) setInstallDirDraft(game.installDir);
+      setAppIdDraft(game?.appId ?? "");
       setLoading(false);
       loadRolePreviews();
       return;
@@ -411,6 +431,7 @@ export default function GameEditDialog({
         if (overrides.ageRating) setAgeRatingDraft(overrides.ageRating);
         if (overrides.region) setRegionDraft(overrides.region);
         if (overrides.linkedSteamAppId) setLinkedIgdbIdDraft(overrides.linkedIgdbId);
+        setAppIdDraft(game?.appId ?? overrides.linkedSteamAppId ?? "");
         setEpicOverrides(overrides as unknown as Record<string, unknown>);
       }
       setLoading(false);
@@ -425,6 +446,7 @@ export default function GameEditDialog({
     }
 
     // Steam edit mode (existing)
+    setAppIdDraft(appId ?? "");
     getGameAppInfo(appId!).then((info) => {
       setAppInfo(info);
       loadDraftsFromUserData(info);
@@ -434,7 +456,9 @@ export default function GameEditDialog({
     const appIdNum = Number(appId);
     if (!isNaN(appIdNum)) {
       resolveGameMetadata([appIdNum]).then((m) => {
-        setMetadata(m[appIdNum] ?? null);
+        const meta = m[appIdNum];
+        setMetadata(meta ?? null);
+        if (meta) fillDraftsFromMetadata(meta);
         setLoading(false);
       }).catch(() => {});
     }
@@ -461,6 +485,31 @@ export default function GameEditDialog({
 
     // Manual/create: IGDB or Steam name search
     if (isManualMode || isCreateMode) {
+      // Manual+appId: resolve by appId directly (no name search needed)
+      const manualAppId = appIdDraft.trim();
+      if (manualAppId && source === "steam") {
+        setMetadataDownloading(true);
+        try {
+          const appIdNum = Number(manualAppId);
+          if (!isNaN(appIdNum)) {
+            if (DEBUG_MANUAL_METADATA) console.log(`[MANUAL][META] appId=${appIdNum} source=steam — direct appId resolution`);
+            const m = await resolveGameMetadata([appIdNum]);
+            const meta = m[appIdNum];
+            if (meta) {
+              fillDraftsFromMetadata(meta, meta.name ?? undefined);
+              setMetadata(meta);
+              showSuccess("Metadata downloaded from Steam");
+            } else {
+              showError("No Steam metadata available for this app");
+            }
+          }
+        } catch {
+          showError("Failed to download Steam metadata");
+        }
+        setMetadataDownloading(false);
+        return;
+      }
+
       const searchName = nameDraft.trim();
       if (!searchName) {
         showError("Enter a game name first");
@@ -688,17 +737,17 @@ export default function GameEditDialog({
 
   const handleOpenMediaFolder = useCallback(async () => {
     try {
-      if (isManualMode && manualGameId) {
-        await openProviderMediaFolder("manual", manualGameId);
-      } else if (isEpicMode && epicProviderGameId) {
+      if (isEpicMode && epicProviderGameId) {
         await openProviderMediaFolder("epic", epicProviderGameId);
-      } else if (appId) {
-        await openGameMediaFolder(appId);
+      } else if (appId || appIdDraft) {
+        await openGameMediaFolder(appId || appIdDraft);
+      } else if (isManualMode && manualGameId) {
+        await openProviderMediaFolder("manual", manualGameId);
       }
     } catch {
       showError("Could not open media folder");
     }
-  }, [appId, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
+  }, [appId, appIdDraft, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
 
   const handleBrowseExe = useCallback(async () => {
     const fullPath = await pickFile("Select Executable", [
@@ -774,6 +823,7 @@ export default function GameEditDialog({
           launchArguments: launchArgsDraft.trim() || undefined,
           installDir: installDirDraft.trim().replace(/^["']|["']$/g, "") || undefined,
           linkedIgdbId: linkedIgdbIdDraft || undefined,
+          appId: appIdDraft || undefined,
           coverPath: freshMediaEntry?.coverPath,
           landscapePath: freshMediaEntry?.landscapePath,
           backgroundPath: freshMediaEntry?.backgroundPath,
@@ -819,6 +869,7 @@ export default function GameEditDialog({
             launchArguments: patch.launchArguments,
             installDir: patch.installDir,
             linkedIgdbId: patch.linkedIgdbId,
+            appId: patch.appId,
             // Preserve media paths from store (already in patch from freshMediaEntry)
             coverPath: patch.coverPath,
             landscapePath: patch.landscapePath,
@@ -869,10 +920,13 @@ export default function GameEditDialog({
         return;
       }
 
-      // ── Debrid game save (install path) ──
+      // ── Debrid game save (install path + appId) ──
       if (isDebridMode && debridProviderGameId) {
         const dir = installDirDraft.trim().replace(/^["']|["']$/g, "");
         const ok = updateDebridGamePath(debridProviderGameId, dir);
+        if (appIdDraft) {
+          updateDebridGameAppId(debridProviderGameId, appIdDraft);
+        }
         if (ok) {
           showSuccess("Debrid install path saved");
         } else {
@@ -915,7 +969,7 @@ export default function GameEditDialog({
       showError("Failed to save game details");
     }
     setSaving(false);
-  }, [appId, manualGameId, epicProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, updateGame]);
+  }, [appId, manualGameId, epicProviderGameId, debridProviderGameId, isManualMode, isEpicMode, isCreateMode, createdManualId, appInfo, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, linkedIgdbIdDraft, appIdDraft, updateDebridGameAppId, updateDebridGamePath, updateGame]);
 
   // ── Track edits ──
   useEffect(() => {
@@ -949,8 +1003,18 @@ export default function GameEditDialog({
         executablePathDraft !== (entry?.executablePath ?? "") ||
         workingDirectoryDraft !== (entry?.workingDirectory ?? "") ||
         launchArgsDraft !== (entry?.launchArguments ?? "") ||
-        installDirDraft !== (entry?.installDir ?? "");
+        installDirDraft !== (entry?.installDir ?? "") ||
+        appIdDraft !== (entry?.appId ?? "");
       setHasEdits(hasChanges || isCreateMode);
+      return;
+    }
+
+    // Debrid mode — compare against current game data
+    if (isDebridMode) {
+      const hasChanges =
+        appIdDraft !== (game?.appId ?? "") ||
+        installDirDraft !== (game?.installDir ?? "");
+      setHasEdits(hasChanges);
       return;
     }
 
@@ -998,7 +1062,7 @@ export default function GameEditDialog({
       regionDraft !== u(appInfo?.userData?.region) ||
       completionStatusDraft !== u(appInfo?.userData?.completionStatus);
     setHasEdits(hasChanges);
-  }, [open, appInfo, manualEntry, epicOverrides, isManualMode, isEpicMode, isCreateMode, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft]);
+  }, [open, appInfo, manualEntry, epicOverrides, game, isManualMode, isEpicMode, isDebridMode, isCreateMode, nameDraft, genresDraft, developersDraft, publishersDraft, categoriesDraft, featuresDraft, tagsDraft, releaseDateDraft, descriptionDraft, sortingNameDraft, userScoreDraft, criticScoreDraft, communityScoreDraft, reviewSummaryDraft, reviewCountDraft, reviewSourceDraft, seriesDraft, ageRatingDraft, regionDraft, completionStatusDraft, executablePathDraft, workingDirectoryDraft, launchArgsDraft, installDirDraft, appIdDraft]);
 
   // ── Escape key ──
 
@@ -1517,12 +1581,6 @@ export default function GameEditDialog({
     [effectiveId, buildUpdatedMedia, commitMediaUpdate, mediaAdapter, manualGameId, createdManualId],
   );
 
-  // ── Backdrop click ──
-
-  function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === backdropRef.current) onClose();
-  }
-
   // ── Role preview resolution ──
 
   async function loadRolePreviews() {
@@ -1620,7 +1678,7 @@ export default function GameEditDialog({
   const capabilities = useMemo(() => {
     if (isManualMode || isCreateMode) {
       const hasSgdbKey = !!(settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled);
-      const hasLinkedSteam = !!(manualEntry?.linkedSteamAppId);
+      const hasLinkedSteam = !!(manualEntry?.linkedSteamAppId || manualEntry?.appId);
       return {
         canUseMetadataProviders: true,
         canUseSteamMetadata: true,
@@ -1661,98 +1719,11 @@ export default function GameEditDialog({
     return appInfo?.media?.[key] ?? null;
   };
 
-  // ── Editable text field helper ──
-
-  function EditableField({
-    label,
-    value,
-    onChange,
-    placeholder,
-    maxLength,
-    multiLine,
-  }: {
-    label: string;
-    value: string;
-    onChange: (v: string) => void;
-    placeholder?: string;
-    maxLength?: number;
-    multiLine?: boolean;
-  }) {
-    return (
-      <div>
-        <label className="mb-1 block text-xs font-medium text-(--color-muted)">{label}</label>
-        {multiLine ? (
-          <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            rows={4}
-            maxLength={maxLength}
-            className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20 resize-none"
-          />
-        ) : (
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            maxLength={maxLength}
-            className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
-          />
-        )}
-      </div>
-    );
-  }
-
   // ── Tab content renderers ──
 
   function renderGeneralTab() {
     return (
       <div className="space-y-6">
-        {/* Download Metadata — capability-driven */}
-        {capabilities.canUseMetadataProviders && (
-          <div className="relative flex items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-            <Download className="h-4 w-4 text-(--color-accent)" />
-            <span className="flex-1 text-sm text-(--color-text)">Download metadata from online sources</span>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMetadataMenuOpen(!metadataMenuOpen)}
-              disabled={metadataDownloading}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3.5 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90 disabled:opacity-50"
-            >
-              {metadataDownloading ? "Downloading..." : "Download Metadata..."}
-              <ChevronDown className="h-3 w-3" />
-            </button>
-            {metadataMenuOpen && (
-              <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-xl border border-(--color-border) bg-(--color-bg) py-1 shadow-xl">
-                {capabilities.canUseSteamMetadata && (
-                  <SourceOption
-                    label={isManualMode || isCreateMode ? "Steam (by name)" : "Steam"}
-                    icon={isManualMode || isCreateMode ? Search : Globe}
-                    onClick={() => handleDownloadMetadata("steam")}
-                  />
-                )}
-                {capabilities.canUseIgdbMetadata && (
-                  <SourceOption
-                    label="IGDB"
-                    icon={Image}
-                    onClick={() => handleDownloadMetadata("igdb")}
-                  />
-                )}
-                {capabilities.canUseRawgMetadata && (
-                  <SourceOption
-                    label="RAWG"
-                    icon={Image}
-                    onClick={() => handleDownloadMetadata("rawg")}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-        )}
-
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           {/* Left column - Identity & Credits */}
           <div className="space-y-4">
@@ -1838,6 +1809,22 @@ export default function GameEditDialog({
             </div>
             <FieldRow label="Source" value={isManualMode || isCreateMode ? "manual" : (game?.source ?? appInfo?.provider ?? (metadata ? "steam" : null))} />
             <FieldRow label="Completion" value={completionStatusDraft || "—"} />
+            <div>
+              <label className="mb-1 block text-xs font-medium text-(--color-muted)">Steam App ID</label>
+              <input
+                type="text"
+                value={appIdDraft}
+                onChange={(e) => setAppIdDraft(e.target.value)}
+                disabled={!isManualMode && !isDebridMode && !isCreateMode}
+                placeholder="Ej: 12210"
+                className={`w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20 ${!isManualMode && !isDebridMode && !isCreateMode ? "opacity-60 cursor-not-allowed" : ""}`}
+              />
+              {(isManualMode || isDebridMode) && (
+                <p className="mt-1 text-[11px] text-white/40">
+                  Set to auto-resolve media &amp; metadata from Steam
+                </p>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1936,7 +1923,7 @@ export default function GameEditDialog({
   }
 
   function renderLinksTab() {
-    if (isManualMode || isCreateMode) {
+    if ((isManualMode || isCreateMode) && !appIdDraft) {
       return (
         <div className="py-8 text-center text-sm text-(--color-muted)">
           No external links for manual games.
@@ -2042,15 +2029,6 @@ export default function GameEditDialog({
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={handleOpenMediaFolder}
-                  disabled={!appId}
-                  className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <FolderOpen className="h-4 w-4 text-(--color-muted)" />
-                  Open Media Folder
-                </button>
               </div>
             </div>
           </>
@@ -2253,15 +2231,6 @@ export default function GameEditDialog({
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={handleOpenMediaFolder}
-                disabled={!appId}
-                className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <FolderOpen className="h-4 w-4 text-(--color-muted)" />
-                Open Media Folder
-              </button>
             </div>
           </>
         )}
@@ -2560,6 +2529,16 @@ export default function GameEditDialog({
             </div>
           </div>
         )}
+
+        <button
+          type="button"
+          onClick={handleOpenMediaFolder}
+          disabled={!appId && !manualGameId}
+          className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <FolderOpen className="h-4 w-4" />
+          Open Media Folder
+        </button>
       </div>
     );
   }
@@ -2576,8 +2555,6 @@ export default function GameEditDialog({
 
   return createPortal(
     <div
-      ref={backdropRef}
-      onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
       aria-label="Edit Game Details"
@@ -2585,7 +2562,7 @@ export default function GameEditDialog({
     >
       <div
         ref={panelRef}
-        className="relative mx-4 w-full max-w-[900px] flex max-h-[88vh] flex-col rounded-2xl border border-(--color-border) bg-(--color-bg) shadow-2xl"
+        className="relative mx-4 w-full max-w-[900px] flex h-[88vh] flex-col rounded-2xl border border-(--color-border) bg-(--color-bg) shadow-2xl"
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-(--color-border) px-6 py-4">
@@ -2642,15 +2619,44 @@ export default function GameEditDialog({
 
         {/* Footer */}
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-(--color-border) px-6 py-3">
-          <button
-            type="button"
-            onClick={handleOpenMediaFolder}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
-          >
-            <FolderOpen className="h-4 w-4" />
-            Open Media Folder
-          </button>
-
+          {capabilities.canUseMetadataProviders && (
+            <div className="relative flex items-center">
+              <button
+                type="button"
+                onClick={() => setMetadataMenuOpen(!metadataMenuOpen)}
+                disabled={metadataDownloading}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-3.5 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:opacity-50"
+              >
+                {metadataDownloading ? "Downloading..." : "Download Metadata"}
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {metadataMenuOpen && (
+                <div className="absolute bottom-full right-0 z-20 mb-1 w-48 rounded-xl border border-(--color-border) bg-(--color-bg) py-1 shadow-xl">
+                  {capabilities.canUseSteamMetadata && (
+                    <SourceOption
+                      label={isManualMode || isCreateMode ? (appIdDraft ? "Steam" : "Steam (by name)") : "Steam"}
+                      icon={isManualMode || isCreateMode ? (appIdDraft ? Globe : Search) : Globe}
+                      onClick={() => handleDownloadMetadata("steam")}
+                    />
+                  )}
+                  {capabilities.canUseIgdbMetadata && (
+                    <SourceOption
+                      label="IGDB"
+                      icon={Image}
+                      onClick={() => handleDownloadMetadata("igdb")}
+                    />
+                  )}
+                  {capabilities.canUseRawgMetadata && (
+                    <SourceOption
+                      label="RAWG"
+                      icon={Image}
+                      onClick={() => handleDownloadMetadata("rawg")}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -2676,12 +2682,12 @@ export default function GameEditDialog({
         </div>
       </div>
 
-      {imageSearchOpen && imageSearchRole && (appId || manualGameId || epicProviderGameId) && (
+      {imageSearchOpen && imageSearchRole && (appId || appIdDraft || manualGameId || epicProviderGameId) && (
         <GameImageSearchDialog
           open={imageSearchOpen}
           onClose={() => { setImageSearchOpen(false); setImageSearchRole(null); }}
-          appId={appId}
-          libraryId={manualGameId ?? (isEpicMode ? `epic:${epicProviderGameId}` : undefined)}
+          appId={appId || appIdDraft || undefined}
+          libraryId={(!appId && !appIdDraft) ? (manualGameId ?? (isEpicMode ? `epic:${epicProviderGameId}` : undefined)) : undefined}
           gameTitle={appInfo?.name ?? game?.title ?? appId ?? manualGameId ?? ""}
           role={imageSearchRole}
           settings={{
@@ -2697,6 +2703,47 @@ export default function GameEditDialog({
 }
 
 // ── Sub-components ──
+
+function EditableField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  maxLength,
+  multiLine,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  maxLength?: number;
+  multiLine?: boolean;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-(--color-muted)">{label}</label>
+      {multiLine ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={4}
+          maxLength={maxLength}
+          className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20 resize-none"
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+        />
+      )}
+    </div>
+  );
+}
 
 function FieldRow({ label, value }: { label: string; value: string | null | undefined }) {
   if (value == null || value === "") return null;
