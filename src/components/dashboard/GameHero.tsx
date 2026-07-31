@@ -777,7 +777,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   return (
     <section ref={heroSectionRef} className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[340px]">
       {bgUrl ? (
-        <div data-hero-bg-layer="true" className="absolute inset-0">
+        <div data-hero-bg-layer="true" className="animate-hero-kenburns absolute inset-0">
           <AsyncImage
             key={bgUrl}
             src={bgUrl}

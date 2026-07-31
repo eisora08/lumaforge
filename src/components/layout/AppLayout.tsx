@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
-import AppTitleBar from "./AppTitleBar";
 import { SearchProvider } from "../../context/SearchContext";
 import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
 import { GameActivityProvider } from "../../context/GameActivityContext";
@@ -124,8 +123,6 @@ export default function AppLayout({
       style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <div className="lf-backdrop" />
-
-      <AppTitleBar />
 
       <LibraryGamesProvider>
         <GameActivityProvider>

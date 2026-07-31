@@ -2,6 +2,24 @@
 const DEBUG_ACH_DETAILS = false;
 const DEBUG_LAUNCH_BUTTON_RENDER = false;
 const DEBUG_MANUAL_REMOVE = false;
+// Debug flag for hero layer composition (blur backdrop vs sharp foreground)
+const DEBUG_HERO_LAYERS = false;
+
+// Compares two media URLs/paths by normalized basename (case-insensitive, ignores query/hash).
+// The snapshot stores relative paths (media/background.jpg) while canonicalAppInfo resolves
+// to absolute paths — both point to the same file. Keeping the same string avoids the
+// <img key={imageUrl}> remount (and its opacity-0 gap) when only the path format changed.
+function sameHeroFile(a: string, b: string): boolean {
+  const base = (s: string) => {
+    const clean = s.split(/[?#]/)[0] ?? s;
+    const parts = clean.split(/[\\/]/);
+    const name = parts[parts.length - 1] ?? clean;
+    return name.toLowerCase();
+  };
+  const na = base(a);
+  const nb = base(b);
+  return na.length > 0 && na === nb;
+}
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
@@ -35,7 +53,7 @@ import {
 import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
-import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
+import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
 import { showInfo } from "../toast/GameToast";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
@@ -123,15 +141,24 @@ function logDetailsCanonical(appId: string, msg: string): void {
 }
 
 function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, appInfoEntry?: LibraryAppInfoEntry | null, mediaEntry?: GameMediaCacheEntry | null, canonicalAppInfo?: GameAppInfo | null, canonicalDiskFallback?: string | null, fallbackBundle?: ResolvedGameMediaBundle | null): string | undefined {
-  // Priority: local disk → metadata primary → fallbackBundle background → metadata secondary → fallbackBundle L/C → imageUrl → placeholder
+  // Priority: snapshot/canonical local disk paths first so the sharp hero targets the
+  // same high-res asset the blurred backdrop shows from frame 1 (no visible swap when
+  // remote sources like appInfoEntry/SGDB/fallbackBundle resolve later) → mediaEntry →
+  // materialized fallbackBundle localPath → Steam metadata primary → Steam header →
+  // SGDB → fallbackBundle remote URL → metadata secondary → imageUrl → placeholder.
   if (canonicalAppInfo?.media?.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=background path=${canonicalAppInfo.media.backgroundPath}`); return canonicalAppInfo.media.backgroundPath; }
+  if (game.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.backgroundPath path=${game.backgroundPath}`); return game.backgroundPath; }
   if (canonicalAppInfo?.media?.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=landscape path=${canonicalAppInfo.media.landscapePath}`); return canonicalAppInfo.media.landscapePath; }
+  if (game.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.landscapePath path=${game.landscapePath}`); return game.landscapePath; }
   if (canonicalAppInfo?.media?.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=cover path=${canonicalAppInfo.media.coverPath}`); return canonicalAppInfo.media.coverPath; }
+  if (game.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.coverPath path=${game.coverPath}`); return game.coverPath; }
   if (mediaEntry?.hero_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.hero_path`); return mediaEntry.hero_path; }
   if (mediaEntry?.grid_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.grid_path`); return mediaEntry.grid_path; }
-  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image`); return appInfoEntry.header_image; }
-  if (artwork?.sgdbHeroUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
-  if (artwork?.sgdbGridUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
+  // FallbackBundle: resolved by multi-provider chain (steam-appdetails metadata → cached → SGDB → IGDB → RAWG)
+  // Prefer localPath (materialized on disk) before remote URL
+  if (fallbackBundle?.background?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background.localPath path=${fallbackBundle.background.localPath}`); return fallbackBundle.background.localPath; }
+  if (fallbackBundle?.landscape?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape.localPath path=${fallbackBundle.landscape.localPath}`); return fallbackBundle.landscape.localPath; }
+  if (fallbackBundle?.cover?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover.localPath path=${fallbackBundle.cover.localPath}`); return fallbackBundle.cover.localPath; }
   // Metadata primary background fields
   const metaPrimary = game.metadata?.background_image
     || (game.metadata as any)?.background
@@ -139,11 +166,9 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.library_hero_image
     || game.metadata?.hero_image;
   if (metaPrimary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataPrimary`); return metaPrimary; }
-  // FallbackBundle: resolved by multi-provider chain (steam-appdetails metadata → cached → SGDB → IGDB → RAWG)
-  // Prefer localPath (materialized on disk) before remote URL
-  if (fallbackBundle?.background?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background.localPath path=${fallbackBundle.background.localPath}`); return fallbackBundle.background.localPath; }
-  if (fallbackBundle?.landscape?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape.localPath path=${fallbackBundle.landscape.localPath}`); return fallbackBundle.landscape.localPath; }
-  if (fallbackBundle?.cover?.localPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover.localPath path=${fallbackBundle.cover.localPath}`); return fallbackBundle.cover.localPath; }
+  if (appInfoEntry?.header_image) { logDetailsCanonical(game.appId ?? "", `heroSelected=appInfoEntry.header_image`); return appInfoEntry.header_image; }
+  if (artwork?.sgdbHeroUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbHeroUrl`); return artwork.sgdbHeroUrl; }
+  if (artwork?.sgdbGridUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=sgdbGridUrl`); return artwork.sgdbGridUrl; }
   if (fallbackBundle?.background?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.background source=${fallbackBundle.background.source}`); return fallbackBundle.background.url; }
   if (fallbackBundle?.landscape?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.landscape source=${fallbackBundle.landscape.source}`); return fallbackBundle.landscape.url; }
   if (fallbackBundle?.cover?.url) { logDetailsCanonical(game.appId ?? "", `heroSelected=fallbackBundle.cover source=${fallbackBundle.cover.source}`); return fallbackBundle.cover.url; }
@@ -153,9 +178,6 @@ function getHeroImageUrl(game: LibraryGame, artwork?: SgdbArtworkData | null, ap
     || game.metadata?.capsule_image
     || game.metadata?.capsule_image_v5;
   if (metaSecondary) { logDetailsCanonical(game.appId ?? "", `heroSelected=metadataSecondary`); return metaSecondary; }
-  if (game.backgroundPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.backgroundPath path=${game.backgroundPath}`); return game.backgroundPath; }
-  if (game.landscapePath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.landscapePath path=${game.landscapePath}`); return game.landscapePath; }
-  if (game.coverPath) { logDetailsCanonical(game.appId ?? "", `heroSelected=game.coverPath path=${game.coverPath}`); return game.coverPath; }
   if (game.imageUrl) { logDetailsCanonical(game.appId ?? "", `heroSelected=imageUrl`); return game.imageUrl; }
   if (mediaEntry?.cover_path) { logDetailsCanonical(game.appId ?? "", `heroSelected=mediaEntry.cover_path`); return mediaEntry.cover_path; }
   if (canonicalDiskFallback) { logDetailsCanonical(game.appId ?? "", `heroSelected=canonicalDiskFallback`); return canonicalDiskFallback; }
@@ -251,9 +273,11 @@ export default function LibraryGameDetails({
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editDialogTab, setEditDialogTab] = useState<"general" | "media">("general");
   const [heroImgError, setHeroImgError] = useState(false);
-  const [heroImageLoaded, setHeroImageLoaded] = useState(false);
+  const [loadedHeroUrl, setLoadedHeroUrl] = useState<string | undefined>(undefined);
+  const [placeholderUrl, setPlaceholderUrl] = useState<string | undefined>(undefined);
+  const [backdropLayers, setBackdropLayers] = useState<string[]>([]);
   const { isFavorite, toggleFavorite } = useFavorites();
-  const favoriteId = game.appId || game.id;
+  const favoriteId = getFavoriteKey(game) ?? game.id;
   const favorite = isFavorite(favoriteId);
   const actionsRef = useRef<HTMLDivElement>(null);
   const isManualGame = game.source === "manual";
@@ -336,10 +360,33 @@ export default function LibraryGameDetails({
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
 
   // Reset hero image states when a new URL is resolved
+  // Clear error on candidate changes, but keep the last good hero visible (crossfade).
+  // Only reset the loaded hero when switching to a different game.
+  const prevHeroAppIdRef = useRef(game.appId);
   useEffect(() => {
     setHeroImgError(false);
-    setHeroImageLoaded(false);
   }, [rawImageUrl]);
+
+  useEffect(() => {
+    if (prevHeroAppIdRef.current !== game.appId) {
+      prevHeroAppIdRef.current = game.appId;
+      setLoadedHeroUrl(undefined);
+      setHeroImgError(false);
+      setBackdropLayers([]);
+    }
+  }, [game.appId]);
+
+  const backdropSrc = loadedHeroUrl ?? placeholderUrl;
+  useEffect(() => {
+    if (!backdropSrc) return;
+    setBackdropLayers((prev) => (prev[prev.length - 1] === backdropSrc ? prev : [...prev.slice(-1), backdropSrc]));
+  }, [backdropSrc]);
+
+  useEffect(() => {
+    if (backdropLayers.length < 2) return;
+    const t = setTimeout(() => setBackdropLayers((prev) => prev.slice(-1)), 600);
+    return () => clearTimeout(t);
+  }, [backdropLayers]);
 
   useEffect(() => {
     if (!rawImageUrl) {
@@ -366,13 +413,40 @@ export default function LibraryGameDetails({
       }
       const isLocal = isLocalPath(resolved);
       const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
-      setImageUrl(url);
+      // Keep the current string when the resolved URL points to the same file (basename match).
+      // Snapshot paths are relative (media/background.jpg) while canonicalAppInfo resolves to
+      // absolute paths; same file → same key={imageUrl} → no <img> remount → no opacity-0 gap.
+      setImageUrl((prev) => (prev && url && sameHeroFile(prev, url) ? prev : url));
       if (game.appId === "4717430") {
         console.log(`[LIB_MEDIA_DEBUG][HERO_FINAL] appid=4717430 url=${url ?? "(null)"} rawUrl=${rawImageUrl} fallbackBundle=${!!fallbackBundle} fbBg=${fallbackBundle?.background?.url ?? "(null)"} canonicalBg=${canonicalAppInfo?.media?.backgroundPath ?? "(null)"} metaBg=${game.metadata?.background_image ?? "(null)"}`);
       }
     };
     resolve();
   }, [rawImageUrl, game.appId, fallbackBundle, canonicalAppInfo, game.metadata?.background_image]);
+
+  // Resolve a fast colorful placeholder (snapshot media) so the hero never flashes black
+  // while canonicalAppInfo/imageUrl load asynchronously for Steam/Lua games.
+  const rawPlaceholder = game.backgroundPath || game.landscapePath || game.coverPath;
+  useEffect(() => {
+    if (!rawPlaceholder) {
+      setPlaceholderUrl(undefined);
+      return;
+    }
+    const resolve = async () => {
+      let resolved = rawPlaceholder;
+      if (resolved.startsWith("media/") || resolved.startsWith("img/")) {
+        const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
+        resolved = await resolveRelativeMediaPath(game.appId ?? "", resolved).catch(() => rawPlaceholder);
+      } else if (resolved.startsWith("games/")) {
+        const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+        resolved = await resolveProviderMediaPreviewUrl(resolved).catch(() => rawPlaceholder) ?? rawPlaceholder;
+      }
+      const isLocal = isLocalPath(resolved);
+      const url = isLocal ? (localPathToUrl(resolved) ?? undefined) : resolved;
+      setPlaceholderUrl(url);
+    };
+    resolve();
+  }, [rawPlaceholder, game.appId]);
 
   const rawLogoUrl = (() => {
     const fallbackLogoSrc = fallbackBundle?.logo?.url;
@@ -403,38 +477,43 @@ export default function LibraryGameDetails({
     }
     return rawLogoUrl;
   })();
-  const [resolvedLogoUrl, setResolvedLogoUrl] = useState<string | undefined>(undefined);
+  const [resolvedRelativeLogoUrl, setResolvedRelativeLogoUrl] = useState<string | undefined>(undefined);
   const [logoNaturalHeight, setLogoNaturalHeight] = useState<number | null>(null);
   const handleLogoLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
     setLogoNaturalHeight(e.currentTarget.naturalHeight);
   }, []);
-  useEffect(() => {
-    if (!_validatedLogoSrc) { setResolvedLogoUrl(undefined); return; }
+  // Resolve the logo URL synchronously during render when possible (absolute/local/http
+  // paths) so the first render after canonicalLoaded already shows the logo — no title flash.
+  // Only relative paths (games/, media/, img/) need the async resolution below.
+  const resolvedLogoSync = useMemo(() => {
+    if (!_validatedLogoSrc) return undefined;
     if (_validatedLogoSrc.startsWith("games/") || _validatedLogoSrc.startsWith("media/") || _validatedLogoSrc.startsWith("img/")) {
-      const resolveLogo = async () => {
-        let resolved: string | null = _validatedLogoSrc;
-        if (_validatedLogoSrc.startsWith("games/")) {
-          const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
-          resolved = await resolveProviderMediaPreviewUrl(_validatedLogoSrc).catch(() => _validatedLogoSrc);
-        } else {
-          const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
-          resolved = await resolveRelativeMediaPath(game.appId ?? "", _validatedLogoSrc).catch(() => _validatedLogoSrc);
-        }
-        setResolvedLogoUrl(resolved ?? undefined);
-      };
-      resolveLogo();
-    } else {
-      setResolvedLogoUrl(isLocalPath(_validatedLogoSrc) ? (localPathToUrl(_validatedLogoSrc) ?? undefined) : _validatedLogoSrc);
+      return undefined;
     }
-  }, [_validatedLogoSrc, game.appId]);
-  const logoUrl = resolvedLogoUrl;
+    return isLocalPath(_validatedLogoSrc) ? (localPathToUrl(_validatedLogoSrc) ?? undefined) : _validatedLogoSrc;
+  }, [_validatedLogoSrc]);
+  useEffect(() => {
+    if (!_validatedLogoSrc || resolvedLogoSync) { setResolvedRelativeLogoUrl(undefined); return; }
+    const resolveLogo = async () => {
+      let resolved: string | null = _validatedLogoSrc;
+      if (_validatedLogoSrc.startsWith("games/")) {
+        const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+        resolved = await resolveProviderMediaPreviewUrl(_validatedLogoSrc).catch(() => _validatedLogoSrc);
+      } else {
+        const { resolveRelativeMediaPath } = await import("../../services/gameCacheService");
+        resolved = await resolveRelativeMediaPath(game.appId ?? "", _validatedLogoSrc).catch(() => _validatedLogoSrc);
+      }
+      setResolvedRelativeLogoUrl(resolved ?? undefined);
+    };
+    resolveLogo();
+  }, [_validatedLogoSrc, resolvedLogoSync, game.appId]);
+  const logoUrl = resolvedLogoSync ?? resolvedRelativeLogoUrl;
   useEffect(() => { setLogoNaturalHeight(null); }, [logoUrl]);
-  const logoDisplayHeight = (() => {
-    if (logoNaturalHeight == null) return undefined;
-    const MIN_H = 80;
-    const MAX_H = 200;
-    return Math.max(MIN_H, Math.min(MAX_H, logoNaturalHeight));
-  })();
+  // Responsive logo sizing: width scales with the viewport, height stays proportional to the
+  // logo's intrinsic aspect ratio once loaded. max-height caps extreme ratios.
+  const logoWidth = "clamp(160px, 44vw, 540px)";
+  const logoHeightFallback = "clamp(80px, 14vh, 200px)";
+  const logoMaxHeight = "clamp(80px, 18vh, 240px)";
   const script = game.luaScripts[0];
   const action = getLauncherGamePrimaryAction(game);
   const { installState, dismiss } = useInstallTracker(game.appId);
@@ -1100,6 +1179,9 @@ export default function LibraryGameDetails({
   if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
     console.log(`[MEDIA][DETAILS_RENDER] appid=${game.appId} title=${detailTitle} imageUrl=${imageUrl ? "set" : "null"} logoUrl=${logoUrl ? "set" : "null"} canonicalMedia=${canonicalAppInfo?.media ? "set" : "null"}`);
   }
+  if (DEBUG_HERO_LAYERS) {
+    console.log(`[HERO_LAYERS] appid=${game.appId} source=${game.source} canonicalLoaded=${canonicalLoaded} imageUrl=${imageUrl ? "set" : "null"} loadedHeroUrl=${loadedHeroUrl ? "set" : "null"} placeholderUrl=${placeholderUrl ? "set" : "null"} heroImgError=${heroImgError} backdropLayers=${backdropLayers.length}`);
+  }
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -1117,17 +1199,20 @@ export default function LibraryGameDetails({
 
         {/* Layer 1 — Steam-style colorful blurred backdrop */}
         {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
-            object-position: center ensures the same crop region as the sharp image. */}
-        <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
-          {canonicalLoaded && imageUrl && !heroImgError ? (
-            <img
-              key={imageUrl}
-              src={imageUrl}
-              alt=""
-              onError={() => setHeroImgError(true)}
-              onLoad={() => setHeroImageLoaded(true)}
-              className={`h-full w-full scale-105 object-cover blur-2xl opacity-0 ${heroImageLoaded ? "animate-hero-blur-in" : ""}`}
-            />
+            object-position: center ensures the same crop region as the sharp image.
+            animate-hero-entrance replays on every game switch (component remounts
+            via key=source:appId), so all sources get a visible background fade-in. */}
+        <div className="absolute inset-0 animate-hero-entrance overflow-hidden brightness-[0.65] saturate-[1.1]">
+          {backdropLayers.length > 0 ? (
+            backdropLayers.map((src, i) => (
+              <img
+                key={`b-${src}`}
+                src={src}
+                alt=""
+                onError={() => setBackdropLayers((prev) => prev.filter((s) => s !== src))}
+                className={`absolute inset-0 h-full w-full scale-105 object-cover blur-2xl transition-opacity duration-500 ${i === backdropLayers.length - 1 ? "opacity-100 animate-hero-blur-in" : "opacity-0"}`}
+              />
+            ))
           ) : (
             <div className="h-full w-full bg-gradient-to-b from-white/[0.03] to-black/40" />
           )}
@@ -1137,14 +1222,14 @@ export default function LibraryGameDetails({
         {/* 0-4% transparent buffer → 4-12% linear fade-in → 12-88% full opacity → 88-96% fade-out → 96-100% transparent.
             Wider 8% transition zone creates a smooth, invisible seam with the blurred backdrop. */}
         <div className="absolute inset-0 z-10 flex items-center justify-center overflow-hidden">
-          {canonicalLoaded && imageUrl && !heroImgError ? (
+          {imageUrl && !heroImgError ? (
             <img
               key={imageUrl}
               src={imageUrl}
               alt={detailTitle}
-              onError={() => setHeroImgError(true)}
-              onLoad={() => setHeroImageLoaded(true)}
-              className={`block h-full w-auto max-w-none shrink-0 opacity-0 ${heroImageLoaded ? "animate-hero-sharp-in" : ""} [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
+              onError={() => { if (!loadedHeroUrl) setHeroImgError(true); }}
+              onLoad={() => setLoadedHeroUrl(imageUrl)}
+              className={`block h-full w-auto max-w-none shrink-0 ${imageUrl === loadedHeroUrl ? "opacity-100 animate-hero-focus-in" : "opacity-0"} [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
             />
           ) : (
             <div className="h-full w-full" />
@@ -1166,15 +1251,18 @@ export default function LibraryGameDetails({
               <img
                 src={logoUrl}
                 alt={`${detailTitle} logo`}
-                loading="lazy"
+                loading="eager"
                 decoding="async"
                 onLoad={handleLogoLoad}
-                className="mb-2 object-contain drop-shadow-2xl w-auto"
-                style={logoDisplayHeight != null
-                  ? { height: `${logoDisplayHeight}px` }
-                  : { maxHeight: '200px' }
-                }
+                className="mb-2 object-contain drop-shadow-2xl"
+                style={{
+                  width: logoWidth,
+                  height: logoNaturalHeight != null ? "auto" : logoHeightFallback,
+                  maxHeight: logoMaxHeight,
+                }}
               />
+            ) : rawLogoUrl ? (
+              <div className="mb-2" aria-hidden="true" style={{ width: logoWidth, height: logoHeightFallback }} />
             ) : (
               <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
                 {detailTitle}
@@ -1481,7 +1569,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
             </div>
 
             {/* Inline stats */}
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1">
+            <div className="flex min-w-0 flex-1 animate-stats-in flex-wrap items-center gap-x-4 gap-y-1">
               <StatInline icon={<Cloud className="h-5 w-5" />} label="Cloud Status" value={cloudStatus} />
               <StatInline icon={<Clock className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
               <StatInline icon={<Trophy className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />

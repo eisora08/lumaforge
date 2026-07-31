@@ -4,6 +4,7 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { AppPage } from "../../types/navigation";
 import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground } from "./consoleMedia";
+import { getFavoriteKey } from "../../services/gameCacheService";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
 import { getGameAchievementSummary } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
@@ -78,7 +79,7 @@ export default function ConsoleSpotlightLayout({
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const heroSrc = getConsoleHeroBackground(focusedGame);
-  const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
+  const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
 
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
 

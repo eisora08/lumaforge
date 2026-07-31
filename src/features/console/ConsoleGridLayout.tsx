@@ -18,7 +18,7 @@ import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
 import { setScrollTarget } from "./useConsoleGamepadInput";
-import { deduplicateByStableId } from "../../services/gameCacheService";
+import { deduplicateByStableId, getFavoriteKey } from "../../services/gameCacheService";
 
 const DEBUG_CONSOLE_GRID_NAV = false;
 const DEBUG_FORCE_TEST_MP4 = false;
@@ -65,7 +65,7 @@ export default function ConsoleGridLayout({
   const gridRef = useRef<HTMLDivElement>(null);
 
   const gridCardVariant: "landscape" | "poster" = settings.gridCardStyle.useLandscapeCards ? "landscape" : "poster";
-  const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
+  const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
   const dedupedRail = useMemo(() => deduplicateByStableId(currentRail), [currentRail]);
 

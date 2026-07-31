@@ -11,6 +11,7 @@ import { useFavorites } from "../../context/FavoritesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { getFavoriteKey } from "../../services/gameCacheService";
 import { buildStoreMedia } from "../../services/storeMediaService";
 import { getConsoleHeroBackground, getConsoleCardSrc, getConsoleLogoSrc } from "./consoleMedia";
 import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
@@ -385,7 +386,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, [game, actionModel, appSettings, addJob, updateJob, libCtx.refresh, handlePlay, onPlayGame]);
 
   const handleFavoriteToggle = useCallback(() => {
-    if (game) toggleFavorite(game.appId || game.id);
+    if (game) toggleFavorite(getFavoriteKey(game) ?? game.id);
   }, [game, toggleFavorite]);
 
   /* ── Sub-focus activation for left-actions zone ── */
@@ -719,7 +720,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     }
     return raw;
   }, [mediaBundle?.logo?.url, game]);
-  const isFav = game ? favoriteIds.has(game.appId || game.id) : false;
+  const isFav = game ? favoriteIds.has(getFavoriteKey(game) ?? game.id) : false;
 
   const playtimeSeconds = useMemo(() => {
     if (!game) return 0;

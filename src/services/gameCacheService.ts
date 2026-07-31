@@ -356,6 +356,43 @@ export function getFavoriteKey(game: { appId?: string | null; libraryId?: string
   return null;
 }
 
+const FAVORITES_STORAGE_KEY = "lumaforge-favorites-v1";
+
+/**
+ * Delete-only reconciler for manual-game favorite keys.
+ *
+ * When a manual game later gains a Steam appId (e.g. flows that set
+ * `entry.appId`), favorite entries stored under the numeric appId would
+ * double-display next to the canonical `manual:<uuid>` key. Rule: if BOTH
+ * the appId AND the libraryId are favorited, delete the appId key. The
+ * "appId-only" case is ambiguous (could be a real Steam favorite) and is
+ * never touched. Idempotent — safe to call repeatedly.
+ */
+export function reconcileManualFavoriteKeys(manualGames: { libraryId?: string | null; appId?: string | null }[]): boolean {
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return false;
+    const ids = new Set<string>(parsed.filter((x): x is string => typeof x === "string"));
+    let changed = false;
+    for (const game of manualGames) {
+      if (!game.libraryId || !game.appId) continue;
+      if (ids.has(game.appId) && ids.has(game.libraryId)) {
+        ids.delete(game.appId);
+        changed = true;
+      }
+    }
+    if (changed) {
+      localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+      window.dispatchEvent(new CustomEvent("lumaforge-data-changed", { detail: { key: FAVORITES_STORAGE_KEY } }));
+    }
+    return changed;
+  } catch {
+    return false;
+  }
+}
+
 /** Deduplicate an array of LibraryGame by stable identity, keeping first occurrence. */
 export function deduplicateByStableId<T extends { libraryId?: string; appId?: string; id: string }>(items: T[]): T[] {
   const seen = new Set<string>();

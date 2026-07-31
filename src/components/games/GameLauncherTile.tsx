@@ -47,6 +47,7 @@ import {
   clearPendingUninstall,
   subscribePendingUninstall,
   getPendingUninstallVersion,
+  getFavoriteKey,
 } from "../../services/gameCacheService";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { useFavorites } from "../../context/FavoritesContext";
@@ -139,7 +140,7 @@ function GameLauncherTileInner({
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editInitialTab, setEditInitialTab] = useState<"general" | "media">("general");
   const { isFavorite, toggleFavorite } = useFavorites();
-  const _favKey = game.appId || (game.source === "manual" ? game.libraryId : null) || game.id;
+  const _favKey = getFavoriteKey(game);
   const favorite = _favKey ? isFavorite(_favKey) : false;
   const [canonicalInfo, setCanonicalInfo] = useState<GameAppInfo | null>(null);
   const [mediaLoading, setMediaLoading] = useState(true);
@@ -814,7 +815,7 @@ function GameLauncherTileInner({
             <MenuItem
               label={favorite ? "Remove from favorites" : "Add to favorites"}
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
-              onClick={() => { const fk = game.appId || (game.source === "manual" ? game.libraryId : null) || game.id; if (fk) toggleFavorite(fk); setMenuOpen(false); }}
+              onClick={() => { const fk = getFavoriteKey(game); if (fk) toggleFavorite(fk); setMenuOpen(false); }}
             />
             {game.appId && game.source !== "epic" && game.source !== "debrid" && (
               <MenuItem

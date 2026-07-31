@@ -48,7 +48,7 @@ import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts } from "../../services/tauri";
-import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion } from "../../services/gameCacheService";
+import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { useConfirm } from "../../services/confirmService";
@@ -715,7 +715,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           const mHasLua = menuGame.luaScripts.length > 0;
           const mPendingUninstall = menuGame.appId ? isPendingUninstall(menuGame.appId) : false;
           if (ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS) console.log(`[SIDEBAR_ACTION_RENDER] appid=${menuGame.appId} uninstallPending=${mPendingUninstall} action=${mPendingUninstall ? "uninstalling" : mAction}`);
-          const _sfk = menuGame.appId || (menuGame.source === "manual" ? menuGame.libraryId : null) || menuGame.id;
+          const _sfk = getFavoriteKey(menuGame);
           const fav = _sfk ? isFavorite(_sfk) : false;
 
           return (
@@ -768,7 +768,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 label={fav ? "Remove from favorites" : "Add to favorites"}
                 icon={<Heart className={`h-3.5 w-3.5 ${fav ? "fill-current" : ""}`} />}
                 onClick={() => {
-                  const fk = menuGame.appId || (menuGame.source === "manual" ? menuGame.libraryId : null) || menuGame.id;
+                  const fk = getFavoriteKey(menuGame);
                   if (fk) toggleFavorite(fk);
                   handleMenuClose();
                 }}

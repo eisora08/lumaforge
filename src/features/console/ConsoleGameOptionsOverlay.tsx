@@ -13,6 +13,7 @@ import { showError, showSuccess, showInfo } from "../../components/toast/GameToa
 import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { getFavoriteKey } from "../../services/gameCacheService";
 import {
   getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel,
 } from "./consoleGameActions";
@@ -45,7 +46,7 @@ export default function ConsoleGameOptionsOverlay({
   const isLaunching = sessionState === "launching";
   const isRunning = sessionState === "running";
   const isStopping = sessionState === "stopping";
-  const isFav = game ? favoriteIds.has(game.appId || game.id) : false;
+  const isFav = game ? favoriteIds.has(getFavoriteKey(game) ?? game.id) : false;
   const hints = useMemo(() => getConsoleInputHints(inputHints), [inputHints]);
   const [focusIndex, setFocusIndex] = useState(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -83,7 +84,7 @@ export default function ConsoleGameOptionsOverlay({
   }, []);
 
   const handleFavToggle = useCallback(() => {
-    if (game) toggleFavorite(game.appId || game.id);
+    if (game) toggleFavorite(getFavoriteKey(game) ?? game.id);
   }, [game, toggleFavorite]);
 
   /* ── Shared action model — single source of truth ── */

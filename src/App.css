@@ -433,6 +433,93 @@ html {
 }
 
 /* =========================
+   HERO FOCUS-IN (pull-focus reveal)
+   The sharp layer starts from the same blurred/scaled state as the backdrop,
+   so when the real background loads it "focuses" into place — reads as the
+   image gaining sharpness rather than an asset swap.
+   Starts at opacity 0 (seamless with the blurred backdrop beneath) and ramps
+   up slowly with a gentle ease for a soft, continuous focus pull.
+========================= */
+
+@keyframes heroFocusIn {
+  from { opacity: 0; filter: blur(24px); transform: scale(1.05); }
+  to   { opacity: 1; filter: blur(0);    transform: scale(1); }
+}
+.animate-hero-focus-in {
+  animation: heroFocusIn 900ms cubic-bezier(0.33, 0, 0.2, 1) both;
+}
+
+/* =========================
+   DASHBOARD HERO KEN BURNS (continuous slow zoom/pan)
+   Subtle ambient motion on the hero background art. Runs continuously
+   while the hero is visible; the section's overflow-hidden clips the
+   scaled edges so no gaps ever appear. Disabled for reduced motion.
+========================= */
+
+@keyframes heroKenburns {
+  0% {
+    transform: scale(1) translate(0, 0);
+    transform-origin: center;
+  }
+  100% {
+    transform: scale(1.06) translate(-1%, 0.5%);
+    transform-origin: center;
+  }
+}
+.animate-hero-kenburns {
+  animation: heroKenburns 25s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-kenburns {
+    animation: none !important;
+  }
+}
+
+/* =========================
+   HERO BACKDROP ENTRANCE (replays on every game switch)
+   LibraryGameDetails remounts per game via key=source:appId,
+   so this container-level fade guarantees a visible background
+   fade-in for ALL games (manual/steam/lua), regardless of whether
+   the placeholder and hero URLs differ or load asynchronously.
+   Layer crossfades (animate-hero-blur-in) compose on top of it.
+========================= */
+
+@keyframes heroEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-hero-entrance {
+  animation: heroEntrance 500ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+/* =========================
+   INLINE STATS ENTRANCE (cloud / last played / playtime)
+   Fades the stats row in on each game switch instead of an
+   instant value swap when canonical/playtime data arrives.
+========================= */
+
+@keyframes statsIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-stats-in {
+  animation: statsIn 300ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+/* =========================
    SLIDE-FADE VARIANT
    For larger content transitions
 ========================= */

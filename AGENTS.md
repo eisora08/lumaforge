@@ -3963,3 +3963,315 @@ Integrate Debrid/Hydra repack catalog entries into the Library grid as a first-c
 - `tsc --noEmit` ✅ (only pre-existing extension/test errors)
 - `vite build` ✅ (only pre-existing chunk warnings)
 - `cargo check` ✅ (0 errors)
+
+## Session — Fix "render viejo" on Library game switch (hero stale props)
+
+### Problem
+When switching to a steam/lua game in LibraryGameDetails, the previous game's hero flashed briefly before self-correcting ("render viejo"). Caused by:
+1. `LibraryGameDetailPage` is NOT keyed by game (`App.tsx:273-274`) — its state (`mediaEntry`, `artwork`, `canonicalAppInfo`, `canonicalDiskFallback`, `localDetailsData`, `fallbackBundle`, `resolvedGame`, `canonicalLoaded`) persists from the previous game while the new game's async pipeline loads.
+2. Render #1 of the new game received the OLD states as props. Previously Layer 2 (sharp hero) was gated by `canonicalLoaded`; the effect's `setCanonicalLoaded(false)` reset it after paint, hiding the stale frame. After decoupling Layer 2 from `canonicalLoaded`, the stale hero became visible.
+3. Two async setters lacked cancellation guards and could write stale state AFTER the reset: `getMediaCacheForAppId(...).then(setMediaEntry)` (`:328`) and `getLibraryGameDetails(...).then(...setLocalDetailsData)` (`:480`).
+- Manual games were immune: `canonicalLoaded=true` + asset:// URLs arrive in one pass with `cancelled` guards.
+
+### Fix
+1. **Render-phase stale reset** in `LibraryGameDetailPage.tsx` (React "adjusting state when a prop changes" pattern): `_detailKeyRef` compared against `computeGameKey(selectedGame)`; on change, resets `mediaEntry`, `canonicalAppInfo`, `canonicalDiskFallback`, `localDetailsData`, `fallbackBundle`, `artwork`, `resolvedGame`, `canonicalLoaded` during render. Ref guard keeps it idempotent. Render #1 of a new game now always shows the correct placeholder → hero crossfade (matches manual behavior).
+2. **`cancelled` guards** added to `getMediaCacheForAppId` (`.then`/`.catch`) and `getLibraryGameDetails` (`.then`) — late resolutions can no longer write stale state.
+3. Existing effect resets (`:195-201`) kept as defense in depth (idempotent).
+
+### Key Files Changed
+- `src/pages/LibraryGameDetailPage.tsx` — render-phase reset block + 2 cancellation guards
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors)
+- `vite build` ✅ (only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Vite 8.2 upgrade (Vite 7 → Rolldown)
+
+### Goal
+Upgrade the bundler from Vite 7 (esbuild + Rollup) to Vite 8.2 (Rolldown) for faster builds and lower memory in production builds.
+
+### Changes
+- **`package.json`** bumps:
+  - `vite`: `^7.0.4` → `^8.2.0` (engines `^20.19.0 || >=22.12.0` — OK with Node v24.16.0)
+  - `@vitejs/plugin-react`: `^4.6.0` → `^6.0.5` (Vite 8 requires the React 6 plugin; Oxc-based, no Babel)
+  - `@tailwindcss/vite`: `^4.3.1` → `^4.3.3` (declares Vite 8 peer support)
+  - `vitest`: unchanged at `^4.1.10` (peer `^6‖^7‖^8`)
+- **`npm install`** regenerated lockfile: 12 added / 35 removed / 12 changed. EPERM cleanup warnings on native binaries (esbuild/rollup/oxide) are cosmetic.
+- **No config changes**: `vite.config.ts` (server + plugins only) needed no Rolldown migration.
+
+### Verification
+- `npx tsc --noEmit` ✅ — only the 23 pre-existing errors (tests/extensions), none in touched files
+- `npx vite build` ✅ — **1.85s** (was ~6.7s); main chunk `index-*.js` 1,752 kB / gzip 439 kB (similar to pre-existing 1.9MB warning)
+- New Rolldown `[INEFFECTIVE_DYNAMIC_IMPORT]` warnings are informational (dynamic imports that stay in the same chunk because they're also statically imported) — not errors
+- `npx vitest run` ✅ — 802 passed / 4 failed. The 4 failures are **stale behavioral tests**, NOT Vite-related:
+  - `sourceManagerDeclarativeWiring.test.ts` (×3) — tests the OLD behavior (repo-sourced extensions with `managedFiles` get a DeclarativeExtension), which was deliberately removed in the "Lua Adapter Bypass Fix" session (repo-sourced + managedFiles now SKIP DeclarativeExtension)
+  - `tools.test.ts` `extractToolConfig` — expects an old 5-field `toolConfig` shape, actual now has 15 fields
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+### Known trade-offs
+- Rolldown dev server uses ~7x RAM (known upstream, being reduced)
+- Pre-existing chunk-size warning persists
+
+### Key Files Changed
+- `package.json` — 3 dependency bumps
+- `package-lock.json` — regenerated
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors)
+- `vite build` ✅ (1.85s, Rolldown; informational INEFFECTIVE_DYNAMIC_IMPORT warnings only)
+- `vitest run` ✅ (802 pass / 4 stale behavioral fails — pre-existing)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Library GameDetails hero pull-focus (blur-to-sharp reveal)
+
+### Problem
+Steam/Lua game heroes showed a visible "low-res flash": the hero mounted with the snapshot's low-res landscape/header asset (e.g. `header.jpg` ~460×215) on frame 1, then swapped to the real high-res background (~1920×620) once the async canonical pipeline resolved. Manual games were immune because their artwork arrives in one pass. The existing `animate-hero-sharp-in` (1000ms opacity fade) went unnoticed because by the time the sharp layer mounted, the low-res asset was already showing — the swap itself was the visible artifact.
+
+### Root cause
+- `getHeroImageUrl` (LibraryGameDetails.tsx) preferred `appInfoEntry.header_image` (metadataSecondary, low-res) over `game.backgroundPath` (snapshot high-res path, always available in memory)
+- `rawPlaceholder` preferred `coverPath` → `landscapePath` over `backgroundPath`, so even the blurred backdrop layer started from low-res assets
+- The sharp layer's animation (opacity 0→1) was a pure fade, not tied to a "focus" metaphor — the asset swap between backdrop and sharp was still perceptible
+
+### Fix — pull-focus (blur-to-sharp) reveal
+
+#### Part 1: `getHeroImageUrl` priority reorder
+- `game.backgroundPath` (snapshot high-res) now checked BEFORE `appInfoEntry.header_image` (metadataSecondary low-res) and before the rest of the metadata chain
+- If no background, `game.landscapePath` still beats the low-res header fallback
+- Result: the sharp layer targets the SAME high-res asset the blurred backdrop shows from frame 1 → same image, same crop, only sharpness changes
+
+#### Part 2: `rawPlaceholder` background-first
+- Order changed from `coverPath || landscapePath || backgroundPath` → `backgroundPath || landscapePath || coverPath`
+- The blurred backdrop layer (frame 1) now starts from the high-res background instead of a low-res cover/landscape
+
+#### Part 3: `heroFocusIn` keyframe (src/App.css)
+- New `@keyframes heroFocusIn`: `from { opacity: 0; filter: blur(24px); transform: scale(1.05); }` → `to { opacity: 1; filter: blur(0); transform: scale(1); }`
+- 1400ms, `cubic-bezier(0.33, 0, 0.2, 1)` (gentle ease), `both` fill mode
+- Starts at `opacity: 0` — seamless with the blurred backdrop beneath (same asset), so no visible "pop"; the sharp layer fades in while unfocusing
+- Blur+scale match the backdrop's own `blur-2xl scale-110` state, so the sharp layer "focuses in" from the identical visual state
+- **Smoothing pass** (user: "se siente brusco"): was originally 900ms + `cubic-bezier(.2,.8,.2,1)` + starting `opacity: 0.4`; the 0→0.4 opacity jump read as abrupt. Now starts at 0 with a slower, softer ease for a continuous focus pull
+
+#### Part 4: Sharp layer class swap
+- `animate-hero-sharp-in` → `animate-hero-focus-in` on the sharp `<img>` (Layer 2), keeping the `imageUrl === loadedHeroUrl` opacity gate
+- `heroSharpIn` keyframe + `.animate-hero-sharp-in` class retained in App.css (unused, no removal)
+
+### Design decisions
+- **Sutil, no "presentation"**: user chose the subtle variant — blur 24px, scale 1.05, 900ms. No dramatic zoom or full-opacity start
+- **Same-asset principle**: backdrop and sharp now resolve to the same background URL, so the transition reads as "the image gained sharpness" rather than an asset swap
+- **Backdrop layers unchanged**: `backdropLayers` crossfade (max 2, 600ms prune) confirmed intentional and left as-is
+- **`animate-hero-entrance` on the container** (replays on keyed remount `source:appId`) retained
+
+### Key Files Changed
+- `src/components/library/LibraryGameDetails.tsx` — `getHeroImageUrl` priority reorder (backgroundPath above metadataSecondary), `rawPlaceholder` background-first, sharp layer class → `animate-hero-focus-in`
+- `src/App.css` — `@keyframes heroFocusIn` + `.animate-hero-focus-in`
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (1.82s, Rolldown; only pre-existing chunk warnings + informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — getHeroImageUrl priority: snapshot/disk paths before remote sources (no Steam→SGDB swap)
+
+### Problem
+Hero still showed a visible swap: frame 1 rendered the low-res Steam `appInfoEntry.header_image` (from `appInfoMap`), then `setFallbackBundle()` resolved SGDB and `fallbackBundle.background.url` replaced it ("primero llega una media de steam y luego carga el de steamgriddb"). Root cause: `game.backgroundPath` (snapshot high-res, the same asset the blurred backdrop shows) sat at the BOTTOM of the priority chain (after `appInfoEntry.header_image`, `artwork`, `metaPrimary`, and all `fallbackBundle` local/url sources) — so the sharp layer never converged to the backdrop asset.
+
+### Fix — getHeroImageUrl reorder (LibraryGameDetails.tsx:127-170)
+- Snapshot/canonical local disk paths moved to the TOP, interleaved by role, so the sharp hero targets the SAME high-res asset the blurred backdrop shows from frame 1:
+  1. `canonicalAppInfo.media.backgroundPath`
+  2. `game.backgroundPath` ← moved up
+  3. `canonicalAppInfo.media.landscapePath`
+  4. `game.landscapePath` ← moved up
+  5. `canonicalAppInfo.media.coverPath`
+  6. `game.coverPath` ← moved up
+  7. `mediaEntry.hero_path` / `grid_path`
+  8. `fallbackBundle.*.localPath` (materialized on disk)
+  9. `metaPrimary` (Steam metadata background fields)
+  10. `appInfoEntry.header_image` (Steam low-res — only when no snapshot/disk media)
+  11. `artwork.sgdbHeroUrl` / `sgdbGridUrl`
+  12. `fallbackBundle.*.url` (remote SGDB/IGDB/RAWG — last remote)
+  13. `metaSecondary` / `imageUrl` / `cover_path` / `canonicalDiskFallback`
+- Comment block updated to document the new priority and why (no visible swap when remote sources resolve later).
+- No change to `rawPlaceholder` (already background-first) or any other surface.
+
+### Scenario coverage
+- **A — Game with snapshot background**: sharp = `game.backgroundPath` from frame 1, identical to backdrop. When `fallbackBundle`/SGDB resolve later they're below the snapshot path → no swap.
+- **B — Game with no background but landscape/cover**: falls to `game.landscapePath`/`game.coverPath` before any remote source — still same asset as backdrop.
+- **C — Game with only remote sources (no snapshot media)**: `metaPrimary` → `appInfoEntry.header_image` → SGDB → `fallbackBundle.url` chain preserved exactly as before.
+- **D — canonicalAppInfo loads with fresh downloaded media**: `canonicalAppInfo.media.*` already outranks snapshot paths; since both usually point to the same file, no visible change.
+- **E — Stale snapshot path**: same behavior as before — sharp error leaves the blurred backdrop, which uses the same path.
+
+### Key Files Changed
+- `src/components/library/LibraryGameDetails.tsx` — `getHeroImageUrl` reordered (snapshot/disk role paths first, remote sources last)
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (1.69s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Hero flicker root cause: snapshot media never reaches LibraryGame + relative/absolute path mismatch
+
+### Problem
+The blur→sharp hero flicker for Steam/Lua games persisted even after `getHeroImageUrl` was reordered to prioritize snapshot paths. Root cause had 2 gaps + 1 mismatch:
+
+1. **Brecha 1 — `snapshotGameToLibraryGame` discarded `sg.media`** (`LibraryGamesContext.tsx:574-598`): only mapped appId/title/source/installed/playable/lastPlayed/playtime. `backgroundPath`/`landscapePath`/`coverPath` were never copied → `getHeroImageUrl` frame 1 fell to `appInfoEntry.header_image` (low-res) or placeholder. SQLite/reconciled games (`loadCachedGames`) don't populate media paths either.
+2. **Mismatch — relative vs absolute path strings**: snapshot stores relative (`media/background.jpg`); `canonicalAppInfo.media` from `loadGameAppInfoWithMediaFallback` resolves to absolute (`resolveMediaPaths`, `gameCacheService.ts:1159`). Both point to the SAME file but the string changes → `key={imageUrl}` (`LibraryGameDetails.tsx:1203`) remounts the `<img>` with `opacity-0` → visible gap.
+3. **Brecha 2 (cosmética)**: `rawPlaceholder` already prioritized `game.backgroundPath` but it was empty (gap 1).
+
+Manual games never flickered: their flow (`LibraryGameDetailPage.tsx:244-280`) sets `canonicalAppInfo` + `canonicalLoaded=true` in ONE pass with stable `asset://` URLs.
+
+### Fix
+
+#### Part 1: `snapshotGameToLibraryGame` maps media (LibraryGamesContext.tsx)
+- Param type changed from inline shape to `SnapshotGame` (imported from `startupSnapshotService`).
+- Copies `backgroundPath`, `landscapePath`, `coverPath`, `logoPath`, `iconPath` from `sg.media` into the `LibraryGame` (fields already exist in `libraryGame.ts:61-68`).
+
+#### Part 2: Snapshot media bridge for SQLite/reconciled path (LibraryGamesContext.tsx `load()`)
+- After `loadedGames` is resolved from ANY source (cached/reconciled/snapshot), bridges `snapshot.library.games[i].media` into each game **only when the field is missing** (`!game.backgroundPath && sm.backgroundPath`, etc.).
+- Logs `[LIBRARY_CONTEXT][SNAPSHOT_MEDIA_BRIDGE] bridged=N games=N`.
+- Covers the common warm-boot case where games come from SQLite (which never populates media paths).
+
+#### Part 3: Stable hero key by basename identity (LibraryGameDetails.tsx)
+- Added `sameHeroFile(a, b)` helper — compares normalized basenames (case-insensitive, strips `?`/`#`, splits on `/` and `\`).
+- In the `imageUrl` resolution effect (L375-406): `setImageUrl((prev) => (prev && url && sameHeroFile(prev, url) ? prev : url))` — keeps the current string when the newly-resolved URL points to the same file (relative snapshot vs absolute canonical). This prevents the `key={imageUrl}` remount and its opacity-0 gap.
+- Functional update avoids adding `imageUrl` to the effect deps.
+- Existing `imageUrl === loadedHeroUrl` opacity gate + backdrop crossfade remain as safety net when the file genuinely changes (e.g. header→background).
+
+### Root-cause summary (for future reference)
+- Snapshot DOES persist appinfo media (`startupSnapshotService.ts:85-122` `normalizeAppInfoMedia`; Rust `validate_snapshot_media_paths` returns the ORIGINAL relative path + `*Exists` flags, never rewrites to absolute).
+- The boot is correct — the data existed but was dropped at the mapper boundary and re-formatted by the canonical resolver.
+- Frame 1 hero now converges to the same asset as the blurred backdrop; when canonical resolves the same file, the string is preserved → no remount → no gap.
+
+### Key Files Changed
+- `src/context/LibraryGamesContext.tsx` — `SnapshotGame` import, `snapshotGameToLibraryGame` media mapping, `[LIBRARY_CONTEXT][SNAPSHOT_MEDIA_BRIDGE]` in `load()`
+- `src/components/library/LibraryGameDetails.tsx` — `sameHeroFile()` helper, stable `setImageUrl` in resolution effect
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (1.76s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Hero logo: kill title flash + responsive sizing
+
+### Problem
+Two issues in the hero bottom-content logo block (`LibraryGameDetails.tsx`):
+
+1. **Title flash before logo**: `resolvedLogoUrl` was resolved in a `useEffect` (default state `undefined`). The whole block is gated by `canonicalLoaded`; on the first render after it flips true, `canonicalAppInfo.media.logoPath` was already resolved (absolute) but `logoUrl` was still `undefined` → JSX `logoUrl ? <img> : <h1>` rendered the title for ~1 frame (16ms). For relative paths (`games/`,`media/`,`img/`) the effect also did a dynamic `import()` + async Tauri invoke, stretching the flash to tens of ms.
+2. **Non-responsive logo sizing**: `logoDisplayHeight` clamped to fixed pixels (`Math.max(80, Math.min(200, naturalHeight))`) — same size regardless of viewport width.
+
+### Fix
+
+#### Part 1: Render-phase synchronous logo resolution
+- Extracted `resolvedLogoSync` via `useMemo` — resolves the logo URL during render for absolute/local/http paths (`isLocalPath` → `localPathToUrl`, else the raw string). Relative paths return `undefined` (async needed).
+- The `useEffect` now runs ONLY for relative paths, writing to `resolvedRelativeLogoUrl`.
+- `logoUrl = resolvedLogoSync ?? resolvedRelativeLogoUrl` — the first render after `canonicalLoaded=true` already has the logo (canonical paths are absolute) → the title is never painted.
+
+#### Part 2: No title swap when logo pending
+- Render branch: `logoUrl ? <img> : rawLogoUrl ? <div placeholder/> : <h1>`.
+- The placeholder div (same responsive box as the logo) prevents any title→logo swap; the title only shows when there is genuinely no logo source.
+
+#### Part 3: `loading="lazy"` → `eager`
+- The hero logo is the main visual above the fold; eager removes the extra load delay.
+
+#### Part 4: Responsive logo sizing (replaces fixed-pixel clamp)
+- `logoWidth = clamp(160px, 44vw, 540px)` — scales with viewport, min/max caps.
+- `height: auto` once loaded (`logoNaturalHeight != null`) — proportional to intrinsic aspect ratio.
+- `max-height: clamp(80px, 18vh, 240px)` + `object-contain` — caps extreme ratios without distortion.
+- Pre-load reservation `height: clamp(80px, 14vh, 200px)` — no layout collapse/pop before intrinsic size is known.
+- `logoNaturalHeight` retained only as a "loaded" marker (resets on `logoUrl` change).
+
+### Key Files Changed
+- `src/components/library/LibraryGameDetails.tsx` — `resolvedLogoSync` useMemo, relative-only effect → `resolvedRelativeLogoUrl`, `logoUrl` derivation, placeholder branch, `loading="eager"`, responsive `logoWidth`/`logoHeightFallback`/`logoMaxHeight` constants, `<img>` style
+
+### Build
+- `tsc --noEmit` ✅ (no errors in `LibraryGameDetails.tsx`)
+- `vite build` ✅ (1.70s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Manual game favorite keys: unify via getFavoriteKey + delete-only reconciler
+
+### Problem
+A manual game that gained a Steam appId lost its favorite marker and, when re-toggled, rendered twice.
+
+### Root cause
+- manualGameLibraryMapper.ts:127 assigns ppId: entry.appId ?? entry.linkedSteamAppId to manual games.
+- Favorite-key consumers computed the key inline with game.appId || game.id — so a manual game that now has a numeric ppId read the appId instead of its canonical manual:<uuid> libraryId.
+- Result: the existing favorite (manual:<uuid>) no longer matched (heart unchecked), and toggling created a NEW favorite under the appId. FavoritesSection resolves both keys against its identityMap → card rendered twice.
+
+### Fixes
+
+#### Part 1: Unified favorite key everywhere
+- Added getFavoriteKey() usage at all inline sites (game.appId || game.id → getFavoriteKey(game) ?? game.id):
+  - LibraryGameDetails.tsx L281 (avoriteId)
+  - GameLauncherTile.tsx L142 (_favKey) + L818 toggle
+  - SidebarLibraryList.tsx L718 (_sfk) + L771 toggle
+  - FavoritesSection.tsx L217 (handleToggleFavorite)
+  - ConsoleGameCard.tsx L22, ConsoleGameDetails.tsx L389/L723, ConsoleGameOptionsOverlay.tsx L49/L87, ConsoleGridLayout.tsx L68, ConsoleSpotlightLayout.tsx L81, ConsoleSwitchSpotlightLayout.tsx L118/L427
+- getFavoriteKey (already in gameCacheService.ts:350): manual → libraryId, Steam → appId, Epic/other → libraryId, fallback id.
+
+#### Part 2: Delete-only reconciler
+- New econcileManualFavoriteKeys(manualGames) in gameCacheService.ts (after getFavoriteKey):
+  - Rule: if BOTH ppId AND libraryId are in the favorites set → delete the ppId key.
+  - "appId-only" case untouched (could be a real Steam favorite).
+  - Idempotent; on change writes localStorage + dispatches lumaforge-data-changed with detail.key = "lumaforge-favorites-v1" (triggers FavoritesContext reload at L67).
+- Hooked in LibraryGamesContext.tsx manual-games subscription effect: one-shot boot-time reconcile + per-change reconcile. Log [FAVORITES][RECONCILE].
+
+#### Part 3: FavoritesSection defensive dedup
+- FavoritesSection.tsx favoriteIds loop now also tracks libGame.libraryId || libGame.id in seen — a game reachable via both appId and libraryId renders only once.
+
+### Key Files Changed
+- src/services/gameCacheService.ts — FAVORITES_STORAGE_KEY + econcileManualFavoriteKeys()
+- src/context/LibraryGamesContext.tsx — boot-time + per-change reconcile in manual subscription effect
+- src/components/library/LibraryGameDetails.tsx, src/components/games/GameLauncherTile.tsx, src/components/layout/SidebarLibraryList.tsx, src/components/dashboard/FavoritesSection.tsx — getFavoriteKey call sites
+- src/features/console/ConsoleGameCard.tsx, ConsoleGameDetails.tsx, ConsoleGameOptionsOverlay.tsx, ConsoleGridLayout.tsx, ConsoleSpotlightLayout.tsx, ConsoleSwitchSpotlightLayout.tsx — getFavoriteKey call sites + imports
+
+### Build
+- 	sc --noEmit ✅ (only pre-existing extension/test errors, none in touched files)
+- ite build ✅ (2.93s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- cargo check ⏭️ skipped (no Rust changes)
+
+## Session — Dashboard hero Ken Burns motion (continuous slow zoom/pan)
+
+### Goal
+Add ambient motion to the dashboard/home hero background without touching layout, matching the Console Spotlight Ken Burns already in the app.
+
+### Changes
+- `src/App.css` — new `@keyframes heroKenburns` (scale 1→1.06 + translate(-1%, 0.5%), origin center, 25s ease-in-out infinite alternate) + `.animate-hero-kenburns` class next to the other hero keyframes, with a `prefers-reduced-motion: reduce` guard that disables the animation.
+- `src/components/dashboard/GameHero.tsx` — `data-hero-bg-layer` div (L780) now uses `className="animate-hero-kenburns absolute inset-0"`.
+
+### Behavior
+- Only the background art layer moves; gradient overlays (bottom `:795`, left `:798`) and `z-10` content (title/buttons/stats) stay static.
+- Continuous (`infinite alternate`) — no restart on game switch; the section's `overflow-hidden` clips scaled edges so no gaps appear.
+- Fallback gradient (no bgUrl) stays static; reduced-motion users get no animation.
+- No layout shift, no JS, no new dependencies.
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.07s, Rolldown; only pre-existing chunk warnings + informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Merge AppTitleBar into TopBar (unified toolbar, no divider)
+
+### Goal
+Make the window title bar visually disappear — no border divider — and merge it into the main toolbar so the app reads as a single 56px bar: search … drag · console · bell · [min][max][close], with the sidebar spanning full height (Discord/Slack style).
+
+### Changes
+- **`TopBar.tsx`** — absorbed the Tauri window-control logic and buttons from `AppTitleBar.tsx`:
+  - Added `isMaximized` state, `syncIsMaximized()` (driven by `onResized`), `exec()` helper, minimize/maximize/close/double-click handlers, dynamic `getCurrentWindow` import, `DEBUG_WINDOW_CONTROLS` flag.
+  - `<header>` restructured (`h-14`, `bg-(--shell-bg)`, backdrop-filter, added `select-none`): left group (menu + search, `px-4 lg:px-6` moved here) → drag spacer (`data-tauri-drag-region flex-1 self-stretch` + double-click maximize) → right group (console + bell, `pr-2`) → 3 square window-control buttons (46px each, flush right, hover/close styles preserved).
+- **`AppLayout.tsx`** — removed `<AppTitleBar />` (was L128) and its import; the sidebar/content row now starts at the top of the window.
+- **`AppTitleBar.tsx`** — deleted (dead code, only imported by AppLayout).
+
+### Behavior
+- No divider/border; the sidebar top area is no longer draggable (drag region is the middle stretch of the top bar, double-click = maximize).
+- Notification + console icons sit directly left of minimize/maximize/close.
+- Everything raises ~36px; sidebar spans full height.
+
+### Key Files Changed
+- `src/components/layout/TopBar.tsx` — window controls + drag region merged in
+- `src/components/layout/AppLayout.tsx` — AppTitleBar removed
+- `src/components/layout/AppTitleBar.tsx` — deleted
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.32s, Rolldown; only pre-existing chunk warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)

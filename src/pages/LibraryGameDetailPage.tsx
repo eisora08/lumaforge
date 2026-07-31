@@ -77,6 +77,25 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const prevRunningRef = useRef(false);
   const _prevAppIdRef = useRef<string | null>(null);
   const _refreshInitiatorRef = useRef<string | null>(null);
+  const _detailKeyRef = useRef<string | null>(null);
+
+  // Reset stale per-game state at render time (React's "adjusting state when a prop
+  // changes" pattern) so the first render of a new game never receives the previous
+  // game's media/artwork props. Previously this only happened inside the effect
+  // (after paint), leaving one frame of "old render" — visible once the hero sharp
+  // layer no longer waits on canonicalLoaded. The ref guard keeps this idempotent.
+  const detailKey = selectedGame ? computeGameKey(selectedGame) : "";
+  if (_detailKeyRef.current !== detailKey) {
+    _detailKeyRef.current = detailKey;
+    setMediaEntry(null);
+    setCanonicalAppInfo(null);
+    setCanonicalDiskFallback(null);
+    setLocalDetailsData(null);
+    setFallbackBundle(null);
+    setArtwork(null);
+    setResolvedGame(null);
+    setCanonicalLoaded(false);
+  }
 
   const gameKey = selectedGame ? computeGameKey(selectedGame) : "";
   const { launchInfo, launchGame, cancelLaunch } = useGameLaunchState(gameKey);
@@ -325,7 +344,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     let cancelled = false;
     const appId = selectedGame.appId;
 
-    getMediaCacheForAppId(appId).then(setMediaEntry).catch(() => setMediaEntry(null));
+    getMediaCacheForAppId(appId)
+      .then((entry) => { if (!cancelled) setMediaEntry(entry); })
+      .catch(() => { if (!cancelled) setMediaEntry(null); });
 
     // Load canonicalAppInfo AND media manifest simultaneously.
     // Manifest paths (where exists=true) override canonicalAppInfo.media.* fields
@@ -478,6 +499,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     }).catch(() => { if (!cancelled) { setCanonicalAppInfo(null); setCanonicalLoaded(true); } });
 
     getLibraryGameDetails(appId).then((entry) => {
+      if (cancelled) return;
       if (entry?.data) setLocalDetailsData(entry.data);
     }).catch(() => {});
     return () => { cancelled = true; };

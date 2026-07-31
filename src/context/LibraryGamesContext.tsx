@@ -21,10 +21,12 @@ import {
 import {
   seedResolvedMediaCacheFromSnapshot,
   dedupeLibraryGames,
+  reconcileManualFavoriteKeys,
 } from "../services/gameCacheService";
 import {
   scheduleSnapshotWrite,
 } from "../services/startupSnapshotService";
+import type { SnapshotGame } from "../services/startupSnapshotService";
 import {
   refreshSingleGameSteamStatus,
 } from "../services/providerStatusReconciliation";
@@ -571,7 +573,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }
 
-  function snapshotGameToLibraryGame(sg: { appId: string; title: string; source: string; installed?: boolean; playable?: boolean; lastPlayed?: number | null; playtime?: number | null }): LibraryGame {
+  function snapshotGameToLibraryGame(sg: SnapshotGame): LibraryGame {
     const resolvedSource: LibraryGame["source"] =
       sg.source === "lua" ? "lua" :
       sg.source === "epic" ? "epic" :
@@ -594,6 +596,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       sources: [],
       steamLastPlayedAt: sg.lastPlayed ?? undefined,
       steamPlaytimeMinutes: sg.playtime ?? undefined,
+      backgroundPath: sg.media?.backgroundPath ?? undefined,
+      landscapePath: sg.media?.landscapePath ?? undefined,
+      coverPath: sg.media?.coverPath ?? undefined,
+      logoPath: sg.media?.logoPath ?? undefined,
+      iconPath: sg.media?.iconPath ?? undefined,
     };
   }
 
@@ -676,6 +683,32 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
 
       if (loadedGames) {
+        // Bridge snapshot media into loaded games so the hero/dashboard get a stable
+        // frame-1 image path for Steam/Lua games even when they come from SQLite/reconciled
+        // (those sources don't populate backgroundPath/landscapePath/coverPath).
+        if (snapshot && snapshot.library.games.length > 0) {
+          const snapshotMediaByAppId = new Map<string, SnapshotGame["media"]>();
+          for (const sg of snapshot.library.games) {
+            if (sg.appId) snapshotMediaByAppId.set(sg.appId, sg.media);
+          }
+          let bridged = 0;
+          for (const game of loadedGames) {
+            if (!game.appId) continue;
+            const sm = snapshotMediaByAppId.get(game.appId);
+            if (!sm) continue;
+            let changed = false;
+            if (!game.backgroundPath && sm.backgroundPath) { game.backgroundPath = sm.backgroundPath; changed = true; }
+            if (!game.landscapePath && sm.landscapePath) { game.landscapePath = sm.landscapePath; changed = true; }
+            if (!game.coverPath && sm.coverPath) { game.coverPath = sm.coverPath; changed = true; }
+            if (!game.logoPath && sm.logoPath) { game.logoPath = sm.logoPath; changed = true; }
+            if (!game.iconPath && sm.iconPath) { game.iconPath = sm.iconPath; changed = true; }
+            if (changed) bridged++;
+          }
+          if (bridged > 0) {
+            console.log(`[LIBRARY_CONTEXT][SNAPSHOT_MEDIA_BRIDGE] bridged=${bridged} games=${loadedGames.length}`);
+          }
+        }
+
         const effectiveSource = (loadSource === "snapshot-fallback" && gamesRef.current.length === 0) ? "snapshot" : loadSource;
         applyGamesSafely(loadedGames, effectiveSource, { allowReplace: true });
       }
@@ -779,13 +812,26 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   // Subscribe to manualGameStore changes â€” re-apply with fresh manual games
   useEffect(() => {
     if (!isIntegrationEnabled("manual")) return;
+    // One-shot boot-time reconcile: delete duplicate numeric-appId favorite keys
+    // for manual games that gained a Steam appId (runs after games are loaded).
+    if (gamesRef.current.length > 0) {
+      const bootManual = getManualLibraryGames();
+      if (reconcileManualFavoriteKeys(bootManual)) {
+        console.log(`[FAVORITES][RECONCILE] manualGames=${bootManual.length} duplicateAppIdKeysRemoved=true`);
+      }
+    }
     return subscribeManualGames(() => {
       const current = gamesRef.current;
       if (current.length === 0) return; // not loaded yet
-      // Strip manual games â€” applyGamesSafely re-adds fresh ones from store at line 222.
+      // Strip manual games — applyGamesSafely re-adds fresh ones from store at line 222.
       // This avoids stale manual objects surviving through mergeGames.
       const nonManual = current.filter((g) => g.source !== "manual");
       const freshManual = getManualLibraryGames();
+      // Delete-only reconcile: if a manual game gained a Steam appId, drop the
+      // duplicate numeric-appId favorite key when the canonical libraryId is also favorited.
+      if (reconcileManualFavoriteKeys(freshManual)) {
+        console.log(`[FAVORITES][RECONCILE] manualGames=${freshManual.length} duplicateAppIdKeysRemoved=true`);
+      }
       if (DEBUG_MANUAL_REMOVE) {
         const prevManual = current.filter((g) => g.source === "manual");
         const removedIds = prevManual.filter((pg) => !freshManual.some((fm) => fm.id === pg.id)).map((g) => g.id);

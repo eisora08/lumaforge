@@ -5,7 +5,7 @@ import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useSettings } from "../../context/SettingsContext";
-import { resolveProviderMediaPreviewUrl, resolveGameMediaUrl } from "../../services/gameCacheService";
+import { resolveProviderMediaPreviewUrl, resolveGameMediaUrl, getFavoriteKey } from "../../services/gameCacheService";
 import {
   type DashboardDisplayGame,
   snapshotToDisplayGame,
@@ -86,9 +86,12 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
       if (seen.has(favId)) continue;
       const libGame = identityMap.get(favId);
       if (!libGame) continue;
+      const stableId = libGame.libraryId || libGame.id;
+      if (stableId && seen.has(stableId)) continue;
       if (exclude.has(libGame.appId || "")) continue;
       if (!libGame.title) continue;
       seen.add(favId);
+      if (stableId) seen.add(stableId);
 
       // Check if this game also exists in the snapshot (Steam games)
       const snapshotGame = libGame.appId
@@ -210,7 +213,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
   }
 
   function handleToggleFavorite(game: DashboardDisplayGame) {
-    const fk = game.appId || game.libraryId || game.stableId;
+    const fk = getFavoriteKey(game) ?? game.stableId;
     if (fk) toggleFavorite(fk);
   }
 

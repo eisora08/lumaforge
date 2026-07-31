@@ -11,7 +11,7 @@ import ConsoleTopHud from "./ConsoleTopHud";
 import ConsoleSpotlightDock from "./ConsoleSpotlightDock";
 import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleActionHints from "./ConsoleActionHints";
-import { deduplicateByStableId } from "../../services/gameCacheService";
+import { deduplicateByStableId, getFavoriteKey } from "../../services/gameCacheService";
 import { RichEmptyState } from "./ConsoleEmptyState";
 
 const DEBUG_SWITCH_SPOTLIGHT = false;
@@ -115,7 +115,7 @@ export default function ConsoleSwitchSpotlightLayout({
     const MAX_H = 150;
     return Math.max(MIN_H, Math.min(MAX_H, logoNaturalHeight));
   })();
-  const isFav = focusedGame ? favoriteIds.has(focusedGame.appId || focusedGame.id) : false;
+  const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
 
   const scs = settings.spotlightCardStyle;
 
@@ -424,7 +424,7 @@ export default function ConsoleSwitchSpotlightLayout({
               dedupedRail.map((game, i) => {
                 const isFocused = focusedIndex === i;
                 const src = getConsoleCardSrc(game, spotlightVariant);
-                const isFav = favoriteIds.has(game.appId || game.id);
+                const isFav = favoriteIds.has(getFavoriteKey(game) ?? game.id);
 
                 return (
                   <div
