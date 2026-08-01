@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   Ban,
+  CheckCircle2,
   DownloadCloud,
   ExternalLink,
   Eye,
@@ -158,17 +159,17 @@ export default function DownloadJobCard({
   /* ── Debrid completed — compact card ── */
   if (isDebridInstall && job.status === "done") {
     return (
-      <article className="lf-surface rounded-2xl border p-4 transition hover:border-(--color-accent)/20">
+      <article className="rounded-2xl border border-(--surface-active-border) bg-(--color-bg)/70 p-4 backdrop-blur-md transition hover:border-(--color-accent)/20">
         <div className="flex items-start gap-3">
           {displayArtworkUrl ? (
             <img
               src={displayArtworkUrl}
               alt=""
-              className="h-14 w-14 flex-shrink-0 rounded-xl object-cover"
+              className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover"
               loading="lazy"
             />
           ) : (
-            <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl bg-white/5">
+            <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-white/5">
               <TypeIcon className="h-6 w-6 text-(--color-accent)" />
             </div>
           )}
@@ -178,35 +179,20 @@ export default function DownloadJobCard({
               <h3 className="truncate font-semibold text-(--color-text)">
                 {displayTitle}
               </h3>
-              <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium bg-cyan-500/15 text-cyan-300 border-cyan-500/20">
-                Debrid
-              </span>
-              {job.repacker && (
-                <span className="inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-400">
-                  {job.repacker.toUpperCase()}
-                </span>
-              )}
               <DownloadStatusBadge status={job.status} />
             </div>
 
-            <p className="mt-0.5 text-sm text-(--color-muted)">
-              {job.message || "Instalado \u00b7 Listo para jugar"}
+            <p className="mt-0.5 truncate text-sm text-(--color-muted)">
+              {["Debrid", job.repacker?.toUpperCase(), job.message || "Instalado · Listo para jugar"]
+                .filter(Boolean)
+                .join(" · ")}
             </p>
-
-            {job.installedSize != null && job.installedSize > 0 && (
-              <p className="mt-1 text-xs text-(--color-muted)">
-                Tama\u00f1o instalado:{" "}
-                <span className="font-medium text-(--color-text)">
-                  {formatBytes(job.installedSize)}
-                </span>
-              </p>
-            )}
           </div>
 
           <button
             type="button"
             onClick={() => onRemove(job.id)}
-            className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
             title="Quitar"
           >
             <Trash2 className="h-4 w-4" />
@@ -214,10 +200,13 @@ export default function DownloadJobCard({
         </div>
 
         <div className="mt-3 flex items-center gap-2">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-(--color-accent)" style={{ width: "100%" }} />
-          </div>
-          <span className="text-[10px] text-(--color-muted)">100%</span>
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+          <span className="text-xs font-medium text-emerald-300">Completada</span>
+          {job.installedSize != null && job.installedSize > 0 && (
+            <span className="text-xs text-(--color-muted)">
+              · {formatBytes(job.installedSize)}
+            </span>
+          )}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -248,17 +237,17 @@ export default function DownloadJobCard({
   /* ── Steam completed — compact card ── */
   if (isSteamInstall && job.status === "done") {
     return (
-      <article className="lf-surface rounded-2xl border p-4 transition hover:border-(--color-accent)/20">
+      <article className="rounded-2xl border border-(--surface-active-border) bg-(--color-bg)/70 p-4 backdrop-blur-md transition hover:border-(--color-accent)/20">
         <div className="flex items-start gap-3">
           {displayArtworkUrl ? (
             <img
               src={displayArtworkUrl}
               alt=""
-              className="h-14 w-14 flex-shrink-0 rounded-xl object-cover"
+              className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover"
               loading="lazy"
             />
           ) : (
-            <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl bg-white/5">
+            <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-white/5">
               <TypeIcon className="h-6 w-6 text-(--color-accent)" />
             </div>
           )}
@@ -268,30 +257,18 @@ export default function DownloadJobCard({
               <h3 className="truncate font-semibold text-(--color-text)">
                 {displayTitle}
               </h3>
-              <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium bg-blue-500/15 text-blue-300 border-blue-500/20">
-                Steam
-              </span>
               <DownloadStatusBadge status={job.status} />
             </div>
 
-            <p className="mt-0.5 text-sm text-(--color-muted)">
-              Instalado · Listo para jugar
+            <p className="mt-0.5 truncate text-sm text-(--color-muted)">
+              Steam · Instalado · Listo para jugar
             </p>
-
-            {job.installedSize != null && job.installedSize > 0 && (
-              <p className="mt-1 text-xs text-(--color-muted)">
-                Tamaño instalado:{" "}
-                <span className="font-medium text-(--color-text)">
-                  {formatBytes(job.installedSize)}
-                </span>
-              </p>
-            )}
           </div>
 
           <button
             type="button"
             onClick={() => onRemove(job.id)}
-            className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            className="flex-shrink-0 rounded-xl border border-(--surface-active-border) bg-white/5 p-2.5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
             title="Quitar"
           >
             <Trash2 className="h-4 w-4" />
@@ -299,10 +276,13 @@ export default function DownloadJobCard({
         </div>
 
         <div className="mt-3 flex items-center gap-2">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-(--color-accent)" style={{ width: "100%" }} />
-          </div>
-          <span className="text-[10px] text-(--color-muted)">100%</span>
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+          <span className="text-xs font-medium text-emerald-300">Completada</span>
+          {job.installedSize != null && job.installedSize > 0 && (
+            <span className="text-xs text-(--color-muted)">
+              · {formatBytes(job.installedSize)}
+            </span>
+          )}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -339,7 +319,7 @@ export default function DownloadJobCard({
   }
 
   return (
-    <article className="lf-surface rounded-2xl border p-5 transition hover:border-(--color-accent)/20">
+    <article className="rounded-2xl border border-(--surface-active-border) bg-(--color-bg)/70 p-5 backdrop-blur-md transition hover:border-(--color-accent)/20">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="flex min-w-0 items-start gap-4">
           {/* Icon/artwork */}
@@ -347,11 +327,11 @@ export default function DownloadJobCard({
             <img
               src={displayArtworkUrl}
               alt=""
-              className="h-14 w-14 flex-shrink-0 rounded-xl object-cover"
+              className="h-16 w-16 flex-shrink-0 rounded-2xl object-cover"
               loading="lazy"
             />
           ) : (
-            <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl bg-white/5">
+            <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-white/5">
               <TypeIcon className="h-6 w-6 text-(--color-accent)" />
             </div>
           )}
@@ -366,23 +346,22 @@ export default function DownloadJobCard({
               >
                 {providerBadge.label}
               </span>
-              {job.type === "debrid-install" && job.repacker && (
-                <span className="inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-400">
-                  {job.repacker.toUpperCase()}
-                </span>
-              )}
             </div>
 
             {job.message ? (
-              <p className="mt-0.5 text-sm text-(--color-muted)">
+              <p className="mt-0.5 truncate text-sm text-(--color-muted)">
                 {job.message}
               </p>
             ) : job.type === "steam-install" ? (
-              <p className="mt-0.5 text-sm text-(--color-muted)">
+              <p className="mt-0.5 truncate text-sm text-(--color-muted)">
                 Instalación en progreso
               </p>
+            ) : job.type === "debrid-install" && job.repacker ? (
+              <p className="mt-0.5 truncate text-sm text-(--color-muted)">
+                {job.repacker.toUpperCase()} · {job.providerName || "Debrid"} · .{job.fileType}
+              </p>
             ) : (
-              <p className="mt-0.5 text-sm text-(--color-muted)">
+              <p className="mt-0.5 truncate text-sm text-(--color-muted)">
                 {job.providerName} · .{job.fileType}
               </p>
             )}
@@ -438,13 +417,15 @@ export default function DownloadJobCard({
         </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="mt-5">
-        <DownloadProgressBar
-          progress={job.progress}
-          mode={progressMode}
-        />
-      </div>
+      {/* Progress bar — active statuses only (done/failed/cancelled are terminal) */}
+      {canCancel(job.status) && (
+        <div className="mt-5">
+          <DownloadProgressBar
+            progress={job.progress}
+            mode={progressMode}
+          />
+        </div>
+      )}
 
       {/* Steam install — stats row (active or completed) */}
       {isSteamInstall ? (

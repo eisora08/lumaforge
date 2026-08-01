@@ -5099,3 +5099,254 @@ Add Cancel/Pause/Resume for Debrid repack installs (HTTP/SteamRip/gofile and tor
 - `cargo check` ✅ (0 errors; 2 pre-existing dead-code warnings)
 - `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
 - `vite build` ✅ (Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings + chunk-size warning)
+
+## Session — Premium Downloads redesign: ActiveDownloadCard hero + live speed chart + mock
+
+### Goal
+Redesign the Downloads page into a premium launcher-style dashboard (INZOI reference): `ActiveDownloadCard` hero with game artwork, thick white progress bar, glass Pause/Cancel buttons, a glassmorphism stats panel (RED/PICO/SEEDS/PEERS + "Torrent" badge), and a live speed bar chart fed from a TS ring buffer. Completed/failed cards also restyled to glass premium.
+
+### Scope decisions (user-confirmed)
+- Full scope: component + dev mock + real wiring. Seeds/peers hidden when not applicable (no Rust changes — deferred to future follow-up).
+- Completed/failed card rows also redesigned to glass premium.
+
+### Part 1: `src/hooks/useActiveDownload.ts` (new)
+- `ActiveDownload` type: `{ id, appId, gameName, coverImageUrl?, downloadedBytes, totalBytes, percentage, timeRemaining?, status, currentSpeedBytes?, peakSpeedBytes?, seeds?, peers?, isTorrent, isSteam, isDebrid, repacker?, speedHistory: number[], progressMode, message? }`.
+- Module-level ring buffer `_samplesByJob: Map<string, {t, bytes}[]>` (cap `MAX_RAW_SAMPLES = 200`; entry deleted on terminal states `done/failed/cancelled`).
+- `useActiveDownload(job)` — `useMemo` per `job`; `speedHistory` = last 40 deltas `Δbytes/Δt`; `currentSpeed` from `job.speedBytesPerSec` if > 0 else last sample; `peakSpeed` = buffer max; `timeRemaining = "en ${formatEtaLong((total-read)/speed)}"`; `percentage = (downloaded/total)*100` or `job.progress`; `isTorrent = job.installMethod === "torrent"`; seeds/peers stay `undefined`.
+- Exported helpers: `formatBytes`, `formatSpeed`, `formatEtaLong` (`d h` / `h m` / `m s`).
+- `resolveDisplayTitle` reads `getBootSnapshot().library.games` (Steam gameTitle is numeric); `resolveCoverUrl` uses `artworkUrl` or `localPathToUrl(media.landscapePath || coverPath || backgroundPath)` for `steam-install`.
+- `MOCK_ACTIVE_DOWNLOAD` (dev): Cuphead 268910, 12.1/28.6 GB via `1024**3`, 42.43%, "en 1 día", 3.4 MB/s, peak 8.7 MB/s, seeds 39/peers 45, isTorrent, `speedHistory` ~40 sinusoid+noise values, repacker "SteamRip".
+
+### Part 2: `src/components/downloads/ActiveDownloadCard.tsx` (new)
+- Presentational `ActiveDownloadCardProps { download, onPause?, onResume?, onCancel? }`; `imgFailed` state → degraded `bg-(--color-bg)` fallback.
+- Hero: full-width with `brightness(0.3)` + dark overlay; large white title; "12.1 GB / 28.6 GB · en 1 día"; big percentage right ("42.43%"); bar `h-2.5 rounded-full bg-white/25` + fill `bg-white`; 2 dark glass buttons `bg-black/50 backdrop-blur rounded-full` (Pausar = pause icon, Cancelar = circle-X).
+- Stats panel `rounded-2xl border-white/10 bg-black/30 backdrop-blur-xl`: RED (down arrow), PICO (chart icon), "SEEDS: 39 · PEERS: 45" (hidden when undefined), "Torrent" label bottom-left only if `isTorrent`.
+- Speed chart ~40 bars `flex-1 rounded-t bg-linear-to-t from-white/20 to-white/70`, `height: (v/max)*100 + "%"`, `transition-[height] duration-300 ease-out`.
+- `canPause = isDebrid && status !== "paused" && CANCELLABLE`, `canResume = isDebrid && status === "paused"`, `canCancel = CANCELLABLE` (queued/waiting/checking/downloading/extracting/installing/paused); "Open Steam" (`steam://install/${appId}`) only if `isSteam && (waiting || downloading)`; `StatRow` `text-[10px] uppercase tracking-[0.16em] text-white/50`; indeterminate → `animate-pulse bg-white/70` bar.
+- Correct nested HTML (article → divs → p; no `<p>` wrapping divs).
+
+### Part 3: `src/pages/Downloads.tsx` wiring
+- `ActiveDownloadRow` subcomponent (component-level, needed for hooks in `.map`) → `useActiveDownload(job)` → `ActiveDownloadCard`.
+- Active jobs no longer use `DownloadJobCard`. Dev mock rendered above everything under "Vista previa (mock)" via `import.meta.env.DEV` (stripped from prod bundle).
+
+### Part 4: `DownloadJobCard.tsx` completed/failed glass restyle
+- Debrid-done, Steam-done, and generic branches: `lf-surface` → `rounded-2xl border border-(--surface-active-border) bg-(--color-bg)/70 p-4 backdrop-blur-md`; artwork `h-14 w-14 rounded-xl` → `h-16 w-16 rounded-2xl`.
+
+### No Rust changes (user decision)
+- Future follow-up documented: extend `InstallProgressEvent` + `torrent.rs` reading `stats.live.snapshot.peer_stats.live` from librqbit 8.1.1 for real seeds/peers.
+
+### Key Files Changed
+- `src/hooks/useActiveDownload.ts` — **new** — `ActiveDownload` type, `useActiveDownload`, ring buffer, format helpers, `MOCK_ACTIVE_DOWNLOAD`
+- `src/components/downloads/ActiveDownloadCard.tsx` — **new** — premium hero + stats panel + speed chart
+- `src/pages/Downloads.tsx` — imports, dev mock preview, `ActiveDownloadRow` subcomponent, active map → `ActiveDownloadCard`
+- `src/components/downloads/DownloadJobCard.tsx` — completed/failed branches → glass premium
+
+### Build
+- `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (1.85s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings; verified "SEEDS:"/"PICO"/"RED" + "Torrent" in bundle; "Vista previa" correctly absent from prod via `import.meta.env.DEV`)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — ActiveDownloadCard redesign: 2 floating glass panels + hero transition + ambient feed
+
+### Goal
+Refactor `ActiveDownloadCard.tsx` into a premium 2-panel Glassmorphism layout over the game''s immersive art (CSS Grid responsive): left panel = live speed bar chart, right panel = title/size, torrent stats (RED/PICO/SEEDS/PEERS) and a bottom row with progress bar + percentage + Pause/Cancel buttons. Wire the page hero to the hero-transition preference (Ajustes → Animaciones) and feed the global ambient background.
+
+### Part 1: Generic theme-driven glass utilities (App.css)
+- `.lf-glass` / `.lf-glass-strong` added next to `.lf-console-glass*` (same recipe: `color-mix(in srgb, var(--color-surface) 55/72%, transparent)` + `blur(28/32px) saturate(1.4)` + inset top highlight), plus a `prefers-reduced-motion` guard.
+- Uses `--color-surface` so themes and `[data-console-theme]` overrides are respected. Desktop surfaces now get real glass without hardcoded `bg-black/40`.
+
+### Part 2: ActiveDownloadCard.tsx — full rewrite
+- **Layout**: `<article>` (rounded-2xl, `border-(--surface-active-border)`) → art layers + 2 overlays → `<div class="grid grid-cols-1 gap-4 p-4 sm:p-6 md:grid-cols-2 lg:min-h-[380px]">`.
+- **Left panel** (`lf-glass-strong`): "Velocidad en vivo" header + `Torrent` accent pill (only if `isTorrent`); chart `h-[clamp(130px,22vh,200px)]` of ~40 bars `from-(--color-accent)/25 to-(--color-accent)/70`, `height:(v/max)*100%`, `transition-[height] duration-300 ease-out`; pulse bar when no samples; footer shows `timeRemaining ?? message ?? status`.
+- **Right panel** (`lf-glass-strong`): big game title + `sizeLine` (+ `timeRemaining`); repacker pill; torrent data row (RED/PICO/SEEDS·PEERS via theme `StatRow`); bottom row (`xl:flex-row`) = accent progress bar (`bg-(--color-accent)`, h-3, `transition-[width]`) + `formatPct` % + glass buttons (`GLASS_BTN` const: `bg-(--color-surface)/40 backdrop-blur-md`); Cancel gets `hover:bg-red-500/30`.
+- **Hero transition** (`useSyncExternalStore` on `heroTransitionStore`): `crossfade` → two-layer `useCrossfadeSrc(artSrc)` (prev `animate-hero-media-out`, current `animate-hero-crossfade-in`); `kenburns` → `animate-hero-kenburns-in`; `focus` → `animate-hero-focus-in`. `brightness-[0.45]` on art.
+- **Ambient feed**: `setAmbientSource("downloads-hero", currentSrc)` on art change (no clear on change); `clearAmbientSource("downloads-hero")` on unmount only — mirrors GameHero pattern. `imgFailed` → `artSrc = null` → fallback `bg-(--color-bg)` layer + ambient stops updating.
+- All action logic preserved (canPause/canResume/canCancel, Open Steam for `isSteam && waiting|downloading`, indeterminate pulse bar).
+
+### Key Files Changed
+- `src/App.css` — `.lf-glass` / `.lf-glass-strong` utilities + reduced-motion guard
+- `src/components/downloads/ActiveDownloadCard.tsx` — full rewrite (2-panel glass grid, hero transition modes, ambient feed, theme StatRow/GLASS_BTN)
+
+### Build
+- `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.14s, Rolldown; verified in bundle: "Velocidad en vivo"/"SEEDS:"/"RED"/"PICO", scope "downloads-hero", `.lf-glass-strong`, `animate-hero-crossfade-in`/`media-out`; compiled CSS has `.from-\(--color-accent\)/25`, `.to-\(--color-accent\)/70`, `bg-\(--color-surface\)/40|60`)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — ActiveDownloadCard polish: fixed 220px floating glass cards + entry animation
+### Goal
+Pulir el ActiveDownloadCard tras el rediseño premium: cards fijas y compactas que flotan sobre el arte del juego, stats en una sola fila, fila de controles en orden exacto y animación de entrada de barras/progreso.
+
+### Decisiones del usuario
+- Dark glass HARDCODEADO (bg-black/40 + texto blanco) — sustituye el glass theme-driven (.lf-glass-strong) de la sesión anterior; ignora temas intencionalmente.
+- Altura fija h-[220px] en ambas cards.
+
+### Part 1: Layout / altura / floating (ActiveDownloadCard.tsx)
+- Grid wrapper: px-4 py-10 sm:px-6 md:grid-cols-2 md:py-12 (sin lg:min-h-[380px]) → arte del juego visible arriba/abajo de las cards.
+- Cards: flex h-[220px] flex-col justify-between rounded-xl border border-white/10 bg-black/40 p-5 shadow-xl shadow-black/40 backdrop-blur-xl.
+
+### Part 2: Card izquierda (gráfico)
+- Header compacto ("Velocidad en vivo" text-white/50 + pill "Torrent" accent).
+- Gráfico flex-1 items-end gap-[3px] (≈80% de la altura), barras from-(--color-accent)/25 to-(--color-accent)/70, transition-[height] duration-500 ease-out.
+- Footer eliminado (el timeRemaining vive en la card derecha).
+
+### Part 3: Card derecha (controles)
+- Header: título truncate text-white + línea de tamaño text-white/60; pill repacker + botón Open Steam icono (ICON_BTN h-7 w-7) movidos aquí.
+- Stats RED · PICO · SEEDS·PEERS en UNA fila compacta (gap-x-4, StatRow blanco, icono opcional).
+- Fila inferior única flex items-center gap-3 en orden exacto: barra h-3.5 flex-1 rounded-full bg-white/15 → % w-16 font-bold tabular-nums → botón Pausar/Reanudar → Cancelar.
+- CTRL_BTN = inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-black/50 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-md transition hover:bg-black/70; Cancelar + hover:bg-red-500/40.
+
+### Part 4: Animación de entrada
+- const [entered, setEntered] = useState(false) + requestAnimationFrame(() => setEntered(true)) en mount.
+- Barra: width entered ? pct : "0%" (transition-[width] duration-500 ease-out); barras: height entered ? h : 0%.
+- Se reproduce al entrar a la página y al cambiar de descarga activa (ActiveDownloadRow keyed por job.id).
+- Indeterminado: animate-pulse bg-white/60.
+
+### Intacto
+- Estado, mock, ambient feed "downloads-hero" (set/clear solo en unmount), hero-transition (crossfade useCrossfadeSrc / kenburns / focus), lógica canPause/canResume/canCancel/isOpenSteam, imgFailed → bg-(--color-bg).
+
+### Key Files Changed
+- src/components/downloads/ActiveDownloadCard.tsx — rewrite completo (layout, stats, controles, animación de entrada)
+
+### Build
+- tsc --noEmit ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en tocados)
+- vite build ✅ (2.07s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos; verificadas strings "Velocidad en vivo"/"SEEDS:"/"RED"/"PICO"/"downloads-hero"/"Open Steam" + clases CSS .from-\(--color-accent\)\/25, .to-\(--color-accent\)\/70, .bg-white\/15, .bg-black\/40, .border-white\/20, .shadow-black\/40)
+- cargo check ⏭️ skipped (no Rust changes)
+
+## Session — Downloads page polish: done-card cleanup + active mock buttons (post-premium-redesign)
+
+### Goal
+Close the remaining gaps after the ActiveDownloadCard premium redesign: remove the misleading 100% blue bar in completed cards, only show the progress bar for active statuses, make rows compact (single badge, provider+type as metadata, larger hit targets), and make the dev mock preview's Pause/Cancel actually do something.
+
+### Part 1: `DownloadJobCard.tsx` — completed-card cleanup
+- **Removed the 100% blue bar** in both done branches (Debrid and Steam): previously rendered a full-width accent bar + "100%" label. Replaced with a compact completion row: `CheckCircle2` emerald icon + "Completada" label + installed size (`· {formatBytes(job.installedSize)}`) when available.
+- **Single badge in done branches**: removed the hardcoded "Debrid"/"Steam" pill and (for Debrid) the separate repacker pill from the title row — kept only `DownloadStatusBadge`. Provider+repacker+message folded into the metadata line: `["Debrid", job.repacker?.toUpperCase(), job.message || "Instalado · Listo para jugar"].filter(Boolean).join(" · ")` for Debrid; `Steam · Instalado · Listo para jugar` for Steam.
+- **Removed the separate "Tamaño instalado" `<p>`** in both done branches — the installed-size metadata now lives only in the completion row.
+- **Generic branch progress bar gated**: `DownloadProgressBar` now only renders when `canCancel(job.status)` (queued/waiting/checking/downloading/extracting/installing/paused). done/failed/cancelled are terminal — no progress bar. Comment updated.
+- **Generic branch single badge**: removed the extra `debrid-install` repacker pill; repacker+provider+type folded into the metadata fallback line: `{job.repacker.toUpperCase()} · {job.providerName || "Debrid"} · .{job.fileType}` when no message, debrid, and repacker present.
+- **All three subtitle lines** (`job.message`, steam-install, debrid, generic) now use `truncate` to prevent long repacker/message strings from breaking the compact layout.
+- **Hit target bump**: trash (Quitar) buttons in both done branches bumped from `p-2` → `p-2.5` (40px hit target).
+- Added `CheckCircle2` to the lucide imports.
+
+### Part 2: ActiveDownloadCard cancel menu gating
+- The `•••` menu's "Cancelar descarga" `MenuItem` is now rendered only when `canCancel` (active + cancellable status), matching the Pause/Resume buttons. Previously it always showed (the mock preview is in `downloading` state, so the item stays visible there).
+- `canCancel` local (CANCELLABLE.has) is now actually read — fixes the TS6133 unused-var.
+
+### Part 3: `useDynamicPalette.ts` fix
+- Fixed TS2300 duplicate identifier in `srgbToOklch`: the OKLCH `b` axis local conflicted with the function's `b` parameter. Renamed the local to `bAxis` (3 references: the axis computation, `C = sqrt(a²+bAxis²)`, and `H = atan2(bAxis, a)`).
+
+### Key Files Changed
+- `src/components/downloads/DownloadJobCard.tsx` — done-branch cleanup (no 100% bar, single badge, compact metadata, `truncate`), generic progress bar gated by `canCancel`, trash hit targets 40px, `CheckCircle2` import
+- `src/components/downloads/ActiveDownloadCard.tsx` — cancel menu item gated by `canCancel`
+- `src/hooks/useDynamicPalette.ts` — `b` → `bAxis` rename in `srgbToOklch`
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en tocados)
+- `vite build` ✅ (2.24s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `vitest run` ✅ 802 passed / 4 failed (solo los 4 preexistentes: sourceManagerDeclarativeWiring ×3 + tools.test extractToolConfig)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Grow-on-mount: barra de progreso ActiveDownloadCard + barra de achievements del GameDetails
+
+### Goal
+Restaurar la animación de entrada (grow desde 0) de las barras de progreso, perdida en el rediseño premium del ActiveDownloadCard, y extenderla a la barra de progreso del panel de achievements del GameDetails de Library. Patrón replicado del de Stats/Logros (transición CSS de width/height sobre un estado `entered` activado tras el primer paint).
+
+### Part 1: Hook `useGrowOnMount` (`src/hooks/useGrowOnMount.ts` — **nuevo**)
+- Devuelve `false` en el primer render y `true` tras el siguiente `requestAnimationFrame`.
+- Bajo `prefers-reduced-motion: reduce` resuelve a `true` inmediatamente (barra al valor final, sin flash de barra vacía).
+- Se empareja con las transiciones CSS ya existentes en el elemento objetivo.
+
+### Part 2: ActiveDownloadCard.tsx
+- **Barra de progreso principal** — `transform: scaleX(${grow ? progressValue : 0})` (el fill ya usa `origin-left` y la transición `.lf-download-progress-fill`).
+- **SpeedChart** — mismo hook dentro del subcomponente; barras `style={{ height: ${grow ? h : 0}% }}` (transición `.lf-download-chart-bar` ya existente).
+- **Sin `transition-delay`/stagger**: el delay persistiría en las actualizaciones en vivo del chart. Todas las barras crecen juntas.
+- Doc comment del SpeedChart actualizado.
+- Sin cambios en `App.css` (transiciones y guards reduced-motion ya existen).
+
+### Part 3: LibraryGameDetails.tsx — barra de achievements
+- Bloque de la barra de progreso del panel extraído a subcomponente interno `AchievementProgressBar({ unlocked, total, isPerfected, syncing })`.
+- Usa `useGrowOnMount()` internamente → `width: ${grow ? percent : 0}%` con el `transition-all duration-500` existente.
+- La extracción es necesaria porque el panel aparece de forma asíncrona (`achievementsSummary` puede cargar después del mount raíz); un estado en el raíz ya estaría `true` antes de que la barra monte y no se vería la animación.
+- Solo la barra — el contenedor del panel NO se anima (decisión del usuario).
+- Re-mount keyed (`LibraryGameDetailPage.tsx:1233`, `key=library:game-details:{source}:{appId}`) re-ejecuta la animación al cambiar de juego.
+
+### Sin cambios en Downloads.tsx
+- `ActiveDownloadRow` ya keyed por `job.id` → re-mount al cambiar descarga activa re-ejecuta la animación; el mock preview la muestra al entrar.
+
+### Key Files Changed
+- `src/hooks/useGrowOnMount.ts` — **nuevo** — hook de grow-on-mount con guard reduced-motion
+- `src/components/downloads/ActiveDownloadCard.tsx` — `scaleX` condicional en la barra de progreso + `height` condicional en las barras del SpeedChart
+- `src/components/library/LibraryGameDetails.tsx` — subcomponente `AchievementProgressBar` con grow-on-mount
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en tocados)
+- `vite build` ✅ (2.13s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Grow-on-mount en páginas LauncherAchievements y ActivityStats (barras + gráficos)
+
+### Goal
+Extender la animación de entrada grow-on-mount (sesión previa) a los pages de Achievements (`LauncherAchievements.tsx`) y Stats (`ActivityStats.tsx`), que no tenían animación al entrar: animar todas las barras de progreso y gráficos con `useGrowOnMount`.
+
+### Part 1: Componente compartido `LevelRing` (`src/components/activity/LevelRing.tsx` — nuevo)
+- Anillo de nivel/XP reutilizable que crece el stroke desde vacío hasta `percent` al montar (page-entry) vía `useGrowOnMount` + `transition-all duration-700` existente.
+- Props opcionales: `svgClassName` (default `h-24 w-24`), `levelClassName` (default `text-2xl`), `labelClassName` (default `text-[8px]`) — permite ambos tamaños (Stats h-24, Achievements h-28).
+- `strokeDashoffset = C * (1 - percent/100)` con `C = 2π·38`; `grow ? percent : 0`.
+
+### Part 2: Componente compartido `GrowBar` (`src/components/common/GrowBar.tsx` — nuevo)
+- Barra de ancho genérica que crece de 0 a `percent` al montar vía `useGrowOnMount` + `transition-all duration-700` en el fill.
+- Props: `percent`, `minPercent?` (reserva un sliver visible para valores ~0, p.ej. `Math.max(2, ...)` en XP bars), `trackClassName?`, `fillClassName?`.
+
+### Part 3: ActivityStats.tsx
+- **Play Activity Chart** — bloque de barras de altura extraído a subcomponente `PlayActivityBars({ activityByDay, maxDaySeconds })` con `useGrowOnMount()` interno; cada barra `style={{ height: grow ? h% : 0% }}` (transición `transition-all` existente).
+- **Level circle** — reemplazado por `<LevelRing percent={profile.progressPercent} level={profile.level} />`.
+- **XP bar** — reemplazada por `<GrowBar percent={profile.progressPercent} minPercent={2} trackClassName="h-2.5 rounded-full bg-white/[0.06]" fillClassName="bg-linear-to-r from-amber-500 to-amber-400" />`.
+- La extracción a subcomponentes es necesaria porque `games` (context) llega async; un estado raíz ya estaría `true` antes de que los gráficos monten.
+
+### Part 4: LauncherAchievements.tsx
+- **Level circle** — reemplazado por `<LevelRing ... svgClassName="h-28 w-28" levelClassName="text-3xl" labelClassName="text-[9px]" />`.
+- **XP bar** (featured card) — reemplazada por `GrowBar` con `minPercent={2}`.
+- **Completion bar** — reemplazada por `GrowBar` (track `h-2`, fill `from-(--color-accent) to-(--color-accent)/70`).
+- **Category bars** — cada barra de categoría (en `.map`) reemplazada por `GrowBar` (track `h-1`, fill `bg-(--color-accent)/50`).
+- Sin cambios en Achievement cards ni contenedores de panel.
+
+### Key Files Changed
+- `src/components/activity/LevelRing.tsx` — **nuevo** — anillo de nivel animado compartido
+- `src/components/common/GrowBar.tsx` — **nuevo** — barra de progreso animada compartida
+- `src/pages/ActivityStats.tsx` — `PlayActivityBars` subcomponente, `LevelRing`, `GrowBar` (chart + anillo + XP)
+- `src/pages/LauncherAchievements.tsx` — `LevelRing` + `GrowBar` (anillo + XP + completion + categorías)
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en tocados)
+- `vite build` ✅ (2.15s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `vitest run` ✅ 802 passed / 4 failed (solo los 4 preexistentes: sourceManagerDeclarativeWiring ×3 + tools.test extractToolConfig)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session � Consistent page/tab entry transitions (lf-page-in coverage + Store tab re-mount fix)
+
+### Problem
+Several pages and content switches had no entry animation while the rest of the app animates (`lf-page-in` 400ms translateY/fade). Root cause analysis found two issues:
+
+1. **Missing `lf-page-in`**: `ActivityStats`, `LauncherAchievements`, `Tools`, `Verification` roots, and `StoreGameDetailsPage` roots (timeout/loading/main) lacked the class. `StoreGameDetailsPage` opened from Store.tsx (`selectedDetailGameWithOverlay`, routeKey stays "store") had zero entry transition.
+2. **Store tabs dead animation**: All 5 tab branches already had `<div className="lf-tab-panel-in">`, BUT React reconciles the div (same position [0], same element type) across branches � the DOM node is recycled, the CSS animation only runs on first mount of the tab area, never re-fires on tab switch. Adding a unique `key` forces unmount/remount ? animation replays.
+
+### Part 1: `lf-page-in` on page roots
+- `src/pages/ActivityStats.tsx` � root `w-full px-6...` + `lf-page-in`
+- `src/pages/LauncherAchievements.tsx` � root idem
+- `src/pages/Tools.tsx` � root `space-y-6 p-5 lg:p-7` + `lf-page-in`
+- `src/pages/Verification.tsx` � root `p-5 lg:p-7` + `lf-page-in`
+
+### Part 2: `lf-page-in` on StoreGameDetailsPage
+- `src/components/store/StoreGameDetailsPage.tsx` � all 3 roots (`space-y-6`): timeout (L1165), metadataLoading (L1189), main (L1221) + `lf-page-in`
+- Covers Store.tsx?details (no routeKey change) and is harmless under GameDetails.tsx wrapper (already has `lf-page-in`)
+
+### Part 3: Store tab re-mount via keys
+- `src/pages/Store.tsx` � unique `key` on each tab wrapper: `store-tab-browse`, `store-tab-repacks`, `store-tab-lua`, `store-tab-news`, `store-tab-discover`
+- Forces React to destroy/recreate the `<div className="lf-tab-panel-in">` on tab switch so `lfTabPanelIn` animation re-fires (was silent before)
+
+### Part 4: Store in-page sections
+- `src/pages/Store.tsx` � viewAll section (`space-y-5` ? + `lf-page-in`) and search results section (`space-y-4` ? + `lf-page-in`)
+
+### Build
+- `tsc --noEmit` ? (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ? (2.16s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ?? skipped (no Rust changes)

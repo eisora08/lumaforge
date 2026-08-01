@@ -1720,6 +1720,33 @@ html[data-compact="true"] .lf-launch-bar {
 }
 
 /* =========================
+   Generic glass utilities (theme-driven).
+   `--color-surface` respects [data-console-theme] overrides.
+   Same recipe as the console glass, neutral for desktop surfaces.
+========================= */
+.lf-glass {
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.lf-glass-strong {
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  -webkit-backdrop-filter: blur(32px) saturate(1.4);
+  backdrop-filter: blur(32px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lf-glass,
+  .lf-glass-strong {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* =========================
    CARD RADIUS (Settings-driven)
    Applied via --card-radius CSS variable.
    Falls back to hardcoded Tailwind values when variable is unset.
@@ -1750,4 +1777,156 @@ html[data-compact="true"] .lf-launch-bar {
 
 [data-card-label="hidden"] .lf-card-title {
   display: none !important;
+}
+
+/* =========================
+   MOTION TOKENS
+   Centralized durations + easing for premium motion.
+========================= */
+:root {
+  --motion-instant: 80ms;
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-emphasized: 240ms;
+  --motion-entrance: 320ms;
+  --motion-artwork: 500ms;
+  --motion-palette: 600ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* =========================
+   DOWNLOADS — Dynamic Effect palette
+   Custom properties are registered so palette swaps interpolate smoothly.
+   Fallback initial-values keep surfaces usable before extraction resolves.
+========================= */
+@property --dynamic-primary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #1d3343;
+}
+@property --dynamic-secondary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2f9fff;
+}
+@property --dynamic-glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2f9fff;
+}
+
+.lf-download-dynamic {
+  transition:
+    --dynamic-primary var(--motion-palette) var(--ease-standard),
+    --dynamic-secondary var(--motion-palette) var(--ease-standard),
+    --dynamic-glow var(--motion-palette) var(--ease-standard);
+}
+
+/* Hero tint + localized glow derived from the artwork palette. */
+.lf-download-tint {
+  background: color-mix(in oklab, var(--dynamic-primary) 6%, transparent);
+}
+.lf-download-glow {
+  background: radial-gradient(
+    60% 70% at 18% 78%,
+    color-mix(in oklab, var(--dynamic-glow) 12%, transparent),
+    transparent 70%
+  );
+}
+
+/* =========================
+   DOWNLOADS — floating download core
+========================= */
+.lf-download-capsule {
+  background: color-mix(in oklab, var(--dynamic-primary) 9%, rgba(12, 14, 19, 0.74));
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    0 16px 40px rgba(0, 0, 0, 0.4);
+}
+
+/* Solid fallback when backdrop-filter is unsupported. */
+@supports not (backdrop-filter: blur(1px)) {
+  .lf-download-capsule {
+    background: color-mix(in oklab, var(--dynamic-primary) 9%, #10131a);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Chart bars: gradient blue→cyan, newest bar highlighted. */
+.lf-download-bar-old {
+  background: linear-gradient(
+    to top,
+    color-mix(in oklab, var(--dynamic-primary) 30%, transparent),
+    color-mix(in oklab, var(--dynamic-secondary) 78%, transparent)
+  );
+}
+.lf-download-bar-new {
+  background: var(--dynamic-secondary);
+}
+.lf-download-chart-bar {
+  transition: height var(--motion-normal) var(--ease-standard);
+}
+.lf-download-chart-frozen {
+  filter: saturate(0.55);
+}
+.lf-download-chart-frozen .lf-download-chart-bar {
+  transition: none;
+}
+
+/* Main progress fill (scaleX, never animated from 0 on mount). */
+.lf-download-progress-fill {
+  transition: transform var(--motion-normal) var(--ease-standard);
+}
+
+/* Entry animations for title + capsule. */
+.lf-download-title-in {
+  animation: lfDownloadTitleIn var(--motion-entrance) var(--ease-emphasized) both;
+}
+.lf-download-capsule-in {
+  animation: lfDownloadCapsuleIn var(--motion-entrance) var(--ease-emphasized) both;
+}
+@keyframes lfDownloadTitleIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes lfDownloadCapsuleIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Newest chart bar slides in from the right edge when a sample arrives. */
+.lf-download-chart-bar-new {
+  animation: lfChartBarIn var(--motion-normal) var(--ease-standard) both;
+}
+@keyframes lfChartBarIn {
+  from { opacity: 0; transform: translateX(4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Respect reduced motion: kill palette/entry/chart/progress motion. */
+@media (prefers-reduced-motion: reduce) {
+  .lf-download-dynamic {
+    transition: none;
+  }
+  .lf-download-capsule {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .lf-download-chart-bar,
+  .lf-download-progress-fill {
+    transition: none;
+  }
+  .lf-download-chart-bar-new {
+    animation: none;
+  }
+  .lf-download-title-in,
+  .lf-download-capsule-in {
+    animation: none;
+  }
 }

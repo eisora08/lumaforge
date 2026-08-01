@@ -3581,7 +3581,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             : activeSection.games;
 
           return (
-            <section className="space-y-5">
+            <section className="space-y-5 lf-page-in">
               <button
                 type="button"
                 onClick={() => setActiveSectionId(null)}
@@ -3643,7 +3643,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           return mergedResults.length === 0 ? (
             <StoreEmptyState />
           ) : (
-            <section className="space-y-4">
+            <section className="space-y-4 lf-page-in">
               <div>
                 <h2 className="text-xl font-bold text-(--color-text)">
                   Search Results for "{submittedSearchQuery}"
@@ -3664,7 +3664,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           );
         })()
       ) : activeStoreTab === "browse" ? (
-        <div className="lf-tab-panel-in"><section className="space-y-5">
+        <div key="store-tab-browse" className="lf-tab-panel-in"><section className="space-y-5">
           {allStoreSections.length > 0 && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
               <button
@@ -3803,7 +3803,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           </div>
         </section></div>
       ) : activeStoreTab === "repacks" ? (
-        <div className="lf-tab-panel-in">
+        <div key="store-tab-repacks" className="lf-tab-panel-in">
           <DebridCatalogSection onNavigateToGame={(appId) => {
             const entry = rankedSteamCatalog.find((g: any) => String(g.appid || g.appId) === appId);
             if (entry) {
@@ -3826,7 +3826,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           }} />
         </div>
       ) : activeStoreTab === "lua-ready" ? (
-        <div className="lf-tab-panel-in">
+        <div key="store-tab-lua" className="lf-tab-panel-in">
           {luaReadyGames.length === 0 ? (
             <StoreLuaReadyEmptyState />
           ) : (
@@ -3841,12 +3841,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           )}
         </div>
       ) : activeStoreTab === "news" ? (
-        <div className="lf-tab-panel-in"><StoreNewsFeed
+        <div key="store-tab-news" className="lf-tab-panel-in"><StoreNewsFeed
           items={newsItems}
           onOpenGame={openDetailsForGame}
         /></div>
       ) : (
-        <div className="lf-tab-panel-in"><div className="space-y-8">
+        <div key="store-tab-discover" className="lf-tab-panel-in"><div className="space-y-8">
           <StoreDiscoverHeroCarousel
             games={featuredGames}
             storeMetadataByAppId={storeMetadataByAppId}

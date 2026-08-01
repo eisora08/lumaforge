@@ -78,6 +78,7 @@ import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
 
 import { useInstallTracker } from "../../hooks/useInstallTracker";
+import { useGrowOnMount } from "../../hooks/useGrowOnMount";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { useGameActivity } from "../../context/GameActivityContext";
 import {
@@ -2117,37 +2118,12 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                     )}
 
                     {/* Progress bar */}
-                    <div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
-                          {effectiveUnlocked} / {effectiveTotal}
-                        </span>
-                        <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
-                          {effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%
-                        </span>
-                      </div>
-                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isPerfected
-                              ? "bg-gradient-to-r from-amber-400 to-yellow-300"
-                              : "bg-(--color-accent)"
-                          }`}
-                          style={{
-                            width: `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}%`,
-                            boxShadow: isPerfected ? "0 0 10px rgba(251,191,36,0.4)" : undefined,
-                          }}
-                        />
-                      </div>
-                      <p className={`mt-1 text-[10px] ${isPerfected ? "text-amber-400/50" : "text-(--color-muted)/60"}`}>
-                        {isPerfected
-                          ? "All achievements unlocked"
-                          : `${effectiveTotal > 0 ? Math.round((effectiveUnlocked / effectiveTotal) * 100) : 0}% complete`}
-                        {achievementsSyncing && (
-                          <span className="ml-2 italic">Syncing...</span>
-                        )}
-                      </p>
-                    </div>
+                    <AchievementProgressBar
+                      unlocked={effectiveUnlocked}
+                      total={effectiveTotal}
+                      isPerfected={isPerfected}
+                      syncing={achievementsSyncing}
+                    />
                     {/* Recent achievements (top 5) */}
                     <div className="space-y-1">
                       {(sortedSidebarAchievements ?? achievementsSummary.achievements).slice(0, 5).map((ach) => (
@@ -2716,5 +2692,59 @@ function DropdownItem({
         <span className="text-[10px] text-(--color-muted)">{subtitle}</span>
       )}
     </button>
+  );
+}
+
+/**
+ * Achievements progress bar. Grows from 0 to its current width on mount
+ * (page-entry / game-switch animation) via `useGrowOnMount`, keeping the
+ * existing `transition-all duration-500` on the fill.
+ */
+function AchievementProgressBar({
+  unlocked,
+  total,
+  isPerfected,
+  syncing,
+}: {
+  unlocked: number;
+  total: number;
+  isPerfected: boolean;
+  syncing: boolean;
+}) {
+  const grow = useGrowOnMount();
+  const percent = total > 0 ? Math.round((unlocked / total) * 100) : 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs">
+        <span className={`font-medium ${isPerfected ? "text-amber-400" : "text-(--color-text)"}`}>
+          {unlocked} / {total}
+        </span>
+        <span className={isPerfected ? "text-amber-400/80" : "text-(--color-muted)"}>
+          {percent}%
+        </span>
+      </div>
+      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${
+            isPerfected
+              ? "bg-gradient-to-r from-amber-400 to-yellow-300"
+              : "bg-(--color-accent)"
+          }`}
+          style={{
+            width: `${grow ? percent : 0}%`,
+            boxShadow: isPerfected ? "0 0 10px rgba(251,191,36,0.4)" : undefined,
+          }}
+        />
+      </div>
+      <p className={`mt-1 text-[10px] ${isPerfected ? "text-amber-400/50" : "text-(--color-muted)/60"}`}>
+        {isPerfected
+          ? "All achievements unlocked"
+          : `${percent}% complete`}
+        {syncing && (
+          <span className="ml-2 italic">Syncing...</span>
+        )}
+      </p>
+    </div>
   );
 }

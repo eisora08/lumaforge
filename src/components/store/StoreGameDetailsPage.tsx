@@ -1162,7 +1162,7 @@ export default function StoreGameDetailsPage({
   if (metadataLoading) {
     if (metadataTimedOut) {
       return (
-        <div className="space-y-6">
+        <div className="space-y-6 lf-page-in">
           <button
             type="button"
             onClick={onBack}
@@ -1186,7 +1186,7 @@ export default function StoreGameDetailsPage({
       );
     }
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 lf-page-in">
         <button
           type="button"
           onClick={onBack}
@@ -1218,7 +1218,7 @@ export default function StoreGameDetailsPage({
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 lf-page-in">
       <button
         type="button"
         onClick={onBack}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -11,11 +11,18 @@ import {
   Upload,
 } from "lucide-react";
 
+import ActiveDownloadCard from "../components/downloads/ActiveDownloadCard";
 import DownloadJobCard from "../components/downloads/DownloadJobCard";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
+import {
+  useActiveDownload,
+  MOCK_ACTIVE_DOWNLOAD,
+  type ActiveDownload,
+} from "../hooks/useActiveDownload";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import type { AppPage } from "../types/navigation";
 import { getBootSnapshot } from "../services/appBootCoordinator";
+import type { DownloadJob } from "../types/download";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
@@ -55,6 +62,8 @@ export default function Downloads({ onNavigate }: Props) {
 
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
 
+  const mockPreview = useMockDownloadPreview();
+
   const activeJobs = useMemo(() => jobs.filter((job) =>
     ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(job.status)
   ), [jobs]);
@@ -89,31 +98,32 @@ export default function Downloads({ onNavigate }: Props) {
         </p>
       </header>
 
-      {/* ── Stats grid ── */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MiniStat
-          icon={Download}
-          label="Activas"
-          value={activeJobs.length}
-        />
-        <MiniStat
-          icon={ListChecks}
-          label="En cola"
-          value={queuedJobs.length}
-        />
-        <MiniStat
-          icon={PackageCheck}
-          label="Completadas"
-          value={completedJobs.length}
-        />
-        <MiniStat
-          icon={PackageX}
-          label="Fallidas"
-          value={failedJobs.length}
-        />
+      {/* ── Dev-only premium preview (mock, with working controls) ── */}
+      {import.meta.env.DEV && (
+        <section className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-(--color-muted)">
+            Vista previa (mock)
+          </p>
+          <ActiveDownloadCard
+            download={mockPreview.mock}
+            onPause={mockPreview.onPause}
+            onResume={mockPreview.onResume}
+            onCancel={mockPreview.onCancel}
+          />
+        </section>
+      )}
+
+      {/* ── Status summary — single segmented surface ── */}
+      <div className="lf-surface rounded-2xl border p-2">
+        <div className="grid grid-cols-2 gap-y-2 md:grid-cols-4 md:gap-y-0 md:divide-x md:divide-(--surface-active-border)">
+          <StatusStat icon={Download} label="Activas" value={activeJobs.length} />
+          <StatusStat icon={ListChecks} label="En cola" value={queuedJobs.length} />
+          <StatusStat icon={PackageCheck} label="Completadas" value={completedJobs.length} />
+          <StatusStat icon={PackageX} label="Fallidas" value={failedJobs.length} />
+        </div>
       </div>
 
-      {/* ── Clear completed bar ── */}
+      {/* ── Clear history bar ── */}
       {jobs.length > 0 && completedJobs.length > 0 && (
         <section className="lf-surface rounded-2xl border p-4">
           <div className="flex items-center justify-between">
@@ -136,7 +146,7 @@ export default function Downloads({ onNavigate }: Props) {
               className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
             >
               <Trash2 className="h-4 w-4" />
-              Limpiar
+              Limpiar historial
             </button>
           </div>
         </section>
@@ -146,14 +156,12 @@ export default function Downloads({ onNavigate }: Props) {
       {activeJobs.length > 0 && (
         <section className="space-y-4">
           {activeJobs.map((job) => (
-            <DownloadJobCard
+            <ActiveDownloadRow
               key={job.id}
               job={job}
-              onCancel={cancelJob}
               onPause={pauseJob}
               onResume={resumeJob}
-              onRemove={removeJob}
-              onOpenDetails={handleOpenGame}
+              onCancel={cancelJob}
             />
           ))}
         </section>
@@ -205,26 +213,73 @@ export default function Downloads({ onNavigate }: Props) {
   );
 }
 
-type MiniStatProps = {
+type StatusStatProps = {
   icon: React.ElementType;
   label: string;
   value: string | number;
 };
 
-function MiniStat({ icon: Icon, label, value }: MiniStatProps) {
+function StatusStat({ icon: Icon, label, value }: StatusStatProps) {
   return (
-    <div className="lf-surface rounded-2xl border px-4 py-3">
-      <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4 text-(--color-accent)" />
+    <div className="flex items-center gap-2.5 px-3 py-2 md:justify-center">
+      <Icon className="h-4 w-4 shrink-0 text-(--color-accent)" />
 
-        <span className="text-xs text-(--color-muted)">
+      <div className="min-w-0">
+        <p className="text-lg font-semibold leading-none text-(--color-text)">
+          {value}
+        </p>
+
+        <p className="mt-1 text-[11px] text-(--color-muted)">
           {label}
-        </span>
+        </p>
       </div>
-
-      <p className="mt-1 text-lg font-semibold text-(--color-text)">
-        {value}
-      </p>
     </div>
+  );
+}
+
+/**
+ * Dev-only: drives the mock preview's Pausar / Reanudar / Cancelar buttons so
+ * the controls are visibly wired even before a real download is running.
+ */
+function useMockDownloadPreview(): {
+  mock: ActiveDownload;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+  onCancel: (id: string) => void;
+} {
+  const [paused, setPaused] = useState(false);
+
+  const mock = useMemo<ActiveDownload>(
+    () => ({
+      ...MOCK_ACTIVE_DOWNLOAD,
+      status: paused ? "paused" : "downloading",
+      message: paused ? "Descarga pausada" : MOCK_ACTIVE_DOWNLOAD.message,
+    }),
+    [paused]
+  );
+
+  const onPause = useCallback(() => setPaused(true), []);
+  const onResume = useCallback(() => setPaused(false), []);
+  const onCancel = useCallback(() => setPaused(false), []);
+
+  return { mock, onPause, onResume, onCancel };
+}
+
+type ActiveDownloadRowProps = {
+  job: DownloadJob;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+  onCancel: (id: string) => void;
+};
+
+function ActiveDownloadRow({ job, onPause, onResume, onCancel }: ActiveDownloadRowProps) {
+  const download = useActiveDownload(job);
+  return (
+    <ActiveDownloadCard
+      download={download}
+      onPause={onPause}
+      onResume={onResume}
+      onCancel={onCancel}
+    />
   );
 }

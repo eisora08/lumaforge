@@ -20,6 +20,8 @@ import type {
 import { RARITY_COLORS, RARITY_ICONS, CATEGORY_ICONS } from "../features/activity/types";
 import ActivityEmptyState from "../components/activity/ActivityEmptyState";
 import AchievementDetailModal from "../components/activity/AchievementDetailModal";
+import LevelRing from "../components/activity/LevelRing";
+import GrowBar from "../components/common/GrowBar";
 import type { EvaluationContextInput } from "../features/activity/stats/statsService";
 
 const CATEGORIES: Array<{ value: AchievementCategory | "all"; label: string; icon?: React.ComponentType<{ className?: string }> }> = [
@@ -178,7 +180,7 @@ export default function LauncherAchievements() {
   }, [selectedAch, evalCtx]);
 
   return (
-    <div className="w-full px-6 lg:px-8 xl:px-10 py-6">
+    <div className="w-full px-6 lg:px-8 xl:px-10 py-6 lf-page-in">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -198,22 +200,7 @@ export default function LauncherAchievements() {
         <PanelCard className="lg:col-span-2 border-amber-400/15">
           <div className="flex items-center gap-6">
             {/* Level circle */}
-            <div className="relative shrink-0">
-              <svg className="h-28 w-28 -rotate-90" viewBox="0 0 88 88">
-                <circle cx="44" cy="44" r="38" fill="none" stroke="currentColor" strokeWidth="5" className="text-white/[0.06]" />
-                <circle
-                  cx="44" cy="44" r="38" fill="none" stroke="currentColor" strokeWidth="5"
-                  strokeDasharray={`${2 * Math.PI * 38}`}
-                  strokeDashoffset={`${2 * Math.PI * 38 * (1 - profile.progressPercent / 100)}`}
-                  strokeLinecap="round"
-                  className="text-amber-400 transition-all duration-700"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-bold text-amber-400">{profile.level}</span>
-                <span className="text-[9px] uppercase tracking-widest text-amber-400/60 -mt-0.5">Level</span>
-              </div>
-            </div>
+            <LevelRing percent={profile.progressPercent} level={profile.level} svgClassName="h-28 w-28" levelClassName="text-3xl" labelClassName="text-[9px]" />
 
             {/* XP details */}
             <div className="flex-1 min-w-0">
@@ -221,12 +208,12 @@ export default function LauncherAchievements() {
                 <span>{profile.currentLevelXp} / {profile.nextLevelXp} XP</span>
                 <span>{Math.round(profile.progressPercent)}%</span>
               </div>
-              <div className="h-2.5 rounded-full bg-white/[0.06] overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-linear-to-r from-amber-500 to-amber-400 transition-all duration-700"
-                  style={{ width: `${Math.max(2, profile.progressPercent)}%` }}
-                />
-              </div>
+              <GrowBar
+                percent={profile.progressPercent}
+                minPercent={2}
+                trackClassName="h-2.5 rounded-full bg-white/[0.06]"
+                fillClassName="bg-linear-to-r from-amber-500 to-amber-400"
+              />
               <div className="mt-3 flex items-center gap-5 text-xs text-(--color-muted)">
                 <span className="flex items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5 text-amber-400/60" />
@@ -246,10 +233,11 @@ export default function LauncherAchievements() {
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="text-4xl font-bold text-(--color-text)">{completionPercent}%</div>
             <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60 mt-1">Completion</div>
-            <div className="mt-3 w-full h-2 rounded-full bg-white/[0.06] overflow-hidden">
-              <div
-                className="h-full rounded-full bg-linear-to-r from-(--color-accent) to-(--color-accent)/70 transition-all duration-700"
-                style={{ width: `${completionPercent}%` }}
+            <div className="mt-3 w-full">
+              <GrowBar
+                percent={completionPercent}
+                trackClassName="h-2 rounded-full bg-white/[0.06]"
+                fillClassName="bg-linear-to-r from-(--color-accent) to-(--color-accent)/70"
               />
             </div>
             <div className="mt-2 text-[11px] text-(--color-muted)">{profile.unlockedCount} of {profile.totalCount} unlocked</div>
@@ -276,8 +264,12 @@ export default function LauncherAchievements() {
               {CatIcon && <CatIcon className="h-4 w-4 mx-auto mb-0.5 text-(--color-muted)/60" />}
               <div className="text-xs font-semibold text-(--color-text)">{cat.label}</div>
               <div className="mt-0.5 text-[10px] text-(--color-muted)">{p.unlocked}/{p.total}</div>
-              <div className="mt-1 h-1 rounded-full bg-white/[0.06] overflow-hidden">
-                <div className="h-full rounded-full bg-(--color-accent)/50 transition-all" style={{ width: `${pct}%` }} />
+              <div className="mt-1">
+                <GrowBar
+                  percent={pct}
+                  trackClassName="h-1 rounded-full bg-white/[0.06]"
+                  fillClassName="bg-(--color-accent)/50"
+                />
               </div>
             </button>
           );

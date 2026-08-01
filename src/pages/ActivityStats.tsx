@@ -20,6 +20,9 @@ import { getPlayerProfile, subscribeAchievementStore } from "../features/activit
 import type { PlayerProfile, StatsTimeFilter } from "../features/activity/types";
 import ActivityFeed from "../components/activity/ActivityFeed";
 import ActivityEmptyState from "../components/activity/ActivityEmptyState";
+import LevelRing from "../components/activity/LevelRing";
+import GrowBar from "../components/common/GrowBar";
+import { useGrowOnMount } from "../hooks/useGrowOnMount";
 
 const TIME_FILTERS: Array<{ value: StatsTimeFilter; label: string }> = [
   { value: "week", label: "This Week" },
@@ -111,7 +114,7 @@ export default function ActivityStats() {
   const hasAnyPlaytime = stats.totalHours > 0;
 
   return (
-    <div className="w-full px-6 lg:px-8 xl:px-10 py-6">
+    <div className="w-full px-6 lg:px-8 xl:px-10 py-6 lf-page-in">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
@@ -182,23 +185,7 @@ export default function ActivityStats() {
           />
         ) : (
           <>
-            <div className="flex items-end gap-[3px] h-36">
-              {activityByDay.map((day) => {
-                const height = day.seconds > 0 ? Math.max(4, (day.seconds / maxDaySeconds) * 100) : 0;
-                return (
-                  <div
-                    key={day.date}
-                    className="flex-1 group relative"
-                    title={`${formatDateShort(day.date)}: ${formatDuration(day.seconds)}`}
-                  >
-                    <div
-                      className="w-full rounded-t bg-(--color-accent)/50 transition-all hover:bg-(--color-accent)/70"
-                      style={{ height: `${height}%`, minHeight: height > 0 ? "4px" : "0" }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
+            <PlayActivityBars activityByDay={activityByDay} maxDaySeconds={maxDaySeconds} />
             <div className="flex justify-between mt-2 text-[10px] text-(--color-muted)/50">
               <span>{formatDateShort(activityByDay[0]?.date ?? "")}</span>
               <span>{formatDateShort(activityByDay[activityByDay.length - 1]?.date ?? "")}</span>
@@ -251,22 +238,7 @@ export default function ActivityStats() {
           <SectionTitle icon={Award}>XP & Level</SectionTitle>
           <div className="flex items-center gap-6">
             {/* Level circle */}
-            <div className="relative shrink-0">
-              <svg className="h-24 w-24 -rotate-90" viewBox="0 0 88 88">
-                <circle cx="44" cy="44" r="38" fill="none" stroke="currentColor" strokeWidth="5" className="text-white/[0.06]" />
-                <circle
-                  cx="44" cy="44" r="38" fill="none" stroke="currentColor" strokeWidth="5"
-                  strokeDasharray={`${2 * Math.PI * 38}`}
-                  strokeDashoffset={`${2 * Math.PI * 38 * (1 - profile.progressPercent / 100)}`}
-                  strokeLinecap="round"
-                  className="text-amber-400 transition-all duration-700"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-2xl font-bold text-amber-400">{profile.level}</span>
-                <span className="text-[8px] uppercase tracking-widest text-amber-400/60 -mt-0.5">Level</span>
-              </div>
-            </div>
+            <LevelRing percent={profile.progressPercent} level={profile.level} />
 
             {/* XP details */}
             <div className="flex-1 min-w-0">
@@ -274,12 +246,12 @@ export default function ActivityStats() {
                 <span>{profile.currentLevelXp} / {profile.nextLevelXp} XP</span>
                 <span>{Math.round(profile.progressPercent)}%</span>
               </div>
-              <div className="h-2.5 rounded-full bg-white/[0.06] overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-linear-to-r from-amber-500 to-amber-400 transition-all duration-700"
-                  style={{ width: `${Math.max(2, profile.progressPercent)}%` }}
-                />
-              </div>
+              <GrowBar
+                percent={profile.progressPercent}
+                minPercent={2}
+                trackClassName="h-2.5 rounded-full bg-white/[0.06]"
+                fillClassName="bg-linear-to-r from-amber-500 to-amber-400"
+              />
               <div className="mt-3 flex items-center gap-4 text-xs text-(--color-muted)">
                 <span className="flex items-center gap-1">
                   <Zap className="h-3 w-3 text-amber-400/60" />
@@ -433,6 +405,35 @@ function StatCard({ icon, label, value, truncate, accent }: { icon: React.ReactN
         {label}
       </div>
       <div className={`mt-1 text-lg font-bold ${accent ? "text-(--color-accent)" : "text-(--color-text)"} ${truncate ? "truncate" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+function PlayActivityBars({
+  activityByDay,
+  maxDaySeconds,
+}: {
+  activityByDay: Array<{ date: string; seconds: number }>;
+  maxDaySeconds: number;
+}) {
+  const grow = useGrowOnMount();
+  return (
+    <div className="flex items-end gap-[3px] h-36">
+      {activityByDay.map((day) => {
+        const height = day.seconds > 0 ? Math.max(4, (day.seconds / maxDaySeconds) * 100) : 0;
+        return (
+          <div
+            key={day.date}
+            className="flex-1 group relative"
+            title={`${formatDateShort(day.date)}: ${formatDuration(day.seconds)}`}
+          >
+            <div
+              className="w-full rounded-t bg-(--color-accent)/50 transition-all hover:bg-(--color-accent)/70"
+              style={{ height: grow ? `${height}%` : "0%", minHeight: height > 0 ? "4px" : "0" }}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
