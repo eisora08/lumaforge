@@ -185,7 +185,7 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
 
   return (
     <header className="sticky top-0 z-20 flex h-14 select-none items-stretch bg-(--shell-bg)" style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}>
-      <div className="flex items-center gap-3 px-4 lg:px-6">
+      <div className="flex items-center gap-3 pl-4 lg:pl-6">
         {sidebarDrawerMode && (
           <button
             onClick={onOpenSidebar}
@@ -194,19 +194,30 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
             <Menu className="h-4 w-4" />
           </button>
         )}
-
-        {showSearch && (
-          <PackagesToolbarSearch
-            variant="topbar"
-            placeholder="Search Steam games..."
-            onSelectItem={handleSelectItem}
-            onSubmit={handleSubmit}
-            onViewAll={handleViewAll}
-          />
-        )}
       </div>
 
-      {/* draggable spacer — only this area has data-tauri-drag-region */}
+      {/* left draggable stretch — only these areas have data-tauri-drag-region */}
+      <div
+        data-tauri-drag-region
+        className="self-stretch flex-1"
+        onDoubleClick={handleDoubleClick}
+      />
+
+      {showSearch && (
+        <div className="flex min-w-0 flex-1 items-center justify-center px-2">
+          <div className="w-full max-w-[540px]">
+            <PackagesToolbarSearch
+              variant="topbar"
+              placeholder="Search Steam games..."
+              onSelectItem={handleSelectItem}
+              onSubmit={handleSubmit}
+              onViewAll={handleViewAll}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* right draggable stretch */}
       <div
         data-tauri-drag-region
         className="self-stretch flex-1"

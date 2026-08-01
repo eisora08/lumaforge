@@ -497,10 +497,11 @@ export function isSidebarInstalledGame(game: LibraryGame): boolean {
 
   const luaActive = hasActiveInstalledLuaScript(game);
 
-  // Provider-neutral installed check: Epic (and future providers) set isInstalled=true
-  // when the game exists on disk from any source.
+  // Provider-neutral installed check: Epic/GOG/Debrid (and future providers)
+  // set isInstalled=true when the game exists on disk from any source.
   const providerNeutralInstalled =
-    (game.source === "epic" || game.source === "gog") && game.isInstalled === true;
+    (game.source === "epic" || game.source === "gog" || game.source === "debrid") &&
+    game.isInstalled === true;
 
   const included = Boolean(
     steamInstalled ||
@@ -544,14 +545,19 @@ export function getSidebarLabel(game: LibraryGame): string {
 
   const luaActive = hasActiveInstalledLuaScript(game);
 
-  // Provider-neutral installed check for Epic/GOG
+  // Provider-neutral installed check for Epic/GOG/Debrid
   const providerNeutralInstalled =
-    (game.source === "epic" || game.source === "gog") && game.isInstalled === true;
+    (game.source === "epic" || game.source === "gog" || game.source === "debrid") &&
+    game.isInstalled === true;
 
   if (steamInstalled && luaActive) return "Steam + Lua";
   if (steamInstalled) return "Steam";
   if (luaActive) return "Lua";
-  if (providerNeutralInstalled) return game.source === "epic" ? "Epic" : "GOG";
+  if (providerNeutralInstalled) {
+    if (game.source === "epic") return "Epic";
+    if (game.source === "debrid") return "Debrid";
+    return "GOG";
+  }
   if (localInstalled) return game.source === "manual" ? "Manual" : "Local";
   if (explicitInstalledStatus) return "Installed";
 
@@ -3016,7 +3022,7 @@ function fromCachedSource(cached: MediaSourcesCache | undefined | null, kind: Ga
 
 const DEBUG_MEDIA_ROLE_MAP = false;
 
-function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "capsule" | "cover"): string | null {
+export function buildSteamCdnUrl(appId: string, kind: "header" | "hero" | "logo" | "capsule" | "cover"): string | null {
   const id = parseInt(appId, 10);
   if (!id || isNaN(id) || id <= 0) return null;
   const base = `https://steamcdn-a.akamaihd.net/steam/apps/${id}`;

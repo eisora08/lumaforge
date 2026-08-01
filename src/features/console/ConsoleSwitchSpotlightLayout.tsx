@@ -183,7 +183,7 @@ export default function ConsoleSwitchSpotlightLayout({
   }, [focusedIndex]);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg)">
+    <div className="relative h-screen w-screen overflow-hidden bg-(--console-bg)">
 
       {/* ── Layer 1: Hero background — z-[0] ── */}
       <div className="absolute inset-0 z-[0] overflow-hidden">

@@ -15,9 +15,11 @@ type Props = {
   cardWidth?: number;
   noTitle?: boolean;
   cornerRadius?: number;
+  onHover?: (game: LibraryGame) => void;
+  onHoverEnd?: () => void;
 };
 
-function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius }: Props) {
+function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "landscape", noLabel, cardWidth, noTitle, cornerRadius, onHover, onHoverEnd }: Props) {
   const { isFavorite } = useFavorites();
   const fav = isFavorite(getFavoriteKey(game) ?? game.id);
   const isSpotlight = !compact;
@@ -37,6 +39,8 @@ function ConsoleGameCardRaw({ game, isFocused, onClick, compact, variant = "land
       tabIndex={isFocused ? 0 : -1}
       aria-label={game.title}
       onClick={onClick}
+      onMouseEnter={() => onHover?.(game)}
+      onMouseLeave={() => onHoverEnd?.()}
       className={`relative cursor-pointer border transition-[transform,opacity,border-color] duration-[200ms] ease-out shrink-0 ${
         compact ? "" : variant === "poster" ? "w-[200px]" : "w-[280px]"
       } ${cardWidth ? "" : "shrink-0"} ${

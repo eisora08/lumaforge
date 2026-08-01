@@ -184,11 +184,9 @@ export async function resolveLibraryGames(
     const hash = typeof window !== "undefined" ? window.location.hash : "";
     if (hash.startsWith("#/store")) {
       console.log("[steam-scan][SKIP] reason=store-active");
-      warnings.push("Skipped: store active");
     } else {
       const now = Date.now();
       console.log(`[steam-scan][SKIP] reason=ttl-valid elapsedMs=${now - _lastSteamScanAt}`);
-      warnings.push("Skipped: TTL valid");
     }
     return { games: [], warnings };
   }

@@ -96,31 +96,127 @@ pub fn discover_executables(dir: String) -> Result<Vec<DiscoveredExecutable>, St
   Ok(results)
 }
 
+/// Spawn a detached process, falling back to elevation for Windows error 740.
+///
+/// Game executables whose manifest requires elevation cannot be launched via
+/// `CreateProcess` (what `Command::spawn` uses) from a non-elevated parent —
+/// Windows returns `os error 740` ("The requested operation requires
+/// elevation"). When that happens on Windows we retry via PowerShell
+/// `Start-Process -Verb RunAs`, which triggers the UAC prompt and returns the
+/// elevated child PID via `-PassThru`.
+///
+/// Returns the PID of the spawned process. The child is already detached — the
+/// caller must not wait on it. Errors are propagated verbatim; a declined UAC
+/// prompt is reported as `elevation declined`.
+pub fn spawn_game_with_elevation_fallback(
+  exe: &str,
+  working_directory: Option<&str>,
+  args: Option<&[String]>,
+) -> Result<u32, String> {
+  let trimmed = exe.trim().trim_matches(|c| c == '"' || c == '\'');
+  if trimmed.is_empty() {
+    return Err("launch failed: executable path is empty".to_string());
+  }
+
+  let mut cmd = Command::new(trimmed);
+  if let Some(wd) = working_directory {
+    if !wd.trim().is_empty() {
+      cmd.current_dir(wd.trim().trim_matches(|c| c == '"' || c == '\''));
+    }
+  }
+  if let Some(a) = args {
+    cmd.args(a.iter().filter(|a| !a.is_empty()));
+  }
+  cmd.stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null());
+
+  match cmd.spawn() {
+    Ok(child) => {
+      let pid = child.id();
+      // Detach so the process outlives our command.
+      std::mem::forget(child);
+      Ok(pid)
+    }
+    Err(e) => {
+      #[cfg(not(target_os = "windows"))]
+      return Err(format!("Failed to launch executable: {}", e));
+
+      #[cfg(target_os = "windows")]
+      if e.raw_os_error() != Some(740) {
+        return Err(format!("Failed to launch executable: {}", e));
+      }
+
+      // Elevation required — retry via PowerShell `Start-Process -Verb RunAs`.
+      // The UAC prompt is blocking: PowerShell waits for the user's choice, so
+      // `.output()` returns either the elevated PID or an error.
+      println!(
+        "[ELEVATED_SPAWN] Elevation required (os error 740) — retrying with PowerShell RunAs"
+      );
+      let safe_exe = trimmed.replace('\'', "''");
+      let mut ps_command = format!("Start-Process -FilePath '{}'", safe_exe);
+
+      if let Some(wd) = working_directory {
+        if !wd.trim().is_empty() {
+          let safe_wd = wd
+            .trim()
+            .trim_matches(|c| c == '"' || c == '\'')
+            .replace('\'', "''");
+          ps_command.push_str(&format!(" -WorkingDirectory '{}'", safe_wd));
+        }
+      }
+
+      let joined_args = args.map(|a| {
+        a.iter()
+          .filter(|a| !a.is_empty())
+          .cloned()
+          .collect::<Vec<_>>()
+          .join(" ")
+      });
+      if let Some(j) = joined_args {
+        if !j.is_empty() {
+          let safe_args = j.replace('\'', "''");
+          ps_command.push_str(&format!(" -ArgumentList '{}'", safe_args));
+        }
+      }
+
+      ps_command.push_str(" -Verb RunAs -PassThru | Select-Object -ExpandProperty Id");
+
+      let ps_command_ref: &str = &ps_command;
+      let output = Command::new("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_command_ref])
+        .output()
+        .map_err(|e2| format!("Failed to launch elevated executable: {}", e2))?;
+
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      let pid_str = stdout.trim();
+      let pid: u32 = pid_str.parse().map_err(|_| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success() {
+          format!(
+            "Could not get PID from elevated process: stdout='{}'",
+            stdout
+          )
+        } else {
+          format!("Elevation declined or failed: {}", stderr.trim())
+        }
+      })?;
+
+      println!("[ELEVATED_SPAWN] Elevated detached PID={}", pid);
+      Ok(pid)
+    }
+  }
+}
+
 #[tauri::command]
 pub fn launch_executable(
   path: String,
   args: Option<Vec<String>>,
   working_dir: Option<String>,
 ) -> Result<SpawnResult, String> {
-  let trimmed = path.trim().trim_matches(|c| c == '"' || c == '\'');
-  let mut cmd = Command::new(trimmed);
-  if let Some(a) = &args {
-    cmd.args(a);
-  }
-  if let Some(wd) = &working_dir {
-    if !wd.is_empty() {
-      cmd.current_dir(wd);
-    }
-  }
-  let child = cmd
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .stdin(Stdio::null())
-    .spawn()
-    .map_err(|e| format!("Failed to launch executable: {}", e))?;
-
-  let pid = child.id();
-  std::mem::forget(child);
+  let pid = spawn_game_with_elevation_fallback(
+    &path,
+    working_dir.as_deref(),
+    args.as_deref(),
+  )?;
 
   Ok(SpawnResult {
     pid: Some(pid),
@@ -128,10 +224,68 @@ pub fn launch_executable(
   })
 }
 
-#[tauri::command]
-pub fn terminate_process(pid: u32) -> Result<(), String> {
+/// Run `taskkill` with an elevated (UAC) fallback on Windows.
+///
+/// Plain `taskkill` cannot terminate a process that was launched elevated via
+/// `Start-Process -Verb RunAs` (the Debrid launch path) — Windows returns
+/// "Access is denied". When the plain kill fails we retry once elevated via
+/// PowerShell `Start-Process -Verb RunAs`, capturing the elevated exit code
+/// with `-PassThru`. The UAC prompt is blocking and user-initiated (Stop),
+/// so the fallback only appears for genuinely elevated targets.
+#[cfg(target_os = "windows")]
+fn kill_via_taskkill(args: Vec<String>) -> Result<(), String> {
+  let plain = Command::new("taskkill")
+    .args(&args)
+    .output()
+    .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
+
+  if plain.status.success() {
+    return Ok(());
+  }
+  let stderr = String::from_utf8_lossy(&plain.stderr);
+  if stderr.contains("not found") || stderr.contains("no running") {
+    return Ok(());
+  }
+
+  println!(
+    "[TERMINATE] taskkill failed ({}), retrying elevated via UAC prompt",
+    stderr.trim()
+  );
+
+  let arg_list = args
+    .iter()
+    .map(|a| format!("'{}'", a.replace('\'', "''")))
+    .collect::<Vec<_>>()
+    .join(",");
+  let ps_command = format!(
+    "Start-Process taskkill -Verb RunAs -Wait -PassThru -ArgumentList {} | Select-Object -ExpandProperty ExitCode",
+    arg_list
+  );
+  let ps_command_ref: &str = &ps_command;
+  let output = Command::new("powershell")
+    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_command_ref])
+    .output()
+    .map_err(|e| format!("Failed to execute elevated taskkill: {}", e))?;
+
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let code = stdout.trim();
+  if code == "0" {
+    println!("[TERMINATE] elevated taskkill exit=0 (target killed)");
+    Ok(())
+  } else {
+    let err = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+      "Failed to terminate process (elevated taskkill exit='{}'): {}",
+      code,
+      err.trim()
+    ))
+  }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn kill_via_taskkill(args: Vec<String>) -> Result<(), String> {
   let output = Command::new("taskkill")
-    .args(["/PID", &pid.to_string(), "/F"])
+    .args(&args)
     .output()
     .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
 
@@ -142,44 +296,37 @@ pub fn terminate_process(pid: u32) -> Result<(), String> {
     if stderr.contains("not found") || stderr.contains("no running") {
       return Ok(());
     }
-    Err(format!("Failed to terminate process {}: {}", pid, stderr))
+    Err(format!("Failed to terminate process: {}", stderr))
   }
+}
+
+#[tauri::command]
+pub fn terminate_process(pid: u32) -> Result<(), String> {
+  kill_via_taskkill(vec![
+    "/PID".to_string(),
+    pid.to_string(),
+    "/F".to_string(),
+  ])
 }
 
 #[tauri::command]
 pub fn terminate_process_tree(pid: u32) -> Result<(), String> {
-  let output = Command::new("taskkill")
-    .args(["/PID", &pid.to_string(), "/F", "/T"])
-    .output()
-    .map_err(|e| format!("Failed to execute taskkill tree: {}", e))?;
-
-  if output.status.success() {
-    Ok(())
-  } else {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("not found") || stderr.contains("no running") {
-      return Ok(());
-    }
-    Err(format!("Failed to terminate process tree {}: {}", pid, stderr))
-  }
+  kill_via_taskkill(vec![
+    "/PID".to_string(),
+    pid.to_string(),
+    "/F".to_string(),
+    "/T".to_string(),
+  ])
 }
 
 #[tauri::command]
 pub fn terminate_process_by_name(name: String) -> Result<(), String> {
-  let output = Command::new("taskkill")
-    .args(["/IM", &name, "/F", "/T"])
-    .output()
-    .map_err(|e| format!("Failed to execute taskkill by name: {}", e))?;
-
-  if output.status.success() {
-    Ok(())
-  } else {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("not found") || stderr.contains("no running") {
-      return Ok(());
-    }
-    Err(format!("Failed to terminate process by name '{}': {}", name, stderr))
-  }
+  kill_via_taskkill(vec![
+    "/IM".to_string(),
+    name,
+    "/F".to_string(),
+    "/T".to_string(),
+  ])
 }
 
 #[tauri::command]

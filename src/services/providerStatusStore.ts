@@ -46,6 +46,12 @@ let _installedAppIds: Set<string> | null = null;
 /** Set the installed-appIds filter. Call when library games change. */
 export function setInstalledAppIds(ids: Set<string>): void {
   _installedAppIds = ids.size > 0 ? ids : null;
+  _notify();
+}
+
+/** Whether the installed-appIds filter has been populated yet (non-null). */
+export function isInstalledFilterReady(): boolean {
+  return _installedAppIds !== null;
 }
 
 /** Check if a specific appId is in the installed set. Returns true when no filter is active. */

@@ -21,6 +21,7 @@ export {
   getUpdateEntry,
   setInstalledAppIds,
   isAppIdInstalled,
+  isInstalledFilterReady,
   getTotalScanned,
   getLastResultHash,
   hasNewUpdatesSinceLastNotification,
@@ -575,6 +576,9 @@ async function refreshInMemoryStatus(luaDir: string, _hubcapConfig?: { baseUrl: 
   storeClearAllEntries();
 
   for (const entry of entries) {
+    // Never surface status for non-installed Lua files (matches main scan + recheck)
+    if (!storeIsAppIdInstalled(entry.appId)) continue;
+
     // Try hubcapdb first, then fallback
     try {
       const statusFile = await readProviderStatus(entry.appId, "hubcapdb");

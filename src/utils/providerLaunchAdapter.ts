@@ -14,6 +14,8 @@ export type LaunchDispatchResult = {
   dispatched: boolean;
   method?: string;
   error?: string;
+  /** PID of the spawned process when the provider reports one (Debrid direct-executable). */
+  pid?: number;
 };
 
 /**
@@ -86,6 +88,7 @@ export async function dispatchProviderLaunch(game: LibraryGame): Promise<LaunchD
       const result = await launchDebridGame({
         executablePath: game.executablePath,
         launchArguments: game.launchArguments ?? null,
+        workingDirectory: game.workingDirectory ?? null,
       });
 
       if (DEBUG_DEBRID_LAUNCH) {
@@ -96,6 +99,7 @@ export async function dispatchProviderLaunch(game: LibraryGame): Promise<LaunchD
         dispatched: result.success,
         method: result.method,
         error: result.error ?? undefined,
+        pid: result.pid ?? undefined,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

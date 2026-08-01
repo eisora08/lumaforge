@@ -18,6 +18,8 @@ pub struct DebridGameEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_arguments: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repacker: Option<String>,

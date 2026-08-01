@@ -131,6 +131,8 @@ export function buildDebridGameFromDiskEntry(
     repacker: entry.repacker || undefined,
     installDir: entry.installDir || undefined,
     executablePath: entry.executablePath || undefined,
+    workingDirectory: entry.workingDirectory || undefined,
+    launchArguments: entry.launchArguments?.join(" ") || undefined,
 
     luaScripts: [],
     hasLua: false,

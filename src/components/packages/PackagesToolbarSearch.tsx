@@ -118,7 +118,7 @@ export default function PackagesToolbarSearch({
   return (
     <div ref={wrapperRef} className={`relative ${className ?? ""}`}>
       <div
-        className={`flex ${isTopbar ? "h-9 w-64 md:w-80" : "h-10 w-full"} items-center gap-2.5 ${isTopbar ? "rounded-2xl lf-surface" : "rounded-xl bg-white/5"} border border-(--surface-active-border) px-3.5 ${isTopbar ? "px-3" : "px-3.5"}`}
+        className={`flex ${isTopbar ? "h-9 w-full" : "h-10 w-full"} items-center gap-2.5 ${isTopbar ? "rounded-2xl lf-surface" : "rounded-xl bg-white/5"} border border-(--surface-active-border) px-3.5 ${isTopbar ? "px-3" : "px-3.5"}`}
       >
         <Search className="h-4 w-4 shrink-0 text-(--color-muted)" />
 

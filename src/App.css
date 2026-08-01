@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "InterVariable";
+  src: url("/fonts/InterVariable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "InterVariable", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+}
+
 :root {
   --color-bg: #181114;
   --color-sidebar: #140d10;
@@ -102,13 +115,14 @@
 
   --shell-bg: rgba(255, 255, 255, 0.035);
   --shell-border: rgba(255, 255, 255, 0.16);
-  --shell-blur: blur(28px);
+  --shell-blur: blur(32px) saturate(1.4);
 
   --surface-active: rgba(255, 255, 255, 0.045);
   --surface-active-border: rgba(255, 255, 255, 0.18);
   --surface-active-hover: rgba(255, 255, 255, 0.09);
-  --surface-active-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
-  --surface-active-blur: blur(26px);
+  --surface-active-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 22px 60px rgba(0, 0, 0, 0.34);
+  --surface-active-blur: blur(26px) saturate(1.4);
 }
 
 
@@ -127,6 +141,11 @@ body,
   min-height: 100%;
   background: var(--color-bg);
   color: var(--color-text);
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -372,14 +391,15 @@ html {
 
 :root[data-theme="fluent"][data-surface="liquid-glass"] {
   --shell-border: rgba(255, 255, 255, 0.14);
-  --surface-active-shadow: 0 20px 50px rgba(0, 0, 0, 0.30);
+  --surface-active-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 20px 50px rgba(0, 0, 0, 0.3);
 }
 
 /* Ambient background: translucent shell/page so active game art shows through */
 :root[data-ambient="on"] {
   --page-bg: transparent;
   --shell-bg: color-mix(in srgb, var(--color-bg) 55%, transparent);
-  --shell-blur: blur(24px);
+  --shell-blur: blur(24px) saturate(1.4);
   --shell-border: color-mix(in srgb, var(--color-border) 60%, transparent);
 }
 
@@ -713,6 +733,21 @@ html {
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+
+.lf-popover-exit {
+  animation: lfPopoverExit 140ms ease-in forwards;
+}
+
+@keyframes lfPopoverExit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
   }
 }
 
@@ -1584,6 +1619,24 @@ html[data-compact="true"] .lf-launch-bar {
 }
 
 /* =========================
+   CONSOLE PAGE BACKGROUND
+   Ambient-aware page background for console layout roots.
+   Mirrors the desktop .lf-page / --page-bg contract:
+   resolves to the console theme's --color-bg by default,
+   but becomes fully transparent when the global ambient
+   background is on, letting the artwork show through the
+   entire console UI (grid, spotlight, details, settings).
+========================= */
+
+[data-console-theme] {
+  --console-bg: var(--color-bg);
+}
+
+:root[data-ambient="on"] [data-console-theme] {
+  --console-bg: transparent;
+}
+
+/* =========================
    CONSOLE TEXTURE: GRAIN SOFT
    Subtle noise overlay on the full viewport
    Uses a fixed pseudo-element with pointer-events: none
@@ -1634,6 +1687,36 @@ html[data-compact="true"] .lf-launch-bar {
   z-index: 9999;
   pointer-events: none;
   background: rgba(0, 0, 0, 0.06);
+}
+
+/* =========================
+   CONSOLE GLASS SURFACES
+   Translucent panels/bars that inherit theme CSS vars so
+   data-console-theme (and follow-app) overrides apply.
+   Surfaces keep their own border utilities; only background,
+   backdrop blur and an inset highlight are provided.
+========================= */
+
+.lf-console-glass {
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.lf-console-glass-strong {
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  -webkit-backdrop-filter: blur(32px) saturate(1.4);
+  backdrop-filter: blur(32px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lf-console-glass,
+  .lf-console-glass-strong {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 /* =========================

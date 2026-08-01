@@ -82,7 +82,7 @@ function computeLibraryFingerprint(games: LibraryGame[]): string {
   return games.slice(0, 200).map(g => {
     // Use provider-neutral identity key to avoid undefined: prefix for Epic/GOG entries
     const identityKey = g.appId || g.libraryId || g.id;
-    return `${identityKey}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}:${g.imageUrl ?? ""}`;
+    return `${identityKey}:${g.title ?? ""}:${g.source}:${!!g.steamInstalled}:${!!g.isInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${!!g.hasLua}:${!!g.isLuaActive}:${(() => { try { return g.executablePath ?? g.installDir ?? g.libraryPath ?? ""; } catch { return ""; } })()}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}:${g.imageUrl ?? ""}`;
   }).join("|");
 }
 
@@ -93,6 +93,25 @@ function computeGamesFingerprint(games: LibraryGame[]): string {
     const identityKey = g.appId || g.libraryId || g.id;
     return `${identityKey}:${!!g.steamInstalled}:${!!g.isPlayable}:${!!g.isFavorite}:${g.steamLastPlayedAt ?? ""}:${g.steamPlaytimeMinutes ?? ""}:${g.achievementTotal ?? ""}`;
   }).join("|");
+}
+
+// One-shot boot diagnostic: report Debrid entries in `games` with their
+// install state so a missing sidebar can be explained (see stable-object reuse).
+let _debridSidebarDiagnosticLogged = false;
+function logDebridSidebarDiagnostic(games: LibraryGame[]) {
+  if (_debridSidebarDiagnosticLogged) return;
+  const debrid = games.filter(g => g.source === "debrid");
+  if (debrid.length === 0) {
+    console.log("[DEBRID][SIDEBAR_DIAG] no debrid entries in games");
+    _debridSidebarDiagnosticLogged = true;
+    return;
+  }
+  console.log(
+    `[DEBRID][SIDEBAR_DIAG] debrid=${debrid.length} installed=${debrid.filter(g => g.isInstalled === true).length} ` +
+    `withInstallDir=${debrid.filter(g => !!g.installDir).length} ` +
+    `entries=${debrid.map(g => `${g.id ?? g.appId}:inst=${g.isInstalled === true}:dir=${!!g.installDir}`).join("|")}`
+  );
+  _debridSidebarDiagnosticLogged = true;
 }
 
 const SELECTED_GAME_KEY = "lumaforge-selected-library-game-v1";
@@ -370,6 +389,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           existing.title === game.title &&
           existing.source === game.source &&
           existing.steamInstalled === game.steamInstalled &&
+          !!existing.isInstalled === !!game.isInstalled &&
+          existing.installDir === game.installDir &&
           !!existing.isPlayable === !!game.isPlayable &&
           !!existing.isFavorite === !!game.isFavorite &&
           !!existing.hasLua === !!game.hasLua &&
@@ -394,6 +415,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
     countLibraryApplied();
     const filtered = filterEnabledGames(stable);
+    logDebridSidebarDiagnostic(filtered);
     const filteredFp = computeLibraryFingerprint(filtered);
     if (filteredFp !== (currentFp ?? computeLibraryFingerprint(gamesRef.current))) {
       setGames(filtered);

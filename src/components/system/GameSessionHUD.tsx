@@ -121,7 +121,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
   if (renderPhase === "hidden") return null;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-5 z-[99999] flex justify-center">
+    <div className="pointer-events-none fixed inset-x-0 top-5 z-99999 flex justify-center">
       <div
         className={`pointer-events-auto origin-center ${
           renderPhase === "exiting" ? "lf-hud-exit" : "lf-hud-entry"
@@ -152,7 +152,7 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
 
           {/* Title + Elapsed / Launching */}
           <div className="flex flex-col leading-tight">
-            <span className="max-w-[140px] truncate text-sm font-medium text-(--color-text)">
+            <span className="max-w-35 truncate text-sm font-medium text-(--color-text)">
               {activeSession?.title || "Unknown Game"}
             </span>
             {isLaunching ? (

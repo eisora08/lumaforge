@@ -18,7 +18,8 @@ import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
 import { setScrollTarget } from "./useConsoleGamepadInput";
-import { deduplicateByStableId, getFavoriteKey } from "../../services/gameCacheService";
+import { deduplicateByStableId, getFavoriteKey, localPathToUrl, isLocalPath } from "../../services/gameCacheService";
+import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
 
 const DEBUG_CONSOLE_GRID_NAV = false;
 const DEBUG_FORCE_TEST_MP4 = false;
@@ -73,6 +74,24 @@ export default function ConsoleGridLayout({
   const previewGame = settledFocusedGame ?? focusedGame;
   const heroSrc = getConsoleHeroBackground(previewGame);
   const trailerData = useMemo(() => previewGame ? extractTrailerData(previewGame) : null, [previewGame]);
+
+  /* ── Hover/focus backdrop: instant in-panel layer + global ambient feed ── */
+  const [hoverGame, setHoverGame] = useState<LibraryGame | null>(null);
+  const backdropGame = hoverGame ?? previewGame;
+  const backdropSrc = getConsoleHeroBackground(backdropGame);
+
+  useEffect(() => {
+    if (!backdropSrc) {
+      clearAmbientSource("console-grid-focus");
+      return;
+    }
+    if (backdropSrc.startsWith("games/") || backdropSrc.startsWith("media/") || backdropSrc.startsWith("img/")) return;
+    const url = isLocalPath(backdropSrc) ? (localPathToUrl(backdropSrc) ?? null) : backdropSrc;
+    if (url) setAmbientSource("console-grid-focus", url);
+    else clearAmbientSource("console-grid-focus");
+  }, [backdropSrc]);
+
+  useEffect(() => () => clearAmbientSource("console-grid-focus"), []);
 
   const [showArtworkFirst, setShowArtworkFirst] = useState(true);
   const [thumbnailAutoplaySrc, setThumbnailAutoplaySrc] = useState<string | null>(null);
@@ -276,7 +295,7 @@ export default function ConsoleGridLayout({
   }
 
   return (
-    <div className="flex h-screen flex-col bg-(--color-bg)">
+    <div className="flex h-screen flex-col bg-(--console-bg)">
       {/* HUD */}
       <ConsoleTopHud
         layoutMode={layoutMode}
@@ -310,6 +329,8 @@ export default function ConsoleGridLayout({
                   game={game}
                   isFocused={focusedIndex === i}
                   onClick={() => onSelectGame(game)}
+                  onHover={setHoverGame}
+                  onHoverEnd={() => setHoverGame(null)}
                   compact
                   variant={gridCardVariant}
                   noLabel={settings.gridCardStyle.hideLabels}
@@ -325,8 +346,16 @@ export default function ConsoleGridLayout({
         </div>
 
         {/* Right preview panel — settings-driven width */}
-        <div className="hidden shrink-0 border-l border-(--color-border) overflow-y-auto bg-(--color-surface)/20 backdrop-blur-sm lg:block"
+        <div className="lf-console-glass hidden relative shrink-0 overflow-hidden border-l border-(--color-border) lg:block"
              style={{ width: `${settings.sidePanelWidth}px`, minWidth: `${settings.sidePanelWidth}px`, maxWidth: `${settings.sidePanelWidth}px` }}>
+          {/* Instant hover/focus backdrop layer */}
+          {backdropSrc && (
+            <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+              <img src={backdropSrc} alt="" className="h-full w-full scale-110 object-cover blur-2xl opacity-40" />
+              <div className="absolute inset-0 bg-(--color-bg)/70" />
+            </div>
+          )}
+          <div className="relative h-full overflow-y-auto">
           {focusedGame ? (
             <div className="flex min-h-full flex-col">
               {/* Hero/preview image — supports trailer thumbnails */}
@@ -560,11 +589,12 @@ export default function ConsoleGridLayout({
               )}
             </div>
           )}
+          </div>
         </div>
       </div>
 
       {/* Bottom category bar */}
-      <div className="shrink-0 border-t border-(--color-border) bg-(--color-bg)/80 backdrop-blur-sm">
+      <div className="lf-console-glass shrink-0 border-t border-(--color-border)">
         <ConsoleCategoryBar
           activeIndex={activeCategory}
           counts={categoryCounts}

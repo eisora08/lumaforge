@@ -4461,3 +4461,288 @@ Añadir el apartado **"Animaciones"** en Ajustes con un selector de transición 
 - `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
 - `vite build` ✅ (1.97s, Rolldown; solo warnings preexistentes + INEFFECTIVE_DYNAMIC_IMPORT informativos)
 - `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session � Library search/footer/dropdown polish + Liquid Glass console
+### Goal
+Centered topbar search with drag on both sides, fixed pagination footer that hides with Show All, glass dropdown with enter/exit animation, and Liquid Glass look applied to main console surfaces respecting `data-console-theme` overrides.
+
+### Part A: TopBar + PackagesToolbarSearch
+- `TopBar.tsx` � new 5-zone header: left group (hamburger only in drawer mode) ? left drag-spacer (`flex-1` + `data-tauri-drag-region` + double-click maximize) ? centered search wrapper (`flex min-w-0 flex-1 items-center justify-center px-2` around `w-full max-w-[540px]`) ? right drag-spacer (identical) ? right group + window controls.
+- `showSearch = activePage !== "store"`.
+- `PackagesToolbarSearch.tsx` L121 � topbar variant `h-9 w-full` (width controlled by centered wrapper); dropdown unchanged `lf-popover-enter absolute z-50 w-[400px]`.
+
+### Part B: Library pagination footer
+- `Library.tsx` � footer renders only when `visibleGames.length > 0 && pageSize !== SHOW_ALL`; `sticky bottom-0 z-10 shrink-0 border-t border-(--surface-active-border)/40 bg-(--color-bg)/70 backdrop-blur-lg`; inner div preserves `mx-auto flex w-full items-center justify-between px-6 py-2.5 lg:px-8 xl:px-10` + `max-w-[1900px]` only when `!settings.libraryUseFullWidth`.
+
+### Part C: CardActionMenu glass + exit animation
+- `CardActionMenu.tsx` � `EXIT_MS = 140`, `closing` state + `wasOpenRef` + `closeTimerRef`; render guard `if ((!open && !closing) || !pos) return null`; menu and submenu use `bg-(--color-surface)/95 backdrop-blur-xl`; animation class `closing ? "lf-popover-exit" : "lf-popover-enter"`.
+- `App.css` � `@keyframes lfPopoverExit` (140ms ease-in forwards, reverse of enter) + `.lf-popover-exit`.
+
+### Part D: Liquid Glass console surfaces
+- `App.css` � `.lf-console-glass` (`color-mix(in srgb, var(--color-surface) 55%, transparent)` + `blur(28px) saturate(1.4)` + inset top highlight) and `.lf-console-glass-strong` (72% + blur(32px) + highlight 0.08); both with `-webkit-backdrop-filter` and `prefers-reduced-motion` guard. Use `--color-surface` so `data-console-theme` overrides are respected.
+- Applied to: `ConsoleGridLayout.tsx` right panel (L328) + bottom bar (L567); `ConsoleTopHud.tsx` clock badge + buttons; `ConsoleSpotlightDock.tsx` (L22, kept `ring-white/[0.12]`); `ConsoleGameOptionsOverlay.tsx` panel (L425); `ConsoleSearchOverlay.tsx` sheet (L465); `ConsoleInstallModal.tsx` modal (L186); `ConsoleGameDetails.tsx` panel via `surfaceBg` (liquid-glass?`lf-console-glass`, default?`lf-console-glass-strong`, solid?opaque unchanged).
+- Out of scope (kept hardcoded): badge/chip fills (`bg-black/40` dim backdrops, `bg-amber-600/85` toast, `bg-cyan-500/20` rings, category pill hovers).
+
+### Build
+- `tsc --noEmit` (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` (1.74s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+
+## Session — Console Grid hover backdrop + Library hover ambient + always-fixed footer
+
+### Goal
+(1) En Console Mode grid: backdrop dinámico del panel derecho según la card enfocada/hovered, con cambio **instantáneo** y alimentación del ambient store global. (2) En Library: footer de paginación **siempre fijo** abajo (también con "Show All" y 0 resultados). (3) Disparar el fondo ambiental global al hacer hover sobre cualquier card de Library.
+
+### Part 1: ConsoleGameCard hover hooks
+- `ConsoleGameCard.tsx` — props opcionales `onHover?: (game) => void` / `onHoverEnd?: () => void`; root div (rol button) conecta `onMouseEnter={() => onHover?.(game)}` + `onMouseLeave={() => onHoverEnd?.()}`. Backward-compatible (nada cambia si las props no se pasan).
+
+### Part 2: ConsoleGridLayout instant backdrop + ambient feed
+- `ConsoleGridLayout.tsx` — imports `localPathToUrl`, `isLocalPath`, `setAmbientSource`, `clearAmbientSource`.
+- Estado `hoverGame`; `backdropGame = hoverGame ?? previewGame` (hover gana, fallback al preview).
+- `backdropSrc = getConsoleHeroBackground(backdropGame)` (síncrono desde consoleMedia).
+- `useEffect` ambient: feed scope `"console-grid-focus"` con skip de prefijos relativos `games/`/`media/`/`img/`, `isLocalPath ? localPathToUrl : raw`; cleanup `clearAmbientSource` al desmontar. Cambio instantáneo: el backdrop del panel derecho NO está debounced.
+- Panel derecho (L328) restructurado a `relative overflow-hidden` + capa backdrop `<img>` (`scale-110 object-cover blur-2xl opacity-40`) + overlay `bg-(--color-bg)/70` + wrapper interno `relative h-full overflow-y-auto`.
+- Cards reciben `onHover={setHoverGame}` / `onHoverEnd={() => setHoverGame(null)}`.
+
+### Part 3: Library footer always fixed
+- `Library.tsx` — condición del footer eliminada; el div `sticky bottom-0 z-10 shrink-0 border-t ... backdrop-blur-lg` se renderiza **siempre** (también con `pageSize === SHOW_ALL` y con 0 resultados). Root `flex h-full flex-col lf-page-in` (L574) garantiza posición inferior. Cierre `</>` ajustado.
+
+### Part 4: GameLauncherTile hover → ambient global (debounced)
+- `GameLauncherTile.tsx` — imports `localPathToUrl` (gameCacheService) + `setAmbientSource`/`clearAmbientSource` (ambientBackgroundStore).
+- Constantes módulo: `AMBIENT_LIBRARY_HOVER_SCOPE = "library-grid-hover"`, `AMBIENT_HOVER_DEBOUNCE_MS = 150`, timer único `_libraryHoverTimer`.
+- `handleHoverEnter` (envuelve `onMouseEnter` de useHoverPrefetch): debounce 150ms → raw `game.backgroundPath ?? game.landscapePath ?? displayImage ?? game.imageUrl`, skip prefijos relativos, `isLocalPath ? localPathToUrl : raw` → `setAmbientSource("library-grid-hover", url)`.
+- `handleHoverLeave`: cancela timer + `clearAmbientSource("library-grid-hover")`.
+- `useEffect` unmount: cancela timer + limpia el scope.
+- Root div (L473): `onMouseEnter={handleHoverEnter}` / `onMouseLeave={handleHoverLeave}`.
+- Ambos scopes (`"console-grid-focus"` y `"library-grid-hover"`) son del slot `_detail` del ambient store → último gana; al salir de hover se restaura el fallback de página (`_context`).
+
+### Key Files Changed
+- `src/features/console/ConsoleGameCard.tsx` — onHover/onHoverEnd props
+- `src/features/console/ConsoleGridLayout.tsx` — hoverGame, backdrop instantáneo, feed `"console-grid-focus"`, panel derecho con capa backdrop
+- `src/pages/Library.tsx` — footer sticky incondicional
+- `src/components/games/GameLauncherTile.tsx` — hover → ambient con debounce 150ms + cleanup
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ✅ (1.83s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Ambient z-index fix en Console Mode + corrección de alcance del hover desktop
+
+### Goal
+(1) Arreglar que el fondo ambiental global se renderizaba POR ENCIMA de toda la UI de Console Mode ("el dynamic se ve por encima de todo en vez de comportarse como fondo"). (2) Corregir el alcance del hover → ambient: solo en Library (única superficie sin hero); Dashboard y Store ya alimentan el ambient vía sus héroes.
+
+### Part 1: Causa raíz del z-index console (confirmada)
+- `AppLayout.tsx` rama console (L44-57): `<AmbientBackground />` (root `absolute inset-0 z-[1]`) se renderizaba como hermano ANTES de `<RouteErrorBoundary>{children}</RouteErrorBoundary>`, y el root de `ConsoleModePage` es `relative` con z-auto.
+- En CSS, un elemento con z-index positivo (z-[1]) pinta POR ENCIMA de hermanos positioned z-auto → la capa ambient (arte blur opacity 30-55% + dim + gradiente) cubría toda la UI de console. Desktop no sufría el bug porque su contenido está envuelto en `relative z-10` (L132).
+- El backdrop interno del panel derecho de `ConsoleGridLayout.tsx` (L351-357, `absolute inset-0` DOM-first + contenido `relative` DOM-later) estaba internamente correcto — el culpable era la capa global.
+
+### Part 2: Fix
+- `src/components/layout/AppLayout.tsx` rama console: `{children}` (providers + RouteErrorBoundary) envuelto en `<div className="relative z-10 h-full w-full">` — espejo del wrapper desktop L132.
+- El ambient pasa a fondo real visible a través de las superficies `lf-console-glass`; los overlays internos console (z-[100]/z-[200]/z-[300]) quedan intactos por encima.
+
+### Part 3: Alcance del hover desktop (corrección de alcance)
+- Hover → ambient SOLO en Library (`GameLauncherTile.tsx`, ya implementado en la sesión previa: debounce 150ms, scope `"library-grid-hover"`). Library es la única superficie desktop sin hero propio.
+- **Dashboard NO necesita hover**: `GameHero` ya alimenta el ambient (`setAmbientSource("dashboard", ...)` en todas sus rutas de resolución). Hover en sus cards (`lf-dash-card`, 6 secciones montadas en Home) sería redundante y ruidoso (parpadeo card→hero).
+- **Store NO necesita hover**: `StoreDiscoverHeroCarousel` (hero del Discover) y `StoreGameDetailsPage` (galería de medios vía `onMediaSelect`) ya alimentan el ambient. Las cards `PackageCard`/`lf-virtual-card` no se tocaron.
+- No se creó `AmbientHoverSurface` ni slot `_hover` en `ambientBackgroundStore.ts` — se descartaron por innecesarios.
+
+### Key Files Changed
+- `src/components/layout/AppLayout.tsx` — rama console: wrapper `relative z-10 h-full w-full` alrededor de children
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ✅ (1.42s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Console Mode: ambient background visible en toda la página (variable --console-bg)
+
+### Goal
+Que el fondo ambiental global se muestre en TODA la página de Console Mode desktop (zona de cards del grid, spotlight, details), no solo en el panel de detalles glass. El dynamic ya se veía en el panel; la zona de cards quedaba opaca.
+
+### Part 1: Causa raíz
+- Desktop logra transparencia porque `.lf-page { background: var(--page-bg) }` (App.css L209-211) y `:root[data-ambient="on"]` (L399-404) vuelve `--page-bg: transparent`. `--color-bg` NO se reasigna.
+- Los roots de los layouts console usan `bg-(--color-bg)` OPACO directo, que tapa la capa ambient (z-[1] por detrás del wrapper z-10). No existen variables `--console-*` previas.
+
+### Part 2: Variable `--console-bg` ambient-aware (App.css)
+- `[data-console-theme] { --console-bg: var(--color-bg) }` — por defecto, el bg del tema console (se resuelve al color del mismo elemento donde el tema fija `--color-bg`).
+- `:root[data-ambient="on"] [data-console-theme] { --console-bg: transparent }` — bajo ambient, el fondo de página console se vuelve transparente (espejo del contrato `--page-bg`).
+- Definida tras el tema neon-noir (L1619+), antes de la sección de texturas.
+
+### Part 3: Aplicación en los roots de layouts console
+- `ConsoleGridLayout.tsx` L298 root → `bg-(--console-bg)` (zona de cards, cambio principal).
+- `ConsoleSwitchSpotlightLayout.tsx` L186 root → `bg-(--console-bg)`.
+- `ConsoleSpotlightLayout.tsx` L125 root → `bg-(--console-bg)`.
+- `ConsoleGameDetails.tsx` L950 fallback del hero (sin heroSrc) → `bg-(--console-bg)`.
+
+### Sin cambios (intencional)
+- `AppLayout.tsx` rama console L46 `bg-(--color-bg)`: es la base POR DETRÁS de la capa ambient — queda como fallback.
+- `ConsoleGridLayout.tsx` L355 overlay `bg-(--color-bg)/70`: dim del backdrop interno del panel derecho para legibilidad.
+- `ConsoleSettingsPanelV2.tsx` L1914 `bg-(--color-bg)/95`: panel lateral interactivo — se mantiene opaco.
+- Tarjetas (`ConsoleGameCard.tsx` `bg-(--color-surface)/40` + overlays) sin tocar: legibilidad intacta sobre el ambient.
+
+### Key Files Changed
+- `src/App.css` — `[data-console-theme]`/`:root[data-ambient=on] [data-console-theme]` + `--console-bg` (default/transparent)
+- `src/features/console/ConsoleGridLayout.tsx` — root `bg-(--console-bg)`
+- `src/features/console/ConsoleSwitchSpotlightLayout.tsx` — root `bg-(--console-bg)`
+- `src/features/console/ConsoleSpotlightLayout.tsx` — root `bg-(--console-bg)`
+- `src/features/console/ConsoleGameDetails.tsx` — fallback hero `bg-(--console-bg)`
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ✅ (1.43s, Rolldown; verificado en dist: `[data-console-theme]{--console-bg:var(--color-bg)}`, `:root[data-ambient=on] [data-console-theme]{--console-bg:transparent}`, `background-color:var(--console-bg)`)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session � Library grid hover -> ambient fallthrough fix
+
+### Problem
+Library grid cards did not feed the global ambient background on hover (desktop). The console-mode ambient background was already visible; only the Library hover feed was dead.
+
+### Root cause
+`GameLauncherTile.tsx` hover handler picked `raw = game.backgroundPath ?? game.landscapePath ?? displayImage ?? game.imageUrl` and early-returned on any relative prefix (`games/`/`media/`/`img/`). For Steam games, `game.backgroundPath`/`game.landscapePath` are the RELATIVE snapshot media paths (e.g. `media/landscape.jpg`) -> truthy -> early return fired before ever reaching the absolute canonical `displayImage` (which `getCardImage` returns from `canonicalInfo.media.*` as absolute resolved paths). Result: no candidate ever fed `setAmbientSource`.
+
+### Fix
+- `handleHoverEnter` now iterates a candidate list (`game.backgroundPath`, `game.landscapePath`, `game.coverPath`, `displayImage`, `game.imageUrl`) and FALLS THROUGH relative prefixes instead of returning on the first relative path.
+- First usable candidate wins; local absolute paths converted via `localPathToUrl`, remote/provider URLs used raw.
+- Added `DEBUG_AMBIENT_HOVER = false` flag + `[AMBIENT][HOVER] appid=... raw=... url=...` diagnostic.
+
+### Key Files Changed
+- `src/components/games/GameLauncherTile.tsx` � candidate-fallthrough loop in `handleHoverEnter`, `game.coverPath` added to candidates, debug flag.
+
+### Build
+- `tsc --noEmit` ? (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ? (1.38s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+- `cargo check` ?? skipped (no Rust changes)
+
+## Session � Remove desktop Library hover -> ambient feed (console-only keeps it)
+
+### Problem
+The desktop Library/Games grid hover?ambient feed (`library-grid-hover` scope) changed the whole window background on card hover. User decision: that behavior is only acceptable inside Console Mode � on desktop it is distracting.
+
+### Fix
+- `src/components/games/GameLauncherTile.tsx` (used by `Library.tsx` and `Games.tsx`):
+  - Removed `setAmbientSource`/`clearAmbientSource` import from `ambientBackgroundStore`.
+  - Removed `localPathToUrl` from the `gameCacheService` import (was only used by the hover handler; `isLocalPath` kept for `fallbackLocalPath` memo).
+  - Removed module constants `AMBIENT_LIBRARY_HOVER_SCOPE`, `AMBIENT_HOVER_DEBOUNCE_MS`, and the shared `_libraryHoverTimer`.
+  - Removed `handleHoverEnter`/`handleHoverLeave` and the unmount cleanup effect.
+  - Root `<div>` handlers back to `onMouseEnter={onMouseEnter}` / `onMouseLeave={onMouseLeave}` (the `useHoverPrefetch` data prefetch is preserved).
+
+### Unchanged
+- Console Mode feed `console-grid-focus` + right-panel backdrop in `ConsoleGridLayout.tsx`.
+- `AmbientNavFallback` page-context in `App.tsx` (navigation-level, not hover).
+- Dashboard/hero feeds and `--console-bg` ambient behavior.
+
+### Result
+- Desktop: ambient background is stable (page-context fallback) � hovering Library/Games cards no longer changes it.
+- Console Mode: hover/focus still drives the background.
+
+### Build
+- `tsc --noEmit` ? (only pre-existing extension/test errors)
+- `vite build` ? (1.41s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ?? skipped (no Rust changes)
+
+## Session � Dashboard hero Steam-style: blurred backdrop + centered sharp image + taller heights
+
+### Goal
+Fix the home/dashboard hero looking like a short wide strip in fullscreen by applying the LibraryGameDetails 3-layer hero recipe, and increase hero height on large screens.
+
+### Changes (src/components/dashboard/GameHero.tsx)
+- **Height**: section + content div bumped from `min-h-[300px] sm:min-h-[340px]` to `sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px]` (content stays anchored bottom via `items-end`).
+- **Layer 1 � Blurred backdrop**: `data-hero-bg-layer` div removed; backdrop now static `overflow-hidden brightness-[0.65] saturate-[1.1]` with AsyncImage `h-full w-full scale-105 blur-2xl` (full-bleed color field, same fallback gradient).
+- **Layer 2 � Sharp image centered**: plain `<img>` (AsyncImage forces `object-cover`, so a raw img is used) with `h-full w-auto max-w-none shrink-0`, `key={bgUrl}`, `loading="eager"`, `onError` ? `setSharpImgError(true)` (hides only the sharp layer, blurred backdrop stays), and horizontal mask `[mask-image:linear-gradient(to_right,transparent 0%,transparent 4%,black 12%,black 88%,transparent 96%,transparent 100%)]`. `heroBgClass` (Settings ? Animaciones: crossfade/kenburns/focus) now applies here.
+- **Layer 3 � Gradients**: bottom readability gradient kept (`from-black/90 via-black/50 to-black/30`); left emphasis softened `from-black/60` ? `from-black/40` so the blur fade shows.
+- Same `bgUrl` on both layers ? one download (browser cache). `EmptyHero` untouched.
+
+### Result
+Sharp image no longer stretches edge-to-edge; sides show the blurred backdrop (Library-style). Hero reads cinematic instead of a wide strip in fullscreen.
+
+### Build
+- `tsc --noEmit` ? (only pre-existing extension/test errors)
+- `vite build` ? (1.59s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ?? skipped (no Rust changes)
+
+## Session — Ambient en Library: último game-details-library (opción B)
+
+### Goal
+Que el fondo ambiental de la página Library (grid) muestre el arte del último juego abierto en GameDetails en vez de quedarse en el fallback estático (primer juego del snapshot con media).
+
+### Contexto
+- El grid de Library no alimentaba el slot `_detail` del ambient store → al navegar a Library el fondo caía a `_context` (fallback de `AmbientNavFallback`: `selectedGame?.imageUrl` global o primer juego del snapshot). Estático, no reaccionaba a Library.
+- `LibraryGameDetails` alimentaba `setAmbientSource("library-details", ...)` pero en unmount hacía `clearAmbientSource("library-details")` → al volver al grid el fondo volvía al fallback estático.
+- El feed hover→ambient de desktop se eliminó intencionalmente por ruidoso (solo Console lo conserva) — esta sesión NO reintroduce hover.
+
+### Part 1: Memoria del último game-details-library (`ambientBackgroundStore.ts`)
+- Añadido `_lastLibraryDetailsUrl: string | null` a nivel de módulo (sesión, como el resto del store). NO se limpia en unmount del detalle.
+- Exportados:
+  - `rememberLibraryDetails(url: string | null)` — guarda vía `normalizeUrl` (solo valores no vacíos).
+  - `getLastLibraryDetailsUrl(): string | null` — lectura para `Library.tsx`.
+- No toca el modelo de dos slots (`_detail`/`_context`); es memoria auxiliar.
+
+### Part 2: `LibraryGameDetails.tsx` — recordar al alimentar
+- `rememberLibraryDetails` importada; llamada junto a ambos `setAmbientSource("library-details", ...)`:
+  - Con `imageUrl` resuelto (alta calidad).
+  - Con el path sincrónico de primer paint (cubre manuales sin resolución async).
+- La memoria se actualiza en cada resolución (incluye cambio de juego). Los cleanups (L450-456) NO la limpian — intencional.
+
+### Part 3: `Library.tsx` — feed `library-page`
+- Nuevo efecto mount (junto a `consumePendingLibraryFocus`):
+  ```ts
+  useEffect(() => {
+    const url = getLastLibraryDetailsUrl();
+    if (url) setAmbientSource("library-page", url);
+    return () => clearAmbientSource("library-page");
+  }, []);
+  ```
+- Al volver del detalle, el cleanup de `library-details` corre antes de que monte el efecto de `Library.tsx` → último estado visible es `library-page` → el grid conserva el arte.
+
+### Comportamiento
+- **Ida y vuelta**: abrir un juego → volver al grid → el fondo sigue mostrando ese juego.
+- **Primera visita (sin detalle previo en la sesión)**: memoria vacía → no alimenta → fallback actual (primer juego del snapshot). Sin regresión.
+- **Library → Dashboard → Library**: la memoria persiste; al remontar Library re-alimenta `library-page`.
+- **Sin hover noise**: valor estable por página, no reintroduce el feed por hover de desktop.
+
+### Key Files Changed
+- `src/services/ambientBackgroundStore.ts` — `_lastLibraryDetailsUrl`, `rememberLibraryDetails()`, `getLastLibraryDetailsUrl()`
+- `src/components/library/LibraryGameDetails.tsx` — import + `rememberLibraryDetails` en ambos feeds del efecto ambient
+- `src/pages/Library.tsx` — import + efecto mount `library-page`
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ✅ (1.86s, Rolldown; solo warnings INEFFECTIVE_DYNAMIC_IMPORT + chunk)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Debrid: refresh/restart pierde path instalado + Download Metadata no hace nada
+
+### Problema
+1. Con el path del ejecutable ya guardado en `debrid-games.json`, al refrescar/reiniciar el juego aparecía como "instalar" (sin `isInstalled`, sin `executablePath`) y el diálogo de edición no traía el path — no se leía lo guardado.
+2. "Download Metadata"→Steam no hacía nada en juegos Debrid.
+
+### Causa raíz Bug 1 (Download Metadata)
+- El guard de `handleDownloadMetadata` (`GameEditDialog.tsx`) hacía early-return silencioso en Debrid porque `appId` llega vacío (los call sites solo pasan `appId` para `steam`/`lua`); `isManualMode`/`isCreateMode`/`isEpicMode` eran false → guard `if (!appId && !isManualMode && !isCreateMode && !isEpicMode) return;` bloqueaba.
+
+### Causa raíz Bug 2 (path perdido)
+- La restauración vive en `refreshDebridGames()` (`debridGameStore.ts`), que lee `getDebridLaunchMetadata()` → el mapa `_launchMetadataByProviderGameId`, que SOLO se puebla en `loadDebridGamesFromDisk()` y en `updateDebridGame`.
+- Carrera: `refreshDebridGames()` (context, `LibraryGamesContext.tsx`) vs Stage 3.35 del boot (`appBootCoordinator.ts`). Si refresh corre primero → mapa vacío → loop de restauración no hace nada → entradas `isInstalled=false` sin path; el loader corre después pero NUNCA re-mapea `_debridGames` → roto toda la sesión.
+- El guardado era correcto (`updateDebridGame` setea mapa + `_userLibraryAppIds` + statuses); el JSON en disco tenía el path. El diálogo pre-rellenaba SOLO desde el prop `game` (entrada rota) sin consultar el store.
+
+### Fixes
+
+#### `debridGameStore.ts`
+- `refreshDebridGames()`: `await loadDebridGamesFromDisk()` como primera línea del `try` (idempotente vía `_loadedFromDisk` → ambos órdenes de boot convergen).
+- `loadDebridGamesFromDisk()`: `_loadedFromDisk = true` movido a DESPUÉS de un `readDebridGames()` exitoso (fail-open ante fallo transitorio — antes estaba antes del try, congelando el estado vacío toda la sesión).
+- `loadDebridGamesFromDisk()`: restaura `_debridAppIdOverrides` desde disco (`if (entry.appId) _debridAppIdOverrides.set(entry.id, String(entry.appId))`) — el `appId` en disco es autoritativo.
+- Nueva `updateDebridGameTitle(providerGameId, title)`: persiste el título (decisión: solo nombre + diálogo, sin tocar schema Rust); no-op si vacío/inexistente.
+
+#### `GameEditDialog.tsx`
+- Guard `:487` → añadido `&& !isDebridMode`.
+- Rama explícita `if (isDebridMode)` en `handleDownloadMetadata` antes del flujo Steam: resuelve por `appIdDraft || game?.appId`; `steam` → `resolveGameMetadata` → `fillDraftsFromMetadata` + `setMetadata` + toast; `igdb`/`rawg` por appId; appId vacío → `showError("No Steam App ID — introduce uno en el campo App ID")`; `appIdDraft` en deps del useCallback.
+- Mount Debrid (rama ~`:407`): fallback a `getDebridLaunchMetadata()` + `getDebridGame()` cuando `game` no traiga path/appId/título → el diálogo siempre muestra lo guardado en disco; añadido `setNameDraft(game?.title ?? savedGame?.title ?? "")` (antes el nombre quedaba vacío en Debrid).
+- Rama Debrid de `handleSave`: añadido `updateDebridGameTitle(debridProviderGameId, nameDraft)` junto a path/appId.
+
+### Key Files Changed
+- `src/services/debridGameStore.ts` — await del loader en refresh, fail-open `_loadedFromDisk`, restore de overrides, `updateDebridGameTitle()`
+- `src/components/games/GameEditDialog.tsx` — guard `!isDebridMode`, rama Debrid de metadata, fallback del mount al store, persistencia de título en save
+
+### Build
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ✅ (1.82s, Rolldown; solo warnings INEFFECTIVE_DYNAMIC_IMPORT)
+- `cargo check` ⏭️ skipped (no Rust changes — decisión del usuario: no extender schema Rust)

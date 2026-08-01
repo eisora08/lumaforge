@@ -29,7 +29,8 @@ import {
   BookOpen,
   Calendar,
   Cloud,
-  Clock,
+  CalendarClock ,
+  ClockFading,
   Database,
   Download,
   ExternalLink,
@@ -54,7 +55,7 @@ import type { LibraryGame } from "../../types/libraryGame";
 import type { LibraryAppInfoEntry, GameMediaCacheEntry } from "../../services/tauri";
 import type { GameAppInfo } from "../../services/gameCacheService";
 import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
-import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import { setAmbientSource, clearAmbientSource, rememberLibraryDetails } from "../../services/ambientBackgroundStore";
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { showInfo } from "../toast/GameToast";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
@@ -433,6 +434,7 @@ export default function LibraryGameDetails({
   useEffect(() => {
     if (imageUrl) {
       setAmbientSource("library-details", imageUrl);
+      rememberLibraryDetails(imageUrl);
       return;
     }
     const syncPath = game.backgroundPath || game.landscapePath || game.coverPath;
@@ -443,7 +445,10 @@ export default function LibraryGameDetails({
       !syncPath.startsWith("games/")
     ) {
       const url = isLocalPath(syncPath) ? (localPathToUrl(syncPath) ?? undefined) : syncPath;
-      if (url) setAmbientSource("library-details", url);
+      if (url) {
+        setAmbientSource("library-details", url);
+        rememberLibraryDetails(url);
+      }
     }
   }, [imageUrl, game.appId, game.backgroundPath, game.landscapePath, game.coverPath]);
 
@@ -1613,8 +1618,8 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
             {/* Inline stats */}
             <div className="flex min-w-0 flex-1 animate-stats-in flex-wrap items-center gap-x-4 gap-y-1">
               <StatInline icon={<Cloud className="h-5 w-5" />} label="Cloud Status" value={cloudStatus} />
-              <StatInline icon={<Clock className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
-              <StatInline icon={<Trophy className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
+              <StatInline icon={<CalendarClock  className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
+              <StatInline icon={<ClockFading className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
               <StatInline icon={<HardDrive className="h-5 w-5" />} label="Size" value={formatBytes(game.sizeOnDisk)} />
               {isPerfected ? (
                 <div className="inline-flex items-center gap-1.5 text-xs">

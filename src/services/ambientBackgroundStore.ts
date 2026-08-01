@@ -21,6 +21,10 @@ type AmbientDetail = { scope: string; url: string | null };
 
 let _detail: AmbientDetail | null = null;
 let _context: string | null = null;
+// Session-level memory of the last resolved library-details art. Unlike the
+// _detail slot it is NOT cleared on unmount — Library.tsx reads it to keep the
+// ambient background on the last game viewed while the grid is mounted.
+let _lastLibraryDetailsUrl: string | null = null;
 let _enabled: boolean = (() => {
   try {
     return localStorage.getItem(AMBIENT_STORAGE_KEY) === "1";
@@ -99,6 +103,18 @@ export function setPageContextSource(url: string | null) {
 
 export function clearPageContextSource() {
   clearAmbientSource(PAGE_CONTEXT_SCOPE);
+}
+
+// ── Last library-details memory ─────────────────────────────────────────────
+// Persists the art of the last game opened in LibraryGameDetails so the Library
+// grid can keep showing it after navigating back (session-scoped, not cleared
+// on detail unmount).
+export function rememberLibraryDetails(url: string | null) {
+  _lastLibraryDetailsUrl = normalizeUrl(url);
+}
+
+export function getLastLibraryDetailsUrl(): string | null {
+  return _lastLibraryDetailsUrl;
 }
 
 // ── Intensity level ─────────────────────────────────────────────────────────

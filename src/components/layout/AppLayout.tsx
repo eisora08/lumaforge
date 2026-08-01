@@ -46,13 +46,15 @@ export default function AppLayout({
       <div className="relative h-screen w-screen overflow-hidden bg-(--color-bg) text-(--color-text)">
         <div className="lf-backdrop" />
         <AmbientBackground />
-        <LibraryGamesProvider>
-          <GameActivityProvider>
-            <RouteErrorBoundary>
-              {children}
-            </RouteErrorBoundary>
-          </GameActivityProvider>
-        </LibraryGamesProvider>
+        <div className="relative z-10 h-full w-full">
+          <LibraryGamesProvider>
+            <GameActivityProvider>
+              <RouteErrorBoundary>
+                {children}
+              </RouteErrorBoundary>
+            </GameActivityProvider>
+          </LibraryGamesProvider>
+        </div>
       </div>
     );
   }

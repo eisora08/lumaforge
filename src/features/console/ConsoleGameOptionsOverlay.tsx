@@ -422,7 +422,7 @@ export default function ConsoleGameOptionsOverlay({
 
       {/* Panel */}
       <div
-        className="relative mt-[clamp(60px,8vh,120px)] w-[clamp(320px,28vw,420px)] rounded-2xl border border-(--color-border)/30 bg-(--color-surface)/90 shadow-2xl shadow-black/50 backdrop-blur-2xl outline-none"
+        className="lf-console-glass-strong relative mt-[clamp(60px,8vh,120px)] w-[clamp(320px,28vw,420px)] rounded-2xl border border-(--color-border)/30 shadow-2xl shadow-black/50 outline-none"
         onClick={(e) => e.stopPropagation()}
         style={{
           transition: `transform ${FADE_DURATION}ms ease, opacity ${FADE_DURATION}ms ease`,

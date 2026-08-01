@@ -1038,7 +1038,9 @@ export async function runBootTasks(): Promise<void> {
           const { logBootPerfSummary } = await import("./perfCounters");
           setTimeout(() => logBootPerfSummary(), 100);
 
-          // Deferred installed Lua scanner — runs after UI is interactive
+          // Deferred installed Lua scanner — runs after UI is interactive.
+          // Waits for the installed-appIds filter to be populated so non-installed
+          // Lua files are never remote-verified. Skips entirely on timeout.
           if (_cachedSettings?.luaPath) {
             setTimeout(() => {
               const luaDir = _cachedSettings!.luaPath!;
@@ -1046,10 +1048,37 @@ export async function runBootTasks(): Promise<void> {
               const hubcapConfig = hubcapSettings?.enabled && hubcapSettings?.baseUrl && hubcapSettings?.apiKey
                 ? { baseUrl: hubcapSettings.baseUrl, apiKey: hubcapSettings.apiKey }
                 : undefined;
-              import("./installedLuaScanner").then(({ runInstalledLuaScan }) => {
-                runInstalledLuaScan({ luaDir, hubcapConfig }).catch((err: unknown) => {
-                  console.warn("[PACKAGE_SCAN][ERROR]", String(err));
+
+              const importScanner = () =>
+                import("./installedLuaScanner").then(({ runInstalledLuaScan }) => {
+                  runInstalledLuaScan({ luaDir, hubcapConfig }).catch((err: unknown) => {
+                    console.warn("[PACKAGE_SCAN][ERROR]", String(err));
+                  });
                 });
+
+              const waitForFilter = async (): Promise<void> => {
+                const { isInstalledFilterReady } = await import("./installedLuaScanner");
+                if (isInstalledFilterReady()) {
+                  await importScanner();
+                  return;
+                }
+                console.log("[PACKAGE_SCAN][WAIT_FILTER] waiting for installed filter");
+                const maxWaitMs = 10_000;
+                const pollMs = 500;
+                let waited = 0;
+                while (!isInstalledFilterReady() && waited < maxWaitMs) {
+                  await new Promise((resolve) => setTimeout(resolve, pollMs));
+                  waited += pollMs;
+                }
+                if (isInstalledFilterReady()) {
+                  await importScanner();
+                } else {
+                  console.warn(`[PACKAGE_SCAN][TIMEOUT_SKIP] filter not ready after ${waited}ms; skipping boot scan`);
+                }
+              };
+
+              waitForFilter().catch((err: unknown) => {
+                console.warn("[PACKAGE_SCAN][ERROR]", String(err));
               });
             }, 2000);
           }

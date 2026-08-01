@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::process::spawn_game_with_elevation_fallback;
+
 
 // ─── Debug policy ──────────────────────────────────────────────────────────
 
@@ -1044,36 +1046,28 @@ pub fn launch_epic_game(
                         ));
                     }
 
-                    let mut cmd = std::process::Command::new(trimmed);
-
+                    let mut args = Vec::new();
                     if let Some(args_str) = launch_arguments {
                         if !args_str.is_empty() {
                             for arg in args_str.split_whitespace() {
                                 if !arg.is_empty() {
-                                    cmd.arg(arg);
+                                    args.push(arg.to_string());
                                 }
                             }
                         }
                     }
 
-                    cmd.stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .stdin(std::process::Stdio::null());
+                    let args_opt: Option<&[String]> = if args.is_empty() { None } else { Some(&args) };
 
-                    match cmd.spawn() {
-                        Ok(child) => {
-                            let _pid = child.id();
-                            // Detach so the process outlives the Rust command
-                            std::mem::forget(child);
-                            Ok(EpicLaunchResult {
-                                success: true,
-                                method: "direct-executable".to_string(),
-                                error: Some(format!(
-                                    "Protocol failed ({}), used direct executable fallback",
-                                    protocol_err
-                                )),
-                            })
-                        }
+                    match spawn_game_with_elevation_fallback(trimmed, None, args_opt) {
+                        Ok(_pid) => Ok(EpicLaunchResult {
+                            success: true,
+                            method: "direct-executable".to_string(),
+                            error: Some(format!(
+                                "Protocol failed ({}), used direct executable fallback",
+                                protocol_err
+                            )),
+                        }),
                         Err(exe_err) => Err(format!(
                             "Both protocol and direct executable failed. Protocol: {}; Executable: {}",
                             protocol_err, exe_err

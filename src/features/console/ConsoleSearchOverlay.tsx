@@ -462,7 +462,7 @@ export default function ConsoleSearchOverlay({
 
       {/* Sheet */}
       <div
-        className="relative mt-[clamp(80px,10vh,160px)] w-[clamp(480px,50vw,720px)] max-h-[clamp(520px,70vh,680px)] flex flex-col rounded-2xl border border-(--color-border)/30 bg-(--color-surface)/90 shadow-2xl shadow-black/50 backdrop-blur-2xl outline-none"
+        className="lf-console-glass-strong relative mt-[clamp(80px,10vh,160px)] w-[clamp(480px,50vw,720px)] max-h-[clamp(520px,70vh,680px)] flex flex-col rounded-2xl border border-(--color-border)/30 shadow-2xl shadow-black/50 outline-none"
         onClick={(e) => e.stopPropagation()}
         style={{
           transition: `transform ${FADE_DURATION}ms ease, opacity ${FADE_DURATION}ms ease`,

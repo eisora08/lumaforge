@@ -533,7 +533,11 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
   // ─── FIX 5: Hero background resolution — running game first, then non-running ──
   const [bgUrl, setBgUrl] = useState<string | null>(null);
+  const [sharpImgError, setSharpImgError] = useState(false);
   const bgUrlGenerationRef = useRef(0);
+  useEffect(() => {
+    setSharpImgError(false);
+  }, [bgUrl]);
   useEffect(() => {
     let cancelled = false;
     const generation = ++bgUrlGenerationRef.current;
@@ -839,14 +843,15 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   }
 
   return (
-    <section ref={heroSectionRef} className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[340px]">
+    <section ref={heroSectionRef} className="relative min-h-[300px] overflow-hidden rounded-2xl border border-(--surface-active-border) sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px]">
+      {/* Layer 1 — Blurred backdrop (full-bleed color field) */}
       {bgUrl ? (
-        <div data-hero-bg-layer="true" className={`${heroBgClass} absolute inset-0`}>
+        <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">
           <AsyncImage
             key={bgUrl}
             src={bgUrl}
             alt=""
-            className="h-full w-full"
+            className="h-full w-full scale-105 blur-2xl"
             fallback={
               <div className="h-full w-full bg-gradient-to-br from-(--color-accent)/20 via-purple-900/30 to-black" />
             }
@@ -856,13 +861,30 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         <div className="absolute inset-0 bg-gradient-to-br from-(--color-accent)/20 via-purple-900/30 to-black" />
       )}
 
+      {/* Layer 2 — Sharp image centered (height-driven, fades into blurred sides) */}
+      {bgUrl && !sharpImgError && (
+        <div className="absolute inset-0 z-[5] flex items-center justify-center overflow-hidden">
+          <img
+            key={bgUrl}
+            src={bgUrl}
+            alt=""
+            draggable={false}
+            loading="eager"
+            decoding="async"
+            onError={() => setSharpImgError(true)}
+            className={`${heroBgClass} block h-full w-auto max-w-none shrink-0 [mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0%,transparent_4%,black_12%,black_88%,transparent_96%,transparent_100%)]`}
+          />
+        </div>
+      )}
+
+      {/* Layer 3 — Readability gradients */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
 
       {!hasActiveSession && (
-        <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/40 via-transparent to-transparent" />
       )}
 
-      <div className="relative z-10 flex min-h-[300px] items-end px-6 pb-8 pt-16 sm:min-h-[340px] sm:px-8">
+      <div className="relative z-10 flex min-h-[300px] items-end px-6 pb-8 pt-16 sm:min-h-[380px] sm:px-8 lg:min-h-[440px] xl:min-h-[480px]">
         <div className="flex-1">
           <div className="mb-3 flex items-center gap-3">
             {isRunning ? (

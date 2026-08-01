@@ -109,7 +109,7 @@ export default function ConsoleTopHud({
 
       {/* Center: source branding */}
       <div className="hidden select-none md:block">
-        <span className="rounded-full bg-(--color-surface)/60 px-3 py-1 text-[11px] font-bold tracking-[0.15em] text-(--color-muted)/50 backdrop-blur-sm">
+        <span className="lf-console-glass rounded-full px-3 py-1 text-[11px] font-bold tracking-[0.15em] text-(--color-muted)/50">
           LUMAFORGE
         </span>
       </div>
@@ -146,7 +146,7 @@ export default function ConsoleTopHud({
 
         <button
           onClick={onToggleLayout}
-          className="flex h-9 w-9 items-center justify-center rounded-xl bg-(--color-surface)/40 text-(--color-muted) backdrop-blur-sm transition hover:bg-(--color-surface) hover:text-(--color-text)"
+          className="lf-console-glass flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) transition hover:bg-(--color-surface) hover:text-(--color-text)"
           aria-label={layoutMode === "spotlight" ? "Grid view" : "Spotlight view"}
         >
           {layoutMode === "spotlight" ? (
@@ -160,7 +160,7 @@ export default function ConsoleTopHud({
         </button>
         <button
           onClick={() => onNavigate?.("home")}
-          className="flex h-9 items-center gap-1.5 rounded-xl border border-(--color-border) bg-(--color-surface)/40 px-3 text-xs font-medium text-(--color-muted) backdrop-blur-sm transition hover:bg-(--color-surface) hover:text-(--color-text)"
+          className="lf-console-glass flex h-9 items-center gap-1.5 rounded-xl border border-(--color-border) px-3 text-xs font-medium text-(--color-muted) transition hover:bg-(--color-surface) hover:text-(--color-text)"
           aria-label="Exit console mode"
         >
           <Monitor className="h-3.5 w-3.5" />

@@ -984,17 +984,29 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       heroUrl = resolvedBackground ?? resolvedLandscape ?? resolvedCover;
       imageUrl = resolvedCover ?? resolvedLandscape ?? resolvedBackground;
     } else if (game.source === "debrid") {
-      // Debrid games: use Steam CDN / metadata (always have Steam appId) plus repack screenshot
-      const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
-      imageUrl = await resolveUrl(rawBestUrl);
-      heroUrl = imageUrl;
-      iconUrl = await resolveUrl(game.iconPath);
+      // Debrid games: use Steam CDN / metadata (always have Steam appId) plus repack screenshot.
+      // The Debrid mapper does not populate imageUrl/metadata, so derive CDN artwork from the
+      // linked Steam appId when no local/override artwork exists yet.
+      const { buildSteamCdnUrl } = await import("../services/gameCacheService");
+      const appId = game.appId ? String(game.appId) : "";
+      const cdnHero = buildSteamCdnUrl(appId, "hero") ?? undefined;
+      const cdnCapsule = buildSteamCdnUrl(appId, "capsule") ?? undefined;
+      const cdnLogo = buildSteamCdnUrl(appId, "logo") ?? undefined;
+
+      const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || cdnCapsule || cdnHero || undefined;
+      const bestUrl = (await resolveUrl(rawBestUrl)) ?? cdnHero ?? cdnCapsule;
+      // Overlay hero: wide hero first (cinematic), then capsule
+      heroUrl = bestUrl;
+      // Summary cover: capsule first (backward compat), then hero
+      imageUrl = (await resolveUrl(rawBestUrl)) ?? cdnCapsule ?? cdnHero;
+      // HUD chip: logo first, then any artwork
+      iconUrl = (await resolveUrl(game.iconPath)) ?? cdnLogo ?? bestUrl;
       // Try repack screenshot as hero fallback (more cinematic)
-      if (!imageUrl && game.metadata?.screenshots?.[0]) {
+      if (!heroUrl && game.metadata?.screenshots?.[0]) {
         const ssUrl = await resolveUrl(game.metadata.screenshots[0]);
         if (ssUrl) {
           heroUrl = ssUrl;
-          imageUrl = ssUrl;
+          imageUrl = imageUrl ?? ssUrl;
         }
       }
     } else {
@@ -1239,14 +1251,42 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         } else if (game.source === "debrid") {
           // Debrid games: direct executable launch (no protocol)
           const result = await dispatchProviderLaunch(game);
-          if (ls.cancelled || ls.token !== token) return;
+          if (ls.cancelled || ls.token !== token) {
+            if (result.pid) {
+              try { await terminateProcess(result.pid); } catch { /* ignore */ }
+            }
+            return;
+          }
 
           if (result.dispatched) {
             if (ENABLE_VERBOSE_LAUNCH_LOGS) {
-              console.debug("[Launch] debrid dispatched", { gameKey: computedKey, method: result.method });
+              console.debug("[Launch] debrid dispatched", { gameKey: computedKey, method: result.method, pid: result.pid ?? null });
             }
 
-            // Scan for process with simple delays (direct executable, fast launch)
+            // Direct executable reported a PID — high-confidence running, no scan needed
+            if (result.pid) {
+              const processName = game.executablePath ? extractExeName(game.executablePath) : undefined;
+              setSessions((prev) => {
+                const existing = prev[computedKey];
+                if (!existing) return prev;
+                return {
+                  ...prev,
+                  [computedKey]: {
+                    ...existing,
+                    state: "running",
+                    pid: result.pid,
+                    softSession: false,
+                    trackingConfidence: "high",
+                    processName,
+                    updatedAt: Date.now(),
+                  },
+                };
+              });
+              ls.inFlight = false;
+              return;
+            }
+
+            // No PID reported — scan for process with simple delays (direct executable, fast launch)
             const DEBRID_SCAN_DELAYS = [2000, 3000, 5000];
             ls.launchTimeout = setTimeout(async () => {
               ls.launchTimeout = null;

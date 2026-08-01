@@ -1335,11 +1335,13 @@ export type DebridLaunchResult = {
   success: boolean;
   method: string;
   error?: string | null;
+  pid?: number | null;
 };
 
 export async function launchDebridGame(params: {
   executablePath: string;
   launchArguments?: string | null;
+  workingDirectory?: string | null;
 }): Promise<DebridLaunchResult> {
   return await invoke<DebridLaunchResult>("launch_debrid_game", params);
 }
@@ -1382,6 +1384,7 @@ export type DebridGameEntryJson = {
   status: string; // "not-downloaded" | "downloading" | "needs-install" | "waiting-installer" | "ready"
   installDir?: string | null;
   executablePath?: string | null;
+  workingDirectory?: string | null;
   installerPath?: string | null;
   launchArguments?: string[] | null;
   repacker?: string | null;

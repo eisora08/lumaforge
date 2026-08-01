@@ -40,7 +40,7 @@ import { useLibraryGames } from "../../context/LibraryGamesContext";
 import type { ManualGameEntry } from "../../services/manualGameStore";
 import { getManualGame, saveManualGame, updateManualGame } from "../../services/manualGameStore";
 import { readEpicOverrides, writeEpicOverrides } from "../../services/epicOverrideStore";
-import { updateDebridGamePath, updateDebridGameAppId } from "../../services/debridGameStore";
+import { updateDebridGamePath, updateDebridGameAppId, updateDebridGameTitle, getDebridLaunchMetadata, getDebridGame } from "../../services/debridGameStore";
 import GameImageSearchDialog from "./GameImageSearchDialog";
 import GameMediaRoleRow from "./GameMediaRoleRow";
 import { SourceOption } from "./GameMediaRoleRow";
@@ -403,10 +403,23 @@ export default function GameEditDialog({
       return;
     }
 
-    // Debrid edit mode — pre-fill install dir + appId from game data
+    // Debrid edit mode — pre-fill install dir + appId + launch config from game data.
+    // The in-memory game may be a fresh catalog entry (isInstalled=false, no paths)
+    // while the launch metadata still lives in the debrid store — fall back to it
+    // so the dialog always shows what was saved on disk.
     if (isDebridMode && debridProviderGameId) {
-      if (game?.installDir) setInstallDirDraft(game.installDir);
-      setAppIdDraft(game?.appId ?? "");
+      const savedMeta = getDebridLaunchMetadata(debridProviderGameId);
+      const savedGame = getDebridGame(debridProviderGameId);
+      const dir = game?.installDir || savedMeta?.installDir || savedGame?.installDir || "";
+      const exe = game?.executablePath || savedMeta?.executablePath || savedGame?.executablePath || "";
+      const wd = game?.workingDirectory || savedMeta?.workingDirectory || savedGame?.workingDirectory || "";
+      const args = game?.launchArguments || savedMeta?.launchArguments || savedGame?.launchArguments || "";
+      setNameDraft(game?.title ?? savedGame?.title ?? "");
+      if (dir) setInstallDirDraft(dir);
+      if (exe) setExecutablePathDraft(exe);
+      if (wd) setWorkingDirectoryDraft(wd);
+      if (args) setLaunchArgsDraft(args);
+      setAppIdDraft(game?.appId ?? savedGame?.appId ?? "");
       setLoading(false);
       loadRolePreviews();
       return;
@@ -481,7 +494,7 @@ export default function GameEditDialog({
   // ── Download Metadata handler ──
   const handleDownloadMetadata = useCallback(async (source: MetadataSourceId) => {
     setMetadataMenuOpen(false);
-    if (!appId && !isManualMode && !isCreateMode && !isEpicMode) return;
+    if (!appId && !isManualMode && !isCreateMode && !isEpicMode && !isDebridMode) return;
 
     // Manual/create: IGDB or Steam name search
     if (isManualMode || isCreateMode) {
@@ -653,6 +666,75 @@ export default function GameEditDialog({
       return;
     }
 
+    // Debrid games — resolve by the Steam appId from the dialog or game data.
+    // Repack installs share the Steam appId; metadata only fills the dialog
+    // fields (nothing is written to appinfo.json — that stays session-level).
+    if (isDebridMode) {
+      const steamAppId = appIdDraft.trim() || (game?.appId ? String(game.appId) : "");
+      if (!steamAppId) {
+        showError("No Steam App ID — introduce uno en el campo App ID");
+        setMetadataDownloading(false);
+        return;
+      }
+      const appIdNum = Number(steamAppId);
+      if (isNaN(appIdNum)) {
+        showError("Steam App ID inválido");
+        setMetadataDownloading(false);
+        return;
+      }
+      setMetadataDownloading(true);
+      try {
+        if (source === "steam") {
+          const m = await resolveGameMetadata([appIdNum]);
+          const meta = m[appIdNum];
+          if (meta) {
+            fillDraftsFromMetadata(meta, meta.name ?? undefined);
+            setMetadata(meta);
+            showSuccess("Metadata downloaded from Steam");
+          } else {
+            showError("No Steam metadata available for this app");
+          }
+        } else if (source === "igdb") {
+          if (!settings?.igdbClientId || !settings?.igdbClientSecret) {
+            showError("Configure IGDB credentials in Settings first");
+            setMetadataDownloading(false);
+            return;
+          }
+          const igdbData = await fetchIgdbArtworkDeduped({
+            clientId: settings.igdbClientId,
+            clientSecret: settings.igdbClientSecret,
+            appId: steamAppId,
+          });
+          if (igdbData) {
+            showSuccess("Metadata downloaded from IGDB");
+            setHasEdits(true);
+          } else {
+            showError("No IGDB data available for this app");
+          }
+        } else if (source === "rawg") {
+          if (!settings?.rawgApiKey) {
+            showError("Configure RAWG API key in Settings first");
+            setMetadataDownloading(false);
+            return;
+          }
+          const rawgData = await fetchRawgArtworkDeduped({
+            apiKey: settings.rawgApiKey,
+            appId: steamAppId,
+          });
+          if (rawgData) {
+            showSuccess("Metadata downloaded from RAWG");
+            setHasEdits(true);
+          } else {
+            showError("No RAWG data available for this app");
+          }
+        }
+      } catch {
+        showError(`Failed to download metadata from ${source}`);
+      }
+      setMetadataDownloading(false);
+      return;
+    }
+
     // Steam games — existing flow
     if (!appId) { setMetadataDownloading(false); return; }
     setMetadataDownloading(true);
@@ -706,7 +788,7 @@ export default function GameEditDialog({
       showError(`Failed to download metadata from ${source}`);
     }
     setMetadataDownloading(false);
-  }, [appId, settings, isManualMode, isCreateMode, isEpicMode, nameDraft, game?.title]);
+  }, [appId, settings, isManualMode, isCreateMode, isEpicMode, isDebridMode, nameDraft, game?.title]);
 
   // ── Build userData from drafts ──
   function buildUserData(): Record<string, unknown> {
@@ -920,12 +1002,18 @@ export default function GameEditDialog({
         return;
       }
 
-      // ── Debrid game save (install path + appId) ──
+      // ── Debrid game save (install path + appId + launch config) ──
       if (isDebridMode && debridProviderGameId) {
         const dir = installDirDraft.trim().replace(/^["']|["']$/g, "");
-        const ok = updateDebridGamePath(debridProviderGameId, dir);
+        const exe = executablePathDraft.trim() || undefined;
+        const wd = workingDirectoryDraft.trim() || undefined;
+        const args = launchArgsDraft.trim() || undefined;
+        const ok = updateDebridGamePath(debridProviderGameId, dir, exe, wd, args);
         if (appIdDraft) {
           updateDebridGameAppId(debridProviderGameId, appIdDraft);
+        }
+        if (nameDraft.trim()) {
+          updateDebridGameTitle(debridProviderGameId, nameDraft);
         }
         if (ok) {
           showSuccess("Debrid install path saved");
@@ -1013,7 +1101,10 @@ export default function GameEditDialog({
     if (isDebridMode) {
       const hasChanges =
         appIdDraft !== (game?.appId ?? "") ||
-        installDirDraft !== (game?.installDir ?? "");
+        installDirDraft !== (game?.installDir ?? "") ||
+        executablePathDraft !== (game?.executablePath ?? "") ||
+        workingDirectoryDraft !== (game?.workingDirectory ?? "") ||
+        launchArgsDraft !== (game?.launchArguments ?? "");
       setHasEdits(hasChanges);
       return;
     }
@@ -2028,6 +2119,80 @@ export default function GameEditDialog({
                     Open Install Folder
                   </button>
                 )}
+
+                {/* Executable Path */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Executable Path
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={executablePathDraft}
+                      onChange={(e) => { setExecutablePathDraft(e.target.value); setHasEdits(true); }}
+                      placeholder="C:\Path\To\Game.exe"
+                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleBrowseExe}
+                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                  {hasExe && !executablePathDraft.trim().includes("/") && !executablePathDraft.trim().includes("\\") && (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Warning: This looks like a bare filename. Use Browse to select the full path so the game can launch.
+                    </p>
+                  )}
+                  <p className="mt-1 text-[11px] text-(--color-muted)/60">
+                    Required to launch the game. Other fields launch the game directly.
+                  </p>
+                </div>
+
+                {/* Working Directory */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Working Directory
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={workingDirectoryDraft}
+                      onChange={(e) => { setWorkingDirectoryDraft(e.target.value); setHasEdits(true); }}
+                      placeholder="C:\Path\To\Game"
+                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const folder = await pickFolder("Select Working Directory");
+                        if (folder) { setWorkingDirectoryDraft(folder); setHasEdits(true); }
+                      }}
+                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[11px] text-(--color-muted)/60">
+                    Auto-filled to executable parent folder if empty.
+                  </p>
+                </div>
+
+                {/* Launch Arguments */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Launch Arguments
+                  </label>
+                  <input
+                    type="text"
+                    value={launchArgsDraft}
+                    onChange={(e) => { setLaunchArgsDraft(e.target.value); setHasEdits(true); }}
+                    placeholder="-windowed -noborder"
+                    className="w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                  />
+                </div>
 
               </div>
             </div>

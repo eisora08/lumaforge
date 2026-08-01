@@ -873,8 +873,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const surfaceBg = isSolid
     ? "bg-(--color-surface)"
     : isLiquidGlass
-      ? "bg-(--color-surface)/40 backdrop-blur-2xl"
-      : "bg-(--color-surface)/85 backdrop-blur-sm";
+      ? "lf-console-glass"
+      : "lf-console-glass-strong";
 
   /* ══════════════════════════════════════════
      FOCUS VISUALS — per-zone focus styling
@@ -947,7 +947,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
         ) : (
-          <div className="h-full w-full bg-(--color-bg)" />
+          <div className="h-full w-full bg-(--console-bg)" />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
       </div>

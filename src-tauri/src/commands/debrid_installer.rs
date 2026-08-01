@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use zip::ZipArchive;
 
+use crate::commands::process::spawn_game_with_elevation_fallback;
 use crate::models::debrid_install_result::{DebridDownloadResult, DebridVerifyResult, InstallerCheckResult};
 use crate::utils::progress_utils::emit_installer_progress;
 
@@ -1879,6 +1880,9 @@ pub struct DebridLaunchResult {
     /// Non-null when launch failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// PID of the spawned process when launch succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 /// Launch an installed Debrid game by running its executable directly.
@@ -1889,39 +1893,37 @@ pub struct DebridLaunchResult {
 pub fn launch_debrid_game(
     executable_path: String,
     launch_arguments: Option<String>,
+    working_directory: Option<String>,
 ) -> Result<DebridLaunchResult, String> {
     if executable_path.trim().is_empty() {
         return Err("Debrid launch failed: executable path is empty".to_string());
     }
 
     let trimmed = executable_path.trim().trim_matches(|c| c == '"' || c == '\'');
-    let mut cmd = std::process::Command::new(trimmed);
+    if trimmed.is_empty() {
+        return Err("Debrid launch failed: executable path is empty".to_string());
+    }
 
+    let mut args = Vec::new();
     if let Some(args_str) = launch_arguments {
         if !args_str.is_empty() {
             for arg in args_str.split_whitespace() {
                 if !arg.is_empty() {
-                    cmd.arg(arg);
+                    args.push(arg.to_string());
                 }
             }
         }
     }
 
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .stdin(std::process::Stdio::null());
+    let args_opt: Option<&[String]> = if args.is_empty() { None } else { Some(&args) };
 
-    match cmd.spawn() {
-        Ok(child) => {
-            let _pid = child.id();
-            // Detach so the process outlives the Rust command
-            std::mem::forget(child);
-            Ok(DebridLaunchResult {
-                success: true,
-                method: "direct-executable".to_string(),
-                error: None,
-            })
-        }
+    match spawn_game_with_elevation_fallback(trimmed, working_directory.as_deref(), args_opt) {
+        Ok(pid) => Ok(DebridLaunchResult {
+            success: true,
+            method: "direct-executable".to_string(),
+            error: None,
+            pid: Some(pid),
+        }),
         Err(e) => Err(format!("Failed to launch Debrid game executable: {}", e)),
     }
 }

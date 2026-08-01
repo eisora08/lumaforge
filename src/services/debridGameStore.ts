@@ -29,7 +29,7 @@ let _debridFingerprint = "";
 let _scanWarning: string | null = null;
 let _scanState: "idle" | "scanning" | "done" | "error" = "idle";
 let _debridGameStatuses = new Map<string, DebridGameStatus>();
-let _launchMetadataByProviderGameId = new Map<string, { installDir: string; executablePath?: string; launchArguments?: string[] }>();
+let _launchMetadataByProviderGameId = new Map<string, { installDir: string; executablePath?: string; workingDirectory?: string; launchArguments?: string }>();
 let _userLibraryAppIds: Set<string> = new Set();
 let _loadedFromDisk = false;
 const _listeners = new Set<() => void>();
@@ -61,6 +61,11 @@ function buildRawEntryKey(entry: RepackQueryResult): string {
   return entry.id || entry.title.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
 }
 
+/** Split a launch-args string into tokens (whitespace-delimited) for disk persistence. */
+function splitLaunchArgs(args: string): string[] {
+  return args.split(/\s+/).filter((a) => a.length > 0);
+}
+
 // ── Disk persistence ──
 
 /**
@@ -69,7 +74,6 @@ function buildRawEntryKey(entry: RepackQueryResult): string {
  */
 export async function loadDebridGamesFromDisk(): Promise<DebridGameEntryJson[]> {
   if (_loadedFromDisk) return await toDiskEntries();
-  _loadedFromDisk = true;
 
   try {
     const { readDebridGames } = await import("./tauri");
@@ -82,10 +86,16 @@ export async function loadDebridGamesFromDisk(): Promise<DebridGameEntryJson[]> 
         _launchMetadataByProviderGameId.set(entry.id, {
           installDir: entry.installDir,
           executablePath: entry.executablePath ?? undefined,
-          launchArguments: entry.launchArguments ?? undefined,
+          workingDirectory: entry.workingDirectory ?? undefined,
+          launchArguments: entry.launchArguments?.join(" ") || undefined,
         });
       }
       _userLibraryAppIds.add(entry.id);
+      // Restore user-overridden appIds so the override loop survives a restart.
+      // The disk `appId` field is authoritative (written from the override map).
+      if (entry.appId) {
+        _debridAppIdOverrides.set(entry.id, String(entry.appId));
+      }
       // Restore status — preserve needs-setup, default to "ready" for installed entries
       const preservedStatus = entry.status === "needs-setup" ? "needs-setup" : null;
       _debridGameStatuses.set(
@@ -93,6 +103,10 @@ export async function loadDebridGamesFromDisk(): Promise<DebridGameEntryJson[]> 
         preservedStatus ?? (entry.installDir ? "ready" : (entry.installerPath ? "ready" : (entry.status === "downloading" ? "downloading" : "not-downloaded")))
       );
     }
+
+    // Mark loaded only after a successful read — a transient failure must not
+    // freeze the in-memory state as empty for the rest of the session.
+    _loadedFromDisk = true;
 
     if (DEBUG_DEBRID_LIBRARY) {
       console.log(
@@ -129,8 +143,9 @@ function toDiskEntries(): DebridGameEntryJson[] {
       status,
       installDir: meta?.installDir ?? null,
       executablePath: meta?.executablePath ?? null,
+      workingDirectory: meta?.workingDirectory ?? null,
       installerPath: null,
-      launchArguments: meta?.launchArguments ?? null,
+      launchArguments: meta?.launchArguments ? splitLaunchArgs(meta.launchArguments) : null,
       repacker: raw?.repacker ?? game?.repacker ?? null,
       fileSize: raw?.fileSize ?? null,
       installSize: raw?.installSize ?? null,
@@ -153,8 +168,9 @@ function toDiskEntries(): DebridGameEntryJson[] {
       status,
       installDir: meta.installDir,
       executablePath: meta.executablePath ?? null,
+      workingDirectory: meta.workingDirectory ?? null,
       installerPath: null,
-      launchArguments: meta.launchArguments ?? null,
+      launchArguments: meta.launchArguments ? splitLaunchArgs(meta.launchArguments) : null,
       repacker: raw?.repacker ?? null,
       fileSize: raw?.fileSize ?? null,
       installSize: raw?.installSize ?? null,
@@ -218,6 +234,11 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
   _scanState = "scanning";
 
   try {
+    // Load persisted install state FIRST so the restore loop below can
+    // re-attach installDir/executablePath. Idempotent via _loadedFromDisk,
+    // so both boot orders (Stage 3.35 loader first vs refresh first) converge.
+    await loadDebridGamesFromDisk();
+
     const { getAllRepackEntries, ensureRepackCatalogImported } = await import("./repackCatalogService");
 
     await ensureRepackCatalogImported();
@@ -242,6 +263,8 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
         game.isPlayable = !!installed.executablePath;
         game.installDir = installed.installDir;
         game.executablePath = installed.executablePath;
+        game.workingDirectory = installed.workingDirectory;
+        game.launchArguments = installed.launchArguments;
       }
       // Restore download/install status
       const status = _debridGameStatuses.get(game.providerGameId!);
@@ -276,6 +299,8 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
       if (meta) {
         orphan.installDir = meta.installDir;
         orphan.executablePath = meta.executablePath;
+        orphan.workingDirectory = meta.workingDirectory;
+        orphan.launchArguments = meta.launchArguments;
         orphan.isInstalled = true;
         orphan.isPlayable = !!meta.executablePath;
       }
@@ -626,7 +651,8 @@ export function updateDebridGame(
   providerGameId: string,
   installDir: string,
   executablePath?: string,
-  launchArguments?: string[],
+  launchArguments?: string,
+  workingDirectory?: string,
 ): boolean {
   if (!DEBRID_INSTALL_ENABLED || !DEBRID_LIBRARY_ENABLED) return false;
 
@@ -639,11 +665,13 @@ export function updateDebridGame(
     isPlayable: !!executablePath,
     installDir,
     executablePath,
+    workingDirectory,
+    launchArguments,
     debridStatus: "ready",
   };
 
   // Store launch metadata for the launch adapter
-  _launchMetadataByProviderGameId.set(providerGameId, { installDir, executablePath, launchArguments });
+  _launchMetadataByProviderGameId.set(providerGameId, { installDir, executablePath, workingDirectory, launchArguments });
 
   // Auto-add to library if not already
   _userLibraryAppIds.add(providerGameId);
@@ -678,7 +706,7 @@ export function getDebridFingerprint(): string {
  */
 export function getDebridLaunchMetadata(
   providerGameId: string,
-): { installDir: string; executablePath?: string; launchArguments?: string[] } | undefined {
+): { installDir: string; executablePath?: string; workingDirectory?: string; launchArguments?: string } | undefined {
   return _launchMetadataByProviderGameId.get(providerGameId);
 }
 
@@ -741,14 +769,21 @@ export function updateDebridGamePath(
   providerGameId: string,
   installDir: string,
   executablePath?: string,
+  workingDirectory?: string,
+  launchArguments?: string,
 ): boolean {
   if (!DEBRID_LIBRARY_ENABLED) return false;
 
-  const meta = _launchMetadataByProviderGameId.get(providerGameId);
-  if (!meta) return false;
-
-  meta.installDir = installDir;
-  if (executablePath !== undefined) meta.executablePath = executablePath;
+  let meta = _launchMetadataByProviderGameId.get(providerGameId);
+  if (!meta) {
+    meta = { installDir, executablePath, workingDirectory, launchArguments };
+    _launchMetadataByProviderGameId.set(providerGameId, meta);
+  } else {
+    meta.installDir = installDir;
+    if (executablePath !== undefined) meta.executablePath = executablePath;
+    if (workingDirectory !== undefined) meta.workingDirectory = workingDirectory;
+    if (launchArguments !== undefined) meta.launchArguments = launchArguments;
+  }
 
   // Update the LibraryGame in memory too
   const idx = _debridGames.findIndex((g) => g.providerGameId === providerGameId);
@@ -758,6 +793,8 @@ export function updateDebridGamePath(
       isPlayable: !!executablePath || !!_debridGames[idx].executablePath,
       installDir,
       executablePath: executablePath ?? _debridGames[idx].executablePath,
+      workingDirectory: workingDirectory ?? _debridGames[idx].workingDirectory,
+      launchArguments: launchArguments ?? _debridGames[idx].launchArguments,
       debridStatus: executablePath || _debridGames[idx].executablePath ? "ready" : (_debridGames[idx].debridStatus ?? "waiting-installer"),
     };
   }
@@ -812,4 +849,30 @@ export function updateDebridGameAppId(providerGameId: string, appId: string): vo
 
   persistToDisk();
   notifyListeners();
+}
+
+/**
+ * Persist a user-edited display title for a Debrid game.
+ * Only the title is persisted (per decision: name + dialog); description,
+ * genres and artwork stay session-level. Survives catalog refresh + restart.
+ */
+export function updateDebridGameTitle(providerGameId: string, title: string): boolean {
+  if (!DEBRID_LIBRARY_ENABLED) return false;
+
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+
+  const idx = _debridGames.findIndex((g) => g.providerGameId === providerGameId);
+  if (idx === -1) return false;
+
+  _debridGames[idx] = { ..._debridGames[idx], title: trimmed };
+  _debridFingerprint = computeDebridFingerprint(_debridGames);
+
+  if (DEBUG_DEBRID_LIBRARY) {
+    console.log(`[DEBRID_STORE] title updated providerGameId=${providerGameId} title="${trimmed}"`);
+  }
+
+  persistToDisk();
+  notifyListeners();
+  return true;
 }

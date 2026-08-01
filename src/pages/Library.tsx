@@ -43,6 +43,7 @@ import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import { enqueueMediaDownload, isAppIdInFlight } from "../services/mediaDownloadQueue";
 import { isSidebarInstalledGame } from "../services/gameCacheService";
 import { consumePendingLibraryFocus } from "../services/libraryNavigationService";
+import { setAmbientSource, clearAmbientSource, getLastLibraryDetailsUrl } from "../services/ambientBackgroundStore";
 
 import DebridSourceSelectorModal from "../components/debrid/DebridSourceSelectorModal";
 import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
@@ -167,6 +168,16 @@ export default function LibraryPage({ onNavigate }: Props) {
       setCurrentPage(1);
       console.log(`[LIBRARY_FOCUS][MOUNT] appid=${pending.appId} title="${pending.title || ""}"`);
     }
+  }, []);
+
+  // Ambient background: keep showing the last library game's details art while
+  // the grid is mounted. LibraryGameDetails remembers it before unmounting; the
+  // detail cleanup runs before this effect, so the grid never falls back to the
+  // static page-context right after returning from a game detail.
+  useEffect(() => {
+    const url = getLastLibraryDetailsUrl();
+    if (url) setAmbientSource("library-page", url);
+    return () => clearAmbientSource("library-page");
   }, []);
 
   // displayGames comes directly from context — no separate luaGames list.
@@ -816,8 +827,7 @@ export default function LibraryPage({ onNavigate }: Props) {
               </div>
             </PageContainer>
 
-            {visibleGames.length > 0 && (
-              <div className="shrink-0 bg-(--color-bg)/60">
+            <div className="sticky bottom-0 z-10 shrink-0 border-t border-(--surface-active-border)/40 bg-(--color-bg)/70 backdrop-blur-lg">
                 <div className={`mx-auto flex w-full items-center justify-between px-6 py-2.5 lg:px-8 xl:px-10 ${settings.libraryUseFullWidth ? "" : "max-w-[1900px]"}`}>
                   <div className="flex items-center gap-2 text-sm text-(--color-muted)">
                     {/* Layout toggle */}
@@ -927,7 +937,6 @@ export default function LibraryPage({ onNavigate }: Props) {
                   </div>
                 </div>
               </div>
-            )}
           </>
         )}
       </div>
