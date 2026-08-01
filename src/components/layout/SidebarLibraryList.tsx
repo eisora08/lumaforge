@@ -109,8 +109,11 @@ function pickSidebarFallbackPath(resolved: ResolvedSidebarMedia | null): string 
 }
 
 function getSidebarTitle(game: LibraryGame, appInfoEntry?: LibraryAppInfoEntry | null): string {
-  if (appInfoEntry?.name) return appInfoEntry.name;
+  // Prefer the live context title (enriched/enriched canonical names) so the
+  // sidebar matches the grid. The legacy appinfo index can hold stale names
+  // (e.g. a verbose Debrid bundle title) and is only a fallback here.
   if (game.title && !game.title.startsWith("Steam App ")) return game.title;
+  if (appInfoEntry?.name) return appInfoEntry.name;
   if (game.appId) {
     logSidebarMedia(game.appId, `placeholderReason=no-name-fallback title="Steam App ${game.appId}"`);
     return `Steam App ${game.appId}`;

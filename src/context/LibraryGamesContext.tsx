@@ -5,7 +5,7 @@ import { resolveLibraryGames } from "../services/libraryGameResolver";
 import { loadCachedGames, isCacheExpired, saveCachedGames } from "../services/gameDetectionCache";
 import { loadLibraryAppInfo, updateLibraryAppInfo } from "../services/libraryLocalCacheService";
 import { triggerBackgroundScan } from "../services/fullSteamGameIndex";
-import type { LibraryAppInfoMap } from "../services/tauri";
+import type { LibraryAppInfoEntry, LibraryAppInfoMap } from "../services/tauri";
 import {
   loadSteamStats,
   mergeSteamStatsIntoGames,
@@ -171,6 +171,47 @@ function getDebridLibraryGames(): LibraryGame[] {
   } catch {
     return [];
   }
+}
+
+/** Self-heal the legacy appinfo index for Debrid games: a Debrid repack may
+ *  carry a verbose catalog title (e.g. "Rail Route: Supporter Bundle v3.0.13
+ *  + 4 DLCs/Bonuses") while the live context title is the clean canonical name
+ *  ("Rail Route"). The sidebar title prefers the live `game.title` now, but
+ *  this keeps `library/appinfo.json` in sync so the stale name is also healed
+ *  on disk for any other consumer (and across restarts).
+ *  Returns the map of entries that actually changed (to refresh React state). */
+async function syncDebridTitlesToLegacyIndex(
+  debridGames: LibraryGame[],
+  currentMap: LibraryAppInfoMap,
+): Promise<Record<string, LibraryAppInfoEntry>> {
+  const changed: Record<string, LibraryAppInfoEntry> = {};
+  for (const g of debridGames) {
+    const appId = g.appId;
+    const title = g.title;
+    if (!appId || !title || title.startsWith("Steam App ")) continue;
+    const existing = currentMap[appId];
+    if (existing?.name === title) continue;
+    const entry: LibraryAppInfoEntry = {
+      app_id: appId,
+      name: title,
+      header_image: existing?.header_image ?? null,
+      cover_path: existing?.cover_path ?? null,
+      grid_path: existing?.grid_path ?? null,
+      hero_path: existing?.hero_path ?? null,
+      logo_path: existing?.logo_path ?? null,
+      icon_path: existing?.icon_path ?? null,
+      updated_at: Date.now(),
+    };
+    try {
+      await updateLibraryAppInfo(appId, entry);
+    } catch (err) {
+      console.warn(`[LIBRARY_CONTEXT][DEBRID_TITLE_SYNC_FAIL] appid=${appId}`, err);
+      continue;
+    }
+    changed[appId] = entry;
+    console.log(`[LIBRARY_CONTEXT][DEBRID_TITLE_SYNC] appid=${appId} name="${title}"`);
+  }
+  return changed;
 }
 
 function loadStoredSelectedId(): string | null {
@@ -900,9 +941,21 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (!DEBRID_LIBRARY_ENABLED || !isIntegrationEnabled("debrid")) return;
 
+    // Self-heal the legacy appinfo index so the sidebar name matches the live
+    // (clean) Debrid title, then refresh React state for a re-render.
+    const syncDebridTitlesNow = () => {
+      syncDebridTitlesToLegacyIndex(getDebridLibraryGames(), appInfoMapRef.current).then((changed) => {
+        const keys = Object.keys(changed);
+        if (keys.length === 0) return;
+        setAppInfoMap((prev) => ({ ...prev, ...changed }));
+      });
+    };
+
     // Trigger initial Debrid refresh (fire-and-forget) only when scanOnStartup is enabled
     if (isIntegrationScanOnStartup("debrid")) {
-      refreshDebridGames().catch((err) => console.warn("[DEBRID] initial refresh:", err));
+      refreshDebridGames()
+        .then(syncDebridTitlesNow)
+        .catch((err) => console.warn("[DEBRID] initial refresh:", err));
     }
 
     return subscribeDebridGames(() => {
@@ -917,6 +970,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         console.log(`[DEBRID_STORE][LIBRARY_SUB] prevDebrid=${prevDebridCount} freshDebrid=${freshDebridCount} prevTotal=${current.length} nonDebrid=${nonDebrid.length}`);
       }
       applyGamesSafely(nonDebrid, "debrid-update");
+      syncDebridTitlesNow();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

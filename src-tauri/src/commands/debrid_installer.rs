@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use sha2::{Digest, Sha256};
 use winreg::enums::*;
 use winreg::RegKey;
 
@@ -26,7 +28,7 @@ use crate::utils::progress_utils::emit_installer_progress;
 enum DetectedFileType {
     /// Windows PE executable (MZ header)
     Executable,
-    /// RAR archive (Rar!\x1a\x07\x00 header)
+    /// RAR archive (RAR4: Rar!\x1a\x07\x00, RAR5: Rar!\x1a\x07\x01\x00 header)
     Rar,
     /// ZIP archive (PK\x03\x04 header)
     Zip,
@@ -50,9 +52,10 @@ fn detect_file_type(path: &Path) -> DetectedFileType {
         return DetectedFileType::Executable;
     }
 
-    // RAR archive
+    // RAR archive (RAR4: `Rar!\x1a\x07\x00`, RAR5: `Rar!\x1a\x07\x01\x00`)
     if buf[0] == 0x52 && buf[1] == 0x61 && buf[2] == 0x72 && buf[3] == 0x21
-        && buf[4] == 0x1A && buf[5] == 0x07 && buf[6] == 0x00
+        && buf[4] == 0x1A && buf[5] == 0x07
+        && (buf[6] == 0x00 || buf[6] == 0x01)
     {
         return DetectedFileType::Rar;
     }
@@ -84,45 +87,166 @@ fn ensure_exe_extension(path: &Path) -> Result<PathBuf, String> {
     Ok(new_path)
 }
 
-/// Attempt to resolve a gofile.io URL to a downloadable link.
-///
-/// Gofile requires a guest token for downloads. This function:
-///   1. Creates a guest account via POST /accounts
-///   2. For page URLs (`/d/{contentId}`): resolves via contents API
-///   3. For direct download URLs (`/download/...`): appends `?wt={guestToken}`
-async fn resolve_gofile_url(gofile_url: &str) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Gofile HTTP client error: {}", e))?;
+/// User-Agent matched to the `X-Website-Token` hash inputs (Chrome 124 + en-US).
+const GOFILE_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-    // Step 1: Create guest account
+/// Known website-token salts. `9844d94d963d30` is the current salt (byte-verified
+/// against the live `wt.obf.js`); the second is a gallery-dl fallback in case it rotates.
+const GOFILE_SALTS: &[&str] = &["9844d94d963d30", "5d4f7g8sd45fsd"];
+
+/// Website-token time window (4h) — `floor(unix_time / window)`.
+const GOFILE_WINDOW_SECS: u64 = 14_400;
+
+/// Guest session token cache (4h TTL). Refresh on 401 / `error-token`.
+fn gofile_token_cache() -> &'static Mutex<Option<(String, Instant)>> {
+    static CACHE: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Compute the gofile website token: `sha256("{ua}::en-US::{token}::{window}::{salt}")`.
+fn gofile_website_token(token: &str, salt: &str, ua: &str) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    gofile_website_token_for_window(token, salt, ua, now / GOFILE_WINDOW_SECS)
+}
+
+/// Pure core of `gofile_website_token` with the 4h window injected, so the exact
+/// formula can be locked down by a deterministic regression test.
+fn gofile_website_token_for_window(token: &str, salt: &str, ua: &str, window: u64) -> String {
+    let input = format!("{}::en-US::{}::{}::{}", ua, token, window, salt);
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let digest = hasher.finalize();
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Create a free guest account and return its token. No email/password required.
+async fn gofile_create_guest_token(client: &reqwest::Client) -> Result<String, String> {
     let resp = client
         .post("https://api.gofile.io/accounts")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::ACCEPT, "application/json")
+        .body(r#"{"email":null,"pass":null}"#)
         .send()
         .await
-        .map_err(|e| format!("Gofile account creation failed: {}", e))?;
+        .map_err(|e| format!("Gofile guest account request failed: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Gofile account creation HTTP {}", resp.status()));
+        return Err(format!(
+            "Gofile guest account HTTP {}",
+            resp.status().as_u16()
+        ));
     }
 
     let body: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("Gofile account parse error: {}", e))?;
+        .map_err(|e| format!("Gofile guest account parse error: {}", e))?;
 
     let token = body["data"]["token"]
         .as_str()
-        .ok_or_else(|| "No guest token in gofile response".to_string())?
+        .ok_or_else(|| "Gofile guest account response has no token".to_string())?
         .to_string();
 
-    // Step 2: Determine URL type
-    let lower = gofile_url.to_lowercase();
+    println!("[DEBRID][GOFILE] Guest token acquired (tier={})", body["data"]["tier"].as_str().unwrap_or("?"));
+    Ok(token)
+}
 
-    if lower.contains("/d/") {
-        // Page URL: extract contentId and use contents API
+/// Return a usable gofile bearer token: `GOFILE_TOKEN` env override if set, else a
+/// cached guest token (refreshed when the cache is empty or expired).
+async fn gofile_bearer_token(client: &reqwest::Client) -> Result<String, String> {
+    if let Ok(env_tok) = std::env::var("GOFILE_TOKEN") {
+        let t = env_tok.trim();
+        if !t.is_empty() {
+            return Ok(t.to_string());
+        }
+    }
+
+    {
+        let cache = gofile_token_cache().lock().unwrap();
+        if let Some((token, created)) = cache.as_ref() {
+            if created.elapsed() < std::time::Duration::from_secs(4 * 60 * 60) {
+                return Ok(token.clone());
+            }
+        }
+    }
+
+    let token = gofile_create_guest_token(client).await?;
+    *gofile_token_cache().lock().unwrap() = Some((token.clone(), Instant::now()));
+    Ok(token)
+}
+
+/// Result of gofile resolution: the direct download URL plus the bearer token the
+/// download step must send (gofile CDN links return 302 → HTML without it).
+#[derive(Debug, Clone)]
+struct GofileResolved {
+    url: String,
+    bearer: Option<String>,
+}
+
+/// Fetch `https://api.gofile.io/contents/{content_id}` with the website-token
+/// headers for a given salt. Returns the parsed JSON body.
+async fn gofile_get_contents(
+    client: &reqwest::Client,
+    token: &str,
+    salt: &str,
+    content_id: &str,
+) -> Result<serde_json::Value, String> {
+    let wt = gofile_website_token(token, salt, GOFILE_UA);
+    let contents_url = format!("https://api.gofile.io/contents/{}", content_id);
+
+    let resp = client
+        .get(&contents_url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token))
+        .header("X-Website-Token", wt)
+        .header("X-BL", "en-US")
+        .send()
+        .await
+        .map_err(|e| format!("Gofile contents fetch failed: {}", e))?;
+
+    let status = resp.status().as_u16();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Gofile contents parse error: {}", e))?;
+
+    if status != 200 {
+        let hint = match status {
+            401 => "unauthorized (bad token or rotated website-token salt)".to_string(),
+            403 => "forbidden (token lacks permission)".to_string(),
+            404 => "content not found or expired".to_string(),
+            429 => "rate limited".to_string(),
+            _ => body["message"].as_str().unwrap_or("unknown error").to_string(),
+        };
+        return Err(format!(
+            "Gofile contents HTTP {} for content '{}': {}",
+            status, content_id, hint
+        ));
+    }
+
+    Ok(body)
+}
+
+/// Attempt to resolve a gofile URL (`gofile.io` / `gofile.my`) to a direct link.
+///
+/// Uses the official `.io` API (`https://api.gofile.io/contents/{id}`) with a guest
+/// account token and the obfuscated website-token header. The bearer token is also
+/// returned because gofile CDN links require it on download (302 → HTML otherwise).
+/// Handles both page URLs (`/d/{contentId}`) and direct download URLs (returned
+/// unchanged, but still carrying the bearer token).
+async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(GOFILE_UA)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Gofile HTTP client error: {}", e))?;
+
+    let token = gofile_bearer_token(&client).await?;
+
+    if gofile_url.to_lowercase().contains("/d/") {
+        // Page URL: extract contentId and resolve via the `.io` contents API.
         let content_id = gofile_url
             .trim_end_matches('/')
             .split('/')
@@ -130,48 +254,68 @@ async fn resolve_gofile_url(gofile_url: &str) -> Result<String, String> {
             .ok_or_else(|| format!("Bad gofile URL: {}", gofile_url))?
             .to_string();
 
-        let contents_url = format!(
-            "https://api.gofile.io/contents/{}?wt={}&cache=true",
-            content_id, token
-        );
+        let mut body = None;
+        let mut last_err: Option<String> = None;
 
-        let c_resp = client
-            .get(&contents_url)
-            .send()
-            .await
-            .map_err(|e| format!("Gofile contents fetch failed: {}", e))?;
-
-        if !c_resp.status().is_success() {
-            return Err(format!("Gofile contents HTTP {}", c_resp.status()));
+        // Try each known salt (handles future salt rotation); on 401 refresh the
+        // guest token once and retry before giving up.
+        for (idx, salt) in GOFILE_SALTS.iter().enumerate() {
+            match gofile_get_contents(&client, &token, salt, &content_id).await {
+                Ok(b) => {
+                    body = Some(b);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if idx == 0 {
+                        // 401 → likely expired cached token. Refresh once and retry.
+                        let refreshed = gofile_create_guest_token(&client).await.ok();
+                        if let Some(rt) = refreshed {
+                            *gofile_token_cache().lock().unwrap() = Some((rt.clone(), Instant::now()));
+                            if let Ok(b) =
+                                gofile_get_contents(&client, &rt, salt, &content_id).await
+                            {
+                                body = Some(b);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        let c_body: serde_json::Value = c_resp
-            .json()
-            .await
-            .map_err(|e| format!("Gofile contents parse error: {}", e))?;
+        let c_body = body.ok_or_else(|| {
+            last_err.unwrap_or_else(|| "Gofile contents resolution failed".to_string())
+        })?;
 
-        let children = &c_body["data"]["children"];
-        let first = children
+        // `.io` returns `data.children` as an OBJECT map; legacy clients used an
+        // array (`data.childs`). Support both, taking the first child's link.
+        let link = c_body["data"]["children"]
             .as_object()
-            .and_then(|obj| obj.values().next())
-            .ok_or_else(|| "No children in gofile contents".to_string())?;
-
-        let link = first["link"]
-            .as_str()
-            .ok_or_else(|| "No link in gofile child".to_string())?
+            .and_then(|map| map.values().next())
+            .and_then(|c| c["link"].as_str())
+            .or_else(|| {
+                c_body["data"]["childs"]
+                    .as_array()
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c["link"].as_str())
+            })
+            .ok_or_else(|| "No children in gofile contents".to_string())?
             .to_string();
 
-        println!("[DEBRID][GOFILE] Resolved page URL to direct link via API");
-        Ok(link)
+        println!("[DEBRID][GOFILE] Resolved page URL to direct link via .io API");
+        Ok(GofileResolved {
+            url: link,
+            bearer: Some(token),
+        })
     } else {
-        // Direct download URL or other format: append guest token
-        let authed_url = if gofile_url.contains('?') {
-            format!("{}&wt={}", gofile_url, token)
-        } else {
-            format!("{}?wt={}", gofile_url, token)
-        };
-        println!("[DEBRID][GOFILE] Appended guest token to direct URL");
-        Ok(authed_url)
+        // Direct download URL or other format: return unchanged, but still carry the
+        // bearer token (the CDN download requires it).
+        println!("[DEBRID][GOFILE] Direct URL returned unchanged (with bearer)");
+        Ok(GofileResolved {
+            url: gofile_url.to_string(),
+            bearer: Some(token),
+        })
     }
 }
 
@@ -184,7 +328,7 @@ fn cancelled_jobs() -> &'static Mutex<HashSet<String>> {
     CANCELLED.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn is_job_cancelled(job_id: &str) -> bool {
+pub(crate) fn is_job_cancelled(job_id: &str) -> bool {
     cancelled_jobs().lock().unwrap().contains(job_id)
 }
 
@@ -194,6 +338,37 @@ pub fn cancel_debrid_download(job_id: String) -> Result<(), String> {
     cancelled_jobs().lock().unwrap().insert(job_id.clone());
     println!("[DEBRID][CANCEL] Download cancelled: {}", job_id);
     Ok(())
+}
+
+// ── Pause tracker ──
+
+/// Module-level set of paused job IDs. Any in-flight `download_file_to_dest` or
+/// torrent poll loop for a paused job_id will checkpoint its progress, pause the
+/// engine, and return a `paused` result instead of an error. The partial data is
+/// preserved so a later resume reuses it.
+fn paused_jobs() -> &'static Mutex<HashSet<String>> {
+    static PAUSED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    PAUSED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub(crate) fn is_job_paused(job_id: &str) -> bool {
+    paused_jobs().lock().unwrap().contains(job_id)
+}
+
+/// Mark a download job as paused so the in-flight download stops cleanly.
+#[tauri::command]
+pub fn pause_debrid_download(job_id: String) -> Result<(), String> {
+    paused_jobs().lock().unwrap().insert(job_id.clone());
+    println!("[DEBRID][PAUSE] Download paused: {}", job_id);
+    Ok(())
+}
+
+/// Clear both cancel + pause flags for a job id. Called at the start of a fresh
+/// `download_debrid_package` / `start_torrent_download` so a re-invocation of the
+/// same job id (resume/retry after cancel) is never aborted by a stale flag.
+pub(crate) fn clear_job_flags(job_id: &str) {
+    cancelled_jobs().lock().unwrap().remove(job_id);
+    paused_jobs().lock().unwrap().remove(job_id);
 }
 
 // ── Download command: download + extract (ZIP/RAR) or just save (EXE/SFX) ──
@@ -220,17 +395,26 @@ pub async fn download_debrid_package(
         return Err("Destination directory is empty.".to_string());
     }
 
+    // Fresh attempt — clear any stale cancel/pause flags for this job id so a
+    // resume after a prior cancel/pause is never aborted immediately.
+    clear_job_flags(&job_id);
+
     let dest_path = PathBuf::from(&dest_dir);
 
-    // ── Resolve gofile.io URL to a direct download link ──
-    let effective_uri = if download_uri.to_lowercase().contains("gofile.io") {
+    // ── Resolve gofile URL (gofile.io / gofile.my) to a direct download link ──
+    let is_gofile = {
+        let lower = download_uri.to_lowercase();
+        lower.contains("gofile.io") || lower.contains("gofile.my")
+    };
+    let (effective_uri, gofile_bearer) = if is_gofile {
         println!(
             "[DEBRID][GOFILE] Resolving gofile URL: {}",
             &download_uri[..download_uri.len().min(80)]
         );
-        resolve_gofile_url(&download_uri).await?
+        let resolved = resolve_gofile_url(&download_uri).await?;
+        (resolved.url, resolved.bearer)
     } else {
-        download_uri.clone()
+        (download_uri.clone(), None)
     };
 
     // ── Step 0: Short-circuit if already extracted (Bug 3 fix) ──
@@ -269,7 +453,39 @@ pub async fn download_debrid_package(
         &format!("Downloading: {}", effective_uri),
     );
 
-    let downloaded = download_file_to_dest(&effective_uri, &dest_path, &app_handle, &job_id).await?;
+    let downloaded = match download_file_to_dest(
+        &effective_uri,
+        &dest_path,
+        &app_handle,
+        &job_id,
+        gofile_bearer.as_deref(),
+    )
+    .await?
+    {
+        DownloadFileOutcome::File(f) => f,
+        DownloadFileOutcome::Paused => {
+            // Paused by user — return a paused result so the TS queue marks the
+            // job as paused (resumable) instead of failed.
+            emit_installer_progress(
+                &app_handle,
+                &job_id,
+                "paused",
+                0,
+                0,
+                0,
+                "Download paused",
+            );
+            return Ok(DebridDownloadResult {
+                success: false,
+                status: "paused".to_string(),
+                install_dir: dest_dir.clone(),
+                executable_path: None,
+                installer_path: None,
+                installer_pid: None,
+                message: "Download paused.".to_string(),
+            });
+        }
+    };
 
     // ── Step 2: Detect actual file type via magic bytes ──
     let detected = detect_file_type(&downloaded.path);
@@ -736,7 +952,7 @@ fn spawn_installer_and_wait(
 ///
 /// - On spawn success: returns `status: "installing"` with `installer_pid`
 /// - On spawn failure: returns `status: "needs-setup"` with `installer_path`
-fn auto_run_installer(
+pub(crate) fn auto_run_installer(
     installer_path: &Path,
     dest_dir: &str,
 ) -> DebridDownloadResult {
@@ -1036,6 +1252,140 @@ struct DownloadedFile {
     total_bytes: u64,
 }
 
+/// Result of a download attempt. A `Paused` outcome preserves the partial file
+/// + checkpoint on disk so a later resume reuses the same `.part`.
+enum DownloadFileOutcome {
+    File(DownloadedFile),
+    Paused,
+}
+
+/// Checkpoint describing an in-progress (possibly resumable) download.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct DownloadCheckpoint {
+    uri: String,
+    total_bytes: u64,
+    downloaded_bytes: u64,
+    started_at: u64,
+}
+
+/// How to proceed given a leftover partial download and the server's response.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ResumeDecision {
+    /// Append from the given byte offset (server answered 206 Partial Content).
+    ResumeFrom(u64),
+    /// Discard the partial file and start from byte 0.
+    FreshStart,
+    /// The server confirms the partial already covers the whole file — rename to final.
+    AlreadyComplete,
+}
+
+fn part_path(tmp_dir: &Path, file_name: &str) -> PathBuf {
+    tmp_dir.join(format!("{}.part", file_name))
+}
+
+fn meta_path(tmp_dir: &Path, file_name: &str) -> PathBuf {
+    tmp_dir.join(format!("{}.part.meta", file_name))
+}
+
+/// Load the resume offset for a download, if any.
+///
+/// Returns `None` when there is no usable checkpoint (missing/mismatched meta,
+/// missing or empty part file). A stale/incompatible checkpoint is removed so a
+/// later attempt starts clean.
+fn load_checkpoint(tmp_dir: &Path, file_name: &str, uri: &str) -> Option<u64> {
+    let part = part_path(tmp_dir, file_name);
+    let meta = meta_path(tmp_dir, file_name);
+
+    if !part.exists() {
+        // Stale meta without a part — nothing to resume.
+        let _ = fs::remove_file(&meta);
+        return None;
+    }
+
+    let part_len = fs::metadata(&part).ok().map(|m| m.len()).unwrap_or(0);
+    if part_len == 0 {
+        // Empty partial carries no value; start over.
+        let _ = fs::remove_file(&part);
+        let _ = fs::remove_file(&meta);
+        return None;
+    }
+
+    if !meta.exists() {
+        // Part without meta — can't verify the source; start over.
+        let _ = fs::remove_file(&part);
+        return None;
+    }
+
+    let meta_str = match fs::read_to_string(&meta) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = fs::remove_file(&part);
+            let _ = fs::remove_file(&meta);
+            return None;
+        }
+    };
+    let cp: DownloadCheckpoint = match serde_json::from_str(&meta_str) {
+        Ok(cp) => cp,
+        Err(_) => {
+            // Corrupt meta — can't trust the partial.
+            let _ = fs::remove_file(&part);
+            let _ = fs::remove_file(&meta);
+            return None;
+        }
+    };
+    if cp.uri != uri {
+        // Different source — the partial belongs to another repack.
+        let _ = fs::remove_file(&part);
+        let _ = fs::remove_file(&meta);
+        return None;
+    }
+
+    // The on-disk size is authoritative; the meta value is advisory.
+    Some(part_len)
+}
+
+/// Write (or refresh) the checkpoint metadata for an in-progress download.
+/// Written via temp file + rename so a crash never leaves a half-written meta.
+fn write_checkpoint(tmp_dir: &Path, file_name: &str, uri: &str, downloaded: u64, total: u64) {
+    let cp = DownloadCheckpoint {
+        uri: uri.to_string(),
+        total_bytes: total,
+        downloaded_bytes: downloaded,
+        started_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    };
+    let tmp_meta = tmp_dir.join(format!("{}.part.meta.tmp", file_name));
+    let meta = meta_path(tmp_dir, file_name);
+    if let Ok(json) = serde_json::to_string(&cp) {
+        if fs::write(&tmp_meta, json).is_ok() {
+            let _ = fs::rename(&tmp_meta, &meta);
+        }
+    }
+}
+
+/// Decide how to proceed with a download attempt based on the local partial
+/// (`resume_from`) and the server response.
+fn decide_resume(resume_from: u64, status: reqwest::StatusCode, content_length: Option<u64>) -> ResumeDecision {
+    if resume_from == 0 {
+        return ResumeDecision::FreshStart;
+    }
+    match status.as_u16() {
+        // Partial Content — the server honors the Range. Content-Length is the
+        // *remaining* bytes (0 means we already have the whole file).
+        206 => match content_length {
+            Some(rem) if rem == 0 => ResumeDecision::AlreadyComplete,
+            _ => ResumeDecision::ResumeFrom(resume_from),
+        },
+        // 416 Range Not Satisfiable with a resume offset means the local partial
+        // disagrees with the server — safest to restart.
+        416 => ResumeDecision::FreshStart,
+        // 200 (or anything else): server ignored the Range header → full restart.
+        _ => ResumeDecision::FreshStart,
+    }
+}
+
 /// Download a file from a URI to a destination directory using async streaming reqwest.
 ///
 /// Uses `reqwest::Client` (async) with `bytes_stream()` to download chunk-by-chunk
@@ -1051,7 +1401,8 @@ async fn download_file_to_dest(
     dest_dir: &Path,
     app_handle: &AppHandle,
     job_id: &str,
-) -> Result<DownloadedFile, String> {
+    bearer: Option<&str>,
+) -> Result<DownloadFileOutcome, String> {
     fs::create_dir_all(dest_dir)
         .map_err(|e| format!("Failed to create destination dir: {}", e))?;
 
@@ -1080,11 +1431,11 @@ async fn download_file_to_dest(
                 file_len,
                 "Already downloaded",
             );
-            return Ok(DownloadedFile {
+            return Ok(DownloadFileOutcome::File(DownloadedFile {
                 path: dest_path,
                 bytes_read: file_len,
                 total_bytes: file_len,
-            });
+            }));
         }
     }
 
@@ -1096,64 +1447,169 @@ async fn download_file_to_dest(
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let response = client
-        .get(uri)
-        .send()
-        .await
-        .map_err(|e| format!("Download request failed: {}", e))?;
+    // ── Resume support ──
+    // A previous attempt may have left tmp/<file>.part + tmp/<file>.part.meta
+    // (preserved on cancel/error). When present, we send an HTTP Range header and
+    // append, so interrupted downloads resume instead of restarting from byte 0.
+    let part = part_path(&tmp_dir, &file_name);
+    let meta = meta_path(&tmp_dir, &file_name);
+    let mut resume_from = load_checkpoint(&tmp_dir, &file_name, uri).unwrap_or(0);
 
-    if !response.status().is_success() {
-        return Err(format!("Download failed with HTTP {}", response.status()));
-    }
-
-    // Reject Content-Type text/html — this is an error page or login page, not a file.
-    if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
-        if let Ok(ct_str) = content_type.to_str() {
-            if ct_str.contains("text/html") {
-                return Err(
-                    "Not a direct download link (server returned HTML instead of file). \
-                     Use stygian-browser for this URL."
-                        .to_string(),
-                );
+    // ── Request / resume decision loop ──
+    // Bounded loop (max 2 iterations): send the request, react to the status.
+    // A 416 on a resume attempt means our offset disagrees with the server — drop
+    // the partial and retry once from zero. Everything else falls through to the
+    // streaming phase below. (Async recursion is not allowed, hence the loop.)
+    let (response, resume_from) = loop {
+        let mut req = client.get(uri);
+        if let Some(tok) = bearer {
+            if !tok.is_empty() {
+                req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", tok));
             }
         }
+        if resume_from > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
+            println!(
+                "[DEBRID][RESUME] Requesting resume from byte {} for {}",
+                resume_from, file_name
+            );
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| format!("Download request failed: {}", e))?;
+
+        // Reject Content-Type text/html — this is an error page or login page, not a file.
+        if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+            if let Ok(ct_str) = content_type.to_str() {
+                if ct_str.contains("text/html") {
+                    return Err(
+                        "Not a direct download link (server returned HTML instead of file). \
+                         Use stygian-browser for this URL."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
+        let status = response.status();
+        if status.as_u16() == 416 && resume_from > 0 {
+            // 416 on a resume attempt: the server doesn't know our offset.
+            println!("[DEBRID][RESUME] 416 Range Not Satisfiable — restarting from zero");
+            let _ = fs::remove_file(&part);
+            let _ = fs::remove_file(&meta);
+            resume_from = 0;
+            continue;
+        }
+        if !status.is_success() {
+            return Err(format!("Download failed with HTTP {}", status));
+        }
+
+        // Decide how to continue based on the local partial + server response.
+        match decide_resume(resume_from, status, response.content_length()) {
+            ResumeDecision::ResumeFrom(n) => break (response, n),
+            ResumeDecision::AlreadyComplete => {
+                // Server confirms we already hold the entire file — rename part → final.
+                println!("[DEBRID][RESUME] Server confirms partial is complete: {}", file_name);
+                drop(response);
+                let _ = fs::remove_file(&meta);
+                let final_bytes = fs::metadata(&part).ok().map(|m| m.len()).unwrap_or(0);
+                fs::rename(&part, &dest_path)
+                    .map_err(|e| format!("Failed to move downloaded file: {}", e))?;
+                let _ = fs::remove_dir(&tmp_dir);
+                return Ok(DownloadFileOutcome::File(DownloadedFile {
+                    path: dest_path,
+                    bytes_read: final_bytes,
+                    total_bytes: final_bytes,
+                }));
+            }
+            ResumeDecision::FreshStart => {
+                if resume_from > 0 {
+                    println!("[DEBRID][RESUME] Server ignored Range — restarting from zero");
+                }
+                let _ = fs::remove_file(&part);
+                let _ = fs::remove_file(&meta);
+                break (response, 0);
+            }
+        }
+    };
+
+    // On a 206 response, Content-Length is the *remaining* bytes.
+    let server_total = response.content_length().unwrap_or(0);
+    let mut total_bytes = if resume_from > 0 {
+        resume_from + server_total
+    } else {
+        server_total
+    };
+    if total_bytes < resume_from {
+        total_bytes = resume_from;
     }
 
-    let total_bytes = response.content_length().unwrap_or(0);
+    // Check disk space for the remaining bytes before downloading anything more.
+    let remaining = total_bytes.saturating_sub(resume_from);
+    check_disk_space(dest_dir, remaining)?;
 
-    // Check disk space before downloading anything
-    check_disk_space(dest_dir, total_bytes)?;
-
-    // Use a clean short filename — gofile.io tokens are 200+ chars
-    let tmp_path = tmp_dir.join(&file_name);
-
-    let mut file = tokio::fs::File::create(&tmp_path)
-        .await
-        .map_err(|e| format!("Failed to create file: {}", e))?;
+    // Open the partial in append mode when resuming, else create fresh.
+    let mut file = if resume_from > 0 {
+        tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&part)
+            .await
+            .map_err(|e| format!("Failed to open partial file for resume: {}", e))?
+    } else {
+        tokio::fs::File::create(&part)
+            .await
+            .map_err(|e| format!("Failed to create file: {}", e))?
+    };
 
     // ── Stream the response body chunk-by-chunk ──
     // Each chunk is written to disk immediately (async, non-blocking).
     // No part of the file is retained in memory after writing.
     // Progress is throttled to avoid flooding Tauri IPC.
     let mut stream = response.bytes_stream();
-    let mut bytes_read: u64 = 0;
+    let mut bytes_read: u64 = resume_from;
     let mut last_progress = std::time::Instant::now();
     let progress_interval = std::time::Duration::from_millis(250);
 
     while let Some(chunk_result) = stream.next().await {
-        // ── Bug 4 fix: Check for cancellation on every chunk ──
+        // Check for cancellation on every chunk. The partial file + checkpoint are
+        // PRESERVED so a later retry resumes via HTTP Range.
         if is_job_cancelled(job_id) {
             drop(file);
-            let _ = fs::remove_file(&tmp_path);
-            let _ = fs::remove_dir(&tmp_dir);
-            println!("[DEBRID][CANCEL] Download aborted by user: {}", file_name);
+            write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+            println!(
+                "[DEBRID][CANCEL] Download aborted by user (partial kept for resume): {} ({} bytes)",
+                file_name, bytes_read
+            );
             return Err("Download cancelled by user.".to_string());
         }
 
-        let chunk = chunk_result.map_err(|e| format!("Download stream error: {}", e))?;
+        // Paused on every chunk: checkpoint and stop cleanly so a resume reuses
+        // the partial via HTTP Range.
+        if is_job_paused(job_id) {
+            drop(file);
+            write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+            println!(
+                "[DEBRID][PAUSE] Download paused (partial kept for resume): {} ({} bytes)",
+                file_name, bytes_read
+            );
+            return Ok(DownloadFileOutcome::Paused);
+        }
+
+        let chunk = chunk_result.map_err(|e| {
+            // Network/stream error mid-download: keep the partial + checkpoint so
+            // a retry resumes instead of restarting.
+            write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+            format!("Download stream error: {}", e)
+        })?;
         file.write_all(&chunk)
             .await
-            .map_err(|e| format!("Write error during download: {}", e))?;
+            .map_err(|e| {
+                write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                format!("Write error during download: {}", e)
+            })?;
         bytes_read += chunk.len() as u64;
 
         // Throttle progress: emit max 4 times per second
@@ -1178,9 +1634,16 @@ async fn download_file_to_dest(
         }
     }
 
+    // Flush and close before the atomic rename (required on Windows).
+    file.flush()
+        .await
+        .map_err(|e| format!("Failed to flush file: {}", e))?;
+    drop(file);
+
     // Atomic rename from tmp to final destination (instant on same filesystem)
-    fs::rename(&tmp_path, &dest_path)
+    fs::rename(&part, &dest_path)
         .map_err(|e| format!("Failed to move downloaded file: {}", e))?;
+    let _ = fs::remove_file(&meta);
 
     // Clean up the tmp directory if empty
     let _ = fs::remove_dir(&tmp_dir);
@@ -1190,11 +1653,11 @@ async fn download_file_to_dest(
         file_name, bytes_read
     );
 
-    Ok(DownloadedFile {
+    Ok(DownloadFileOutcome::File(DownloadedFile {
         path: dest_path,
         bytes_read,
         total_bytes,
-    })
+    }))
 }
 
 /// Check that `dest_dir` has enough free space to accommodate `required_bytes`
@@ -1245,7 +1708,7 @@ fn sanitize_zip_entry_path(path: &str) -> PathBuf {
 /// This is the primary extractor — no CMD window, no external dependencies.
 /// If `unrar` fails (corrupt archive, unsupported feature), falls back to
 /// `extract_rar_via_7z` (external process with hidden window).
-fn extract_rar_with_unrar(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
+pub(crate) fn extract_rar_with_unrar(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
     use unrar::Archive;
 
     fs::create_dir_all(dest_dir)
@@ -1464,7 +1927,7 @@ fn find_in_path(exe_name: &str) -> Option<PathBuf> {
 ///   b. Flatten single-root wrapper folder
 ///   c. Copy with rollback to the final destination
 /// Returns `Ok(())` on the first successful extraction.
-fn extract_rar_with_cli(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
+pub(crate) fn extract_rar_with_cli(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
     #[cfg(windows)]
     use std::os::windows::process::CommandExt;
 
@@ -1573,7 +2036,7 @@ fn extract_rar_with_cli(rar_path: &Path, dest_dir: &Path) -> Result<(), String> 
 
 /// If the extracted directory contains exactly one subdirectory and no loose
 /// files, return that subdirectory as the effective source (flatten wrapper).
-fn flatten_single_root_folder(extract_root: &Path) -> PathBuf {
+pub(crate) fn flatten_single_root_folder(extract_root: &Path) -> PathBuf {
     let entries: Vec<_> = match fs::read_dir(extract_root) {
         Ok(iter) => iter.flatten().collect(),
         Err(_) => return extract_root.to_path_buf(),
@@ -1659,7 +2122,7 @@ fn copy_recursive_impl(src: &Path, dst: &Path, created: &mut Vec<PathBuf>) -> Re
 ///
 /// Only called when `extract_rar_with_unrar` fails.
 /// Uses `CREATE_NO_WINDOW` so the console flash doesn't appear.
-fn extract_rar_via_7z(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
+pub(crate) fn extract_rar_via_7z(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
     #[cfg(windows)]
     use std::os::windows::process::CommandExt;
 
@@ -1710,7 +2173,7 @@ fn extract_rar_via_7z(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
 /// then decompresses each entry via a streaming reader — memory usage stays
 /// proportional to the buffer size (~64 KB), NOT the archive size.
 /// This avoids the gigabytes of RAM that PowerShell `Expand-Archive` consumes.
-fn extract_zip_with_zip_crate(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
+pub(crate) fn extract_zip_with_zip_crate(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
     if !zip_path.exists() {
         return Err(format!("ZIP file not found: {}", zip_path.display()));
     }
@@ -1776,7 +2239,7 @@ fn extract_zip_with_zip_crate(zip_path: &Path, dest_dir: &Path) -> Result<(), St
 /// Known repack utility executables — checksum tools, verify helpers, etc.
 /// These are NOT game executables — they signal that the extracted content needs
 /// manual setup installation (typically a FitGirl/DODI/ElAmigos repack).
-const REPACK_UTILITY_EXES: &[&str] = &[
+pub(crate) const REPACK_UTILITY_EXES: &[&str] = &[
     "quicksfv.exe", "quicksfv64.exe",
     "verify.exe", "verify.bat",
     "md5.exe", "md5sums.exe",
@@ -1784,7 +2247,7 @@ const REPACK_UTILITY_EXES: &[&str] = &[
 ];
 
 /// Known installer executable names.
-const INSTALLER_EXE_NAMES: &[&str] = &[
+pub(crate) const INSTALLER_EXE_NAMES: &[&str] = &[
     "setup.exe", "installer.exe",
     "setup_x64.exe", "setup_x86.exe",
     "autorun.exe",
@@ -1794,7 +2257,7 @@ const INSTALLER_EXE_NAMES: &[&str] = &[
 ///
 /// Returns the name of the first match using a priority order:
 /// setup.exe (most authoritative) → other installer names → repack utilities.
-fn find_installer_exe_in_dir(dir: &Path) -> Option<String> {
+pub(crate) fn find_installer_exe_in_dir(dir: &Path) -> Option<String> {
     // Priority 1: real installer EXEs
     for candidate in INSTALLER_EXE_NAMES {
         let path = dir.join(candidate);
@@ -1815,7 +2278,7 @@ fn find_installer_exe_in_dir(dir: &Path) -> Option<String> {
 }
 
 /// Scan a directory for the largest .exe file (excluding setup/installer/repack-utility names).
-fn find_largest_exe_in_dir(dir: &Path) -> Option<String> {
+pub(crate) fn find_largest_exe_in_dir(dir: &Path) -> Option<String> {
     let exclude = [
         // Installers
         "unins000.exe", "uninstall.exe", "setup.exe", "installer.exe",
@@ -2068,4 +2531,320 @@ pub fn detect_install_path_from_registry(game_title: String) -> Result<Option<Re
     }
 
     Ok(best)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+    #[test]
+    fn website_token_known_vector() {
+        // Independently computed (PowerShell SHA256) for:
+        //   window=12345, token="testtoken", salt="9844d94d963d30", ua=TEST_UA
+        //   input = "{ua}::en-US::testtoken::12345::9844d94d963d30"
+        let expected =
+            "26c3eb177e3027ae20796898eb3aa7f012a2529e2cb44ed28512a0f25a757aaa";
+        assert_eq!(
+            gofile_website_token_for_window("testtoken", "9844d94d963d30", TEST_UA, 12345),
+            expected
+        );
+    }
+
+    #[test]
+    fn website_token_hex_format() {
+        let h = gofile_website_token_for_window("abc", "9844d94d963d30", TEST_UA, 1);
+        assert_eq!(h.len(), 64);
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(h.chars().all(|c| !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn website_token_deterministic() {
+        let a = gofile_website_token_for_window("tok", "9844d94d963d30", TEST_UA, 7);
+        let b = gofile_website_token_for_window("tok", "9844d94d963d30", TEST_UA, 7);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn website_token_salt_sensitive() {
+        let a = gofile_website_token_for_window("tok", "9844d94d963d30", TEST_UA, 7);
+        let b = gofile_website_token_for_window("tok", "5d4f7g8sd45fsd", TEST_UA, 7);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn website_token_window_sensitive() {
+        let a = gofile_website_token_for_window("tok", "9844d94d963d30", TEST_UA, 7);
+        let b = gofile_website_token_for_window("tok", "9844d94d963d30", TEST_UA, 8);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn website_token_salt_rotation_behavior() {
+        // The live resolver tries salts in order; a wrong salt must not panic and
+        // must differ from the correct one (so the 401 retry can be attempted).
+        let cur = gofile_website_token_for_window("t", "9844d94d963d30", TEST_UA, 42);
+        let rot = gofile_website_token_for_window("t", "5d4f7g8sd45fsd", TEST_UA, 42);
+        assert!(!cur.is_empty());
+        assert_ne!(cur, rot);
+    }
+
+    #[test]
+    fn detect_rar5_signature() {
+        // RAR5 magic: Rar!\x1a\x07\x01\x00 (repack files on gofile are RAR5).
+        // Regression: previously only RAR4 (byte6=0x00) was matched, so RAR5
+        // downloads fell through to Unknown → "Unknown file type" error.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.rar");
+        let mut bytes = [0u8; 16];
+        bytes[..8].copy_from_slice(&[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]);
+        std::fs::write(&path, bytes).unwrap();
+        assert!(matches!(detect_file_type(&path), DetectedFileType::Rar));
+    }
+
+    #[test]
+    fn detect_rar4_signature() {
+        // RAR4 magic: Rar!\x1a\x07\x00
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.rar");
+        let mut bytes = [0u8; 16];
+        bytes[..8].copy_from_slice(&[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00, 0x00]);
+        std::fs::write(&path, bytes).unwrap();
+        assert!(matches!(detect_file_type(&path), DetectedFileType::Rar));
+    }
+
+    #[test]
+    fn detect_unknown_signature() {
+        // Unrelated magic bytes must still classify as Unknown.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.bin");
+        let bytes = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B];
+        std::fs::write(&path, bytes).unwrap();
+        assert!(matches!(detect_file_type(&path), DetectedFileType::Unknown(_)));
+    }
+
+    // ── Resume decision ──
+
+    #[test]
+    fn resume_decision_no_resume_is_fresh() {
+        use reqwest::StatusCode;
+        assert_eq!(
+            decide_resume(0, StatusCode::OK, Some(100)),
+            ResumeDecision::FreshStart
+        );
+    }
+
+    #[test]
+    fn resume_decision_206_appends() {
+        use reqwest::StatusCode;
+        assert_eq!(
+            decide_resume(5000, StatusCode::PARTIAL_CONTENT, Some(15000)),
+            ResumeDecision::ResumeFrom(5000)
+        );
+    }
+
+    #[test]
+    fn resume_decision_206_without_length_appends() {
+        use reqwest::StatusCode;
+        assert_eq!(
+            decide_resume(5000, StatusCode::PARTIAL_CONTENT, None),
+            ResumeDecision::ResumeFrom(5000)
+        );
+    }
+
+    #[test]
+    fn resume_decision_206_zero_remaining_complete() {
+        use reqwest::StatusCode;
+        assert_eq!(
+            decide_resume(5000, StatusCode::PARTIAL_CONTENT, Some(0)),
+            ResumeDecision::AlreadyComplete
+        );
+    }
+
+    #[test]
+    fn resume_decision_200_restarts() {
+        // Server ignored the Range header and sent the full body from byte 0.
+        use reqwest::StatusCode;
+        assert_eq!(
+            decide_resume(5000, StatusCode::OK, Some(20000)),
+            ResumeDecision::FreshStart
+        );
+    }
+
+    #[test]
+    fn resume_decision_416_restarts() {
+        use reqwest::StatusCode;
+        assert_eq!(
+            decide_resume(5000, StatusCode::RANGE_NOT_SATISFIABLE, None),
+            ResumeDecision::FreshStart
+        );
+    }
+
+    // ── Checkpoint load ──
+
+    #[test]
+    fn checkpoint_load_resumes_from_part_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        // Part file is authoritative for the offset.
+        std::fs::write(part_path(tmp.path(), name), vec![0u8; 4096]).unwrap();
+        let cp = DownloadCheckpoint {
+            uri: "https://cdn.test/game.rar".to_string(),
+            total_bytes: 100_000,
+            downloaded_bytes: 4000,
+            started_at: 1,
+        };
+        std::fs::write(
+            meta_path(tmp.path(), name),
+            serde_json::to_string(&cp).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://cdn.test/game.rar"),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn checkpoint_load_uri_mismatch_starts_fresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        std::fs::write(part_path(tmp.path(), name), vec![0u8; 1024]).unwrap();
+        let cp = DownloadCheckpoint {
+            uri: "https://cdn.test/other.rar".to_string(),
+            total_bytes: 100_000,
+            downloaded_bytes: 1000,
+            started_at: 1,
+        };
+        std::fs::write(
+            meta_path(tmp.path(), name),
+            serde_json::to_string(&cp).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://cdn.test/game.rar"),
+            None
+        );
+        // Stale files are removed so the next attempt is clean.
+        assert!(!part_path(tmp.path(), name).exists());
+        assert!(!meta_path(tmp.path(), name).exists());
+    }
+
+    #[test]
+    fn checkpoint_load_corrupt_meta_starts_fresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        std::fs::write(part_path(tmp.path(), name), vec![0u8; 1024]).unwrap();
+        std::fs::write(meta_path(tmp.path(), name), "{not json").unwrap();
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://cdn.test/game.rar"),
+            None
+        );
+        assert!(!part_path(tmp.path(), name).exists());
+    }
+
+    #[test]
+    fn checkpoint_load_meta_without_part_starts_fresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        let cp = DownloadCheckpoint {
+            uri: "https://cdn.test/game.rar".to_string(),
+            total_bytes: 100_000,
+            downloaded_bytes: 1000,
+            started_at: 1,
+        };
+        std::fs::write(
+            meta_path(tmp.path(), name),
+            serde_json::to_string(&cp).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://cdn.test/game.rar"),
+            None
+        );
+        assert!(!meta_path(tmp.path(), name).exists());
+    }
+
+    #[test]
+    fn checkpoint_load_empty_part_starts_fresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        std::fs::write(part_path(tmp.path(), name), b"").unwrap();
+        let cp = DownloadCheckpoint {
+            uri: "https://cdn.test/game.rar".to_string(),
+            total_bytes: 100_000,
+            downloaded_bytes: 0,
+            started_at: 1,
+        };
+        std::fs::write(
+            meta_path(tmp.path(), name),
+            serde_json::to_string(&cp).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://cdn.test/game.rar"),
+            None
+        );
+        assert!(!part_path(tmp.path(), name).exists());
+    }
+
+    #[test]
+    fn checkpoint_write_then_load_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        std::fs::write(part_path(tmp.path(), name), vec![0u8; 8192]).unwrap();
+        write_checkpoint(tmp.path(), name, "https://cdn.test/game.rar", 8192, 50_000);
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://cdn.test/game.rar"),
+            Some(8192)
+        );
+    }
+
+    // ── Pause tracker / flag cleanup ──
+
+    #[test]
+    fn pause_flag_tracked_and_checked() {
+        clear_job_flags("pause-test-job");
+        assert!(!is_job_paused("pause-test-job"));
+        assert!(!is_job_cancelled("pause-test-job"));
+
+        pause_debrid_download("pause-test-job".to_string()).unwrap();
+        assert!(is_job_paused("pause-test-job"));
+
+        // A paused job is NOT treated as cancelled.
+        assert!(!is_job_cancelled("pause-test-job"));
+    }
+
+    #[test]
+    fn clear_job_flags_removes_both_cancel_and_pause() {
+        clear_job_flags("flags-test-job");
+        cancel_debrid_download("flags-test-job".to_string()).unwrap();
+        pause_debrid_download("flags-test-job".to_string()).unwrap();
+        assert!(is_job_cancelled("flags-test-job"));
+        assert!(is_job_paused("flags-test-job"));
+
+        // Fresh attempt (resume/retry) must clear both so re-invocation proceeds.
+        clear_job_flags("flags-test-job");
+        assert!(!is_job_cancelled("flags-test-job"));
+        assert!(!is_job_paused("flags-test-job"));
+    }
+
+    #[test]
+    fn clear_job_flags_only_affects_target_job() {
+        clear_job_flags("other-job");
+        pause_debrid_download("keep-job".to_string()).unwrap();
+        clear_job_flags("other-job");
+        assert!(is_job_paused("keep-job"));
+        assert!(!is_job_paused("other-job"));
+    }
+
+    #[test]
+    fn clear_job_flags_idempotent() {
+        clear_job_flags("idem-job");
+        clear_job_flags("idem-job");
+        assert!(!is_job_cancelled("idem-job"));
+        assert!(!is_job_paused("idem-job"));
+    }
 }

@@ -9,7 +9,8 @@ import {
 import { DownloadJob, DownloadStatus } from "../types/download";
 import { useSteamInstallSync } from "../hooks/useSteamInstallSync";
 import { useDebridInstallSync, type DebridInstallHandle } from "../hooks/useDebridInstallSync";
-import { cancelDebridDownload } from "../services/tauri";
+import { cancelDebridDownload, pauseDebridDownload } from "../services/tauri";
+import type { DebridInstallMethod } from "../services/debridInstallChoice";
 
 type CreateDownloadJobInput = {
   appId: string;
@@ -42,9 +43,11 @@ type DownloadQueueContextValue = {
   jobs: DownloadJob[];
   addJob: (input: CreateDownloadJobInput) => DownloadJob;
   addSteamInstallJob: (appId: string, title: string, artworkUrl?: string) => string;
-  addDebridInstallJob: (providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string) => string;
+  addDebridInstallJob: (providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string, installMethod?: DebridInstallMethod) => string;
   updateJob: (jobId: string, update: UpdateDownloadJobInput) => void;
   cancelJob: (jobId: string) => void;
+  pauseJob: (jobId: string) => void;
+  resumeJob: (jobId: string) => void;
   removeJob: (jobId: string) => void;
   clearCompleted: () => void;
   getJobByAppId: (appId: string) => DownloadJob | undefined;
@@ -101,6 +104,18 @@ function loadJobs(): DownloadJob[] {
 
       // App reload while active — mark as failed unless it's a steam-install (can't verify on reload)
       if (activeStatuses.includes(migrated.status)) {
+        if (migrated.type === "debrid-install") {
+          // Debrid installs resume from their HTTP `.part` checkpoint or torrent
+          // fastresume — keep them "paused" for a manual resume instead of failing.
+          return {
+            ...migrated,
+            status: "paused",
+            error: undefined,
+            message: "Download paused",
+            updatedAt: new Date().toISOString(),
+          };
+        }
+
         return {
           ...migrated,
           status: "failed",
@@ -217,7 +232,7 @@ export function DownloadQueueProvider({
     return jobId;
   }
 
-  function addDebridInstallJob(providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string): string {
+  function addDebridInstallJob(providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string, installMethod?: DebridInstallMethod): string {
     const jobId = createDebridJobId(providerGameId);
     const existing = jobs.find((j) => j.id === jobId);
     if (existing && activeStatuses.includes(existing.status)) {
@@ -239,6 +254,7 @@ export function DownloadQueueProvider({
       downloadUrl: downloadUri,
       artworkUrl: artworkUrl,
       repacker: repacker,
+      installMethod: installMethod,
 
       status: "queued",
       progress: 0,
@@ -254,7 +270,7 @@ export function DownloadQueueProvider({
     commitJobs(nextJobs);
 
     // Start install asynchronously
-    debridInstallRef.current.startInstall(jobId, providerGameId, downloadUri, installerType, title);
+    debridInstallRef.current.startInstall(jobId, providerGameId, downloadUri, installerType, title, installMethod);
 
     return jobId;
   }
@@ -288,6 +304,50 @@ export function DownloadQueueProvider({
     } catch (e) {
       console.warn("[DOWNLOAD][CANCEL] Failed to abort Rust download:", e);
     }
+  }
+
+  /** Pause a debrid-install job (HTTP checkpoint or torrent fastresume kept on disk). */
+  async function pauseJob(jobId: string) {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job || job.type !== "debrid-install") return;
+
+    updateJob(jobId, {
+      status: "paused",
+      message: "Pausing\u2026",
+    });
+    try {
+      await pauseDebridDownload(jobId);
+    } catch (e) {
+      console.warn("[DOWNLOAD][PAUSE] Failed to pause Rust download:", e);
+      // Revert to the pre-pause state — nothing was paused on the Rust side.
+      updateJob(jobId, {
+        status: job.status,
+        message: job.message,
+      });
+    }
+  }
+
+  /** Resume a previously paused debrid-install job (re-invokes the install pipeline). */
+  async function resumeJob(jobId: string) {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job || job.type !== "debrid-install") return;
+
+    const providerGameId = jobId.replace("debrid-install-", "");
+    if (!providerGameId || !job.downloadUrl) return;
+
+    updateJob(jobId, {
+      status: "queued",
+      message: "Resuming\u2026",
+      error: undefined,
+    });
+    await debridInstallRef.current.startInstall(
+      jobId,
+      providerGameId,
+      job.downloadUrl,
+      "zip",
+      job.gameTitle,
+      job.installMethod,
+    );
   }
 
   function removeJob(jobId: string) {
@@ -325,6 +385,8 @@ export function DownloadQueueProvider({
       addDebridInstallJob,
       updateJob,
       cancelJob,
+      pauseJob,
+      resumeJob,
       removeJob,
       clearCompleted,
       getJobByAppId,

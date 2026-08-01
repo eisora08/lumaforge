@@ -10,11 +10,14 @@ export type ConfirmOptions = {
   icon?: React.ReactNode;
   secondaryLabel?: string;
   secondaryVariant?: ConfirmVariant;
+  tertiaryLabel?: string;
+  tertiaryVariant?: ConfirmVariant;
 };
 
 export type ConfirmResult = {
   confirmed: boolean;
   secondary?: boolean;
+  tertiary?: boolean;
 };
 
 type ConfirmContextType = {
@@ -57,6 +60,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     setPending(null);
   }, [pending]);
 
+  const handleTertiary = useCallback(() => {
+    pending?.resolve({ confirmed: true, tertiary: true });
+    setPending(null);
+  }, [pending]);
+
   return (
     <ConfirmContext.Provider value={{ confirm }}>
       {children}
@@ -71,6 +79,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         secondaryLabel={pending?.secondaryLabel}
         secondaryVariant={pending?.secondaryVariant}
         onSecondary={pending?.secondaryLabel ? handleSecondary : undefined}
+        tertiaryLabel={pending?.tertiaryLabel}
+        tertiaryVariant={pending?.tertiaryVariant}
+        onTertiary={pending?.tertiaryLabel ? handleTertiary : undefined}
         onConfirm={handleConfirm}
         onCancel={handleCancel}
       />

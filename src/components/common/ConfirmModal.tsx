@@ -18,6 +18,9 @@ type Props = {
   secondaryLabel?: string;
   onSecondary?: () => void;
   secondaryVariant?: ConfirmVariant;
+  tertiaryLabel?: string;
+  onTertiary?: () => void;
+  tertiaryVariant?: ConfirmVariant;
   extraActions?: React.ReactNode;
 };
 
@@ -82,6 +85,9 @@ export default function ConfirmModal({
   secondaryLabel,
   onSecondary,
   secondaryVariant,
+  tertiaryLabel,
+  onTertiary,
+  tertiaryVariant,
   extraActions,
 }: Props) {
   const [focusedButton, setFocusedButton] = useState<"cancel" | "confirm">("cancel");
@@ -218,7 +224,7 @@ export default function ConfirmModal({
         </p>
 
         <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-          {(extraActions || (secondaryLabel && onSecondary)) && (
+          {(extraActions || (secondaryLabel && onSecondary) || (tertiaryLabel && onTertiary)) && (
             <div className="flex flex-wrap items-center gap-3 mr-auto">
               {extraActions}
               {secondaryLabel && onSecondary && (
@@ -231,6 +237,18 @@ export default function ConfirmModal({
                     }`}
                 >
                   {secondaryLabel}
+                </button>
+              )}
+              {tertiaryLabel && onTertiary && (
+                <button
+                  type="button"
+                  onClick={() => { onTertiary(); }}
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-(--color-text)/20 ${tertiaryVariant
+                      ? variantConfig[tertiaryVariant].btnClass
+                      : "border border-(--surface-active-border) bg-white/5 text-(--color-text) hover:bg-white/10"
+                    }`}
+                >
+                  {tertiaryLabel}
                 </button>
               )}
             </div>

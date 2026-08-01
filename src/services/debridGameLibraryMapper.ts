@@ -124,8 +124,8 @@ export function buildDebridGameFromDiskEntry(
     appId,
 
     isPlayable: status === "ready" && !!entry.executablePath,
-    isInstallable: !entry.installDir || status === "not-downloaded",
-    isInstalled: !!entry.installDir,
+    isInstallable: !(entry.installDir || entry.executablePath) || status === "not-downloaded",
+    isInstalled: !!(entry.installDir || entry.executablePath),
     steamInstalled: false,
 
     repacker: entry.repacker || undefined,

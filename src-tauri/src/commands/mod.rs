@@ -49,3 +49,4 @@ pub mod debrid_games;
 pub mod debrid_installer;
 pub mod hydra_source;
 pub mod debrid_resolver;
+pub mod torrent;

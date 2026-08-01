@@ -596,6 +596,7 @@ export function dedupeLibraryGames(games: LibraryGame[]): LibraryGame[] {
     // Boolean flags: true wins
     merged.steamInstalled = existing.steamInstalled || game.steamInstalled;
     merged.isPlayable = existing.isPlayable || game.isPlayable;
+    merged.isInstalled = existing.isInstalled || game.isInstalled;
     merged.isInstallable = existing.isInstallable || game.isInstallable;
     merged.hasLua = existing.hasLua || game.hasLua;
     merged.isLuaActive = existing.isLuaActive || game.isLuaActive;

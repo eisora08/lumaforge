@@ -2,8 +2,11 @@ import { useCallback, useRef } from "react";
 
 import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
 import { markDebridGameInstalling, setPendingCompletionNeedsPath, updateDebridGame, markDebridGameExtracted, markDebridGameStatus, setPendingSetup } from "../services/debridGameStore";
-import { checkInstallerStatus, detectInstallPathFromRegistry, discoverExecutables, downloadDebridPackage, resolveAppDataDir } from "../services/tauri";
+import { checkInstallerStatus, detectInstallPathFromRegistry, discoverExecutables, downloadDebridPackage, resolveAppDataDir, startTorrentDownload } from "../services/tauri";
 import type { DebridDownloadResult } from "../services/tauri";
+import { resolveDebridUri } from "../services/debridProviderService";
+import type { DebridInstallMethod } from "../services/debridInstallChoice";
+import type { DebridProviderConfig } from "../types/settings";
 import type { DownloadJob } from "../types/download";
 
 export type UpdateDebridJobFn = (jobId: string, update: Partial<{
@@ -27,6 +30,7 @@ export type DebridInstallHandle = {
     downloadUri: string,
     installerType: string,
     title: string,
+    installMethod?: DebridInstallMethod,
   ) => Promise<void>;
 };
 
@@ -43,6 +47,58 @@ export type DebridInstallHandle = {
  */
 const POLL_INSTALLER_MS = 2_000;
 const POLL_TIMEOUT_MS = 600_000; // 10 min — installer likely requires user interaction
+
+/**
+ * Resolves a magnet URI through the configured debrid providers (TorBox,
+ * Real-Debrid, AllDebrid, Premiumize). Non-magnet URIs pass through unchanged.
+ *
+ * Returns the direct download URL when a provider resolves the magnet. Throws
+ * with the resolver's error message on failure. Callers may catch the throw
+ * and fall back to the built-in torrent client for the same magnet (see
+ * `startInstall`), since a raw magnet can never be fed to `download_file_to_dest`.
+ */
+async function resolveInstallUri(downloadUri: string): Promise<string> {
+  if (!downloadUri.startsWith("magnet:")) {
+    return downloadUri;
+  }
+
+  let settings;
+  try {
+    const { loadSettings } = await import("../context/SettingsContext");
+    settings = loadSettings();
+  } catch (err) {
+    console.warn("[DEBRID_INSTALL] magnet resolution error loading settings", err);
+    throw new Error(
+      "Could not load debrid settings to resolve the magnet link. Configure a debrid provider in Settings.",
+    );
+  }
+
+  const config: DebridProviderConfig = settings.debridProviders;
+
+  let result;
+  try {
+    result = await resolveDebridUri(downloadUri, config);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[DEBRID_INSTALL] magnet resolution error", err);
+    throw new Error(`Could not resolve magnet link via debrid provider: ${msg}`);
+  }
+
+  if (result.success && result.resolvedUrl) {
+    if (DEBUG_DEBRID_INSTALL) {
+      console.log(
+        `[DEBRID_INSTALL] magnet resolved provider=${result.provider} url=${result.resolvedUrl.slice(0, 80)}\u2026`,
+      );
+    }
+    return result.resolvedUrl;
+  }
+
+  throw new Error(
+    result.error
+      ? `No debrid provider resolved the magnet link: ${result.error}`
+      : "No debrid provider resolved the magnet link. Configure a debrid provider in Settings.",
+  );
+}
 
 export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstallHandle {
   const updateJobRef = useRef(updateJob);
@@ -153,6 +209,111 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
     });
   }
 
+  async function handleInstallResult(
+    result: DebridDownloadResult,
+    providerGameId: string,
+    jobId: string,
+    title: string,
+  ): Promise<void> {
+    if (!result.success && result.status === "paused") {
+      // Paused by the user — the HTTP `.part` checkpoint (or torrent fastresume +
+      // persistence) is kept on disk. Keep the job "paused" so it can be resumed
+      // later; do NOT reset the Debrid store status (it was never marked done).
+      updateJobRef.current(jobId, {
+        status: "paused",
+        message: result.message || "Download paused",
+      });
+      if (DEBUG_DEBRID_INSTALL) {
+        console.log(`[DEBRID_INSTALL] paused jobId=${jobId} msg=${result.message}`);
+      }
+      return;
+    }
+
+    if (result.success) {
+      if (result.status === "ready") {
+        // ZIP/RAR extracted, game executable found
+        updateDebridGame(providerGameId, result.installDir, result.executablePath ?? undefined);
+
+        updateJobRef.current(jobId, {
+          status: "done",
+          progress: 100,
+          message: "Installed \u00b7 Ready to play",
+          progressMode: "determinate",
+          installedSize: 0,
+          installDir: result.installDir,
+        });
+
+        if (DEBUG_DEBRID_INSTALL) {
+          console.log(
+            `[DEBRID_INSTALL] ready jobId=${jobId} installDir=${result.installDir} exe=${result.executablePath}`,
+          );
+        }
+      } else if (result.status === "installing") {
+        // Installer detached and running — add game to library, poll for completion
+        markDebridGameInstalling(providerGameId, result.installDir);
+
+        updateJobRef.current(jobId, {
+          status: "downloading",
+          progress: 80,
+          message: "Installing\u2026 Wait for the installer to finish",
+          progressMode: "indeterminate",
+          installDir: result.installDir,
+        });
+
+        if (result.installerPid) {
+          await pollInstallerUntilDone(result.installerPid, result.installDir, jobId, providerGameId, title);
+        } else {
+          // No PID — fall back to needs-setup
+          markDebridGameExtracted(providerGameId, result.installerPath ?? "", result.installDir, {
+            title,
+            repacker: (result as any).repacker,
+          });
+          updateJobRef.current(jobId, {
+            status: "done",
+            progress: 100,
+            message: "Extraction complete \u00b7 Setup required",
+            progressMode: "determinate",
+            installedSize: 0,
+            installDir: result.installDir,
+          });
+        }
+      } else if (result.status === "needs-setup") {
+        // Extraction complete, setup.exe ready on disk — add to library + show modal
+        markDebridGameExtracted(providerGameId, result.installerPath ?? "", result.installDir, {
+          title,
+          repacker: (result as any).repacker,
+        });
+
+        if (result.installerPath) {
+          setPendingSetup(providerGameId, result.installerPath, result.installDir);
+        }
+
+        updateJobRef.current(jobId, {
+          status: "done",
+          progress: 100,
+          message: "Extraction complete \u00b7 Setup required",
+          progressMode: "determinate",
+          installedSize: 0,
+          installDir: result.installDir,
+        });
+
+        if (DEBUG_DEBRID_INSTALL) {
+          console.log(
+            `[DEBRID_INSTALL] needs-setup jobId=${jobId} installDir=${result.installDir} installer=${result.installerPath}`,
+          );
+        }
+      }
+    } else {
+      markDebridGameStatus(providerGameId, "not-downloaded");
+      updateJobRef.current(jobId, {
+        status: "failed",
+        message: result.message || "Download failed",
+        error: result.message,
+        progressMode: "indeterminate",
+      });
+    }
+  }
+
   const startInstall = useCallback(
     async (
       jobId: string,
@@ -160,6 +321,7 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
       downloadUri: string,
       installerType: string,
       title: string,
+      installMethod?: DebridInstallMethod,
     ) => {
       if (!DEBRID_INSTALL_ENABLED || !DEBRID_LIBRARY_ENABLED) {
         updateJobRef.current(jobId, {
@@ -178,101 +340,55 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
 
       if (DEBUG_DEBRID_INSTALL) {
         console.log(
-          `[DEBRID_INSTALL] start jobId=${jobId} providerGameId=${providerGameId} type=${installerType}`,
+          `[DEBRID_INSTALL] start jobId=${jobId} providerGameId=${providerGameId} type=${installerType} method=${installMethod ?? "auto"}`,
         );
       }
 
       try {
         const appDataDir = await resolveAppDataDir();
         const destDir = `${appDataDir}/games/debrid/${providerGameId}`;
-        const result: DebridDownloadResult = await downloadDebridPackage({
-          jobId,
-          downloadUri,
-          destDir,
-        });
 
-        if (result.success) {
-          if (result.status === "ready") {
-            // ZIP/RAR extracted, game executable found
-            updateDebridGame(providerGameId, result.installDir, result.executablePath ?? undefined);
+        let result: DebridDownloadResult | null = null;
 
-            updateJobRef.current(jobId, {
-              status: "done",
-              progress: 100,
-              message: "Installed \u00b7 Ready to play",
-              progressMode: "determinate",
-              installedSize: 0,
-              installDir: result.installDir,
-            });
-
-            if (DEBUG_DEBRID_INSTALL) {
-              console.log(
-                `[DEBRID_INSTALL] ready jobId=${jobId} installDir=${result.installDir} exe=${result.executablePath}`,
-              );
-            }
-          } else if (result.status === "installing") {
-            // Installer detached and running — add game to library, poll for completion
-            markDebridGameInstalling(providerGameId, result.installDir);
-
-            updateJobRef.current(jobId, {
-              status: "downloading",
-              progress: 80,
-              message: "Installing\u2026 Wait for the installer to finish",
-              progressMode: "indeterminate",
-              installDir: result.installDir,
-            });
-
-            if (result.installerPid) {
-              await pollInstallerUntilDone(result.installerPid, result.installDir, jobId, providerGameId, title);
-            } else {
-              // No PID — fall back to needs-setup
-              markDebridGameExtracted(providerGameId, result.installerPath ?? "", result.installDir, {
-                title,
-                repacker: (result as any).repacker,
-              });
-              updateJobRef.current(jobId, {
-                status: "done",
-                progress: 100,
-                message: "Extraction complete \u00b7 Setup required",
-                progressMode: "determinate",
-                installedSize: 0,
-                installDir: result.installDir,
-              });
-            }
-          } else if (result.status === "needs-setup") {
-            // Extraction complete, setup.exe ready on disk — add to library + show modal
-            markDebridGameExtracted(providerGameId, result.installerPath ?? "", result.installDir, {
-              title,
-              repacker: (result as any).repacker,
-            });
-
-            if (result.installerPath) {
-              setPendingSetup(providerGameId, result.installerPath, result.installDir);
-            }
-
-            updateJobRef.current(jobId, {
-              status: "done",
-              progress: 100,
-              message: "Extraction complete \u00b7 Setup required",
-              progressMode: "determinate",
-              installedSize: 0,
-              installDir: result.installDir,
-            });
-
-            if (DEBUG_DEBRID_INSTALL) {
-              console.log(
-                `[DEBRID_INSTALL] needs-setup jobId=${jobId} installDir=${result.installDir} installer=${result.installerPath}`,
-              );
-            }
-          }
-        } else {
-          markDebridGameStatus(providerGameId, "not-downloaded");
-          updateJobRef.current(jobId, {
-            status: "failed",
-            message: result.message || "Download failed",
-            error: result.message,
-            progressMode: "indeterminate",
+        if (installMethod === "torrent") {
+          // Magnet downloaded by the built-in torrent client (librqbit).
+          result = await startTorrentDownload({
+            jobId,
+            magnet: downloadUri,
+            destDir,
           });
+        } else {
+          // Magnets need to be resolved through a configured debrid provider
+          // (TorBox / Real-Debrid / AllDebrid / Premiumize) to get a direct URL.
+          let effectiveUri: string | undefined;
+          try {
+            effectiveUri = await resolveInstallUri(downloadUri);
+          } catch (resolveErr) {
+            // Debrid resolution failed — if the source is a magnet, fall back to
+            // the built-in torrent client so the download always proceeds.
+            if (!downloadUri.startsWith("magnet:")) throw resolveErr;
+            const msg = resolveErr instanceof Error ? resolveErr.message : String(resolveErr);
+            console.warn(
+              `[DEBRID_INSTALL] debrid-resolve-failed reason=${msg} \u2192 torrent fallback jobId=${jobId}`,
+            );
+            result = await startTorrentDownload({
+              jobId,
+              magnet: downloadUri,
+              destDir,
+            });
+          }
+
+          if (effectiveUri) {
+            result = await downloadDebridPackage({
+              jobId,
+              downloadUri: effectiveUri,
+              destDir,
+            });
+          }
+        }
+
+        if (result) {
+          await handleInstallResult(result, providerGameId, jobId, title);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

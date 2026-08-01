@@ -73,6 +73,14 @@ pub struct RepackCatalogMeta {
     pub imported_at: String,
 }
 
+/// Repacker aggregate (distinct repacker + entry count) — returned to TS for filter chips.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepackGroupStat {
+    pub repacker: String,
+    pub count: i64,
+}
+
 // ── Table creation (called from sqlite_cache init) ──
 
 pub fn create_repack_tables(conn: &Connection) -> SqliteResult<()> {
@@ -219,6 +227,35 @@ fn query_by_fuzzy_title(conn: &Connection, query: &str, limit: u32) -> SqliteRes
     rows.collect()
 }
 
+/// Fuzzy title search constrained to a single repacker (case-insensitive).
+fn query_by_repacker_fuzzy_title(
+    conn: &Connection,
+    repacker: &str,
+    query: &str,
+    limit: u32,
+) -> SqliteResult<Vec<RepackQueryResult>> {
+    let normalized = query.to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && !c.is_whitespace(), "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut stmt = conn.prepare(
+        "SELECT id, title, app_id, repacker, installer_type, file_size, install_size,
+                languages_json, download_uris_json, source_url, checksum, updated_at, tags_json
+         FROM repack_catalog
+         WHERE lower(repacker) = lower(?1)
+           AND normalized_title LIKE '%' || ?2 || '%'
+         ORDER BY
+            CASE WHEN app_id > 0 THEN 0 ELSE 1 END,
+            length(normalized_title) ASC
+         LIMIT ?3",
+    )?;
+
+    let rows = stmt.query_map(params![repacker, normalized, limit], |row| parse_repack_row(row))?;
+    rows.collect()
+}
+
 fn query_by_app_id(conn: &Connection, app_id: u32) -> SqliteResult<Vec<RepackQueryResult>> {
     let mut stmt = conn.prepare(
         "SELECT id, title, app_id, repacker, installer_type, file_size, install_size,
@@ -249,12 +286,47 @@ fn query_by_repacker(conn: &Connection, repacker: &str, limit: u32, offset: u32)
         "SELECT id, title, app_id, repacker, installer_type, file_size, install_size,
                 languages_json, download_uris_json, source_url, checksum, updated_at, tags_json
          FROM repack_catalog
-         WHERE repacker = ?1
+         WHERE lower(repacker) = lower(?1)
          ORDER BY updated_at DESC
          LIMIT ?2 OFFSET ?3",
     )?;
 
     let rows = stmt.query_map(params![repacker, limit, offset], |row| parse_repack_row(row))?;
+    rows.collect()
+}
+
+/// Distinct repacker names with entry counts, sorted by count descending.
+fn query_repacker_groups(conn: &Connection) -> SqliteResult<Vec<RepackGroupStat>> {
+    let mut stmt = conn.prepare(
+        "SELECT repacker, COUNT(*) AS count
+         FROM repack_catalog
+         WHERE repacker <> ''
+         GROUP BY lower(repacker)
+         ORDER BY count DESC, lower(repacker) ASC",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(RepackGroupStat {
+            repacker: row.get(0)?,
+            count: row.get(1)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Paged query over the whole catalog (for browse-all without a repacker filter).
+fn query_page(conn: &Connection, limit: u32, offset: u32) -> SqliteResult<Vec<RepackQueryResult>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, app_id, repacker, installer_type, file_size, install_size,
+                languages_json, download_uris_json, source_url, checksum, updated_at, tags_json
+         FROM repack_catalog
+         ORDER BY
+            CASE WHEN app_id > 0 THEN 0 ELSE 1 END,
+            updated_at DESC
+         LIMIT ?1 OFFSET ?2",
+    )?;
+
+    let rows = stmt.query_map(params![limit, offset], |row| parse_repack_row(row))?;
     rows.collect()
 }
 
@@ -361,6 +433,21 @@ pub fn query_repack_catalog_fuzzy(
 }
 
 #[tauri::command]
+pub fn query_repack_catalog_by_repacker_fuzzy(
+    repacker: String,
+    query: String,
+    limit: u32,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<RepackQueryResult>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    query_by_repacker_fuzzy_title(&guard, &repacker, &query, limit)
+        .map_err(|e| format!("Repack fuzzy by repacker query error: {}", e))
+}
+
+#[tauri::command]
 pub fn query_repack_catalog_by_app_id(
     app_id: u32,
     db: tauri::State<'_, SqliteDb>,
@@ -397,6 +484,32 @@ pub fn query_repack_catalog_by_repacker(
     };
     query_by_repacker(&guard, &repacker, limit, offset)
         .map_err(|e| format!("Repack by repacker query error: {}", e))
+}
+
+#[tauri::command]
+pub fn query_repack_catalog_page(
+    limit: u32,
+    offset: u32,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<RepackQueryResult>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    query_page(&guard, limit, offset)
+        .map_err(|e| format!("Repack page query error: {}", e))
+}
+
+#[tauri::command]
+pub fn query_repack_repackers(
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<RepackGroupStat>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    query_repacker_groups(&guard)
+        .map_err(|e| format!("Repack repackers query error: {}", e))
 }
 
 // ── Helpers ──
@@ -578,6 +691,42 @@ mod tests {
         let results = query_by_repacker(&conn, "fitgirl", 10, 0).unwrap();
         assert!(results.len() >= 2);
         assert!(results.iter().all(|r| r.repacker == "fitgirl"));
+    }
+
+    // ── Query by repacker + fuzzy title ──
+
+    #[test]
+    fn test_query_by_repacker_fuzzy_match() {
+        let conn = test_conn();
+        import_repack_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_by_repacker_fuzzy_title(&conn, "fitgirl", "cyberpunk", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "fitgirl-1091500");
+    }
+
+    #[test]
+    fn test_query_by_repacker_fuzzy_case_insensitive_repacker() {
+        let conn = test_conn();
+        import_repack_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_by_repacker_fuzzy_title(&conn, "FITGIRL", "eld", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "fitgirl-1245620");
+    }
+
+    #[test]
+    fn test_query_by_repacker_fuzzy_excludes_other_repackers() {
+        let conn = test_conn();
+        import_repack_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_by_repacker_fuzzy_title(&conn, "fitgirl", "bald", 10).unwrap();
+        assert!(results.is_empty(), "Baldur's Gate 3 belongs to Dodi, not FitGirl");
+    }
+
+    #[test]
+    fn test_query_by_repacker_fuzzy_no_results() {
+        let conn = test_conn();
+        import_repack_catalog_inner(&conn, &build_test_artifact(), "x").unwrap();
+        let results = query_by_repacker_fuzzy_title(&conn, "fitgirl", "zzz_nonexistent", 10).unwrap();
+        assert!(results.is_empty());
     }
 
     #[test]

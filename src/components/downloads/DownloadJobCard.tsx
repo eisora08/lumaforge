@@ -9,6 +9,8 @@ import {
   FileText,
   FolderOpen,
   Package,
+  Pause,
+  Play,
   Trash2,
 } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -22,6 +24,8 @@ import { localPathToUrl } from "../../services/gameCacheService";
 type DownloadJobCardProps = {
   job: DownloadJob;
   onCancel: (jobId: string) => void;
+  onPause: (jobId: string) => void;
+  onResume: (jobId: string) => void;
   onRemove: (jobId: string) => void;
   onOpenDetails: (appId: string) => void;
 };
@@ -102,6 +106,8 @@ function canRemove(status: DownloadJob["status"]) {
 export default function DownloadJobCard({
   job,
   onCancel,
+  onPause,
+  onResume,
   onRemove,
   onOpenDetails,
 }: DownloadJobCardProps) {
@@ -110,6 +116,11 @@ export default function DownloadJobCard({
   const progressMode = job.progressMode ?? "determinate";
   const isSteamInstall = job.type === "steam-install";
   const isDebridInstall = job.type === "debrid-install";
+
+  // Pause/Resume only applies to debrid-install jobs (the Rust side checkpoints
+  // HTTP downloads and keeps fastresume for torrents).
+  const canPause = isDebridInstall && canCancel(job.status) && job.status !== "paused";
+  const canResume = isDebridInstall && job.status === "paused";
 
   const snapshotGame = useMemo(() => {
     const snapshot = getBootSnapshot();
@@ -380,6 +391,28 @@ export default function DownloadJobCard({
 
         <div className="flex flex-wrap items-center gap-2">
           <DownloadStatusBadge status={job.status} />
+
+          {canResume && (
+            <button
+              type="button"
+              onClick={() => onResume(job.id)}
+              className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-medium text-(--color-accent-text) transition hover:opacity-90"
+            >
+              <Play className="h-3.5 w-3.5" />
+              Reanudar
+            </button>
+          )}
+
+          {canPause && (
+            <button
+              type="button"
+              onClick={() => onPause(job.id)}
+              className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+            >
+              <Pause className="h-3.5 w-3.5" />
+              Pausar
+            </button>
+          )}
 
           {canCancel(job.status) && (
             <button

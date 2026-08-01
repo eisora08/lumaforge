@@ -25,6 +25,8 @@ export default function Downloads({ onNavigate }: Props) {
   const {
     jobs,
     cancelJob,
+    pauseJob,
+    resumeJob,
     removeJob,
     clearCompleted,
   } = useDownloadQueue();
@@ -148,6 +150,8 @@ export default function Downloads({ onNavigate }: Props) {
               key={job.id}
               job={job}
               onCancel={cancelJob}
+              onPause={pauseJob}
+              onResume={resumeJob}
               onRemove={removeJob}
               onOpenDetails={handleOpenGame}
             />
@@ -163,6 +167,8 @@ export default function Downloads({ onNavigate }: Props) {
               key={job.id}
               job={job}
               onCancel={cancelJob}
+              onPause={pauseJob}
+              onResume={resumeJob}
               onRemove={removeJob}
               onOpenDetails={handleOpenGame}
             />

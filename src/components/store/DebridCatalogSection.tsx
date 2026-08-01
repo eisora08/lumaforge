@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Package, Download, HardDrive, Star, Tag, Search, Loader2, RefreshCw, Play, Settings2 } from "lucide-react";
-import type { RepackQueryResult } from "../../services/tauri";
-import { queryRepackCatalogByRepacker, queryRepackCatalogFuzzy, setupDebridGame } from "../../services/tauri";
+import type { RepackGroupStat, RepackQueryResult } from "../../services/tauri";
+import {
+  queryRepackCatalogByRepacker,
+  queryRepackCatalogByRepackerFuzzy,
+  queryRepackCatalogFuzzy,
+  queryRepackCatalogPage,
+  queryRepackRepackers,
+  setupDebridGame,
+} from "../../services/tauri";
+import { buildSteamCdnUrl } from "../../services/gameCacheService";
 import { DEBRID_LIBRARY_ENABLED } from "../../features/debrid/debridFeatureFlag";
 import {
   getAllDebridGames,
@@ -11,8 +19,10 @@ import {
   clearPendingSetup,
   updateDebridGame,
 } from "../../services/debridGameStore";
-import { showError, showSuccess } from "../toast/GameToast";
+import { showError, showSuccess, showWarning } from "../toast/GameToast";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
+import { useConfirm } from "../../services/confirmService";
+import { resolveDebridInstallUri } from "../../services/debridInstallChoice";
 import PackageInstallSuccessModal from "../common/PackageInstallSuccessModal";
 
 function formatBytes(bytes?: number | null): string {
@@ -25,6 +35,10 @@ function formatBytes(bytes?: number | null): string {
 
 const REPACKERS = ["FitGirl", "DODI", "ElAmigos", "Chovka", "TENOKE", "Empress", "RUNE", "GOG"];
 const GAMES_PER_PAGE = 24;
+
+function repackerLabel(repacker: string): string {
+  return repacker ? repacker.charAt(0).toUpperCase() + repacker.slice(1) : repacker;
+}
 
 type DebridCatalogSectionProps = {
   onNavigateToGame?: (appId: string) => void;
@@ -45,12 +59,17 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  const [repackerStats, setRepackerStats] = useState<RepackGroupStat[]>([]);
 
   const loadGames = useCallback(
     async (repacker: string | null, query: string, pageNum: number) => {
       setLoading(true);
       try {
-        if (query.trim()) {
+        if (query.trim() && repacker) {
+          const results = await queryRepackCatalogByRepackerFuzzy(repacker, query, GAMES_PER_PAGE);
+          setGames(results);
+          setHasMore(false);
+        } else if (query.trim()) {
           const results = await queryRepackCatalogFuzzy(query, GAMES_PER_PAGE);
           setGames(results);
           setHasMore(false);
@@ -63,8 +82,13 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
           }
           setHasMore(results.length === GAMES_PER_PAGE);
         } else {
-          setGames([]);
-          setHasMore(false);
+          const results = await queryRepackCatalogPage(GAMES_PER_PAGE, pageNum * GAMES_PER_PAGE);
+          if (pageNum === 0) {
+            setGames(results);
+          } else {
+            setGames((prev) => [...prev, ...results]);
+          }
+          setHasMore(results.length === GAMES_PER_PAGE);
         }
       } catch (err) {
         console.error("[DEBRID_CATALOG] Failed to load:", err);
@@ -76,34 +100,49 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
     [],
   );
 
+  // Load distinct repackers for the filter chips (fallback to hardcoded list on failure).
   useEffect(() => {
-    if (activeRepacker) {
-      setPage(0);
-      loadGames(activeRepacker, searchQuery, 0);
-    }
+    let cancelled = false;
+    queryRepackRepackers()
+      .then((stats) => {
+        if (cancelled) return;
+        if (stats.length > 0) setRepackerStats(stats);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        console.warn("[DEBRID_CATALOG] Failed to load repacker groups, using fallback list");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load page 0 whenever the active filter or search changes (mount → browse-all).
+  useEffect(() => {
+    setPage(0);
+    loadGames(activeRepacker, searchQuery, 0);
   }, [activeRepacker, searchQuery, loadGames]);
 
   const handleRepackerClick = useCallback((repacker: string) => {
-    setActiveRepacker((prev) => (prev === repacker ? null : repacker));
-    setSearchQuery("");
+    setActiveRepacker((prev) => (prev && prev.toLowerCase() === repacker.toLowerCase() ? null : repacker));
   }, []);
 
-  const handleSearch = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      setActiveRepacker(null);
-      loadGames(null, searchQuery, 0);
-    },
-    [searchQuery, loadGames],
-  );
+  const handleSearch = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+  }, []);
 
   const handleLoadMore = useCallback(() => {
     const nextPage = page + 1;
     setPage(nextPage);
-    if (activeRepacker) {
-      loadGames(activeRepacker, searchQuery, nextPage);
-    }
+    loadGames(activeRepacker, searchQuery, nextPage);
   }, [page, activeRepacker, searchQuery, loadGames]);
+
+  const chips = useMemo(() => {
+    if (repackerStats.length > 0) {
+      return repackerStats.map((s) => ({ repacker: s.repacker, count: s.count }));
+    }
+    return REPACKERS.map((r) => ({ repacker: r, count: 0 }));
+  }, [repackerStats]);
 
   const displayGames = useMemo(() => {
     if (!DEBRID_LIBRARY_ENABLED) return [];
@@ -127,7 +166,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
         <div>
           <h2 className="text-xl font-bold text-(--color-text)">Repack Catalog</h2>
           <p className="text-sm text-(--color-muted)">
-            Debrid/Hydra repack sources — click a repacker to browse
+            Debrid/Hydra repack sources — browse all or filter by repacker
           </p>
         </div>
       </div>
@@ -154,18 +193,23 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
 
       {/* Repacker pills */}
       <div className="flex flex-wrap gap-2">
-        {REPACKERS.map((repacker) => (
+        {chips.map(({ repacker, count }) => (
           <button
             key={repacker}
             type="button"
             onClick={() => handleRepackerClick(repacker)}
-            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-all ${
-              activeRepacker === repacker
+            className={`inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-medium transition-all ${
+              activeRepacker && activeRepacker.toLowerCase() === repacker.toLowerCase()
                 ? "bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-400/30"
                 : "bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
             }`}
           >
-            {repacker}
+            {repackerLabel(repacker)}
+            {count > 0 && (
+              <span className="rounded-full bg-white/10 px-1.5 text-[10px] leading-tight">
+                {count}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -182,7 +226,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
           <p className="mt-1 text-sm">
             {searchQuery
               ? "Try a different search term"
-              : "Select a repacker above or add Hydra sources in Settings"}
+              : "Nothing in the catalog yet — add Hydra sources or import a repack feed in Settings"}
           </p>
         </div>
       ) : (
@@ -236,7 +280,16 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
   const [localStatus, setLocalStatus] = useState(() => game.id ? getDebridGameStatus(game.id) : "not-downloaded");
   const [setupLoading, setSetupLoading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
   const downloadQueue = useDownloadQueue();
+  const { confirm } = useConfirm();
+
+  const heroUrl = game.appId > 0 ? buildSteamCdnUrl(String(game.appId), "capsule") : null;
+
+  // Reset image error when switching games.
+  useEffect(() => {
+    setImgFailed(false);
+  }, [game.id]);
 
   // Refresh status when store updates
   useEffect(() => {
@@ -248,9 +301,17 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
     return () => clearInterval(interval);
   }, [game.id]);
 
-  const handleDownload = useCallback((e: React.MouseEvent) => {
+  const handleDownload = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!game.downloadUris?.[0] || !game.id) return;
+    if (!game.id) return;
+
+    const resolved = await resolveDebridInstallUri(game.downloadUris, confirm, game.title);
+    if (!resolved.ok) {
+      if (resolved.reason === "no-uri") {
+        showWarning("No download URI available for this repack.", { title: "Not available" });
+      }
+      return;
+    }
 
     markDebridGameStatus(game.id, "downloading");
     setLocalStatus("downloading");
@@ -258,15 +319,16 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
     downloadQueue.addDebridInstallJob(
       game.id,
       game.title,
-      game.downloadUris[0],
+      resolved.uri,
       game.installerType || "zip",
       game.appId > 0 ? String(game.appId) : undefined,
       undefined,
       game.repacker,
+      resolved.method,
     );
 
     showSuccess("Download queued. Check the Downloads page for progress.");
-  }, [game, downloadQueue]);
+  }, [game, downloadQueue, confirm]);
 
   const handleRunSetup = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -329,13 +391,29 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
         />
       )}
 
-      {/* Top gradient */}
-      <div className="bg-linear-to-br from-cyan-500/10 to-transparent p-4 pb-3">
-        <div className="flex items-center gap-2">
-          <Package className="h-4 w-4 text-cyan-400" />
-          <span className="text-xs font-medium text-cyan-400">{game.repacker}</span>
+      {/* Top artwork */}
+      {heroUrl && !imgFailed ? (
+        <div className="relative aspect-video w-full overflow-hidden bg-black/30">
+          <img
+            src={heroUrl}
+            alt=""
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+          />
+          <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2 py-1 backdrop-blur-sm">
+            <Package className="h-3 w-3 text-cyan-400" />
+            <span className="text-[10px] font-medium text-cyan-400">{repackerLabel(game.repacker)}</span>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="bg-linear-to-br from-cyan-500/10 to-transparent p-4 pb-3">
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4 text-cyan-400" />
+            <span className="text-xs font-medium text-cyan-400">{repackerLabel(game.repacker)}</span>
+          </div>
+        </div>
+      )}
 
       {/* Body */}
       <div className="px-4 pb-4">

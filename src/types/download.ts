@@ -1,4 +1,5 @@
 import { PackageFileType } from "./provider";
+import type { DebridInstallMethod } from "../services/debridInstallChoice";
 
 export type DownloadStatus =
   | "queued"
@@ -37,6 +38,8 @@ export type DownloadJob = {
   installedSize?: number;
   /** Repacker name for Debrid installs (e.g., "FitGirl", "DODI") */
   repacker?: string;
+  /** Download method chosen by the user for Debrid installs */
+  installMethod?: DebridInstallMethod;
   /** Install directory on disk (populated when install completes) */
   installDir?: string;
 

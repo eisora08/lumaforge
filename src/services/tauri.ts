@@ -1217,6 +1217,11 @@ export type RepackCatalogMeta = {
   importedAt: string;
 };
 
+export type RepackGroupStat = {
+  repacker: string;
+  count: number;
+};
+
 /** Get repack catalog metadata (counts, version, checksum). */
 export async function getRepackCatalogMeta(): Promise<RepackCatalogMeta> {
   return await invoke<RepackCatalogMeta>("get_repack_catalog_meta");
@@ -1236,6 +1241,19 @@ export async function queryRepackCatalogFuzzy(
   limit: number,
 ): Promise<RepackQueryResult[]> {
   return await invoke<RepackQueryResult[]>("query_repack_catalog_fuzzy", { query, limit });
+}
+
+/** Query repack catalog by fuzzy title match constrained to a single repacker. */
+export async function queryRepackCatalogByRepackerFuzzy(
+  repacker: string,
+  query: string,
+  limit: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_by_repacker_fuzzy", {
+    repacker,
+    query,
+    limit,
+  });
 }
 
 /** Query repack catalog by Steam app ID — returns all repacks for that app. */
@@ -1261,12 +1279,25 @@ export async function queryRepackCatalogByRepacker(
   });
 }
 
+/** Query a page of the whole repack catalog (browse-all). */
+export async function queryRepackCatalogPage(
+  limit: number,
+  offset: number,
+): Promise<RepackQueryResult[]> {
+  return await invoke<RepackQueryResult[]>("query_repack_catalog_page", { limit, offset });
+}
+
+/** List distinct repackers with entry counts (for filter chips). */
+export async function queryRepackRepackers(): Promise<RepackGroupStat[]> {
+  return await invoke<RepackGroupStat[]>("query_repack_repackers");
+}
+
 // --- Debrid Installer ---
 
 /** Result from download_debrid_package — download + extract or save installer. */
 export type DebridDownloadResult = {
   success: boolean;
-  status: "ready" | "needs-setup" | "installing";
+  status: "ready" | "needs-setup" | "installing" | "paused";
   installDir: string;
   executablePath: string | null;
   installerPath: string | null;
@@ -1309,6 +1340,19 @@ export async function downloadDebridPackage(params: {
 }
 
 /**
+ * Download a Debrid repack whose source is a `magnet:` URI via the built-in
+ * torrent client (librqbit). Returns the same `DebridDownloadResult` shape as
+ * `download_debrid_package`, so the install pipeline is unchanged.
+ */
+export async function startTorrentDownload(params: {
+  jobId: string;
+  magnet: string;
+  destDir: string;
+}): Promise<DebridDownloadResult> {
+  return await invoke<DebridDownloadResult>("start_torrent_download", params);
+}
+
+/**
  * Run a previously-downloaded repack installer (setup.exe) in the foreground.
  * This is the second phase for `needs-setup` results — no download, no extraction.
  */
@@ -1322,6 +1366,15 @@ export async function setupDebridGame(params: {
 /** Abort an in-flight debrid download by job ID. */
 export async function cancelDebridDownload(jobId: string): Promise<void> {
   await invoke("cancel_debrid_download", { jobId });
+}
+
+/**
+ * Pause an in-flight debrid download by job ID. HTTP downloads checkpoint a
+ * `.part` file; torrent downloads keep fastresume + persistence. Both can be
+ * resumed later by re-invoking `downloadDebridPackage` / `startTorrentDownload`.
+ */
+export async function pauseDebridDownload(jobId: string): Promise<void> {
+  await invoke("pause_debrid_download", { jobId });
 }
 
 /** Check whether a Debrid install directory has a game executable. */

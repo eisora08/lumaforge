@@ -48,6 +48,7 @@ import {
   DEBRID_LIBRARY_ENABLED,
   DEBUG_DEBRID_INSTALL,
 } from "../../features/debrid/debridFeatureFlag";
+import { pickInstallUriWithoutDialog } from "../../services/debridInstallChoice";
 
 const DEBUG_CONSOLE_ACTIONS = false;
 
@@ -497,7 +498,7 @@ export async function handleConsolePrimaryAction(
               return { action, success: false, error: "no-repacks" };
             }
             const rawEntry = repacks[0];
-            const downloadUri = rawEntry.downloadUris?.[0] || "";
+            const downloadUri = pickInstallUriWithoutDialog(rawEntry.downloadUris);
             if (!downloadUri) {
               showWarning("No download URI available for this Debrid game.", { id: `console-debrid-nouri-${appId}`, duration: 3000 });
               return { action, success: false, error: "no-download-uri" };

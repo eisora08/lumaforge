@@ -1012,11 +1012,14 @@ export default function GameEditDialog({
         if (appIdDraft) {
           updateDebridGameAppId(debridProviderGameId, appIdDraft);
         }
+        let titleOk = true;
         if (nameDraft.trim()) {
-          updateDebridGameTitle(debridProviderGameId, nameDraft);
+          titleOk = updateDebridGameTitle(debridProviderGameId, nameDraft);
         }
-        if (ok) {
+        if (ok && titleOk) {
           showSuccess("Debrid install path saved");
+        } else if (ok) {
+          showError("El título no se pudo guardar");
         } else {
           showError("Could not save debrid path");
         }

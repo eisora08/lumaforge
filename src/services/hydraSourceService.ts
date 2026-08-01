@@ -6,7 +6,11 @@
  * Source configs live in AppData/debrid/hydra-sources.json via Rust commands.
  */
 
-import type { HydraSourceConfig, HydraImportResult } from "../types/hydraSource";
+import type {
+  HydraSourceConfig,
+  HydraImportResult,
+  ImportedFeedSummary,
+} from "../types/hydraSource";
 import { invoke } from "@tauri-apps/api/core";
 
 /** Result of validating a Hydra source URL. */
@@ -20,6 +24,7 @@ interface HydraFetchResult {
 // ── Module-level cache ──
 
 let _cachedSources: HydraSourceConfig[] | null = null;
+let _cachedFeeds: ImportedFeedSummary[] | null = null;
 
 // ── Tauri bindings ──
 
@@ -72,6 +77,26 @@ async function tauriRefreshAll(): Promise<HydraImportResult[]> {
 
 async function tauriClearCache(): Promise<void> {
   await invoke("clear_hydra_cache");
+}
+
+async function tauriImportRepackFeed(
+  contents: string,
+  sourceName?: string,
+  sourceUrl?: string,
+): Promise<HydraImportResult> {
+  return await invoke<HydraImportResult>("import_repack_feed", {
+    contents,
+    sourceName,
+    sourceUrl,
+  });
+}
+
+async function tauriListImportedFeeds(): Promise<ImportedFeedSummary[]> {
+  return await invoke<ImportedFeedSummary[]>("list_imported_feeds");
+}
+
+async function tauriRemoveImportedFeed(name: string): Promise<number> {
+  return await invoke<number>("remove_imported_feed", { name });
 }
 
 // ── Public API ──
@@ -155,6 +180,46 @@ export async function refreshAllHydraSources(): Promise<HydraImportResult[]> {
 export async function clearHydraCache(): Promise<void> {
   await tauriClearCache();
   _cachedSources = null;
+}
+
+/**
+ * Import a pasted repack feed (raw JSON) directly into the repack catalog.
+ * Supports Hydra (`games`), official artifact (`records`), and scraped
+ * (`downloads`) formats. Download links from the feed are preserved as-is
+ * so the Debrid installer can use them.
+ */
+export async function importRepackFeed(
+  contents: string,
+  options?: { sourceName?: string; sourceUrl?: string },
+): Promise<HydraImportResult> {
+  const result = await tauriImportRepackFeed(
+    contents,
+    options?.sourceName,
+    options?.sourceUrl,
+  );
+  _cachedFeeds = null; // invalidate imported-feeds cache
+  return result;
+}
+
+/**
+ * List pasted repack feeds (catalog rows with an empty sourceUrl),
+ * grouped by feed name. Cached in memory.
+ */
+export async function getImportedFeeds(forceRefresh = false): Promise<ImportedFeedSummary[]> {
+  if (!_cachedFeeds || forceRefresh) {
+    _cachedFeeds = await tauriListImportedFeeds();
+  }
+  return _cachedFeeds;
+}
+
+/**
+ * Remove a pasted repack feed, purging all of its rows from the repack catalog.
+ * Returns the number of rows deleted.
+ */
+export async function removeImportedFeed(name: string): Promise<number> {
+  const deleted = await tauriRemoveImportedFeed(name);
+  _cachedFeeds = null;
+  return deleted;
 }
 
 /**

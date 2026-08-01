@@ -52,6 +52,7 @@ import {
   showInfo,
 } from "../components/toast/GameToast";
 import { useConfirm } from "../services/confirmService";
+import { resolveDebridInstallUri } from "../services/debridInstallChoice";
 
 
 type Props = {
@@ -1125,19 +1126,22 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         }
         if (repacks.length === 1) {
           const rawEntry = repacks[0];
-          const downloadUri = rawEntry.downloadUris?.[0] || "";
-          if (!downloadUri) {
-            showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+          const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
+          if (!resolved.ok) {
+            if (resolved.reason === "no-uri") {
+              showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+            }
             return;
           }
           downloadQueue.addDebridInstallJob(
             rawEntry.id,
             game.title,
-            downloadUri,
+            resolved.uri,
             rawEntry.installerType || "zip",
             game.appId ?? "",
             undefined,
             rawEntry.repacker,
+            resolved.method,
           );
           return;
         }
@@ -1149,20 +1153,22 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         showWarning("Debrid game entry not found.", { title: "Not available" });
         return;
       }
-      const downloadUri = rawEntry.downloadUris?.[0] || "";
-      const installerType = rawEntry.installerType || "zip";
-      if (!downloadUri) {
-        showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+      const resolved = await resolveDebridInstallUri(rawEntry.downloadUris, confirm, game.title);
+      if (!resolved.ok) {
+        if (resolved.reason === "no-uri") {
+          showWarning("No download URI available for this Debrid game.", { title: "Not available" });
+        }
         return;
       }
       downloadQueue.addDebridInstallJob(
         providerGameId,
         game.title,
-        downloadUri,
-        installerType,
+        resolved.uri,
+        rawEntry.installerType || "zip",
         game.appId ?? "",
         undefined,
         game.repacker,
+        resolved.method,
       );
       return;
     }
@@ -1206,8 +1212,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     );
   }
 
-  const sgdbActive = !!(settings.steamGridDbArtworkEnabled && settings.steamGridDbApiKey);
-  const displayGame = sgdbActive ? selectedGame : (resolvedGame || selectedGame);
+  const displayGame = resolvedGame || selectedGame;
   const currentSession = session.getSession(gameKey);
   const appInfoEntry = displayGame.appId ? (appInfoMap[displayGame.appId] ?? null) : null;
   const detailTitle = resolveCanonicalDisplayTitle(
@@ -1253,20 +1258,24 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         repacks={debridRepacks}
         gameTitle={debridInstallGame?.title ?? ""}
         appId={debridInstallGame?.appId}
-        onInstallSource={(repack: RepackQueryResult) => {
-          const downloadUri = repack.downloadUris?.[0] || "";
-          if (!downloadUri || !debridInstallGame) {
-            showWarning("No download URI available for this Debrid source.", { title: "Not available" });
+        onInstallSource={async (repack: RepackQueryResult) => {
+          if (!debridInstallGame) return;
+          const resolved = await resolveDebridInstallUri(repack.downloadUris, confirm, debridInstallGame.title);
+          if (!resolved.ok) {
+            if (resolved.reason === "no-uri") {
+              showWarning("No download URI available for this Debrid source.", { title: "Not available" });
+            }
             return;
           }
           downloadQueue.addDebridInstallJob(
             repack.id,
             debridInstallGame.title,
-            downloadUri,
+            resolved.uri,
             repack.installerType || "zip",
             debridInstallGame.appId ?? "",
             undefined,
             debridInstallGame.repacker,
+            resolved.method,
           );
         }}
         onClose={() => {

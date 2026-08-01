@@ -44,6 +44,8 @@ import { fetchHubcapAppStatus, checkHubcapAppUpdate, setLocalPackageMetadata, re
 import type { ProviderCheckState } from "./details/StoreGameSummaryPanel";
 
 import { showError, showSuccess, showWarning } from "../toast/GameToast";
+import { useConfirm } from "../../services/confirmService";
+import { resolveDebridInstallUri } from "../../services/debridInstallChoice";
 import PackageInstallSuccessModal from "../common/PackageInstallSuccessModal";
 
 import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
@@ -285,26 +287,30 @@ export default function StoreGameDetailsPage({
   const [repackSelectorOpen, setRepackSelectorOpen] = useState(false);
 
   const downloadQueue = useDownloadQueueContext();
+  const { confirm } = useConfirm();
 
   const handleInstallRepack = useCallback(async (entry: RepackEntry) => {
     if (!DEBRID_INSTALL_ENABLED) {
       showWarning("Debrid install is not enabled in settings.", { title: "Not available" });
       return;
     }
-    const downloadUri = entry.downloadUris?.[0];
-    if (!downloadUri) {
-      showWarning("No download URI available for this repack.", { title: "Not available" });
+    const resolved = await resolveDebridInstallUri(entry.downloadUris, confirm, entry.title);
+    if (!resolved.ok) {
+      if (resolved.reason === "no-uri") {
+        showWarning("No download URI available for this repack.", { title: "Not available" });
+      }
       return;
     }
     try {
       downloadQueue.addDebridInstallJob(
         entry.id,
         entry.title,
-        downloadUri,
+        resolved.uri,
         entry.installerType || "zip",
         game.appId ?? "",
         game.imageUrl,
         entry.repacker,
+        resolved.method,
       );
       setRepackSelectorOpen(false);
       showSuccess(`Install started: ${entry.title}`, { title: "Debrid" });
@@ -312,7 +318,7 @@ export default function StoreGameDetailsPage({
       const msg = err instanceof Error ? err.message : String(err);
       showError(`Failed to start install: ${msg}`, { title: "Debrid" });
     }
-  }, [downloadQueue, game.appId, game.imageUrl]);
+  }, [downloadQueue, game.appId, game.imageUrl, confirm]);
 
   // Internal source checking â€” used when parent does not provide sourceStatus/onRefreshSources
   const [internalSourceStatus, setInternalSourceStatus] = useState<SourceCheckStatus | undefined>();

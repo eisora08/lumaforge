@@ -37,6 +37,17 @@ const _listeners = new Set<() => void>();
 // User-overridden Steam appIds (survive catalog refresh)
 let _debridAppIdOverrides = new Map<string, string>();
 
+// User-edited display titles (survive catalog refresh + restart).
+// Seeded on boot from disk entries whose title differs from the catalog title.
+let _debridTitleOverrides = new Map<string, string>();
+
+// Persisted disk title per providerGameId — used to detect user edits
+// when re-mapping from the catalog (disk title != catalog title => override).
+let _diskTitleByProviderGameId = new Map<string, string>();
+
+// Session-level guard so title enrichment resolves each providerGameId once.
+let _titleEnrichAttemptedThisSession = new Set<string>();
+
 // Pending setup state: installerPath + installDir per providerGameId
 let _pendingSetup = new Map<string, { installerPath: string; installDir: string }>();
 
@@ -66,6 +77,66 @@ function splitLaunchArgs(args: string): string[] {
   return args.split(/\s+/).filter((a) => a.length > 0);
 }
 
+/**
+ * Replace unedited Debrid entries' titles with the clean Steam store name via
+ * resolveGameMetadata (batched, cached, per-appId deduped). Only entries with
+ * no title override are enriched. Returns the number of titles actually
+ * applied. Clean names are promoted to sticky overrides (same treatment as a
+ * user edit); the caller persists them so they survive refresh + restart.
+ */
+async function enrichDebridTitles(games: LibraryGame[]): Promise<number> {
+  const toResolve: { game: LibraryGame; appId: number }[] = [];
+
+  for (const game of games) {
+    if (!game.providerGameId) continue;
+    if (_debridTitleOverrides.has(game.providerGameId)) continue;
+    if (_titleEnrichAttemptedThisSession.has(game.providerGameId)) continue;
+
+    const appIdNum = Number(game.appId);
+    if (!appIdNum || Number.isNaN(appIdNum)) continue;
+
+    toResolve.push({ game, appId: appIdNum });
+  }
+
+  if (toResolve.length === 0) return 0;
+
+  let applied = 0;
+
+  try {
+    const { resolveGameMetadata } = await import("./gameMetadataResolver");
+    const results = await resolveGameMetadata(toResolve.map((r) => r.appId));
+
+    for (const { game, appId } of toResolve) {
+      if (!game.providerGameId) continue;
+
+      const name = results[appId]?.name?.trim();
+      if (!name || /^Steam App \d+$/.test(name)) continue;
+      if (name === game.title) continue;
+      game.title = name;
+      // Promote the clean name to a sticky override so the title-apply loop on
+      // future refreshes treats it as authoritative instead of reverting to the
+      // verbose catalog/disk title.
+      _debridTitleOverrides.set(game.providerGameId, name);
+      _diskTitleByProviderGameId.set(game.providerGameId, name);
+      // Only mark as attempted once a valid name was actually applied, so a
+      // fallback/placeholder resolution (e.g. "Steam App <id>") doesn't lock
+      // the verbose title for the whole session — retries are cheap because the
+      // metadata resolver caches in-memory + on disk.
+      _titleEnrichAttemptedThisSession.add(game.providerGameId);
+      applied += 1;
+      if (DEBUG_DEBRID_LIBRARY) {
+        console.log(`[DEBRID_STORE] title enriched providerGameId=${game.providerGameId} appId=${appId} title="${name}"`);
+      }
+    }
+  } catch (e) {
+    if (DEBUG_DEBRID_LIBRARY) {
+      console.warn("[DEBRID_STORE] title enrichment failed", e);
+    }
+  }
+
+  return applied;
+}
+
 // ── Disk persistence ──
 
 /**
@@ -82,15 +153,18 @@ export async function loadDebridGamesFromDisk(): Promise<DebridGameEntryJson[]> 
     _diskEntryById = new Map(entries.map((e) => [e.id, e]));
 
     for (const entry of entries) {
-      if (entry.installDir) {
+      if (entry.installDir || entry.executablePath) {
         _launchMetadataByProviderGameId.set(entry.id, {
-          installDir: entry.installDir,
+          installDir: entry.installDir ?? "",
           executablePath: entry.executablePath ?? undefined,
           workingDirectory: entry.workingDirectory ?? undefined,
           launchArguments: entry.launchArguments?.join(" ") || undefined,
         });
       }
       _userLibraryAppIds.add(entry.id);
+      // Remember the persisted title so refreshDebridGames can re-apply
+      // user edits (disk title differs from the catalog title when edited).
+      _diskTitleByProviderGameId.set(entry.id, entry.title || "");
       // Restore user-overridden appIds so the override loop survives a restart.
       // The disk `appId` field is authoritative (written from the override map).
       if (entry.appId) {
@@ -182,27 +256,31 @@ function toDiskEntries(): DebridGameEntryJson[] {
   return entries;
 }
 
-let _persistInFlight = false;
-
 /**
- * Write current install/library state to `debrid-games.json` (fire-and-forget).
- * Guards against concurrent writes via _persistInFlight flag.
+ * Coalescing persist chain. Multiple synchronous callers (e.g. the three
+ * store updates in GameEditDialog.handleSave) must not drop each other's
+ * writes: a boolean in-flight guard would discard the title/appId flush
+ * after the path flush already serialized the older state. Chaining instead
+ * coalesces every request into a single trailing flush that calls
+ * `toDiskEntries()` at flush time — so the final in-memory state (including
+ * the just-edited title) is what reaches disk. Fire-and-forget API kept.
  */
-async function persistToDisk(): Promise<void> {
-  if (_persistInFlight) return;
-  _persistInFlight = true;
-  try {
-    const { writeDebridGames } = await import("./tauri");
-    const entries = toDiskEntries();
-    await writeDebridGames(entries);
-    if (DEBUG_DEBRID_LIBRARY) {
-      console.log(`[DEBRID_STORE] persisted ${entries.length} entries to disk`);
-    }
-  } catch (e) {
-    console.error("[DEBRID_STORE] persist failed:", e);
-  } finally {
-    _persistInFlight = false;
-  }
+let _persistChain: Promise<void> = Promise.resolve();
+
+function persistToDisk(): Promise<void> {
+  _persistChain = _persistChain
+    .then(async () => {
+      const { writeDebridGames } = await import("./tauri");
+      const entries = toDiskEntries();
+      await writeDebridGames(entries);
+      if (DEBUG_DEBRID_LIBRARY) {
+        console.log(`[DEBRID_STORE] persisted ${entries.length} entries to disk`);
+      }
+    })
+    .catch((e) => {
+      console.error("[DEBRID_STORE] persist failed:", e);
+    });
+  return _persistChain;
 }
 
 // ── Notification ──
@@ -261,7 +339,7 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
       if (installed) {
         game.isInstalled = true;
         game.isPlayable = !!installed.executablePath;
-        game.installDir = installed.installDir;
+        game.installDir = installed.installDir || undefined;
         game.executablePath = installed.executablePath;
         game.workingDirectory = installed.workingDirectory;
         game.launchArguments = installed.launchArguments;
@@ -284,13 +362,37 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
       }
     }
 
+    // Apply user-edited titles (survive catalog refresh + restart).
+    // An explicit override always wins; otherwise a disk title that differs
+    // from the freshly-mapped catalog title is treated as a user edit and
+    // promoted to an override (unedited games have disk == catalog title).
+    // Placeholder titles ("Steam App <id>") are never promoted.
+    for (const game of mapped) {
+      if (!game.providerGameId) continue;
+      const explicit = _debridTitleOverrides.get(game.providerGameId);
+      const diskTitle = _diskTitleByProviderGameId.get(game.providerGameId);
+      if (explicit) {
+        game.title = explicit;
+      } else if (
+        diskTitle &&
+        diskTitle !== game.title &&
+        !/^Steam App \d+$/.test(diskTitle)
+      ) {
+        _debridTitleOverrides.set(game.providerGameId, diskTitle);
+        game.title = diskTitle;
+        if (DEBUG_DEBRID_LIBRARY) {
+          console.log(`[DEBRID_STORE] title override restored providerGameId=${game.providerGameId} title="${diskTitle}"`);
+        }
+      }
+    }
+
     // Synthesise orphan entries for user-library appIds not in the catalog.
     // These come from debrid-games.json (installed or previously added) but
     // have no matching row in the SQLite repack catalog (e.g. after rebuild).
     const catalogIds = new Set(_rawEntries.keys());
     for (const id of _userLibraryAppIds) {
       if (catalogIds.has(id)) continue;
-      const diskEntry = _diskEntryById.get(id);
+      const diskEntry = deriveDiskEntry(id);
       if (!diskEntry) continue;
       const status = _debridGameStatuses.get(id) ?? "not-downloaded";
       const orphan = buildDebridGameFromDiskEntry(diskEntry, status);
@@ -310,6 +412,11 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
       mapped.push(orphan);
     }
 
+    // Enrich unedited entries with the clean Steam store name (e.g. "Rail Route"
+    // instead of the verbose bundle name). Runs before the fingerprint so the
+    // enriched titles are captured in a single notify.
+    const titleEnrichedCount = await enrichDebridTitles(mapped);
+
     const newFingerprint = computeDebridFingerprint(mapped);
 
     const fingerprintChanged = newFingerprint !== _debridFingerprint;
@@ -318,6 +425,15 @@ export async function refreshDebridGames(): Promise<{ count: number; warning: st
     _debridFingerprint = newFingerprint;
     _scanWarning = null;
     _scanState = "done";
+
+    // Persist state changes so debrid-games.json records them and the fix
+    // survives refresh + restart. toDiskEntries reads game.title, which is now
+    // clean on the mapped entries. Persisting on any fingerprint change also
+    // captures restored title/appId overrides; the coalescing chain makes the
+    // write idempotent (no-op when nothing changed).
+    if (titleEnrichedCount > 0 || fingerprintChanged) {
+      persistToDisk();
+    }
 
     if (fingerprintChanged || mapped.length === 0) {
       if (DEBUG_DEBRID_LIBRARY) {
@@ -417,10 +533,64 @@ export function resetDebridLibraryAppIds(): void {
   notifyListeners();
 }
 
+// ── Library visibility self-heal ──
+
+/**
+ * Derive the disk entry for a providerGameId from live in-memory state.
+ * Prefers the boot-loaded map, falling back to a freshly derived entry so
+ * in-session installs (which never touch `_diskEntryById`) are covered.
+ */
+function deriveDiskEntry(providerGameId: string): DebridGameEntryJson | undefined {
+  return _diskEntryById.get(providerGameId) ?? toDiskEntries().find((e) => e.id === providerGameId);
+}
+
+/**
+ * Ensure a library-member Debrid game has a corresponding entry in
+ * `_debridGames` so it renders in the Library grid even if it was added via a
+ * write path that never pushed to the array (install flows) or before a
+ * catalog refresh ran.
+ *
+ * Idempotent: no-op when the entry already exists or the id is not a library
+ * member. Persists + (optionally) notifies only when a new entry was inserted.
+ */
+function ensureDebridGameVisible(providerGameId: string, notify = true): boolean {
+  if (_debridGames.some((g) => g.providerGameId === providerGameId)) return false;
+  if (!_userLibraryAppIds.has(providerGameId)) return false;
+
+  const status = _debridGameStatuses.get(providerGameId) ?? "not-downloaded";
+  const diskEntry = deriveDiskEntry(providerGameId);
+  if (!diskEntry) return false;
+
+  const orphan = buildDebridGameFromDiskEntry(diskEntry, status);
+  const meta = _launchMetadataByProviderGameId.get(providerGameId);
+  if (meta) {
+    orphan.installDir = meta.installDir;
+    orphan.executablePath = meta.executablePath;
+    orphan.workingDirectory = meta.workingDirectory;
+    orphan.launchArguments = meta.launchArguments;
+    orphan.isInstalled = true;
+    orphan.isPlayable = !!meta.executablePath;
+  }
+
+  _debridGames.push(orphan);
+  _debridFingerprint = computeDebridFingerprint(_debridGames);
+
+  if (DEBUG_DEBRID_LIBRARY) {
+    console.log(`[DEBRID_STORE] self-healed entry id=${providerGameId} title="${orphan.title}" appId=${orphan.appId}`);
+  }
+
+  persistToDisk();
+  if (notify) notifyListeners();
+  return true;
+}
+
 // ── Sync reads ──
 
 /** Return current Debrid LibraryGame entries (sync, no query). */
 export function getAllDebridGames(): LibraryGame[] {
+  for (const id of _userLibraryAppIds) {
+    ensureDebridGameVisible(id, false);
+  }
   return _debridGames;
 }
 
@@ -459,6 +629,7 @@ export function markDebridGameStatus(providerGameId: string, status: DebridGameS
 
   _debridGameStatuses.set(providerGameId, status);
   _debridFingerprint = computeDebridFingerprint(_debridGames);
+  ensureDebridGameVisible(providerGameId, false);
 
   if (DEBUG_DEBRID_LIBRARY) {
     console.log(`[DEBRID_STORE] status ${providerGameId}: ${old ?? "none"} → ${status}`);
@@ -483,6 +654,7 @@ export function markDebridGameExtracted(
   _debridGameStatuses.set(providerGameId, "needs-setup");
   _userLibraryAppIds.add(providerGameId);
   _launchMetadataByProviderGameId.set(providerGameId, { installDir });
+  ensureDebridGameVisible(providerGameId, false);
 
   // Also update the _debridGames[] entry so isInstalled=true + installDir
   // are reflected immediately when getDebridLibraryGames() is called.
@@ -548,6 +720,7 @@ export function markDebridGameInstalling(
   _debridGameStatuses.set(providerGameId, "waiting-installer");
   _userLibraryAppIds.add(providerGameId);
   _launchMetadataByProviderGameId.set(providerGameId, { installDir });
+  ensureDebridGameVisible(providerGameId, false);
 
   const idx = _debridGames.findIndex((g) => g.providerGameId === providerGameId);
   if (idx !== -1) {
@@ -576,6 +749,7 @@ export function setPendingCompletionNeedsPath(
   installDir: string,
   extras?: { title?: string; appId?: string; repacker?: string },
 ): void {
+  ensureDebridGameVisible(providerGameId, false);
   const game = _debridGames.find((g) => g.providerGameId === providerGameId);
   _pendingCompletion = {
     providerGameId,
@@ -656,6 +830,12 @@ export function updateDebridGame(
 ): boolean {
   if (!DEBRID_INSTALL_ENABLED || !DEBRID_LIBRARY_ENABLED) return false;
 
+  // Auto-add to library so the game is visible even if the install flow never
+  // went through markDebridGameExtracted / markDebridGameInstalling, then
+  // heal the render array so a fresh (non-catalog) game gets an entry.
+  _userLibraryAppIds.add(providerGameId);
+  ensureDebridGameVisible(providerGameId, false);
+
   const idx = _debridGames.findIndex((g) => g.providerGameId === providerGameId);
   if (idx === -1) return false;
 
@@ -672,9 +852,6 @@ export function updateDebridGame(
 
   // Store launch metadata for the launch adapter
   _launchMetadataByProviderGameId.set(providerGameId, { installDir, executablePath, workingDirectory, launchArguments });
-
-  // Auto-add to library if not already
-  _userLibraryAppIds.add(providerGameId);
 
   // Mark as ready
   _debridGameStatuses.set(providerGameId, "ready");
@@ -746,6 +923,9 @@ export function resetDebridGameCache(): void {
   _pendingSetup = new Map();
   _pendingCompletion = null;
   _debridAppIdOverrides = new Map();
+  _debridTitleOverrides = new Map();
+  _diskTitleByProviderGameId = new Map();
+  _titleEnrichAttemptedThisSession = new Set();
   _userLibraryAppIds = new Set();
   _debridFingerprint = "";
   _scanWarning = null;
@@ -790,6 +970,8 @@ export function updateDebridGamePath(
   if (idx !== -1) {
     _debridGames[idx] = {
       ..._debridGames[idx],
+      isInstalled: true,
+      isInstallable: false,
       isPlayable: !!executablePath || !!_debridGames[idx].executablePath,
       installDir,
       executablePath: executablePath ?? _debridGames[idx].executablePath,
@@ -798,6 +980,10 @@ export function updateDebridGamePath(
       debridStatus: executablePath || _debridGames[idx].executablePath ? "ready" : (_debridGames[idx].debridStatus ?? "waiting-installer"),
     };
   }
+
+  _debridGameStatuses.set(providerGameId, meta.installDir || meta.executablePath ? "ready" : "waiting-installer");
+  _userLibraryAppIds.add(providerGameId);
+  ensureDebridGameVisible(providerGameId, false);
 
   _debridFingerprint = computeDebridFingerprint(_debridGames);
   persistToDisk();
@@ -866,6 +1052,7 @@ export function updateDebridGameTitle(providerGameId: string, title: string): bo
   if (idx === -1) return false;
 
   _debridGames[idx] = { ..._debridGames[idx], title: trimmed };
+  _debridTitleOverrides.set(providerGameId, trimmed);
   _debridFingerprint = computeDebridFingerprint(_debridGames);
 
   if (DEBUG_DEBRID_LIBRARY) {

@@ -4746,3 +4746,356 @@ Que el fondo ambiental de la página Library (grid) muestre el arte del último 
 - `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
 - `vite build` ✅ (1.82s, Rolldown; solo warnings INEFFECTIVE_DYNAMIC_IMPORT)
 - `cargo check` ⏭️ skipped (no Rust changes — decisión del usuario: no extender schema Rust)
+
+## Session — Importación de feeds de repack (URL/raw pegado) con parser Rust tolerante
+
+### Objetivo
+Permitir importar feeds de repack (URL o raw pegado) leyendo los JSON scrapeados (`fitgirl.json`/`steamrip.json`) preservando sus links de descarga en `download_uris_json` para que el instalador Debrid los use. Plan de 4 partes aprobado.
+
+### Datos verificados
+- `steamrip.json`: raíz `{name:"SteamRip", downloads[]}` (~1,239 items), items `{title, uploadDate, fileSize:"33 GB" string, uris[]}` HTTP tipo `https://gofile.io/d/...`.
+- `fitgirl.json`: raíz `{name:"FitGirl", downloads[]}` (8,548 items), uris `magnet:?xt=urn:btih:...` → `installer_type = "torrent"`.
+- Ambos sin `appId` ni `repacker` → `repacker` inferido del `name` de la raíz (lowercase); `app_id = 0` (resolución por título queda FUERA de fase 1, es fase 2 con `matchIndexer.ts`).
+- 3 formatos detectados por clave raíz: `games` (Hydra), `records` (artefacto oficial), `downloads` (scrapeado).
+
+### Part 1 — Parser Rust tolerante (`hydra_source.rs`)
+- `RepackRowData` struct: title, app_id, repacker, repack_group, installer_type, file_size/install_size `Option<i64>`, languages, selective_features, uris, checksum, updated_at, tags.
+- Helpers: `parse_human_size(s)` (TB/GB/MB/KB/B → bytes), `infer_installer_type(uris)` (magnet→"torrent", else "zip"), `parse_repack_feed_value(value, fallback_name)` con despacho a `parse_hydra_feed` / `parse_artifact_feed` / `parse_scraped_feed`.
+- `parse_artifact_feed` usa `RepackCatalogArtifact`; `parse_scraped_feed` infiere repacker del `name` raíz, `parse_human_size` en `fileSize`, `uploadDate`→`updated_at`.
+- `insert_repack_rows(db, rows, source_url, source_name) -> (u32, u32)` — UPSERT de 18 columnas, devuelve `(imported, updated)`; `id` canónico `"{normalized_title}-{repacker}"`.
+- `fetch_and_import_hydra_source`, `validate_hydra_source_url` e `import_hydra_source_entries` (path refresh) refactorizados para usar el parser compartido.
+- **Nuevo comando `import_repack_feed(app_handle, contents, source_name?, source_url?)`** — parsea raw pegado y lo inserta (fallback name `"pasted-feed"`, sin cache de raw).
+
+### Part 2 — Registro en `lib.rs` (L288, entre `clear_hydra_cache` y `webview_fetch_callback`).
+
+### Part 3 — TS (`hydraSourceService.ts`)
+- `tauriImportRepackFeed(contents, sourceName?, sourceUrl?)` — invoke directo a `"import_repack_feed"` con args camelCase `{contents, sourceName, sourceUrl}` (patrón del archivo, sin binding en `tauri.ts`).
+- Público `importRepackFeed(contents, options?) → HydraImportResult`.
+
+### Part 4 — UI (`DebridProvidersCard.tsx`)
+- Bloque "Importar feed repack": textarea (font-mono, placeholder con ejemplo de steamrip), botón "Importar" (estado `importingFeed`, icono `Download`/`Loader2`), texto explicativo de que los links se conservan.
+- Post-import: `showSuccess("Feed importado: N nuevos, M actualizados")` + `await refreshDebridGames()` para refrescar la librería.
+
+### Key Files Changed
+- `src-tauri/src/commands/hydra_source.rs` — parser tolerante, `insert_repack_rows`, comando `import_repack_feed`, refactor de los 3 paths de import
+- `src-tauri/src/lib.rs` — comando registrado
+- `src/services/hydraSourceService.ts` — `importRepackFeed` + `tauriImportRepackFeed`
+- `src/components/settings/DebridProvidersCard.tsx` — UI de importación de feed + `refreshDebridGames` post-import
+
+### Build
+- `cargo check` ✅ (0 errores; 2 warnings preexistentes dead-code)
+- `tsc --noEmit` ✅ (solo los 23 errores preexistentes de extensions/tests, ninguno en archivos tocados)
+- `vite build` ✅ (1.73s, Rolldown; solo INEFFECTIVE_DYNAMIC_IMPORT informativos)
+
+## Session — Gofile resolver: `.my` v1 → `.io` API + guest token + website-token (fix descarga 302→HTML)
+
+### Objetivo
+Reemplazar la resolución gofile rota (`.my/v1/content` muerta) por el flujo oficial `.io` verificado end-to-end: cuenta guest → `X-Website-Token` → `contents/{id}` → link CDN que requiere Bearer.
+
+### Verificación en vivo (previo a la implementación)
+- `api.gofile.my` NO sirve la API (404 HTML). La base correcta es `https://api.gofile.io`.
+- `POST https://api.gofile.io/accounts` `{"email":null,"pass":null}` → `data.token` (guest, sin email).
+- `wt = sha256("{ua}::en-US::{token}::{floor(unix/14400)}::{salt}")`; salt vigente `9844d94d963d30` (byte-exacto vs `wt.obf.js`); `5d4f7g8sd45fsd` (gallery-dl) NO coincide.
+- El token `"0"` no sirve → 401 `error-token`; hace falta cuenta guest real.
+- `GET /contents/{id}` con `User-Agent` + `Authorization: Bearer` + `X-Website-Token` + `X-BL: en-US` → 200; `data.children` es MAPA de objetos (legacy `data.childs` era array).
+- El link CDN requiere `Authorization: Bearer` en la descarga: sin token → 302 → HTML (login page); con token → 206 `application/vnd.rar`.
+
+### Part 1 — Constantes + imports
+- `use sha2::{Digest, Sha256}` y `std::time::{Instant, SystemTime, UNIX_EPOCH}` (sha2 0.10 ya en Cargo.toml).
+- `GOFILE_UA` (Chrome 124, extraída del string inline), `GOFILE_SALTS = ["9844d94d963d30", "5d4f7g8sd45fsd"]` (vigente + fallback rotación), `GOFILE_WINDOW_SECS = 14_400`.
+
+### Part 2 — Helpers nuevos
+- `gofile_website_token(token, salt, ua)` — sha256 hex del formato verificado.
+- `gofile_create_guest_token(client)` — POST `/accounts` json `{"email":null,"pass":null}`, parsea `data.token`, log tier.
+- `gofile_bearer_token(client)` — env `GOFILE_TOKEN` override primero; si no, cache de guest token en `OnceLock<Mutex<Option<(String, Instant)>>>` con TTL 4h; refresca al caducar.
+- `gofile_get_contents(client, token, salt, content_id)` — GET `.io/contents/{id}` con los 4 headers, errores hint 401/403/404/429.
+- `GofileResolved { url, bearer: Option<String> }`.
+
+### Part 3 — `resolve_gofile_url` → `Result<GofileResolved, String>`
+- Page URL `/d/{id}`: itera `GOFILE_SALTS`; en el 401 del primer salt refresca el guest token una vez y reintenta; parsea `data.children` (mapa) con fallback a `data.childs` (array) → primer child `.link`.
+- Direct URL: devuelve la URL igual PERO con bearer (el CDN lo exige).
+- `[DEBRID][GOFILE]` logs de resolución.
+
+### Part 4 — `download_file_to_dest` + bearer
+- Nuevo parámetro `bearer: Option<&str>`; añade `Authorization: Bearer <token>` al GET solo cuando Some y no vacío.
+- Call site en `download_debrid_package`: `let (effective_uri, gofile_bearer)` desde `resolve_gofile_url`; pasa `gofile_bearer.as_deref()`.
+- El guard de Content-Type `text/html` se mantiene (con auth correcta el CDN responde `application/vnd.rar`).
+
+### Alcance
+- Solo primer archivo (multi-parte fuera de scope, decisión del usuario).
+- Solo Rust; sin cambios TS/UI.
+
+### Part 5 — Tests de regresión del WT
+- `gofile_website_token` refactorizada: núcleo puro `gofile_website_token_for_window(token, salt, ua, window)` (window inyectada, testable) + wrapper que computa `now / GOFILE_WINDOW_SECS`.
+- Vector conocido independiente: hash sha256 calculado con PowerShell (implementación independiente) para `window=12345, token="testtoken", salt="9844d94d963d30"` → `26c3eb17...a757aaa`.
+- 6 tests en `#[cfg(test)] mod tests`: vector conocido, formato (64 hex lowercase), determinismo, sensibilidad a salt, sensibilidad a window, comportamiento de rotación de salts.
+
+### Key Files Changed
+- `src-tauri/src/commands/debrid_installer.rs` — toda la resolución gofile reescrita + threading del bearer a `download_file_to_dest` + núcleo puro del WT + 6 tests de regresión
+
+### Build
+- `cargo check` ✅ (0 errores; 2 warnings preexistentes dead-code)
+- `cargo test` ✅ (141 passed / 0 failed — 135 preexistentes + 6 nuevos)
+- `tsc --noEmit` ⏭️ (sin cambios TS)
+- `vite build` ⏭️ (sin cambios TS)
+
+## Session — RAR5 signature detection fix (download RAR5 ya funcionaba; solo el detector fallaba)
+
+### Problema
+Descarga gofile correcta (bearer ya funcional) de un repack con archivo **RAR5** (`The-Operator-SteamRIP.com.rar`). Error al final del download: `Unknown file type (magic bytes: 52 61 72 21 1A 07 01 00). Expected RAR, ZIP, or Windows executable.`
+
+### Causa raíz
+`detect_file_type` (`debrid_installer.rs:56`) solo comparaba la firma **RAR4** (`Rar!\x1A\x07\x00` — byte[6]=0x00). El archivo descargado era **RAR5** (`Rar!\x1A\x07\x01\x00` — byte[6]=0x01) → caía al brazo `Unknown` → error. El download en sí fue un éxito (los magic bytes del archivo en disco son RAR válido); el fix del bearer de la sesión previa funciona.
+
+### Fix
+- Check RAR ampliado: primeros 6 bytes `52 61 72 21 1A 07` + byte[6] ∈ `{0x00, 0x01}` (cubre RAR4 y RAR5). Doc del enum actualizado.
+- Extracción ya soporta RAR5 en los 3 fallbacks (verificado, sin cambios): `extract_rar_with_cli` (unrar.exe/7z.exe/unar modernos), `extract_rar_with_unrar` (unrar crate 0.5.8 → unrar_sys 0.5.8 bundlea UnRAR 6.x), `extract_rar_via_7z` (7-Zip 15.06+).
+- Retry tras el fix: `download_file_to_dest` short-circuita con archivo existente (L1222) → salta re-descarga y va directo a detección → extracción.
+
+### Tests (3 nuevos en `mod tests`)
+- `detect_rar5_signature` — fichero 16B con firma RAR5 → `DetectedFileType::Rar` (regresión del bug).
+- `detect_rar4_signature` — firma RAR4 → `Rar` (evita regresión en sentido contrario).
+- `detect_unknown_signature` — magic no relacionado → `Unknown(_)`.
+- Ojo: fixtures deben tener ≥16 bytes (el detector hace `read_exact` de 16); con 8 bytes daba `cannot_read` y fallaba el test (no el código).
+
+### Build
+- `cargo test` ✅ (144 passed / 0 failed — 141 previos + 3 nuevos)
+- `cargo check` ✅ (solo 2 warnings preexistentes dead-code)
+- `tsc --noEmit` ⏭️ (sin cambios TS)
+- `vite build` ⏭️ (sin cambios TS)
+
+## Session — Store repacks: dynamic repacker filters + browse-all default + card images
+
+### Goal
+Fix the Store → Debrid Catalog repacker filter chips (they were a hardcoded list with no real data), make the default view a paginated browse-all (24/page, "Load more"), and show Steam CDN card images with the existing gradient header as fallback.
+
+### Rust (src-tauri/src/commands/repack_catalog.rs)
+- RepackGroupStat { repacker, count } struct (serde camelCase).
+- query_by_repacker now case-insensitive: WHERE lower(repacker) = lower(?1) (chips previously returned 0 rows because stored repacker is lowercase, e.g. itgirl vs chip FitGirl).
+- query_repacker_groups(conn) — SELECT repacker, COUNT(*) ... GROUP BY lower(repacker) ORDER BY count DESC, lower(repacker) ASC, excluding empty repacker.
+- query_page(conn, limit, offset) — browse-all ORDER BY CASE WHEN app_id > 0 THEN 0 ELSE 1 END, updated_at DESC LIMIT ?1 OFFSET ?2 (games with Steam appIds first, then recent).
+- New Tauri commands query_repack_catalog_page(limit, offset) + query_repack_repackers(), registered in src-tauri/src/lib.rs after query_repack_catalog_by_repacker.
+
+### TS bindings (src/services/tauri.ts)
+- RepackGroupStat type; queryRepackCatalogPage(limit, offset) → query_repack_catalog_page; queryRepackRepackers() → query_repack_repackers.
+
+### Frontend (src/components/store/DebridCatalogSection.tsx)
+- **Dynamic chips**: on mount loads queryRepackRepackers(); chips show display-capitalized repacker name + count badge (epackerLabel). Falls back to the hardcoded REPACKERS list only on query failure/empty DB.
+- **Browse-all default**: loadGames(null, "", page) now calls queryRepackCatalogPage(GAMES_PER_PAGE, page * GAMES_PER_PAGE) (was setGames([]) dead branch). Page-0 effect on mount + on ctiveRepacker/searchQuery change; appends on "Load More"; hasMore = results.length === GAMES_PER_PAGE.
+- handleRepackerClick toggles case-insensitively (clicking the active chip clears the filter → browse-all).
+- Card images: heroUrl = buildSteamCdnUrl(String(game.appId), "capsule") for ppId > 0; top spect-video + object-cover <img> with onError → imgFailed state → existing gradient header fallback (Package icon + repacker chip). Repacker chip overlaid on the image (g-black/60 backdrop-blur-sm). No MediaIndex/snapshot writes (keyless Steam CDN derivation).
+- Empty-state copy updated; header subtitle → "browse all or filter by repacker".
+
+### Build
+- cargo check ✅ (0 errors; 2 pre-existing dead-code warnings)
+- 	sc --noEmit ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- ite build ✅ (1.71s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+
+## Session — Debrid download resume/checkpointing (Phase A) + combined repacker+search filter
+
+### Goal
+Resumable Debrid downloads: keep a `.part` file + checkpoint meta on cancel/error so retries resume via HTTP Range instead of restarting. Also complete the combined repacker+search composition for the Debrid Catalog (Phase B/C deferred).
+
+### Part 1: Combined repacker + search filter
+- Rust `query_by_repacker_fuzzy_title(conn, repacker, query, limit)` in `repack_catalog.rs` — `WHERE lower(repacker) = lower(?1) AND normalized_title LIKE '%' || ?2 || '%'`, ordered by has-appId then title length.
+- Command `query_repack_catalog_by_repacker_fuzzy(repacker, query, limit, db)` registered in `lib.rs`; TS binding `queryRepackCatalogByRepackerFuzzy`.
+- `DebridCatalogSection.tsx` — combined branch calls the new query with `setHasMore(false)`; effect always calls `loadGames(activeRepacker, searchQuery, 0)`; `handleRepackerClick` no longer clears search; `handleSearch` no longer clears repacker (symmetric, confirmed UX).
+
+### Part 2: Download resume/checkpointing (Phase A)
+- New types/helpers in `debrid_installer.rs`:
+  - `DownloadCheckpoint { uri, total_bytes, downloaded_bytes, started_at }` (serde) + `ResumeDecision` enum (`ResumeFrom(u64) | FreshStart | AlreadyComplete`).
+  - `part_path()` / `meta_path()` → `tmp/<file>.part` + `.part.meta`.
+  - `load_checkpoint()` — returns on-disk part size only when meta parses, `cp.uri == uri`, and part is non-empty; cleans stale/corrupt/mismatched part+meta.
+  - `write_checkpoint()` — atomic via `.meta.tmp` + rename; called on cancel and stream/write errors, not per-chunk.
+  - `decide_resume()` — 206 → ResumeFrom (Content-Length = remaining bytes; `Some(0)` → AlreadyComplete); 416 → FreshStart; anything else (incl. 200) → FreshStart; `resume_from == 0` → FreshStart.
+- `download_file_to_dest` rewritten:
+  - Bounded request loop (async recursion not allowed → loop instead of recursion): Range header on resume; 416 with offset > 0 → delete partial+meta, retry once from 0; non-2xx → error; Content-Type text/html rejected as before.
+  - `AlreadyComplete` → rename part → dest, remove meta+tmp dir.
+  - Totals: `total_bytes = resume_from + server_total` on 206; `remaining` passed to `check_disk_space` (skips at 0).
+  - File opened append-mode when resuming, else `File::create`; `bytes_read` seeded to `resume_from`.
+  - Cancel/stream/write errors keep partial + checkpoint (resumable later).
+  - Completion: flush → drop (Windows) → rename part → dest → remove meta + empty tmp dir.
+- GoFile bearer threaded through the resume request.
+
+### Tests
+- 12 new unit tests: `decide_resume` matrix (no-resume fresh, 206 append, 206 no-length append, 206 zero-remaining complete, 200 restart, 416 restart) + `load_checkpoint` (resume from part size, URI mismatch cleanup, corrupt meta cleanup, meta-without-part, empty part, write→load roundtrip).
+- Full suite: 160 passed / 0 failed.
+
+### Build
+- cargo check (0 errors; 2 pre-existing dead-code warnings)
+- cargo test (160 passed / 0 failed; 21 in debrid_installer)
+- tsc --noEmit (only the 23 pre-existing extension/test errors, none in touched files)
+- vite build (Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+
+## Session — Debrid Phase C: magnet/torrent resolution via debrid providers
+
+### Goal
+Wire magnet/torrent repack downloads through `resolveDebridUri()` — when a download URI starts with `magnet:`, resolve it to a direct URL via a configured debrid provider (TorBox / Real-Debrid / AllDebrid / Premiumize) before starting the install download.
+
+### Part 1: TorBox magnet + direct-HTTP flows (`debrid_resolver.rs`)
+- `resolve_via_torbox_magnet()` — addMagnet (multipart) → poll `mylist` until ready states (`cached`/`download_finished`/`uploading`/`completed`; errors `error`/`metaDL_error`) → pick largest non-sample file via `torbox_largest_file` → `torrents/requestdl` with `?token=&torrent_id=&file_id=` (or without `file_id` when only the root file exists).
+- `resolve_via_torbox_webdl()` — direct-HTTP flow: `webdl/createwebdownload` → `webdl/requestdl?token=&download_id=` → reads `data.url` / `data` / `data.permalink` and `data.filename`/`data.size`.
+- Poll constants: `TORBOX_POLL_MAX_ATTEMPTS: u64 = 40`, `TORBOX_POLL_INTERVAL_SECS: u64 = 3`.
+
+### Part 2: Real-Debrid magnet + HTTP flows (`debrid_resolver.rs`)
+- `resolve_via_real_debrid()` now dispatches: `magnet:` → `resolve_via_real_debrid_magnet()`; HTTP direct → `POST /unrestrict/link` directly (previous flow preserved).
+- `resolve_via_real_debrid_magnet()` — addMagnet → error code 22 (`magnet_infohash` + active-torrent list to reuse an existing id) → selectFiles `files="all"` → poll `torrents/info/{id}` until `progress >= 100.0` / `downloadFinished` / status `2|6|7` → `GET /torrents/links/{id}` → first link → `POST /unrestrict/link`.
+- Poll constants: `REAL_DEBRID_POLL_MAX_ATTEMPTS: u64 = 40`, `REAL_DEBRID_POLL_INTERVAL_SECS: u64 = 3`.
+
+### Part 3: Helpers + unit tests (`debrid_resolver.rs`)
+- `magnet_infohash(uri)` — extracts 40-hex lowercase infohash from `xt=urn:btih:...`; accepts dash-separated hashes (strips `-`); rejects missing/short/non-hex.
+- `json_u64()` — reads numeric fields that arrive as number OR string.
+- `torbox_largest_file()` — largest non-sample file, excludes `.txt`/`.nfo`/`.diz`.
+- `torbox_error_message()` — prefers `detail`, then `message`, falls back to status string.
+- 8 unit tests (`#[cfg(test)] mod tests`): infohash extraction, dash-separated hash, missing/short rejection, non-hex rejection, json_u64 number/string, largest-file filtering, empty/metadata-only → None, error message precedence.
+- Fixed `TORBOX_API_BASE` → `https://api.torbox.app/v1/api`; reqwest feature `multipart` added.
+
+### Part 4: Frontend wiring (`useDebridInstallSync.ts`)
+- `resolveInstallUri(downloadUri)` helper — non-magnet URIs pass through; `magnet:` URIs load settings via dynamic `import("../context/SettingsContext")` → `loadSettings()`, build `DebridProviderConfig` from `settings.debridProviders`, call `resolveDebridUri()`, return `result.resolvedUrl` when successful (gated `[DEBRID_INSTALL] magnet resolved provider=...` log), else warn and fall back to the raw magnet.
+- `startInstall` now calls `resolveInstallUri(downloadUri)` before `downloadDebridPackage` → magnet downloads resolve through the configured provider chain (TorBox → Real-Debrid → AllDebrid → Premiumize, preferred-provider aware).
+
+### Build
+- cargo check ✅ (0 errors; 2 pre-existing dead-code warnings)
+- cargo test ✅ 168 passed / 0 failed (8 new in debrid_resolver; 21 in debrid_installer)
+- tsc --noEmit ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- vite build ✅ (Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+
+## Session — Debrid integrated torrent client (librqbit) + 3-way install method choice
+
+### Goal
+Add a built-in torrent path for Debrid repack installs: when the source is a magnet (FitGirl/DODI), let the user pick "direct download" | "resolve via Debrid provider" | "download with the integrated torrent client" (librqbit). Rust command returns the same `DebridDownloadResult` so the TS pipeline contract is unchanged.
+
+### Rust
+- **`Cargo.toml`**: `librqbit = "8"` (vendored native client — no external binary) + `dashmap = "6"` (declared explicitly; was already transitive).
+- **`src-tauri/src/commands/torrent.rs`** (**new**; `pub mod torrent` in commands/mod.rs; registered in lib.rs):
+  - `start_torrent_download(job_id, magnet, dest_dir)` Tauri command returning `DebridDownloadResult`.
+  - `Session::new_with_opts(PathBuf, SessionOptions)` — `disable_dht: false` (real swarm), `disable_dht_persistence: true`, `defer_writes_up_to: None`, fastresume + persistence on.
+  - `AddTorrent::from_url(magnet)` (Cow<String>) → `add_torrent` → `AddTorrentResponse::into_handle()` → `ManagedTorrent`.
+  - Poll `handle.stats()` every 1s (max ~10 min) emitting `emit_installer_progress` (status `"downloading"`, %, bytes). `TorrentStatsState` has no `PartialEq` → `matches!()` comparison. On `Error` state read `stats.error`.
+  - Cancellation reuses the SAME `OnceLock<Mutex<HashSet<String>>>` as `cancel_debrid_download`/`is_job_cancelled` in `debrid_installer.rs` — existing cancel command works for torrents, no new binding.
+  - Completion → `session.delete(id, false)` (drop torrent, keep files) → post-process via `debrid_installer.rs` helpers (all made `pub(crate)`): `auto_run_installer`, `extract_rar_with_unrar`, `extract_rar_with_cli`, `flatten_single_root_folder`, `extract_rar_via_7z`, `extract_zip_with_zip_crate`, `find_largest_exe`.
+- **`debrid_installer.rs`**: 11 helpers + `cancelled_jobs()` accessor made `pub(crate)`. No behavior changes.
+- `cargo check` ✅ (only 2 pre-existing dead-code warnings).
+
+### TS
+- **`src/services/tauri.ts`**: `startTorrentDownload({ jobId, magnet, destDir })` → invoke `"start_torrent_download"` → `Promise<DebridDownloadResult>`.
+- **`src/services/debridInstallChoice.ts`**: `DebridInstallMethod = "direct" | "debrid" | "torrent"`; `DebridInstallResolution = { ok: true; uri; method } | { ok: false; reason }`.
+  - `resolveDebridInstallUri(uris, confirm, title)`: direct+magnet both present → 3-way dialog; magnet-only → debrid (unchanged auto path); direct-only → "direct"; none → `{ ok:false, reason:"no-uri" }`.
+  - Dialog labels: primary "Descarga directa" (`"direct"`), secondary "Resolver con Debrid" (`"debrid"`), tertiary "Descargar vía torrent" (`"torrent"`).
+- **`src/services/confirmService.tsx`**: `ConfirmOptions` + `ConfirmResult` gain `tertiaryLabel`/`tertiaryVariant`/`tertiary?`; `handleTertiary`.
+- **`src/components/common/ConfirmModal.tsx`**: `tertiaryLabel`/`onTertiary`/`tertiaryVariant` props; tertiary button in the `.mr-auto` action group.
+- **`src/types/download.ts`**: `installMethod?: DebridInstallMethod` on `DownloadJob` (after `repacker`).
+- **`src/context/DownloadQueueContext.tsx`**: `addDebridInstallJob(providerGameId, title, downloadUri, installerType, appId?, artworkUrl?, repacker?, installMethod?)`; job carries `installMethod`; `startInstall(..., installMethod?)` forwards it.
+- **`src/hooks/useDebridInstallSync.ts`**: `startInstall` — `installMethod === "torrent"` → `startTorrentDownload({ jobId, magnet: downloadUri, destDir })` (skips `resolveInstallUri`); else → `resolveInstallUri` + `downloadDebridPackage` (previous behavior).
+- **Call sites (8)** pass `resolved.method`: `DebridCatalogSection.tsx`, `LibraryGameDetailPage.tsx` (×3 incl. `DebridSourceSelectorModal`), `Library.tsx` (×3 incl. modal), `StoreGameDetailsPage.tsx`. Console Mode (`consoleGameActions.ts`) uses `pickInstallUriWithoutDialog` + own `addJob` — out of scope, unchanged.
+
+### Decisions
+- `DEBRID_TORRENT_ENABLED` kill-switch documented; torrent is a dialog *option*, not the default — debrid providers stay primary when configured.
+- `start_torrent_download` is a long-running Tauri command (poll loop on its own thread) — returns only after completion + post-process, same contract as `download_debrid_package`.
+- **Reachability note**: torrent only appears when an entry has BOTH a direct URI and a magnet URI. Magnet-only repacks (the typical FitGirl/DODI case) still auto-resolve via the configured debrid provider without a dialog — a future follow-up can offer torrent as fallback when debrid resolution fails or no provider is configured.
+
+### Key Files Changed
+- `src-tauri/Cargo.toml` — `librqbit = "8"` + `dashmap = "6"`
+- `src-tauri/src/commands/torrent.rs` — **new** — `start_torrent_download` (session init, add_torrent, poll+progress, cancel, post-process)
+- `src-tauri/src/commands/mod.rs` + `src-tauri/src/lib.rs` — module + command registration
+- `src-tauri/src/commands/debrid_installer.rs` — helpers `pub(crate)` + `cancelled_jobs()`
+- `src/services/tauri.ts` — `startTorrentDownload` binding
+- `src/services/debridInstallChoice.ts` — `DebridInstallMethod`, `method` on resolution, 3-way `resolveDebridInstallUri`
+- `src/services/confirmService.tsx` + `src/components/common/ConfirmModal.tsx` — tertiary button support
+- `src/types/download.ts` + `src/context/DownloadQueueContext.tsx` — `installMethod` on job, threaded through `addDebridInstallJob`/`startInstall`
+- `src/hooks/useDebridInstallSync.ts` — torrent branch in `startInstall`
+- `src/components/store/DebridCatalogSection.tsx`, `src/pages/LibraryGameDetailPage.tsx`, `src/pages/Library.tsx`, `src/components/store/StoreGameDetailsPage.tsx` — 8 call sites pass `resolved.method`
+
+### Build
+- `cargo check` ✅ (0 errors; 2 pre-existing dead-code warnings)
+- `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (1.53s, Rolldown; verified in bundle: `start_torrent_download` invoke string, "Descargar vía torrent" tertiary label, `installMethod` field)
+
+## Session — Debrid: magnet-only dialog + automatic torrent fallback + metadata stall-detector
+
+### Goal
+Close the reachability gaps in the Debrid install flow: (1) magnet-only repacks (the typical FitGirl/DODI case) now show the method dialog instead of silently using debrid, (2) if Debrid resolution fails the install falls back to the built-in torrent client so the download always proceeds, and (3) the torrent connect phase stops after ~3 min without peers instead of hanging forever.
+
+### Part 1: Magnet-only dialog (`debridInstallChoice.ts`)
+- `resolveDebridInstallUri` restructured: `direct && magnet` → 3-way dialog (unchanged); `magnet` only → new 2-way dialog ("Resolver con Debrid" primary / "Descargar vía torrent" tertiary / Cancelar); `direct` only → no dialog.
+- Mapping: `tertiary` → `"torrent"`, `confirmed`/`secondary` → `"debrid"`, else cancelled. Direct-only remains `"direct"` without a dialog.
+- Header doc comment updated ("only one kind present → no dialog" no longer applies to magnet-only).
+- `pickInstallUriWithoutDialog` unchanged — Console Mode still bypasses the dialog.
+
+### Part 2: Automatic torrent fallback (`useDebridInstallSync.ts`)
+- `startInstall` else-branch: `resolveInstallUri(downloadUri)` wrapped in try/catch. On resolution failure for a `magnet:` URI → logs `[DEBRID_INSTALL] debrid-resolve-failed reason=<msg> → torrent fallback jobId=<id>` and calls `startTorrentDownload({ jobId, magnet: downloadUri, destDir })`. Non-magnet URIs rethrow (can't meaningfully fail).
+- Result handling extracted into a shared `handleInstallResult(result, providerGameId, jobId, title)` helper so the fallback path and the debrid/torrent path converge on the same `ready`/`installing`/`needs-setup`/failed handling.
+- `result` typed `DebridDownloadResult | null` (guard `if (result)`) to satisfy TS definite-assignment across the try/catch rethrow.
+- `resolveInstallUri` doc comment updated — the "raw magnet can never be downloaded" note is superseded by the torrent fallback.
+
+### Part 3: Metadata stall-detector (`torrent.rs`)
+- New `TORRENT_METADATA_STALL_SECS: u64 = 3 * 60` + pure helper `metadata_stall_exceeded(first_seen, threshold)`.
+- In `poll_torrent_until_done`, `metadata_stalled: Option<Instant>` is set on the first `Initializing` observation; when elapsed exceeds the threshold → `Err("Could not connect to torrent swarm (no peers/seeds).")`.
+- The stall guard resets to `None` as soon as the state leaves `Initializing` (bytes flowing) — a large in-progress download is never cut; `TORRENT_MAX_WAIT_SECS = 6h` still caps the full download.
+
+### Key Files Changed
+- `src/services/debridInstallChoice.ts` — magnet-only dialog branch, doc update
+- `src/hooks/useDebridInstallSync.ts` — torrent fallback in `startInstall`, extracted `handleInstallResult`, `DebridDownloadResult | null` guard
+- `src-tauri/src/commands/torrent.rs` — `TORRENT_METADATA_STALL_SECS`, `metadata_stall_exceeded`, stall tracking in poll loop
+
+### Build
+- `cargo test` ✅ (174 passed / 0 failed; 3 new torrent stall tests)
+- `cargo check` ✅ (0 errors; 2 pre-existing dead-code warnings)
+- `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings + chunk-size warning)
+
+## Session — Debrid Pause/Resume (Cancel/Pause/Resume for HTTP + torrent installs)
+
+### Goal
+Add Cancel/Pause/Resume for Debrid repack installs (HTTP/SteamRip/gofile and torrent via librqbit) with persistence that survives app restart / PC shutdown. Paused downloads resume manually (never auto-restart); a resumed torrent deletes stale partial data from other torrents recorded this session (TS job queue is the single source of truth).
+
+### Decisions (user-confirmed)
+- After app restart with active debrid downloads → they show **"Paused" with manual resume**; nothing downloads automatically.
+- Resuming a torrent **deletes orphaned partial data** of other torrents remembered this session.
+- **Pause/Resume only for `debrid-install` jobs**; Steam installs and others stay cancel-only.
+- Pause → the in-flight command returns `DebridDownloadResult { success:false, status:"paused" }` (HTTP) or `Ok(PollOutcome::Paused)` (torrent); resume → re-invokes the same entry point (`download_debrid_package` / `start_torrent_download`). HTTP resumes via `.part`/`.part.meta`; torrent via fastresume + Json persistence.
+- **Root-cause bug**: `cancelled_jobs()` was never cleared → `is_job_cancelled` stayed `true` forever and a re-invocation aborted on the first chunk. Fix: `clear_job_flags(job_id)` at the start of `download_debrid_package` and `start_torrent_download` (clears both cancel **and** pause).
+- `job_id = debrid-install-${providerGameId}`; `DownloadStatus` already included `"paused"` and `activeStatuses` includes it, so dedup doesn't block resume.
+
+### Part 1 (Rust HTTP) — `debrid_installer.rs`
+- `DownloadFileOutcome { File(DownloadedFile), Paused }`; pause tracker `paused_jobs()` + `is_job_paused(job_id)` + `#[tauri::command] pause_debrid_download(job_id)` + `clear_job_flags(job_id)`.
+- `download_debrid_package` calls `clear_job_flags(&job_id)`; dispatches `Paused` → emits `emit_installer_progress(..., "paused", 0,0,0, "Download paused")` and returns `Ok(DebridDownloadResult { success:false, status:"paused", message:"Download paused." })`.
+- `download_file_to_dest` returns `Result<DownloadFileOutcome, String>`; checks `is_job_paused(job_id)` in the loop (next to cancel) → `drop(file)` + `write_checkpoint` + `Ok(Paused)`.
+
+### Part 2 (Rust torrent) — `torrent.rs`
+- New imports: `use std::collections::HashSet;`, `use tokio::time::{sleep, Duration}`, `use crate::utils::progress_utils::emit_installer_progress`, `use tauri::{AppHandle, Manager}`.
+- `get_session(&app_handle)` → `Session::new_with_opts(base_dir, opts)` with `base_dir = app_data_dir()/librqbit`, `fastresume: true`, `persistence: Some(SessionPersistenceConfig::Json { folder: Some(base_dir.clone()) })` (removed `disable_dht_persistence`/`persistence: None`).
+- `cleanup_orphan_torrents(session, current)`: collects `HashSet` of ids from `active_torrents()`, uses `session.with_torrents(|it| -> Vec<TorrentId>)` and deletes via `session.delete(TorrentIdOrHash::Id(id), true)`.
+- `start_torrent_download`: `clear_job_flags(&job_id)`; `get_session(&app_handle)`; `session.unpause(&torrent)` if `stats.state == Paused`; `cleanup_orphan_torrents`; match `poll_result` → `Ok(Done) => process_torrent_files`, `Ok(Paused) => session.pause(&torrent)` + result `status:"paused"` (torrent stays in `active_torrents()`), `Err(e) => session.delete(..., true)` + remove from `active_torrents()`.
+- `PollOutcome { Done, Paused }`; `poll_torrent_until_done` returns `Result<PollOutcome, String>` and adds `if is_job_paused(job_id) { return Ok(PollOutcome::Paused); }`.
+
+### Part 3 (TS)
+- `src/services/tauri.ts` — `pauseDebridDownload(jobId)` → `invoke("pause_debrid_download", { jobId })`; `DebridDownloadResult.status` union extended with `"paused"`.
+- `src/hooks/useDebridInstallSync.ts` — early branch in `handleInstallResult`: `if (!result.success && result.status === "paused")` → `updateJobRef(jobId, { status:"paused", message })` and return (Debrid store untouched).
+- `src/context/DownloadQueueContext.tsx` — `loadJobs()` converts active `debrid-install` jobs after reload → `status:"paused", error:undefined, message:"Download paused"` (Steam installs stay `"failed"`); `pauseJob(jobId)` (sets `"paused"`, invokes Rust, reverts on failure); `resumeJob(jobId)` (derives `providerGameId` from `debrid-install-`, sets `"queued"`, re-calls `debridInstallRef.current.startInstall(jobId, providerGameId, job.downloadUrl, "zip", job.gameTitle, job.installMethod)`); exposed in types + provider value.
+
+### Part 4 (UI)
+- `src/components/downloads/DownloadJobCard.tsx` — destructured `onPause`/`onResume`; `canPause`/`canResume` (only `debrid-install`; pause when active, resume when `"paused"`); Pause/Play buttons in the action row before Cancelar.
+- `src/pages/Downloads.tsx` — `pauseJob`/`resumeJob` destructured; `onPause`/`onResume` passed to both card render sites. `paused` already in the active section filter.
+
+### Tests (4 new in debrid_installer)
+- `pause_flag_tracked_and_checked` — pause sets paused flag, paused ≠ cancelled.
+- `clear_job_flags_removes_both_cancel_and_pause` — fresh attempt clears both so re-invocation proceeds.
+- `clear_job_flags_only_affects_target_job` — other jobs' flags untouched.
+- `clear_job_flags_idempotent` — clearing empty state is safe.
+
+### Key Files Changed
+- `src-tauri/src/commands/debrid_installer.rs` — `DownloadFileOutcome`, pause tracker + `clear_job_flags`, `pause_debrid_download` command, dispatch `Paused`, pause check in download loop
+- `src-tauri/src/commands/torrent.rs` — persistent session (`get_session(&app_handle)`), `cleanup_orphan_torrents`, `unpause`/`pause`, `PollOutcome { Done, Paused }`
+- `src-tauri/src/lib.rs` — `pause_debrid_download` registered (~276-278)
+- `src/services/tauri.ts` — `pauseDebridDownload` binding + `"paused"` in `DebridDownloadResult.status`
+- `src/hooks/useDebridInstallSync.ts` — `paused` early branch in `handleInstallResult`
+- `src/context/DownloadQueueContext.tsx` — `loadJobs()` pause-on-reload, `pauseJob`/`resumeJob`, types + provider value
+- `src/components/downloads/DownloadJobCard.tsx` — Pause/Resume buttons
+- `src/pages/Downloads.tsx` — wiring
+
+### Build
+- `cargo test` ✅ (185 passed / 0 failed; 4 new pause/flag tests)
+- `cargo check` ✅ (0 errors; 2 pre-existing dead-code warnings)
+- `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings + chunk-size warning)

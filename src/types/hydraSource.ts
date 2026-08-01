@@ -145,6 +145,16 @@ export interface HydraImportResult {
   error?: string;
 }
 
+/** Summary of a pasted repack feed (catalog rows with an empty sourceUrl). */
+export interface ImportedFeedSummary {
+  /** Feed name (the repacker/root name, e.g. "SteamRip"). */
+  name: string;
+  /** Number of games in the catalog for this feed. */
+  gameCount: number;
+  /** Most recent `updated_at` among the feed's rows, if any. */
+  lastUpdated?: string;
+}
+
 /**
  * Normalize a Hydra source game entry to the canonical format.
  * Deduplicates URIs, fills defaults, generates a stable ID.
