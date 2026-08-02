@@ -384,6 +384,8 @@ pub async fn download_debrid_package(
     job_id: String,
     download_uri: String,
     dest_dir: String,
+    auto_extract: bool,
+    delete_archive: bool,
 ) -> Result<DebridDownloadResult, String> {
     if job_id.trim().is_empty() {
         return Err("Job ID is empty.".to_string());
@@ -486,6 +488,36 @@ pub async fn download_debrid_package(
             });
         }
     };
+
+    // ── Step 1.5: auto_extract=false — download only, keep the archive on disk ──
+    // The user opted to download and manually extract later. Skip all
+    // extraction/installer auto-run and return status="downloaded" so the TS
+    // queue marks the job done (manual extraction) without marking the game
+    // as installed.
+    if !auto_extract {
+        println!(
+            "[DEBRID][DOWNLOAD] auto_extract=false — saved archive only: {}",
+            downloaded.path.display()
+        );
+        emit_installer_progress(
+            &app_handle,
+            &job_id,
+            "done",
+            100,
+            downloaded.bytes_read,
+            downloaded.total_bytes,
+            "Download complete. Extract manually.",
+        );
+        return Ok(DebridDownloadResult {
+            success: true,
+            status: "downloaded".to_string(),
+            install_dir: dest_dir.clone(),
+            executable_path: None,
+            installer_path: Some(downloaded.path.to_string_lossy().to_string()),
+            installer_pid: None,
+            message: "Download complete. Extract the archive manually.".to_string(),
+        });
+    }
 
     // ── Step 2: Detect actual file type via magic bytes ──
     let detected = detect_file_type(&downloaded.path);
@@ -594,7 +626,15 @@ pub async fn download_debrid_package(
                 Ok(()) => {
                     // Keep the downloaded archive on disk for retry — Bug 2 fix
                     // (do NOT fs::remove_file here — if install fails later,
-                    //  retry can skip re-download since the archive is still present)
+                    //  retry can skip re-download since the archive is still present).
+                    // Exception: if the user explicitly opted to delete the archive
+                    // after a successful extraction, honor it now.
+                    if delete_archive {
+                        match fs::remove_file(&rar_path) {
+                            Ok(_) => println!("[DEBRID][EXTRACT] Removed RAR after extraction: {}", rar_path.display()),
+                            Err(e) => println!("[DEBRID][EXTRACT] Failed to remove RAR {}: {}", rar_path.display(), e),
+                        }
+                    }
 
                     emit_installer_progress(
                         &app_handle,
@@ -711,7 +751,15 @@ pub async fn download_debrid_package(
 
             // Keep the downloaded archive on disk for retry — Bug 2 fix
             // (do NOT fs::remove_file here — if install fails later,
-            //  retry can skip re-download since the archive is still present)
+            //  retry can skip re-download since the archive is still present).
+            // Exception: if the user explicitly opted to delete the archive
+            // after a successful extraction, honor it now.
+            if delete_archive {
+                match fs::remove_file(&downloaded.path) {
+                    Ok(_) => println!("[DEBRID][EXTRACT] Removed ZIP after extraction: {}", downloaded.path.display()),
+                    Err(e) => println!("[DEBRID][EXTRACT] Failed to remove ZIP {}: {}", downloaded.path.display(), e),
+                }
+            }
 
             emit_installer_progress(
                 &app_handle,
@@ -1386,6 +1434,25 @@ fn decide_resume(resume_from: u64, status: reqwest::StatusCode, content_length: 
     }
 }
 
+/// Maximum number of download attempts before giving up on a transient network
+/// failure (DNS, connection, timeout, mid-stream drop). Each retry resumes from
+/// the on-disk checkpoint via HTTP Range.
+const DOWNLOAD_MAX_ATTEMPTS: u32 = 3;
+
+/// Backoff (ms) to wait before each retry attempt, indexed by `attempt - 1`.
+/// There are only `MAX_ATTEMPTS - 1` gaps, so the last gap is the largest.
+const DOWNLOAD_RETRY_BACKOFF_MS: [u64; 2] = [2_000, 5_000];
+
+/// Backoff (ms) to wait before the next retry attempt, or `None` when no
+/// attempts remain. `attempt` is 1-based (the first attempt has no backoff —
+/// it just happened).
+fn retry_backoff_ms(attempt: u32) -> Option<u64> {
+    if attempt == 0 || attempt >= DOWNLOAD_MAX_ATTEMPTS {
+        return None;
+    }
+    DOWNLOAD_RETRY_BACKOFF_MS.get((attempt - 1) as usize).copied()
+}
+
 /// Download a file from a URI to a destination directory using async streaming reqwest.
 ///
 /// Uses `reqwest::Client` (async) with `bytes_stream()` to download chunk-by-chunk
@@ -1453,211 +1520,277 @@ async fn download_file_to_dest(
     // append, so interrupted downloads resume instead of restarting from byte 0.
     let part = part_path(&tmp_dir, &file_name);
     let meta = meta_path(&tmp_dir, &file_name);
-    let mut resume_from = load_checkpoint(&tmp_dir, &file_name, uri).unwrap_or(0);
 
-    // ── Request / resume decision loop ──
-    // Bounded loop (max 2 iterations): send the request, react to the status.
-    // A 416 on a resume attempt means our offset disagrees with the server — drop
-    // the partial and retry once from zero. Everything else falls through to the
-    // streaming phase below. (Async recursion is not allowed, hence the loop.)
-    let (response, resume_from) = loop {
-        let mut req = client.get(uri);
-        if let Some(tok) = bearer {
-            if !tok.is_empty() {
-                req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", tok));
-            }
-        }
-        if resume_from > 0 {
-            req = req.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
-            println!(
-                "[DEBRID][RESUME] Requesting resume from byte {} for {}",
-                resume_from, file_name
-            );
-        }
+    // ── Transient auto-retry ──
+    // A brief network drop (Wi-Fi switch, momentary loss, server reset) is absorbed
+    // by retrying up to DOWNLOAD_MAX_ATTEMPTS with a small backoff. Each retry
+    // re-loads the on-disk checkpoint, so HTTP Range resumes from the last written
+    // byte instead of restarting. Cancel/pause are authoritative and stop at once;
+    // if the network is still down after all attempts the error propagates and the
+    // job becomes `failed` (recoverable from the Downloads UI).
+    let mut attempt: u32 = 0;
+    'attempt: loop {
+        attempt += 1;
+        let mut resume_from = load_checkpoint(&tmp_dir, &file_name, uri).unwrap_or(0);
 
-        let response = req
-            .send()
-            .await
-            .map_err(|e| format!("Download request failed: {}", e))?;
-
-        // Reject Content-Type text/html — this is an error page or login page, not a file.
-        if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
-            if let Ok(ct_str) = content_type.to_str() {
-                if ct_str.contains("text/html") {
-                    return Err(
-                        "Not a direct download link (server returned HTML instead of file). \
-                         Use stygian-browser for this URL."
-                            .to_string(),
-                    );
+        // ── Request / resume decision loop ──
+        // Bounded loop (max 2 iterations): send the request, react to the status.
+        // A 416 on a resume attempt means our offset disagrees with the server — drop
+        // the partial and retry once from zero. Everything else falls through to the
+        // streaming phase below. (Async recursion is not allowed, hence the loop.)
+        let (response, resume_from) = loop {
+            let mut req = client.get(uri);
+            if let Some(tok) = bearer {
+                if !tok.is_empty() {
+                    req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", tok));
                 }
             }
-        }
-
-        let status = response.status();
-        if status.as_u16() == 416 && resume_from > 0 {
-            // 416 on a resume attempt: the server doesn't know our offset.
-            println!("[DEBRID][RESUME] 416 Range Not Satisfiable — restarting from zero");
-            let _ = fs::remove_file(&part);
-            let _ = fs::remove_file(&meta);
-            resume_from = 0;
-            continue;
-        }
-        if !status.is_success() {
-            return Err(format!("Download failed with HTTP {}", status));
-        }
-
-        // Decide how to continue based on the local partial + server response.
-        match decide_resume(resume_from, status, response.content_length()) {
-            ResumeDecision::ResumeFrom(n) => break (response, n),
-            ResumeDecision::AlreadyComplete => {
-                // Server confirms we already hold the entire file — rename part → final.
-                println!("[DEBRID][RESUME] Server confirms partial is complete: {}", file_name);
-                drop(response);
-                let _ = fs::remove_file(&meta);
-                let final_bytes = fs::metadata(&part).ok().map(|m| m.len()).unwrap_or(0);
-                fs::rename(&part, &dest_path)
-                    .map_err(|e| format!("Failed to move downloaded file: {}", e))?;
-                let _ = fs::remove_dir(&tmp_dir);
-                return Ok(DownloadFileOutcome::File(DownloadedFile {
-                    path: dest_path,
-                    bytes_read: final_bytes,
-                    total_bytes: final_bytes,
-                }));
+            if resume_from > 0 {
+                req = req.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
+                println!(
+                    "[DEBRID][RESUME] Requesting resume from byte {} for {}",
+                    resume_from, file_name
+                );
             }
-            ResumeDecision::FreshStart => {
-                if resume_from > 0 {
-                    println!("[DEBRID][RESUME] Server ignored Range — restarting from zero");
+
+            let response = match req.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    // Network-level failure (DNS, connect, timeout). Retry with backoff
+                    // when attempts remain; cancel/pause abort immediately.
+                    if is_job_cancelled(job_id) {
+                        return Err(format!("Download request failed: {}", e));
+                    }
+                    if is_job_paused(job_id) {
+                        return Ok(DownloadFileOutcome::Paused);
+                    }
+                    match retry_backoff_ms(attempt) {
+                        Some(backoff) => {
+                            println!(
+                                "[DEBRID][RETRY] Request failed (attempt {}/{}): {} — retrying in {}ms",
+                                attempt, DOWNLOAD_MAX_ATTEMPTS, e, backoff
+                            );
+                            tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                            if is_job_cancelled(job_id) {
+                                return Err(format!("Download request failed: {}", e));
+                            }
+                            if is_job_paused(job_id) {
+                                return Ok(DownloadFileOutcome::Paused);
+                            }
+                            continue 'attempt;
+                        }
+                        None => return Err(format!("Download request failed: {}", e)),
+                    }
                 }
-                let _ = fs::remove_file(&part);
-                let _ = fs::remove_file(&meta);
-                break (response, 0);
-            }
-        }
-    };
-
-    // On a 206 response, Content-Length is the *remaining* bytes.
-    let server_total = response.content_length().unwrap_or(0);
-    let mut total_bytes = if resume_from > 0 {
-        resume_from + server_total
-    } else {
-        server_total
-    };
-    if total_bytes < resume_from {
-        total_bytes = resume_from;
-    }
-
-    // Check disk space for the remaining bytes before downloading anything more.
-    let remaining = total_bytes.saturating_sub(resume_from);
-    check_disk_space(dest_dir, remaining)?;
-
-    // Open the partial in append mode when resuming, else create fresh.
-    let mut file = if resume_from > 0 {
-        tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&part)
-            .await
-            .map_err(|e| format!("Failed to open partial file for resume: {}", e))?
-    } else {
-        tokio::fs::File::create(&part)
-            .await
-            .map_err(|e| format!("Failed to create file: {}", e))?
-    };
-
-    // ── Stream the response body chunk-by-chunk ──
-    // Each chunk is written to disk immediately (async, non-blocking).
-    // No part of the file is retained in memory after writing.
-    // Progress is throttled to avoid flooding Tauri IPC.
-    let mut stream = response.bytes_stream();
-    let mut bytes_read: u64 = resume_from;
-    let mut last_progress = std::time::Instant::now();
-    let progress_interval = std::time::Duration::from_millis(250);
-
-    while let Some(chunk_result) = stream.next().await {
-        // Check for cancellation on every chunk. The partial file + checkpoint are
-        // PRESERVED so a later retry resumes via HTTP Range.
-        if is_job_cancelled(job_id) {
-            drop(file);
-            write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
-            println!(
-                "[DEBRID][CANCEL] Download aborted by user (partial kept for resume): {} ({} bytes)",
-                file_name, bytes_read
-            );
-            return Err("Download cancelled by user.".to_string());
-        }
-
-        // Paused on every chunk: checkpoint and stop cleanly so a resume reuses
-        // the partial via HTTP Range.
-        if is_job_paused(job_id) {
-            drop(file);
-            write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
-            println!(
-                "[DEBRID][PAUSE] Download paused (partial kept for resume): {} ({} bytes)",
-                file_name, bytes_read
-            );
-            return Ok(DownloadFileOutcome::Paused);
-        }
-
-        let chunk = chunk_result.map_err(|e| {
-            // Network/stream error mid-download: keep the partial + checkpoint so
-            // a retry resumes instead of restarting.
-            write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
-            format!("Download stream error: {}", e)
-        })?;
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| {
-                write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
-                format!("Write error during download: {}", e)
-            })?;
-        bytes_read += chunk.len() as u64;
-
-        // Throttle progress: emit max 4 times per second
-        if last_progress.elapsed() >= progress_interval {
-            let progress = if total_bytes > 0 {
-                let pct = ((bytes_read as f64 / total_bytes as f64) * 55.0) as u8;
-                5 + pct.min(55)
-            } else {
-                35
             };
 
-            emit_installer_progress(
-                app_handle,
-                job_id,
-                "downloading",
-                progress,
-                bytes_read,
-                total_bytes,
-                "Downloading repack\u{2026}",
-            );
-            last_progress = std::time::Instant::now();
+            // Reject Content-Type text/html — this is an error page or login page, not a file.
+            if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+                if let Ok(ct_str) = content_type.to_str() {
+                    if ct_str.contains("text/html") {
+                        return Err(
+                            "Not a direct download link (server returned HTML instead of file). \
+                             Use stygian-browser for this URL."
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+
+            let status = response.status();
+            if status.as_u16() == 416 && resume_from > 0 {
+                // 416 on a resume attempt: the server doesn't know our offset.
+                println!("[DEBRID][RESUME] 416 Range Not Satisfiable — restarting from zero");
+                let _ = fs::remove_file(&part);
+                let _ = fs::remove_file(&meta);
+                resume_from = 0;
+                continue;
+            }
+            if !status.is_success() {
+                return Err(format!("Download failed with HTTP {}", status));
+            }
+
+            // Decide how to continue based on the local partial + server response.
+            match decide_resume(resume_from, status, response.content_length()) {
+                ResumeDecision::ResumeFrom(n) => break (response, n),
+                ResumeDecision::AlreadyComplete => {
+                    // Server confirms we already hold the entire file — rename part → final.
+                    println!("[DEBRID][RESUME] Server confirms partial is complete: {}", file_name);
+                    drop(response);
+                    let _ = fs::remove_file(&meta);
+                    let final_bytes = fs::metadata(&part).ok().map(|m| m.len()).unwrap_or(0);
+                    fs::rename(&part, &dest_path)
+                        .map_err(|e| format!("Failed to move downloaded file: {}", e))?;
+                    let _ = fs::remove_dir(&tmp_dir);
+                    return Ok(DownloadFileOutcome::File(DownloadedFile {
+                        path: dest_path,
+                        bytes_read: final_bytes,
+                        total_bytes: final_bytes,
+                    }));
+                }
+                ResumeDecision::FreshStart => {
+                    if resume_from > 0 {
+                        println!("[DEBRID][RESUME] Server ignored Range — restarting from zero");
+                    }
+                    let _ = fs::remove_file(&part);
+                    let _ = fs::remove_file(&meta);
+                    break (response, 0);
+                }
+            }
+        };
+
+        // On a 206 response, Content-Length is the *remaining* bytes.
+        let server_total = response.content_length().unwrap_or(0);
+        let mut total_bytes = if resume_from > 0 {
+            resume_from + server_total
+        } else {
+            server_total
+        };
+        if total_bytes < resume_from {
+            total_bytes = resume_from;
         }
+
+        // Check disk space for the remaining bytes before downloading anything more.
+        let remaining = total_bytes.saturating_sub(resume_from);
+        check_disk_space(dest_dir, remaining)?;
+
+        // Open the partial in append mode when resuming, else create fresh.
+        let mut file = if resume_from > 0 {
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&part)
+                .await
+                .map_err(|e| format!("Failed to open partial file for resume: {}", e))?
+        } else {
+            tokio::fs::File::create(&part)
+                .await
+                .map_err(|e| format!("Failed to create file: {}", e))?
+        };
+
+        // ── Stream the response body chunk-by-chunk ──
+        // Each chunk is written to disk immediately (async, non-blocking).
+        // No part of the file is retained in memory after writing.
+        // Progress is throttled to avoid flooding Tauri IPC.
+        let mut stream = response.bytes_stream();
+        let mut bytes_read: u64 = resume_from;
+        let mut last_progress = std::time::Instant::now();
+        let progress_interval = std::time::Duration::from_millis(250);
+
+        while let Some(chunk_result) = stream.next().await {
+            // Check for cancellation on every chunk. The partial file + checkpoint are
+            // PRESERVED so a later retry resumes via HTTP Range.
+            if is_job_cancelled(job_id) {
+                drop(file);
+                write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                println!(
+                    "[DEBRID][CANCEL] Download aborted by user (partial kept for resume): {} ({} bytes)",
+                    file_name, bytes_read
+                );
+                return Err("Download cancelled by user.".to_string());
+            }
+
+            // Paused on every chunk: checkpoint and stop cleanly so a resume reuses
+            // the partial via HTTP Range.
+            if is_job_paused(job_id) {
+                drop(file);
+                write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                println!(
+                    "[DEBRID][PAUSE] Download paused (partial kept for resume): {} ({} bytes)",
+                    file_name, bytes_read
+                );
+                return Ok(DownloadFileOutcome::Paused);
+            }
+
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    // Network/stream error mid-download: keep the partial + checkpoint so
+                    // a retry resumes via HTTP Range. Retry with backoff when attempts
+                    // remain; cancel/pause abort immediately.
+                    write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                    if is_job_cancelled(job_id) {
+                        return Err(format!("Download stream error: {}", e));
+                    }
+                    if is_job_paused(job_id) {
+                        drop(file);
+                        return Ok(DownloadFileOutcome::Paused);
+                    }
+                    match retry_backoff_ms(attempt) {
+                        Some(backoff) => {
+                            println!(
+                                "[DEBRID][RETRY] Stream error (attempt {}/{}): {} — retrying in {}ms",
+                                attempt, DOWNLOAD_MAX_ATTEMPTS, e, backoff
+                            );
+                            drop(file);
+                            tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                            if is_job_cancelled(job_id) {
+                                return Err(format!("Download stream error: {}", e));
+                            }
+                            if is_job_paused(job_id) {
+                                return Ok(DownloadFileOutcome::Paused);
+                            }
+                            continue 'attempt;
+                        }
+                        None => return Err(format!("Download stream error: {}", e)),
+                    }
+                }
+            };
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| {
+                    write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                    format!("Write error during download: {}", e)
+                })?;
+            bytes_read += chunk.len() as u64;
+
+            // Throttle progress: emit max 4 times per second
+            if last_progress.elapsed() >= progress_interval {
+                let progress = if total_bytes > 0 {
+                    let pct = ((bytes_read as f64 / total_bytes as f64) * 55.0) as u8;
+                    5 + pct.min(55)
+                } else {
+                    35
+                };
+
+                emit_installer_progress(
+                    app_handle,
+                    job_id,
+                    "downloading",
+                    progress,
+                    bytes_read,
+                    total_bytes,
+                    "Downloading repack\u{2026}",
+                );
+                last_progress = std::time::Instant::now();
+            }
+        }
+
+        // Flush and close before the atomic rename (required on Windows).
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to flush file: {}", e))?;
+        drop(file);
+
+        // Atomic rename from tmp to final destination (instant on same filesystem)
+        fs::rename(&part, &dest_path)
+            .map_err(|e| format!("Failed to move downloaded file: {}", e))?;
+        let _ = fs::remove_file(&meta);
+
+        // Clean up the tmp directory if empty
+        let _ = fs::remove_dir(&tmp_dir);
+
+        println!(
+            "[DEBRID][DOWNLOAD] Complete: {} ({} bytes written)",
+            file_name, bytes_read
+        );
+
+        return Ok(DownloadFileOutcome::File(DownloadedFile {
+            path: dest_path,
+            bytes_read,
+            total_bytes,
+        }));
     }
-
-    // Flush and close before the atomic rename (required on Windows).
-    file.flush()
-        .await
-        .map_err(|e| format!("Failed to flush file: {}", e))?;
-    drop(file);
-
-    // Atomic rename from tmp to final destination (instant on same filesystem)
-    fs::rename(&part, &dest_path)
-        .map_err(|e| format!("Failed to move downloaded file: {}", e))?;
-    let _ = fs::remove_file(&meta);
-
-    // Clean up the tmp directory if empty
-    let _ = fs::remove_dir(&tmp_dir);
-
-    println!(
-        "[DEBRID][DOWNLOAD] Complete: {} ({} bytes written)",
-        file_name, bytes_read
-    );
-
-    Ok(DownloadFileOutcome::File(DownloadedFile {
-        path: dest_path,
-        bytes_read,
-        total_bytes,
-    }))
 }
 
 /// Check that `dest_dir` has enough free space to accommodate `required_bytes`
@@ -2846,5 +2979,31 @@ mod tests {
         clear_job_flags("idem-job");
         assert!(!is_job_cancelled("idem-job"));
         assert!(!is_job_paused("idem-job"));
+    }
+
+    // ── Transient retry backoff ──
+
+    #[test]
+    fn retry_backoff_first_attempt_waits_short() {
+        assert_eq!(retry_backoff_ms(1), Some(2_000));
+    }
+
+    #[test]
+    fn retry_backoff_second_attempt_waits_long() {
+        assert_eq!(retry_backoff_ms(2), Some(5_000));
+    }
+
+    #[test]
+    fn retry_backoff_after_max_attempts_returns_none() {
+        // attempt 3 is the final attempt — no more retries.
+        assert_eq!(retry_backoff_ms(3), None);
+        assert_eq!(retry_backoff_ms(4), None);
+        assert_eq!(retry_backoff_ms(u32::MAX), None);
+    }
+
+    #[test]
+    fn retry_backoff_zero_attempt_returns_none() {
+        // attempt is 1-based; 0 is an invalid state.
+        assert_eq!(retry_backoff_ms(0), None);
     }
 }

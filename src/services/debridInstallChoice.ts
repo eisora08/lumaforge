@@ -1,4 +1,5 @@
 import type { ConfirmOptions, ConfirmResult } from "./confirmService";
+import type { ProviderId } from "./debridProviderService";
 
 /**
  * Debrid install method selection.
@@ -23,6 +24,24 @@ export type DebridInstallMethod = "direct" | "debrid" | "torrent";
 export type DebridInstallResolution =
   | { ok: true; uri: string; method: DebridInstallMethod }
   | { ok: false; reason: "no-uri" | "cancelled" };
+
+/**
+ * Options chosen in the repack install modal.
+ *
+ *  - `method`         — how the chosen URI is downloaded (direct / debrid / torrent).
+ *  - `provider`       — preferred debrid provider when `method === "debrid"`.
+ *  - `destDir`        — destination directory (defaults to `games/debrid/<providerGameId>`).
+ *  - `autoExtract`    — if false, download only and leave the archive on disk
+ *                       (status `"downloaded"`; the game is NOT marked installed).
+ *  - `deleteArchive`  — remove the `.rar`/`.zip` after a successful extraction.
+ */
+export type RepackInstallOptions = {
+  method: DebridInstallMethod;
+  provider?: ProviderId;
+  destDir: string;
+  autoExtract: boolean;
+  deleteArchive: boolean;
+};
 
 export function isMagnetUri(uri: string): boolean {
   return uri.startsWith("magnet:");

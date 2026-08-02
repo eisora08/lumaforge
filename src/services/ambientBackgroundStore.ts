@@ -1,13 +1,16 @@
 export type AmbientIntensity = "sutil" | "equilibrado" | "vivido";
+export type AmbientMode = "image" | "color";
 
 type AmbientSnapshot = {
   url: string | null;
   enabled: boolean;
   intensity: AmbientIntensity;
+  mode: AmbientMode;
 };
 
 const AMBIENT_STORAGE_KEY = "lumaforge-ambient-background";
 const AMBIENT_INTENSITY_KEY = "lumaforge-ambient-intensity";
+const AMBIENT_MODE_KEY = "lumaforge-ambient-mode";
 const PAGE_CONTEXT_SCOPE = "page-context";
 
 // Two-slot source model:
@@ -40,6 +43,13 @@ let _intensity: AmbientIntensity = (() => {
     return "equilibrado";
   }
 })();
+let _mode: AmbientMode = (() => {
+  try {
+    return localStorage.getItem(AMBIENT_MODE_KEY) === "color" ? "color" : "image";
+  } catch {
+    return "image";
+  }
+})();
 
 const _listeners = new Set<() => void>();
 
@@ -51,7 +61,12 @@ function activeUrl(): string | null {
   return (_detail?.url ?? _context) ?? null;
 }
 
-let _snapshot: AmbientSnapshot = { url: activeUrl(), enabled: _enabled, intensity: _intensity };
+let _snapshot: AmbientSnapshot = {
+  url: activeUrl(),
+  enabled: _enabled,
+  intensity: _intensity,
+  mode: _mode,
+};
 
 if (typeof document !== "undefined") {
   document.documentElement.dataset.ambient = _enabled ? "on" : "off";
@@ -62,7 +77,12 @@ function emit() {
   // snapshots with Object.is — mutating the same object means the reference is
   // identical and the component never re-renders (the "ambient only updates on
   // minimize/maximize" bug).
-  _snapshot = { url: activeUrl(), enabled: _enabled, intensity: _intensity };
+  _snapshot = {
+    url: activeUrl(),
+    enabled: _enabled,
+    intensity: _intensity,
+    mode: _mode,
+  };
   _listeners.forEach((cb) => cb());
   document.documentElement.dataset.ambient = _enabled ? "on" : "off";
 }
@@ -134,6 +154,25 @@ export function setAmbientIntensity(intensity: AmbientIntensity) {
 
 export function getAmbientIntensity() {
   return _intensity;
+}
+
+// ── Display mode (image vs dominant color) ──────────────────────────────────
+export function setAmbientMode(mode: AmbientMode) {
+  if (_mode === mode) {
+    emit();
+    return;
+  }
+  _mode = mode;
+  try {
+    localStorage.setItem(AMBIENT_MODE_KEY, mode);
+  } catch {
+    // storage unavailable — keep session-only state
+  }
+  emit();
+}
+
+export function getAmbientMode() {
+  return _mode;
 }
 
 export function setAmbientEnabled(enabled: boolean) {

@@ -177,4 +177,9 @@ export const defaultProviderSettings: Record<
     baseUrl: "",
     apiKey: "",
   },
+  repack: {
+    enabled: false,
+    baseUrl: "",
+    apiKey: "",
+  },
 };

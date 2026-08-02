@@ -16,8 +16,6 @@ export type ActiveDownload = {
   status: DownloadStatus;
   currentSpeedBytes?: number;
   peakSpeedBytes?: number;
-  seeds?: number;
-  peers?: number;
   isTorrent: boolean;
   isSteam: boolean;
   isDebrid: boolean;
@@ -185,43 +183,3 @@ export function useActiveDownload(job: DownloadJob): ActiveDownload {
     };
   }, [job]);
 }
-
-/* ── Dev-only mock for the premium preview ── */
-
-const MOCK_GB = 1024 ** 3;
-const MOCK_MB = 1024 ** 2;
-
-function buildMockHistory(): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < HISTORY_LEN; i += 1) {
-    const wave = Math.sin(i / 4.5) * 1.4;
-    const noise = Math.random() * 2.6 - 1.3;
-    const base = 4.6;
-    out.push(Math.max(0.4, base + wave + noise) * MOCK_MB);
-  }
-  return out;
-}
-
-export const MOCK_ACTIVE_DOWNLOAD: ActiveDownload = {
-  id: "mock-cuphead",
-  appId: "268910",
-  gameName: "Cuphead",
-  coverImageUrl:
-    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/268910/capsule_616x353.jpg",
-  downloadedBytes: 12.1 * MOCK_GB,
-  totalBytes: 28.6 * MOCK_GB,
-  percentage: (12.1 / 28.6) * 100,
-  timeRemaining: "en 1 día",
-  status: "downloading",
-  currentSpeedBytes: 3.4 * MOCK_MB,
-  peakSpeedBytes: 8.7 * MOCK_MB,
-  seeds: 39,
-  peers: 45,
-  isTorrent: true,
-  isSteam: false,
-  isDebrid: true,
-  repacker: "SteamRip",
-  speedHistory: buildMockHistory(),
-  progressMode: "determinate",
-  message: "Descargando vía torrent",
-};

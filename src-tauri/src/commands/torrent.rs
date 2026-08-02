@@ -122,6 +122,8 @@ pub async fn start_torrent_download(
     job_id: String,
     magnet: String,
     dest_dir: String,
+    auto_extract: bool,
+    delete_archive: bool,
 ) -> Result<DebridDownloadResult, String> {
     if !DEBRID_TORRENT_ENABLED {
         return Err("Torrent downloads are disabled.".to_string());
@@ -231,7 +233,36 @@ pub async fn start_torrent_download(
                 .await;
             active_torrents().remove(&job_id);
 
-            process_torrent_files(&app_handle, &job_id, &dest_path, &dest_dir)
+            // auto_extract=false → download only, leave the files on disk. Never
+            // auto-run an installer or extract an archive; return "downloaded"
+            // so the job shows a manual-extraction message without marking the
+            // game as installed.
+            if !auto_extract {
+                println!(
+                    "[TORRENT][DOWNLOAD_ONLY] job_id={} auto_extract=false",
+                    job_id
+                );
+                emit_installer_progress(
+                    &app_handle,
+                    &job_id,
+                    "done",
+                    100,
+                    0,
+                    0,
+                    "Download complete. Extract manually.",
+                );
+                return Ok(DebridDownloadResult {
+                    success: true,
+                    status: "downloaded".to_string(),
+                    install_dir: dest_dir.clone(),
+                    executable_path: None,
+                    installer_path: None,
+                    installer_pid: None,
+                    message: "Download complete. Extract the archive manually.".to_string(),
+                });
+            }
+
+            process_torrent_files(&app_handle, &job_id, &dest_path, &dest_dir, delete_archive)
         }
         Ok(PollOutcome::Paused) => {
             // Paused by user — stop the engine but keep the partial data +
@@ -364,11 +395,14 @@ async fn poll_torrent_until_done(
 
 /// Post-process the downloaded torrent files, mirroring `download_debrid_package`:
 /// auto-run installer → find game exe → extract archive → fallback "files on disk".
+/// `delete_archive` removes the downloaded `.rar`/`.zip` after a successful
+/// extraction (only meaningful when `auto_extract` is enabled upstream).
 fn process_torrent_files(
     app_handle: &AppHandle,
     job_id: &str,
     dest_path: &Path,
     dest_dir: &str,
+    delete_archive: bool,
 ) -> Result<DebridDownloadResult, String> {
     // Effective game root: torrents sometimes ship a single wrapper folder.
     let game_root = flatten_single_root_folder(dest_path);
@@ -439,6 +473,24 @@ fn process_torrent_files(
                  Install 7-Zip and extract manually. ({e})"
             )
         })?;
+
+        // User asked to remove the archive after a successful extraction.
+        if delete_archive {
+            match fs::remove_file(&archive_path) {
+                Ok(()) => {
+                    println!(
+                        "[TORRENT][DELETE_ARCHIVE] Removed {}",
+                        archive_path.display()
+                    );
+                }
+                Err(e) => {
+                    println!(
+                        "[TORRENT][DELETE_ARCHIVE] Failed to remove {}: {e}",
+                        archive_path.display()
+                    );
+                }
+            }
+        }
 
         // Re-scan after extraction (flatten wrapper again).
         let game_root = flatten_single_root_folder(dest_path);

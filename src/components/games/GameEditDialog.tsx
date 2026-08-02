@@ -2101,7 +2101,7 @@ export default function GameEditDialog({
                     <button
                       type="button"
                       onClick={async () => {
-                        const folder = await pickFolder("Select Install Folder");
+                        const folder = await pickFolder("Select Install Folder", installDirDraft.trim() || undefined);
                         if (folder) { setInstallDirDraft(folder); setHasEdits(true); }
                       }}
                       className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
@@ -2170,7 +2170,7 @@ export default function GameEditDialog({
                     <button
                       type="button"
                       onClick={async () => {
-                        const folder = await pickFolder("Select Working Directory");
+                        const folder = await pickFolder("Select Working Directory", workingDirectoryDraft.trim() || undefined);
                         if (folder) { setWorkingDirectoryDraft(folder); setHasEdits(true); }
                       }}
                       className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
@@ -2252,7 +2252,7 @@ export default function GameEditDialog({
                     <button
                       type="button"
                       onClick={async () => {
-                        const folder = await pickFolder("Select Working Directory");
+                        const folder = await pickFolder("Select Working Directory", workingDirectoryDraft.trim() || undefined);
                         if (folder) { setWorkingDirectoryDraft(folder); setHasEdits(true); }
                       }}
                       className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
@@ -2295,7 +2295,7 @@ export default function GameEditDialog({
                     <button
                       type="button"
                       onClick={async () => {
-                        const folder = await pickFolder("Select Install Folder");
+                        const folder = await pickFolder("Select Install Folder", installDirDraft.trim() || undefined);
                         if (folder) { setInstallDirDraft(folder); setHasEdits(true); }
                       }}
                       className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"

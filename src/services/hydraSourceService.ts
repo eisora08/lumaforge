@@ -12,6 +12,7 @@ import type {
   ImportedFeedSummary,
 } from "../types/hydraSource";
 import { invoke } from "@tauri-apps/api/core";
+import { clearRepackCatalogCaches } from "./repackCatalogService";
 
 /** Result of validating a Hydra source URL. */
 interface HydraFetchResult {
@@ -198,6 +199,7 @@ export async function importRepackFeed(
     options?.sourceUrl,
   );
   _cachedFeeds = null; // invalidate imported-feeds cache
+  clearRepackCatalogCaches(); // invalidate SQLite-backed search caches so new rows are immediately searchable
   return result;
 }
 
@@ -219,6 +221,7 @@ export async function getImportedFeeds(forceRefresh = false): Promise<ImportedFe
 export async function removeImportedFeed(name: string): Promise<number> {
   const deleted = await tauriRemoveImportedFeed(name);
   _cachedFeeds = null;
+  clearRepackCatalogCaches(); // invalidate SQLite-backed search caches after feed rows are purged
   return deleted;
 }
 

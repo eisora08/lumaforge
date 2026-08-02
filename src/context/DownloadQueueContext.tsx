@@ -10,7 +10,8 @@ import { DownloadJob, DownloadStatus } from "../types/download";
 import { useSteamInstallSync } from "../hooks/useSteamInstallSync";
 import { useDebridInstallSync, type DebridInstallHandle } from "../hooks/useDebridInstallSync";
 import { cancelDebridDownload, pauseDebridDownload } from "../services/tauri";
-import type { DebridInstallMethod } from "../services/debridInstallChoice";
+import type { DebridInstallMethod, RepackInstallOptions } from "../services/debridInstallChoice";
+import type { ProviderId } from "../services/debridProviderService";
 
 type CreateDownloadJobInput = {
   appId: string;
@@ -43,7 +44,7 @@ type DownloadQueueContextValue = {
   jobs: DownloadJob[];
   addJob: (input: CreateDownloadJobInput) => DownloadJob;
   addSteamInstallJob: (appId: string, title: string, artworkUrl?: string) => string;
-  addDebridInstallJob: (providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string, installMethod?: DebridInstallMethod) => string;
+  addDebridInstallJob: (providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string, installMethod?: DebridInstallMethod, options?: RepackInstallOptions) => string;
   updateJob: (jobId: string, update: UpdateDownloadJobInput) => void;
   cancelJob: (jobId: string) => void;
   pauseJob: (jobId: string) => void;
@@ -232,7 +233,7 @@ export function DownloadQueueProvider({
     return jobId;
   }
 
-  function addDebridInstallJob(providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string, installMethod?: DebridInstallMethod): string {
+  function addDebridInstallJob(providerGameId: string, title: string, downloadUri: string, installerType: string, appId?: string, artworkUrl?: string, repacker?: string, installMethod?: DebridInstallMethod, options?: RepackInstallOptions): string {
     const jobId = createDebridJobId(providerGameId);
     const existing = jobs.find((j) => j.id === jobId);
     if (existing && activeStatuses.includes(existing.status)) {
@@ -254,7 +255,11 @@ export function DownloadQueueProvider({
       downloadUrl: downloadUri,
       artworkUrl: artworkUrl,
       repacker: repacker,
-      installMethod: installMethod,
+      installMethod: installMethod ?? options?.method,
+      debridProviderId: options?.provider,
+      destDir: options?.destDir,
+      autoExtract: options?.autoExtract,
+      deleteArchive: options?.deleteArchive,
 
       status: "queued",
       progress: 0,
@@ -270,7 +275,7 @@ export function DownloadQueueProvider({
     commitJobs(nextJobs);
 
     // Start install asynchronously
-    debridInstallRef.current.startInstall(jobId, providerGameId, downloadUri, installerType, title, installMethod);
+    debridInstallRef.current.startInstall(jobId, providerGameId, downloadUri, installerType, title, job.installMethod, options, job.appId);
 
     return jobId;
   }
@@ -340,6 +345,18 @@ export function DownloadQueueProvider({
       message: "Resuming\u2026",
       error: undefined,
     });
+    // Rebuild the install options from the persisted job so a resumed download
+    // honors the original destination directory and auto-extract/delete flags.
+    const resumeOptions: RepackInstallOptions | undefined =
+      job.destDir || job.autoExtract !== undefined || job.deleteArchive !== undefined
+        ? {
+            method: job.installMethod ?? "debrid",
+            provider: job.debridProviderId as ProviderId | undefined,
+            destDir: job.destDir ?? "",
+            autoExtract: job.autoExtract ?? true,
+            deleteArchive: job.deleteArchive ?? false,
+          }
+        : undefined;
     await debridInstallRef.current.startInstall(
       jobId,
       providerGameId,
@@ -347,6 +364,8 @@ export function DownloadQueueProvider({
       "zip",
       job.gameTitle,
       job.installMethod,
+      resumeOptions,
+      job.appId,
     );
   }
 

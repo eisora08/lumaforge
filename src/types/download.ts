@@ -40,6 +40,14 @@ export type DownloadJob = {
   repacker?: string;
   /** Download method chosen by the user for Debrid installs */
   installMethod?: DebridInstallMethod;
+  /** Preferred debrid provider when `installMethod === "debrid"` */
+  debridProviderId?: string;
+  /** Custom destination directory for the Debrid install (defaults to games/debrid/<providerGameId>) */
+  destDir?: string;
+  /** If false, download only and leave the archive on disk (game NOT marked installed) */
+  autoExtract?: boolean;
+  /** Remove the .rar/.zip after a successful extraction */
+  deleteArchive?: boolean;
   /** Install directory on disk (populated when install completes) */
   installDir?: string;
 

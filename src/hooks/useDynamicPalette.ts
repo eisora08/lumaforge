@@ -12,8 +12,8 @@ import { useEffect, useState } from "react";
  *   secondary — same hue, brighter, more saturated              (bars, accent)
  *   glow      — bright secondary                                (radial glow)
  *
- * The chosen hue is blended 18% toward the LumaForge blue-cyan accent so the
- * result always reads "on brand" even for strongly colored art.
+ * The chosen hue is blended 10% toward the LumaForge blue-cyan accent so the
+ * result keeps a subtle brand feel without distorting strongly colored art.
  *
  * If the artwork can't be sampled (CORS-tainted canvas, no window, load
  * failure, etc.) the hook falls back to a fixed blue-cyan palette — never
@@ -26,7 +26,7 @@ export type DynamicPalette = {
   glow: string;
 };
 
-const FALLBACK_PALETTE: DynamicPalette = {
+export const FALLBACK_PALETTE: DynamicPalette = {
   primary: "#1d3343",
   secondary: "#2f9fff",
   glow: "#2f9fff",
@@ -44,7 +44,7 @@ const MIN_LIGHTNESS = 0.08;
 const MAX_LIGHTNESS = 0.93;
 const MIN_CHROMA = 0.03;
 
-const SAMPLE_BLEND = 0.18; // toward the LumaForge blue-cyan accent
+const SAMPLE_BLEND = 0.1; // toward the LumaForge blue-cyan accent
 const ACCENT_HUE = 235; // OKLCH hue of the blue-cyan accent
 
 // Clamp targets (OKLCH space).
@@ -132,10 +132,10 @@ function samplePaletteFromCanvas(canvas: HTMLCanvasElement): DynamicPalette | nu
     return null;
   }
 
-  const bucketSum = new Float32Array(HUE_BUCKETS);
   const bucketCount = new Uint32Array(HUE_BUCKETS);
   const bucketHue = new Float32Array(HUE_BUCKETS);
   const bucketWeight = new Float32Array(HUE_BUCKETS);
+  const bucketDenom = new Float32Array(HUE_BUCKETS);
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i] / 255;
@@ -151,10 +151,10 @@ function samplePaletteFromCanvas(canvas: HTMLCanvasElement): DynamicPalette | nu
     if (C < MIN_CHROMA) continue;
 
     const bucket = Math.floor(H / HUE_SLICE) % HUE_BUCKETS;
-    bucketSum[bucket] += H;
     bucketCount[bucket] += 1;
     bucketWeight[bucket] += C * 10; // chroma-weighted dominance
     bucketHue[bucket] += H * (1 + C);
+    bucketDenom[bucket] += 1 + C;
   }
 
   let best = -1;
@@ -168,19 +168,46 @@ function samplePaletteFromCanvas(canvas: HTMLCanvasElement): DynamicPalette | nu
 
   if (best < 0 || bucketCount[best] < 2) return null;
 
-  const hue = bucketHue[best] / (bucketCount[best] * (1 + bestScore / Math.max(1, bucketWeight[best])) + 1e-6);
-
-  // Blend the dominant hue toward the LumaForge blue-cyan accent.
-  let dh = hue - ACCENT_HUE;
-  while (dh > 180) dh -= 360;
-  while (dh < -180) dh += 360;
-  const blendedHue = (hue - dh * SAMPLE_BLEND + 360) % 360;
+  const blendedHue = dominantBlendedHue(bucketCount, bucketHue, bucketWeight, bucketDenom);
+  if (blendedHue === null) return null;
 
   return {
     primary: oklchToHex(PRIMARY_L, PRIMARY_C, blendedHue),
     secondary: oklchToHex(SECONDARY_L, SECONDARY_C, blendedHue),
     glow: oklchToHex(Math.min(0.82, SECONDARY_L + 0.08), SECONDARY_C, blendedHue),
   };
+}
+
+/**
+ * Chroma-weighted mean of the dominant hue bucket, blended toward the
+ * LumaForge blue-cyan accent. The weighted mean uses `Σ H·(1+C) / Σ(1+C)` —
+ * the denominator must be the accumulated `(1 + C)` sum (not the pixel count),
+ * otherwise the hue is halved (yellow → red-orange). Pure & testable.
+ */
+export function dominantBlendedHue(
+  bucketCount: Uint32Array,
+  bucketHue: Float32Array,
+  bucketWeight: Float32Array,
+  bucketDenom: Float32Array
+): number | null {
+  let best = -1;
+  let bestScore = 0;
+  for (let i = 0; i < HUE_BUCKETS; i += 1) {
+    if (bucketWeight[i] > bestScore) {
+      bestScore = bucketWeight[i];
+      best = i;
+    }
+  }
+
+  if (best < 0 || bucketCount[best] < 2) return null;
+
+  const hue = bucketHue[best] / (bucketDenom[best] || 1);
+
+  // Blend the dominant hue toward the LumaForge blue-cyan accent.
+  let dh = hue - ACCENT_HUE;
+  while (dh > 180) dh -= 360;
+  while (dh < -180) dh += 360;
+  return (hue - dh * SAMPLE_BLEND + 360) % 360;
 }
 
 function extractPaletteFromUrl(src: string): Promise<DynamicPalette | null> {
@@ -217,6 +244,17 @@ function extractPaletteFromUrl(src: string): Promise<DynamicPalette | null> {
 
     img.src = src;
   });
+}
+
+/**
+ * Synchronous read of a previously extracted palette for `url`. Returns `null`
+ * when the URL hasn't been sampled yet (no async work). Used by crossfade
+ * surfaces to render the *previous* layer with its real color instead of the
+ * fallback while the current layer's palette refines.
+ */
+export function getCachedDynamicPalette(url: string | null | undefined): DynamicPalette | null {
+  if (!url) return null;
+  return _paletteCache.get(url) ?? null;
 }
 
 /**

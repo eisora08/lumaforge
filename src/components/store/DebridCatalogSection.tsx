@@ -21,9 +21,15 @@ import {
 } from "../../services/debridGameStore";
 import { showError, showSuccess, showWarning } from "../toast/GameToast";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
-import { useConfirm } from "../../services/confirmService";
-import { resolveDebridInstallUri } from "../../services/debridInstallChoice";
+import type { RepackInstallOptions } from "../../services/debridInstallChoice";
+import { pickDirectDebridUri, pickMagnetDebridUri } from "../../services/debridInstallChoice";
+import {
+  getConfiguredProviders,
+  type ProviderId,
+} from "../../services/debridProviderService";
+import { useSettings } from "../../context/SettingsContext";
 import PackageInstallSuccessModal from "../common/PackageInstallSuccessModal";
+import StoreRepackInstallModal from "./StoreRepackInstallModal";
 
 function formatBytes(bytes?: number | null): string {
   if (bytes == null || bytes <= 0) return "?";
@@ -36,7 +42,7 @@ function formatBytes(bytes?: number | null): string {
 const REPACKERS = ["FitGirl", "DODI", "ElAmigos", "Chovka", "TENOKE", "Empress", "RUNE", "GOG"];
 const GAMES_PER_PAGE = 24;
 
-function repackerLabel(repacker: string): string {
+export function repackerLabel(repacker: string): string {
   return repacker ? repacker.charAt(0).toUpperCase() + repacker.slice(1) : repacker;
 }
 
@@ -280,9 +286,12 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
   const [localStatus, setLocalStatus] = useState(() => game.id ? getDebridGameStatus(game.id) : "not-downloaded");
   const [setupLoading, setSetupLoading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
   const downloadQueue = useDownloadQueue();
-  const { confirm } = useConfirm();
+  const { settings } = useSettings();
+
+  const configuredProviders: ProviderId[] = getConfiguredProviders(settings.debridProviders);
 
   const heroUrl = game.appId > 0 ? buildSteamCdnUrl(String(game.appId), "capsule") : null;
 
@@ -301,15 +310,21 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
     return () => clearInterval(interval);
   }, [game.id]);
 
-  const handleDownload = useCallback(async (e: React.MouseEvent) => {
+  const handleDownload = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!game.id) return;
+    setInstallOpen(true);
+  }, [game]);
 
-    const resolved = await resolveDebridInstallUri(game.downloadUris, confirm, game.title);
-    if (!resolved.ok) {
-      if (resolved.reason === "no-uri") {
-        showWarning("No download URI available for this repack.", { title: "Not available" });
-      }
+  const handleInstallConfirm = useCallback(async (options: RepackInstallOptions) => {
+    if (!game.id) return;
+
+    const uri =
+      options.method === "direct"
+        ? pickDirectDebridUri(game.downloadUris)
+        : pickMagnetDebridUri(game.downloadUris);
+    if (!uri) {
+      showWarning("No download URI available for this repack.", { title: "Not available" });
       return;
     }
 
@@ -319,16 +334,17 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
     downloadQueue.addDebridInstallJob(
       game.id,
       game.title,
-      resolved.uri,
+      uri,
       game.installerType || "zip",
       game.appId > 0 ? String(game.appId) : undefined,
       undefined,
       game.repacker,
-      resolved.method,
+      options.method,
+      options,
     );
 
     showSuccess("Download queued. Check the Downloads page for progress.");
-  }, [game, downloadQueue, confirm]);
+  }, [game, downloadQueue]);
 
   const handleRunSetup = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -388,6 +404,17 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
             if (game.appId > 0) onNavigate?.(String(game.appId));
           }}
           onContinueBrowsing={() => setShowSuccessModal(false)}
+        />
+      )}
+
+      {/* Install method modal */}
+      {game.id && (
+        <StoreRepackInstallModal
+          open={installOpen}
+          entry={game}
+          configuredProviders={configuredProviders}
+          onClose={() => setInstallOpen(false)}
+          onConfirm={handleInstallConfirm}
         />
       )}
 

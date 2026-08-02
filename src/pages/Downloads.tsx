@@ -1,12 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
   Download,
   HardDrive,
-  ListChecks,
-  PackageCheck,
-  PackageX,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -14,11 +11,7 @@ import {
 import ActiveDownloadCard from "../components/downloads/ActiveDownloadCard";
 import DownloadJobCard from "../components/downloads/DownloadJobCard";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
-import {
-  useActiveDownload,
-  MOCK_ACTIVE_DOWNLOAD,
-  type ActiveDownload,
-} from "../hooks/useActiveDownload";
+import { useActiveDownload } from "../hooks/useActiveDownload";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import type { AppPage } from "../types/navigation";
 import { getBootSnapshot } from "../services/appBootCoordinator";
@@ -62,22 +55,19 @@ export default function Downloads({ onNavigate }: Props) {
 
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
 
-  const mockPreview = useMockDownloadPreview();
-
   const activeJobs = useMemo(() => jobs.filter((job) =>
     ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(job.status)
   ), [jobs]);
 
+  // Failed Debrid downloads are shown in the active section so they can be
+  // resumed from their on-disk checkpoint after a network interruption.
+  const interruptedDebrid = useMemo(() => jobs.filter((job) =>
+    job.type === "debrid-install" && job.status === "failed"
+  ), [jobs]);
+
   const completedJobs = useMemo(() => jobs.filter((job) =>
-    ["done", "failed", "cancelled"].includes(job.status)
-  ), [jobs]);
-
-  const failedJobs = useMemo(() => jobs.filter((job) =>
-    job.status === "failed"
-  ), [jobs]);
-
-  const queuedJobs = useMemo(() => jobs.filter((job) =>
-    job.status === "queued" || job.status === "waiting"
+    ["done", "failed", "cancelled"].includes(job.status) &&
+    !(job.type === "debrid-install" && job.status === "failed")
   ), [jobs]);
 
   return (
@@ -98,60 +88,6 @@ export default function Downloads({ onNavigate }: Props) {
         </p>
       </header>
 
-      {/* ── Dev-only premium preview (mock, with working controls) ── */}
-      {import.meta.env.DEV && (
-        <section className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-(--color-muted)">
-            Vista previa (mock)
-          </p>
-          <ActiveDownloadCard
-            download={mockPreview.mock}
-            onPause={mockPreview.onPause}
-            onResume={mockPreview.onResume}
-            onCancel={mockPreview.onCancel}
-          />
-        </section>
-      )}
-
-      {/* ── Status summary — single segmented surface ── */}
-      <div className="lf-surface rounded-2xl border p-2">
-        <div className="grid grid-cols-2 gap-y-2 md:grid-cols-4 md:gap-y-0 md:divide-x md:divide-(--surface-active-border)">
-          <StatusStat icon={Download} label="Activas" value={activeJobs.length} />
-          <StatusStat icon={ListChecks} label="En cola" value={queuedJobs.length} />
-          <StatusStat icon={PackageCheck} label="Completadas" value={completedJobs.length} />
-          <StatusStat icon={PackageX} label="Fallidas" value={failedJobs.length} />
-        </div>
-      </div>
-
-      {/* ── Clear history bar ── */}
-      {jobs.length > 0 && completedJobs.length > 0 && (
-        <section className="lf-surface rounded-2xl border p-4">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => setCompletedCollapsed((v) => !v)}
-              className="flex items-center gap-2 text-sm font-medium text-(--color-text) transition hover:text-(--color-accent)"
-            >
-              {completedCollapsed ? (
-                <ChevronRight className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-              Completadas y fallidas ({completedJobs.length})
-            </button>
-
-            <button
-              type="button"
-              onClick={clearCompleted}
-              className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
-            >
-              <Trash2 className="h-4 w-4" />
-              Limpiar historial
-            </button>
-          </div>
-        </section>
-      )}
-
       {/* ── Active download queue ── */}
       {activeJobs.length > 0 && (
         <section className="space-y-4">
@@ -167,10 +103,18 @@ export default function Downloads({ onNavigate }: Props) {
         </section>
       )}
 
-      {/* ── Completed section (collapsible) ── */}
-      {completedJobs.length > 0 && !completedCollapsed && (
+      {/* ── Interrupted Debrid downloads (resumable) ── */}
+      {interruptedDebrid.length > 0 && (
         <section className="space-y-4">
-          {completedJobs.map((job) => (
+          <header>
+            <h2 className="text-sm font-semibold text-(--color-text)">
+              Descargas interrumpidas
+            </h2>
+            <p className="mt-1 text-xs text-(--color-muted)">
+              La descarga se detuvo por un error de conexión. Reanuda para continuar desde donde quedó.
+            </p>
+          </header>
+          {interruptedDebrid.map((job) => (
             <DownloadJobCard
               key={job.id}
               job={job}
@@ -182,6 +126,53 @@ export default function Downloads({ onNavigate }: Props) {
             />
           ))}
         </section>
+      )}
+
+      {/* ── Completed/failed section (collapsible, below active) ── */}
+      {completedJobs.length > 0 && (
+        <>
+          <section className="lf-surface rounded-2xl border p-4">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setCompletedCollapsed((v) => !v)}
+                className="flex items-center gap-2 text-sm font-medium text-(--color-text) transition hover:text-(--color-accent)"
+              >
+                {completedCollapsed ? (
+                  <ChevronRight className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+                Completadas y fallidas ({completedJobs.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={clearCompleted}
+                className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
+              >
+                <Trash2 className="h-4 w-4" />
+                Limpiar historial
+              </button>
+            </div>
+          </section>
+
+          {!completedCollapsed && (
+            <section className="space-y-4">
+              {completedJobs.map((job) => (
+                <DownloadJobCard
+                  key={job.id}
+                  job={job}
+                  onCancel={cancelJob}
+                  onPause={pauseJob}
+                  onResume={resumeJob}
+                  onRemove={removeJob}
+                  onOpenDetails={handleOpenGame}
+                />
+              ))}
+            </section>
+          )}
+        </>
       )}
 
       {/* ── Empty state ── */}
@@ -213,58 +204,9 @@ export default function Downloads({ onNavigate }: Props) {
   );
 }
 
-type StatusStatProps = {
-  icon: React.ElementType;
-  label: string;
-  value: string | number;
-};
-
-function StatusStat({ icon: Icon, label, value }: StatusStatProps) {
-  return (
-    <div className="flex items-center gap-2.5 px-3 py-2 md:justify-center">
-      <Icon className="h-4 w-4 shrink-0 text-(--color-accent)" />
-
-      <div className="min-w-0">
-        <p className="text-lg font-semibold leading-none text-(--color-text)">
-          {value}
-        </p>
-
-        <p className="mt-1 text-[11px] text-(--color-muted)">
-          {label}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 /**
- * Dev-only: drives the mock preview's Pausar / Reanudar / Cancelar buttons so
- * the controls are visibly wired even before a real download is running.
+ * Renders an active download job through the premium hero card.
  */
-function useMockDownloadPreview(): {
-  mock: ActiveDownload;
-  onPause: (id: string) => void;
-  onResume: (id: string) => void;
-  onCancel: (id: string) => void;
-} {
-  const [paused, setPaused] = useState(false);
-
-  const mock = useMemo<ActiveDownload>(
-    () => ({
-      ...MOCK_ACTIVE_DOWNLOAD,
-      status: paused ? "paused" : "downloading",
-      message: paused ? "Descarga pausada" : MOCK_ACTIVE_DOWNLOAD.message,
-    }),
-    [paused]
-  );
-
-  const onPause = useCallback(() => setPaused(true), []);
-  const onResume = useCallback(() => setPaused(false), []);
-  const onCancel = useCallback(() => setPaused(false), []);
-
-  return { mock, onPause, onResume, onCancel };
-}
-
 type ActiveDownloadRowProps = {
   job: DownloadJob;
   onPause: (id: string) => void;

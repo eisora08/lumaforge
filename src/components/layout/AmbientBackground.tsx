@@ -5,6 +5,11 @@ import {
   getAmbientSnapshot,
   type AmbientIntensity,
 } from "../../services/ambientBackgroundStore";
+import {
+  useDynamicPalette,
+  getCachedDynamicPalette,
+  type DynamicPalette,
+} from "../../hooks/useDynamicPalette";
 
 const INTENSITY_STYLES: Record<
   AmbientIntensity,
@@ -17,15 +22,35 @@ const INTENSITY_STYLES: Record<
 
 const CROSSFADE_MS = 650;
 
+function ColorField({ palette, className }: { palette: DynamicPalette; className?: string }) {
+  return (
+    <div className={`absolute inset-0 ${className ?? ""}`}>
+      <div
+        className="lf-ambient-color absolute inset-0"
+        style={
+          {
+            "--ambient-primary": palette.primary,
+            "--ambient-secondary": palette.secondary,
+            "--ambient-glow": palette.glow,
+          } as React.CSSProperties
+        }
+      >
+        <div className="lf-ambient-glow absolute inset-0" />
+      </div>
+    </div>
+  );
+}
+
 export default function AmbientBackground() {
-  const { url, enabled, intensity } = useSyncExternalStore(
+  const { url, enabled, intensity, mode } = useSyncExternalStore(
     subscribeAmbient,
     getAmbientSnapshot,
     getAmbientSnapshot,
   );
+  const currentPalette = useDynamicPalette(mode === "color" ? url : null);
 
-  // Two-layer crossfade: keep the previous image mounted and fade it out while
-  // the new one fades in, instead of a hard key-based swap.
+  // Two-layer crossfade: keep the previous image/color mounted and fade it out
+  // while the new one fades in, instead of a hard key-based swap.
   const [prevUrl, setPrevUrl] = useState<string | null>(null);
   const lastUrlRef = useRef<string | null>(url);
 
@@ -46,6 +71,8 @@ export default function AmbientBackground() {
   if (!enabled || !url) return null;
 
   const style = INTENSITY_STYLES[intensity] ?? INTENSITY_STYLES.equilibrado;
+  const prevPalette = prevUrl ? (getCachedDynamicPalette(prevUrl) ?? currentPalette) : null;
+  const colorMode = mode === "color";
 
   return (
     <div
@@ -53,24 +80,35 @@ export default function AmbientBackground() {
       className="pointer-events-none absolute inset-0 z-[1] overflow-hidden"
     >
       <div className={`absolute inset-0 ${style.artOpacity}`}>
-        {prevUrl && (
-          <img
-            key={`out-${prevUrl}`}
-            src={prevUrl}
-            alt=""
-            draggable={false}
-            loading="eager"
-            className={`animate-ambient-out absolute inset-0 h-full w-full scale-110 object-cover ${style.blur}`}
-          />
+        {colorMode ? (
+          <>
+            {prevUrl && prevPalette && (
+              <ColorField palette={prevPalette} className="animate-ambient-out" />
+            )}
+            <ColorField palette={currentPalette} className="animate-ambient-in" />
+          </>
+        ) : (
+          <>
+            {prevUrl && (
+              <img
+                key={`out-${prevUrl}`}
+                src={prevUrl}
+                alt=""
+                draggable={false}
+                loading="eager"
+                className={`animate-ambient-out absolute inset-0 h-full w-full scale-110 object-cover ${style.blur}`}
+              />
+            )}
+            <img
+              key={url}
+              src={url}
+              alt=""
+              draggable={false}
+              loading="eager"
+              className={`animate-ambient-in absolute inset-0 h-full w-full scale-110 object-cover ${style.blur}`}
+            />
+          </>
         )}
-        <img
-          key={url}
-          src={url}
-          alt=""
-          draggable={false}
-          loading="eager"
-          className={`animate-ambient-in absolute inset-0 h-full w-full scale-110 object-cover ${style.blur}`}
-        />
       </div>
       <div className={`absolute inset-0 ${style.dim}`} />
       <div className="absolute inset-0 bg-linear-to-t from-(--color-bg)/75 via-transparent to-(--color-bg)/40" />

@@ -1297,7 +1297,7 @@ export async function queryRepackRepackers(): Promise<RepackGroupStat[]> {
 /** Result from download_debrid_package — download + extract or save installer. */
 export type DebridDownloadResult = {
   success: boolean;
-  status: "ready" | "needs-setup" | "installing" | "paused";
+  status: "ready" | "needs-setup" | "installing" | "paused" | "downloaded";
   installDir: string;
   executablePath: string | null;
   installerPath: string | null;
@@ -1330,11 +1330,17 @@ export type DebridVerifyResult = {
   executablePath: string | null;
 };
 
-/** Download a Debrid repack: download + extract (ZIP/RAR) or save installer (EXE/SFX). */
+/**
+ * Download a Debrid repack: download + extract (ZIP/RAR) or save installer (EXE/SFX).
+ * `autoExtract=false` stops after the download (status `"downloaded"`, archive left on disk);
+ * `deleteArchive=true` removes the `.rar`/`.zip` after a successful extraction.
+ */
 export async function downloadDebridPackage(params: {
   jobId: string;
   downloadUri: string;
   destDir: string;
+  autoExtract: boolean;
+  deleteArchive: boolean;
 }): Promise<DebridDownloadResult> {
   return await invoke<DebridDownloadResult>("download_debrid_package", params);
 }
@@ -1343,11 +1349,15 @@ export async function downloadDebridPackage(params: {
  * Download a Debrid repack whose source is a `magnet:` URI via the built-in
  * torrent client (librqbit). Returns the same `DebridDownloadResult` shape as
  * `download_debrid_package`, so the install pipeline is unchanged.
+ * `autoExtract=false` stops after the download (status `"downloaded"`);
+ * `deleteArchive` removes the `.rar`/`.zip` after a successful extraction.
  */
 export async function startTorrentDownload(params: {
   jobId: string;
   magnet: string;
   destDir: string;
+  autoExtract: boolean;
+  deleteArchive: boolean;
 }): Promise<DebridDownloadResult> {
   return await invoke<DebridDownloadResult>("start_torrent_download", params);
 }
@@ -2746,8 +2756,11 @@ export async function pickFile(
   return await invoke<string | null>("pick_file", { title, filters });
 }
 
-export async function pickFolder(title?: string): Promise<string | null> {
-  return await invoke<string | null>("pick_folder", { title });
+export async function pickFolder(
+  title?: string,
+  startDir?: string,
+): Promise<string | null> {
+  return await invoke<string | null>("pick_folder", { title, startDir });
 }
 
 // --- Provider Status Cache (sidecar JSON) ---

@@ -31,6 +31,12 @@ export function useProviderSearch() {
     let cancelled = false;
 
     async function runSearch() {
+      if (!query.trim()) {
+        setResults([]);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
 
       const enabledProviderIds = getEnabledProviderIds(settings);

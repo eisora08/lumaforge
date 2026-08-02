@@ -35,7 +35,7 @@ import { scanInstalledLuaScripts } from "../services/tauri";
 
 import { getBestAvailableSource, getSourceKey } from "../utils/sourceHelpers";
 import { isHttpUrl } from "../services/libraryLocalCacheService";
-import { resolveGameMetadata } from "../services/gameMetadataResolver";
+import { resolveGameMetadata, createResolvedFallbackMetadata } from "../services/gameMetadataResolver";
 import { parseReleaseDate } from "../services/globalCatalogService";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
 import {
@@ -2449,7 +2449,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       console.log(`[STORE_DETAILS_BOUNDARY][LOAD] appId=${appId} fullCacheHit=${!!existing} lightweightRecordPresent=${!!catalogRecord} requestStarted=true`);
     }
 
-    resolveGameMetadata([appId])
+    resolveGameMetadata([appId], { skipInFlight: true })
       .then((metadata) => {
         if (!_mountedRef.current) return;
         if (reqId !== _detailMetadataReqRef.current) {
@@ -2458,18 +2458,32 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         }
         const meta = metadata[appId];
         if (meta) {
-          setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: meta }));
-          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} success=true loadingCleared=true finalRenderedState=details`);
+          if (meta.resolved) {
+            setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: meta }));
+            if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} success=true loadingCleared=true finalRenderedState=details`);
+          } else {
+            // resolveGameMetadata filled the gap with createFallbackMetadata (resolved:false),
+            // which would leave the page in skeleton for the full 30s timeout and hide the
+            // repack card. Write a resolved fallback so the page renders immediately.
+            const fallback = createResolvedFallbackMetadata(appId, meta.name);
+            setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
+            if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} success=true fallbackResolved=true loadingCleared=true finalRenderedState=details`);
+          }
         } else {
-          // createFallbackMetadata returns resolved:false — the page will show skeleton
-          // but at least the effect won't re-fire (existing is now set)
-          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} unavailable=true loadingCleared=false finalRenderedState=skeleton`);
+          // No entry at all — write a resolved fallback too so the page never hangs.
+          const fallback = createResolvedFallbackMetadata(appId);
+          setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
+          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} unavailable=true fallbackResolved=true loadingCleared=true finalRenderedState=details`);
         }
       })
       .catch((err) => {
         if (!_mountedRef.current) return;
         if (reqId !== _detailMetadataReqRef.current) return;
-        if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} error=${String(err).slice(0, 80)} loadingCleared=false finalRenderedState=retry`);
+        // Write a resolved fallback so the page renders instead of hanging in
+        // skeleton until the 30s timeout.
+        const fallback = createResolvedFallbackMetadata(appId);
+        setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
+        if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} error=${String(err).slice(0, 80)} fallbackResolved=true loadingCleared=true finalRenderedState=details`);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDetailGameWithOverlay?.appId]);
@@ -3109,11 +3123,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   function handleSelectSearchItem(item: StoreSearchDropdownItem) {
     const game = mapSteamDropdownItemToPackageGame(item);
 
-    setStoreSearchQuery("");
-    setSubmittedSearchQuery("");
-    setQuery("");
     setActiveSectionId(null);
-    setSteamSubmittedSearchGames([]);
 
     // Open details immediately — source resolution (+ cache hydration) happens inside openDetailsForGame
     openDetailsForGame(game);
@@ -3121,10 +3131,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   function handleBackFromDetails() {
     setSelectedDetailGame(null);
-    setStoreSearchQuery("");
-    setSubmittedSearchQuery("");
-    setQuery("");
-    setSteamSubmittedSearchGames([]);
   }
 
   function handleStoreTabChange(tab: StoreTab) {

@@ -93,8 +93,19 @@ async function parallelDiskRead(
   return results;
 }
 
+export interface ResolveMetadataOptions {
+  /**
+   * Skip the per-appId in-flight dedup so each appId issues its own fresh fetch
+   * instead of waiting on a previously-started shared batch. Used by the Store
+   * detail effect so a search-selected game resolves fast and independently of a
+   * slow (serial) batch that may already be in flight.
+   */
+  skipInFlight?: boolean;
+}
+
 export async function resolveGameMetadata(
-  appIds: number[]
+  appIds: number[],
+  options: ResolveMetadataOptions = {}
 ): Promise<Record<number, SteamAppMetadata>> {
   const uniqueAppIds = Array.from(new Set(appIds));
   const result: Record<number, SteamAppMetadata> = {};
@@ -138,6 +149,11 @@ export async function resolveGameMetadata(
   const inFlightPromises: Promise<void>[] = [];
 
   for (const appId of toFetch) {
+    if (options.skipInFlight) {
+      // Bypass the shared batch promise — force an independent fetch for each id.
+      trulyNeedsFetch.push(appId);
+      continue;
+    }
     const inflight = metadataInFlightByAppId.get(appId);
     if (inflight) {
       // Already fetching this appId — wait for it and merge
@@ -452,5 +468,19 @@ function createFallbackMetadata(appId: number): SteamAppMetadata {
     screenshots: [],
     movies: [],
     resolved: false,
+  };
+}
+
+/**
+ * Build a metadata entry that the details page treats as resolved even when the
+ * Steam Store API had no data for the app. `resolved: true` lets the page render
+ * (with the repack card and title fallback) instead of hanging in the skeleton
+ * for the full 30s timeout. Only used by the Store overlay detail effect.
+ */
+export function createResolvedFallbackMetadata(appId: number, name?: string): SteamAppMetadata {
+  return {
+    ...createFallbackMetadata(appId),
+    name: name || `Steam App ${appId}`,
+    resolved: true,
   };
 }

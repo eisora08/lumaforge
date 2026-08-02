@@ -4,6 +4,8 @@ use crate::models::steam_app_metadata::SteamAppMetadata;
 
 const DEBUG_STEAM_MEDIA: bool = false;
 
+const FETCH_CONCURRENCY: usize = 8;
+
 #[tauri::command]
 pub fn resolve_steam_app_metadata(
     app_ids: Vec<u32>,
@@ -22,52 +24,109 @@ pub fn resolve_steam_app_metadata(
         .build()
         .map_err(|error| format!("[HTTP][TIMEOUT] Error creando cliente HTTP: {}", error))?;
 
-    let mut output = Vec::new();
+    // Fetch each app with bounded concurrency so large batches complete in seconds
+    // instead of serially (up to 15s timeout per app). Result order is preserved via
+    // a position-indexed vector; the shared blocking Client is Send + Sync.
+    // The Mutexes live in this function so the scoped threads' borrowed references
+    // outlive the `thread::scope` block itself.
+    let next = std::sync::Mutex::new(0usize);
+    let results = std::sync::Mutex::new(
+        std::iter::repeat_with(|| None).take(app_ids.len()).collect::<Vec<_>>(),
+    );
+    let next_ref = &next;
+    let results_ref = &results;
+    let app_ids_ref = &app_ids;
+    let client_ref = &client;
+    let language_ref = &language;
+    let country_ref = &country;
 
-    for app_id in app_ids {
-        let mut url = format!(
-            "https://store.steampowered.com/api/appdetails?appids={}",
-            app_id
-        );
-        if let Some(ref lang) = language {
-            url.push_str(&format!("&l={}", lang));
+    let output = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..FETCH_CONCURRENCY.min(app_ids_ref.len()) {
+            handles.push(scope.spawn(move || {
+                loop {
+                    let idx = {
+                        let mut guard = next_ref.lock().unwrap();
+                        if *guard >= app_ids_ref.len() {
+                            break;
+                        }
+                        let i = *guard;
+                        *guard += 1;
+                        i
+                    };
+                    let meta = fetch_app_metadata(
+                        client_ref,
+                        app_ids_ref[idx],
+                        language_ref.as_deref(),
+                        country_ref.as_deref(),
+                    );
+                    results_ref.lock().unwrap()[idx] = Some(meta);
+                }
+            }));
         }
-        if let Some(ref cc) = country {
-            url.push_str(&format!("&cc={}", cc));
+        for handle in handles {
+            let _ = handle.join();
         }
+        let mut guard = results_ref.lock().unwrap();
+        std::mem::take(&mut *guard)
+    });
 
-        if DEBUG_STEAM_MEDIA && (language.is_some() || country.is_some()) {
-            println!("[STORE][STEAM_MEDIA_FETCH] appid={} language={:?} country={:?} url={}", app_id, language, country, url);
+    let mut output = app_ids
+        .iter()
+        .zip(output.into_iter())
+        .map(|(&app_id, opt)| opt.unwrap_or_else(|| fallback_metadata(app_id)))
+        .collect::<Vec<SteamAppMetadata>>();
+
+    output.sort_by_key(|item| item.app_id);
+
+    Ok(output)
+}
+
+fn fetch_app_metadata(
+    client: &reqwest::blocking::Client,
+    app_id: u32,
+    language: Option<&str>,
+    country: Option<&str>,
+) -> SteamAppMetadata {
+    let mut url = format!(
+        "https://store.steampowered.com/api/appdetails?appids={}",
+        app_id
+    );
+    if let Some(lang) = language {
+        url.push_str(&format!("&l={}", lang));
+    }
+    if let Some(cc) = country {
+        url.push_str(&format!("&cc={}", cc));
+    }
+
+    if DEBUG_STEAM_MEDIA && (language.is_some() || country.is_some()) {
+        println!("[STORE][STEAM_MEDIA_FETCH] appid={} language={:?} country={:?} url={}", app_id, language, country, url);
+    }
+
+    let response = match client.get(&url).send() {
+        Ok(value) => value,
+        Err(_) => {
+            return fallback_metadata(app_id);
         }
+    };
 
-        let response = match client.get(&url).send() {
-            Ok(value) => value,
-            Err(_) => {
-                output.push(fallback_metadata(app_id));
-                continue;
-            }
-        };
+    if !response.status().is_success() {
+        return fallback_metadata(app_id);
+    }
 
-        if !response.status().is_success() {
-            output.push(fallback_metadata(app_id));
-            continue;
+    let json: serde_json::Value = match response.json() {
+        Ok(value) => value,
+        Err(_) => {
+            return fallback_metadata(app_id);
         }
+    };
 
-        let json: serde_json::Value = match response.json() {
-            Ok(value) => value,
-            Err(_) => {
-                output.push(fallback_metadata(app_id));
-                continue;
-            }
-        };
-
-        let entry = match json.get(app_id.to_string()) {
-            Some(value) => value,
-            None => {
-                output.push(fallback_metadata(app_id));
-                continue;
-            }
-        };
+    let entry = match json.get(app_id.to_string()) {
+        Some(value) => value,
+        None => {
+            return fallback_metadata(app_id);
+        }
+    };
 
         let success = entry
             .get("success")
@@ -75,15 +134,13 @@ pub fn resolve_steam_app_metadata(
             .unwrap_or(false);
 
         if !success {
-            output.push(fallback_metadata(app_id));
-            continue;
+            return fallback_metadata(app_id);
         }
 
         let data = match entry.get("data") {
             Some(value) => value,
             None => {
-                output.push(fallback_metadata(app_id));
-                continue;
+                return fallback_metadata(app_id);
             }
         };
 
@@ -128,8 +185,7 @@ pub fn resolve_steam_app_metadata(
             .to_string();
 
         if name.is_empty() {
-            output.push(fallback_metadata(app_id));
-            continue;
+            return fallback_metadata(app_id);
         }
 
         let developer = data
@@ -323,45 +379,40 @@ pub fn resolve_steam_app_metadata(
             println!("[STORE][MOVIES_PARSED] appid={} count={} names={}", app_id, parsed_movies, names.join(", "));
         }
 
-        output.push(SteamAppMetadata {
-            app_id,
-            name,
-            developer,
-            header_image,
-            capsule_image,
-            capsule_image_v5,
-            library_hero_image: None,
-            background_image,
-            hero_image: None,
-            library_header_image: None,
-            wide_cover_image: None,
-            logo_image: None,
-            library_logo_image: None,
-            platforms,
-            languages,
-            dlc_count,
-            short_description,
-            detailed_description,
-            about_the_game,
-            legal_notice,
-            store_drm_notice: None,
-            genres,
-            publishers,
-            release_date,
-            categories,
-            dlc_app_ids,
-            pc_requirements,
-            mac_requirements,
-            linux_requirements,
-            screenshots,
-            movies,
-            resolved: true,
-        });
+    SteamAppMetadata {
+        app_id,
+        name,
+        developer,
+        header_image,
+        capsule_image,
+        capsule_image_v5,
+        library_hero_image: None,
+        background_image,
+        hero_image: None,
+        library_header_image: None,
+        wide_cover_image: None,
+        logo_image: None,
+        library_logo_image: None,
+        platforms,
+        languages,
+        dlc_count,
+        short_description,
+        detailed_description,
+        about_the_game,
+        legal_notice,
+        store_drm_notice: None,
+        genres,
+        publishers,
+        release_date,
+        categories,
+        dlc_app_ids,
+        pc_requirements,
+        mac_requirements,
+        linux_requirements,
+        screenshots,
+        movies,
+        resolved: true,
     }
-
-    output.sort_by_key(|item| item.app_id);
-
-    Ok(output)
 }
 
 fn parse_genres(data: &serde_json::Value) -> Vec<String> {

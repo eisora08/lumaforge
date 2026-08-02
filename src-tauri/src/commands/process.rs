@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use sysinfo::{PidExt, ProcessExt, System, SystemExt};
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SpawnResult {
@@ -446,10 +447,35 @@ pub fn pick_file(title: Option<String>, filters: Option<Vec<FileFilter>>) -> Res
 }
 
 #[tauri::command]
-pub fn pick_folder(title: Option<String>) -> Result<Option<String>, String> {
+pub fn pick_folder(
+  app_handle: AppHandle,
+  title: Option<String>,
+  start_dir: Option<String>,
+) -> Result<Option<String>, String> {
   let mut dialog = rfd::FileDialog::new();
   if let Some(t) = title {
     dialog = dialog.set_title(&t);
+  }
+  if let Some(d) = start_dir {
+    let mut p = PathBuf::from(&d);
+    if !p.is_absolute() {
+      // Resolve relative paths (e.g. "games/debrid/<id>") against the app data dir.
+      if let Ok(dir) = app_handle.path().app_data_dir() {
+        p = dir.join(&p);
+      }
+    }
+    // When the typed directory doesn't exist yet (e.g. a not-yet-created
+    // games/debrid/<id>), walk up to the nearest existing ancestor so the
+    // native dialog doesn't silently fall back to the OS last-used folder.
+    let mut dir = p;
+    while !dir.exists() {
+      if !dir.pop() {
+        break;
+      }
+    }
+    if dir.exists() {
+      dialog = dialog.set_directory(&dir);
+    }
   }
   match dialog.pick_folder() {
     Some(path) => Ok(Some(path.to_string_lossy().to_string())),

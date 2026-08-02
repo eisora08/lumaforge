@@ -14,6 +14,7 @@ import {
   type RepackQueryResult,
   type RepackCatalogMeta,
 } from "./tauri";
+import { rankRepackMatches } from "./repackMatch";
 
 const BUNDLED_ARTIFACT_PATH = "/data/repacks/repack-catalog-v1.json";
 const BUNDLED_MANIFEST_PATH = "/data/repacks/repack-catalog-v1.manifest.json";
@@ -23,6 +24,12 @@ const BUNDLED_MANIFEST_PATH = "/data/repacks/repack-catalog-v1.manifest.json";
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const _categoryCache = new Map<string, { ts: number; games: RepackQueryResult[] }>();
 const _metaCache = new Map<string, { ts: number; meta: RepackCatalogMeta }>();
+
+// The SQL fuzzy query is substring + `LIMIT` ordered by title length ASC, so a
+// raw pool can be cut short by unrelated short matches ("SPORTAL" for
+// "Portal"). Fetch a larger superset, then re-rank in TS with whole-word
+// token matching (`rankRepackMatches`) and slice down to the caller's limit.
+const FUZZY_POOL_SIZE = 100;
 
 function isCacheFresh(entry: { ts: number } | undefined): entry is { ts: number } {
   return entry !== undefined && Date.now() - entry.ts < CACHE_TTL_MS;
@@ -59,7 +66,7 @@ export async function importRepackArtifact(
   checksum: string,
 ): Promise<number> {
   const count = await importRepackCatalog(artifactJson, checksum);
-  clearRepackCaches();
+  clearRepackCatalogCaches();
   return count;
 }
 
@@ -78,7 +85,8 @@ export async function searchRepacksByTitle(
   }
 
   try {
-    const games = await queryRepackCatalogFuzzy(query, limit);
+    const raw = await queryRepackCatalogFuzzy(query, FUZZY_POOL_SIZE);
+    const games = rankRepackMatches(query, raw, limit);
     _categoryCache.set(cacheKey, { ts: Date.now(), games });
     return { results: games, fromCache: false };
   } catch (err) {
@@ -205,7 +213,11 @@ export async function ensureRepackCatalogImported(): Promise<boolean> {
 
 // ── Cache clear ──
 
-function clearRepackCaches(): void {
+/**
+ * Clear all in-memory repack catalog caches (fuzzy, meta, all-entries).
+ * Call after importing/removing repack feeds so fresh rows are immediately searchable.
+ */
+export function clearRepackCatalogCaches(): void {
   _categoryCache.clear();
   _metaCache.clear();
   _allEntriesCache = null;

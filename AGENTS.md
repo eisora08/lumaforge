@@ -5321,32 +5321,170 @@ Extender la animación de entrada grow-on-mount (sesión previa) a los pages de 
 - `vitest run` ✅ 802 passed / 4 failed (solo los 4 preexistentes: sourceManagerDeclarativeWiring ×3 + tools.test extractToolConfig)
 - `cargo check` ⏭️ skipped (no Rust changes)
 
-## Session � Consistent page/tab entry transitions (lf-page-in coverage + Store tab re-mount fix)
+## Session � Consistent page/tab entry transitions (lf-page-in coverage + Store tab re-mount fix)
 
 ### Problem
 Several pages and content switches had no entry animation while the rest of the app animates (`lf-page-in` 400ms translateY/fade). Root cause analysis found two issues:
 
 1. **Missing `lf-page-in`**: `ActivityStats`, `LauncherAchievements`, `Tools`, `Verification` roots, and `StoreGameDetailsPage` roots (timeout/loading/main) lacked the class. `StoreGameDetailsPage` opened from Store.tsx (`selectedDetailGameWithOverlay`, routeKey stays "store") had zero entry transition.
-2. **Store tabs dead animation**: All 5 tab branches already had `<div className="lf-tab-panel-in">`, BUT React reconciles the div (same position [0], same element type) across branches � the DOM node is recycled, the CSS animation only runs on first mount of the tab area, never re-fires on tab switch. Adding a unique `key` forces unmount/remount ? animation replays.
+2. **Store tabs dead animation**: All 5 tab branches already had `<div className="lf-tab-panel-in">`, BUT React reconciles the div (same position [0], same element type) across branches � the DOM node is recycled, the CSS animation only runs on first mount of the tab area, never re-fires on tab switch. Adding a unique `key` forces unmount/remount ? animation replays.
 
 ### Part 1: `lf-page-in` on page roots
-- `src/pages/ActivityStats.tsx` � root `w-full px-6...` + `lf-page-in`
-- `src/pages/LauncherAchievements.tsx` � root idem
-- `src/pages/Tools.tsx` � root `space-y-6 p-5 lg:p-7` + `lf-page-in`
-- `src/pages/Verification.tsx` � root `p-5 lg:p-7` + `lf-page-in`
+- `src/pages/ActivityStats.tsx` � root `w-full px-6...` + `lf-page-in`
+- `src/pages/LauncherAchievements.tsx` � root idem
+- `src/pages/Tools.tsx` � root `space-y-6 p-5 lg:p-7` + `lf-page-in`
+- `src/pages/Verification.tsx` � root `p-5 lg:p-7` + `lf-page-in`
 
 ### Part 2: `lf-page-in` on StoreGameDetailsPage
-- `src/components/store/StoreGameDetailsPage.tsx` � all 3 roots (`space-y-6`): timeout (L1165), metadataLoading (L1189), main (L1221) + `lf-page-in`
+- `src/components/store/StoreGameDetailsPage.tsx` � all 3 roots (`space-y-6`): timeout (L1165), metadataLoading (L1189), main (L1221) + `lf-page-in`
 - Covers Store.tsx?details (no routeKey change) and is harmless under GameDetails.tsx wrapper (already has `lf-page-in`)
 
 ### Part 3: Store tab re-mount via keys
-- `src/pages/Store.tsx` � unique `key` on each tab wrapper: `store-tab-browse`, `store-tab-repacks`, `store-tab-lua`, `store-tab-news`, `store-tab-discover`
+- `src/pages/Store.tsx` � unique `key` on each tab wrapper: `store-tab-browse`, `store-tab-repacks`, `store-tab-lua`, `store-tab-news`, `store-tab-discover`
 - Forces React to destroy/recreate the `<div className="lf-tab-panel-in">` on tab switch so `lfTabPanelIn` animation re-fires (was silent before)
 
 ### Part 4: Store in-page sections
-- `src/pages/Store.tsx` � viewAll section (`space-y-5` ? + `lf-page-in`) and search results section (`space-y-4` ? + `lf-page-in`)
+- `src/pages/Store.tsx` � viewAll section (`space-y-5` ? + `lf-page-in`) and search results section (`space-y-4` ? + `lf-page-in`)
 
 ### Build
 - `tsc --noEmit` ? (only the 23 pre-existing extension/test errors, none in touched files)
 - `vite build` ? (2.16s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
 - `cargo check` ?? skipped (no Rust changes)
+
+## Session — Ambient background color mode (dominant color instead of blurred image)
+
+### Goal
+Add an opt-in display mode for the global ambient background: instead of showing the active game's artwork blurred, extract its dominant color and render a premium radial gradient + glow field (Dynamic Effect / Mica style). User chose "Gradiente con glow" and image mode stays the default.
+
+### Part 1: `ambientBackgroundStore.ts`
+- `export type AmbientMode = "image" | "color"`; storage key `lumaforge-ambient-mode`, default `"image"`.
+- `_mode` module state + `setAmbientMode()` / `getAmbientMode()` (persist + `emit()`).
+- `AmbientSnapshot` gains `mode: AmbientMode`; `emit()` includes it (new object each call — Object.is contract preserved).
+
+### Part 2: `useDynamicPalette.ts`
+- Exported `getCachedDynamicPalette(url)` — synchronous read of `_paletteCache`, returns `null` when not sampled yet. Lets the crossfade's *previous* layer render its real color (already cached) without a fallback flash.
+- Exported `FALLBACK_PALETTE` (used by AmbientBackground for the current layer before sampling refines).
+
+### Part 3: `AmbientBackground.tsx` — color mode branch
+- Reads `mode` from the snapshot; `useDynamicPalette(url)` only when `mode === "color"`.
+- `ColorField` sub-component: a div with `lf-ambient-color` (radial `--ambient-secondary → --ambient-primary` gradient) plus a `lf-ambient-glow` child (radial localized glow), driven by `--ambient-primary/secondary/glow` CSS vars.
+- Keeps the two-layer crossfade (prev/current with `animate-ambient-out`/`in`, `CROSSFADE_MS`): prev layer uses `getCachedDynamicPalette(prevUrl) ?? currentPalette`, current layer uses `useDynamicPalette(url)`.
+- Overlays (dim + bottom gradient) and `style.artOpacity` (intensity) apply identically; no `<img>`, no blur in color mode. `data-ambient=on` still set → shell translucency works.
+
+### Part 4: `Settings.tsx`
+- New "Modo del fondo ambiental" 2-column segmented control (Imagen difuminado / Color dominante) inside the ambient block, visible when enabled. Intensity description reworded to cover both modes.
+
+### Part 5: `App.css`
+- Registered `@property --ambient-primary/secondary/glow` (syntax `<color>`, initial-values from the download dynamic palette) so palette swaps interpolate smoothly (`--motion-palette` 600ms).
+- `.lf-ambient-color` radial gradient + transition on the three vars; `.lf-ambient-glow` localized radial glow. Reuses existing `ambientIn`/`ambientOut` keyframes.
+
+### Behavior
+- **Image mode (default)**: unchanged — blurred art crossfade.
+- **Color mode**: dominant hue of the current ambient `url` → radial gradient with glow; crossfades smoothly between games; intensity controls opacity; works across all ambient feeds (dashboard, library-details, store, console, page-context fallback) since they all flow the same `url` into the store.
+- Canvas sampling may fall back to the blue-cyan `FALLBACK_PALETTE` for CORS-tainted remote URLs (same as the Downloads hero).
+
+### Key Files Changed
+- `src/services/ambientBackgroundStore.ts` — `AmbientMode`, `setAmbientMode`/`getAmbientMode`, snapshot `mode`
+- `src/hooks/useDynamicPalette.ts` — `getCachedDynamicPalette`, exported `FALLBACK_PALETTE`
+- `src/components/layout/AmbientBackground.tsx` — `ColorField`, color branch, `useDynamicPalette`/`getCachedDynamicPalette` wiring
+- `src/pages/Settings.tsx` — mode segmented control
+- `src/App.css` — `@property --ambient-*`, `.lf-ambient-color`, `.lf-ambient-glow`
+
+### Build
+- `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.14s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings; verified `Color dominante`, `lumaforge-ambient-mode`, `lf-ambient-color`/`lf-ambient-glow`/`--ambient-primary` in bundle)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Ambient color mode: dominant-hue fix (yellow showed as red/pink)
+
+### Problem
+In "Color dominante" ambient mode, yellow-dominant art (e.g. Cuphead) sampled as reddish/pinkish instead of yellow. Both consumers affected: `AmbientBackground` (color mode) and `ActiveDownloadCard` (Downloads hero).
+
+### Root cause (`useDynamicPalette.ts` `samplePaletteFromCanvas`)
+- Line 171 denominator `bucketCount[best] * (1 + bestScore / Math.max(1, bucketWeight[best]))` — since `best` is the argmax of `bucketWeight`, `bestScore === bucketWeight[best]` → `1 + ratio` **always collapses to 2** → denominator = `2 * count`.
+- Numerator `bucketHue[best]` accumulates `Σ H·(1+C)` (chroma-weighted hue sum). So computed hue ≈ `ΣH·(1+C)/(2·count)` ≈ **half the real dominant hue**. Yellow (OKLCH `H≈110`) → ~55 = red-orange; the bright low-chroma `secondary`/`glow` render that as pinkish.
+- Line 154 `bucketSum[bucket] += H` was dead code (never read) — leftover from a plain-average attempt.
+
+### Fix (`src/hooks/useDynamicPalette.ts`)
+- **Proper chroma-weighted mean**: added `bucketDenom = new Float32Array(HUE_BUCKETS)`; accumulate `bucketDenom[bucket] += 1 + C;` next to `bucketHue[bucket] += H * (1 + C);`; compute `hue = bucketHue[best] / (bucketDenom[best] || 1)`.
+- Removed dead `bucketSum` accumulation + declaration.
+- **Brand blend reduced** `SAMPLE_BLEND` `0.18` → `0.10` (user decision) so yellows read yellow instead of drifting green toward the blue accent; doc comment updated.
+- Extracted the argmax+guard+mean+blend into **pure, exported `dominantBlendedHue(bucketCount, bucketHue, bucketWeight, bucketDenom)`** (returns `number | null`), used by `samplePaletteFromCanvas` — testable without canvas.
+
+### Regression tests (`src/__tests__/dynamicPalette.test.ts` — new, 5 tests)
+- Yellow art stays yellow (asserts result > 80 — NOT the buggy ~55 red-orange).
+- Red art stays red.
+- **Chroma weighting exact-bug test**: same bucket, 1000 low-chroma pixels (H=106, C=0.05) + 5 vivid (H=118, C=0.5) → weighted mean ≈ 106.08 + 10% blend ≈ 119 (old 2·count denominator gave ≈55.8).
+- Empty data → null; single-pixel bucket → null.
+
+### Key Files Changed
+- `src/hooks/useDynamicPalette.ts` — `bucketDenom`, proper weighted mean, removed `bucketSum`, `SAMPLE_BLEND` 0.10, exported `dominantBlendedHue`
+- `src/__tests__/dynamicPalette.test.ts` — **new** — 5 regression tests
+
+### Build
+- `vitest run src/__tests__/dynamicPalette.test.ts` ✅ 5/5 passed
+- `tsc --noEmit` ✅ (only the 23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.23s, Rolldown; only pre-existing chunk warnings + informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+- `cargo check` ⏭️ skipped (no Rust changes)
+
+## Session — Folder picker: start from the input path, fall back to games/debrid root
+
+### Problem
+The folder-picker button opened at the OS last-used folder ("a game's path") instead of the path typed in the input — even in GameEditDialog. Root cause: `pick_folder` (Rust) called `dialog.set_directory(&d)` with whatever `start_dir` arrived; when the path didn't exist on disk (e.g. the repack default `games/debrid/<entryId>` before download), rfd silently fell back to last-used. GameEditDialog's 4 folder-Browse buttons passed no `start_dir` at all.
+
+### Part 1: Rust `pick_folder` — robust start_dir (`src-tauri/src/commands/process.rs`)
+- Added injected `app_handle: tauri::AppHandle` (Tauri injects automatically — no `lib.rs` change).
+- Relative `start_dir` (e.g. `games/debrid/<id>`) resolved against `app_data_dir()`.
+- When the path doesn't exist, walks up to the **nearest existing ancestor** so the native dialog doesn't fall back to last-used. For a repack default this lands on `<appData>/games/debrid` (the root the user wants).
+- Only calls `set_directory` with an existing dir; Windows drive root handled (`pop()` false → stop).
+- `use tauri::{AppHandle, Manager}` imports added.
+
+### Part 2: GameEditDialog — pass the typed value as startDir
+- All 4 folder-Browse buttons now pass the draft value as `startDir`:
+  - `pickFolder("Select Install Folder", installDirDraft.trim() || undefined)` (×2)
+  - `pickFolder("Select Working Directory", workingDirectoryDraft.trim() || undefined)` (×2)
+
+### Part 3: StoreRepackInstallModal — explicit root on empty input
+- Caches the resolved `appDataDir` in state (`resolvedAppDataDir`) from the existing `resolveAppDataDir()` effect.
+- `handlePickFolder`: `pickFolder("Elige la carpeta de destino", destDir.trim() || (resolvedAppDataDir ? \`${resolvedAppDataDir}/games/debrid\` : undefined))` — empty input opens at the root `games/debrid`; non-empty missing path handled by the Rust walk-up.
+
+### Key Files Changed
+- `src-tauri/src/commands/process.rs` — `pick_folder` robust start_dir (relative→appData, walk-up to existing ancestor)
+- `src/components/games/GameEditDialog.tsx` — 4 Browse buttons pass input draft as `startDir`
+- `src/components/store/StoreRepackInstallModal.tsx` — `resolvedAppDataDir` state + root fallback in `handlePickFolder`
+
+### Build
+- `cargo check` ✅ (only 2 pre-existing dead-code warnings)
+- `tsc --noEmit` ✅ (only the 22 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.12s, Rolldown; only pre-existing chunk warnings + informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+
+## Session — Debrid: native appId/title persistence + auto artwork refresh (Parts A–D+F)
+### Goal
+Make a Debrid-installed repack game feel "native" in the Library desktop grid + detail by persisting the clean Steam `title` and a valid numeric `appId` onto the Debrid store entry, and auto-materializing Steam artwork after install. All media/title surfaces are keyed by `appId` (Steam) with no source filter, so persisting the appId unlocks the whole appInfo/media pipeline automatically.
+
+### Part A: Thread appId through the Debrid install flow (`useDebridInstallSync.ts`)
+- `persistDebridIdentity(providerGameId, title, appId?)` — module helper: `updateDebridGameAppId(String(num))` when `Number.isInteger(num) && num > 0`; `updateDebridGameTitle(title)` when non-empty and not placeholder (`/^Steam App \d+$/`); then `queueNativeArtworkRefresh` when valid appId.
+- `queueNativeArtworkRefresh(appId?)` — dynamic `import("../services/gameCacheService").detectAndQueueMissingMedia(validAppId, "refresh-artwork")`. `"refresh-artwork"` is a MANUAL_ARTWORK_SOURCE (gameCacheService.ts:1688) which passes the emergency-stabilization gate (L1845: `isManualArtworkSource`), so it runs despite `AUTO_MEDIA_REPAIR_GLOBAL=false`. It checks disk, resolves Steam metadata + SGDB, and queues `enqueueMediaDownload` (low priority, `target:"canonical"`) per missing of the 5 roles → writes `games/steam/<appId>/media/`.
+- `startInstall` (DebridInstallHandle type + body) gained optional `appId?: string` param; forwarded to `handleInstallResult`.
+- `pollInstallerUntilDone(pid, installDir, jobId, providerGameId, title, appId?)` — calls `persistDebridIdentity` on the `ready` success path and the registry-detect success path; passes `appId` in the `setPendingCompletionNeedsPath(..., { title, appId })` extras (both needs-path modal and timeout paths).
+- `handleInstallResult(..., appId?)` — `persistDebridIdentity` in the `ready`, `installing` (early, right after `markDebridGameInstalling`), and `needs-setup` branches; `markDebridGameExtracted` extras gain `appId`.
+
+### Part B: persist appId + forward on resume (`DownloadQueueContext.tsx`)
+- `addDebridInstallJob` already persisted `job.appId`/`job.gameTitle`; the `startInstall` invocation (line 278) now appends `job.appId` as the new final arg.
+- `resumeJob` reforward now also passes `job.appId` (line 368).
+- No `addDebridInstallJob` signature change — `appId` was already the 5th param.
+
+### Part C: clean title at the Store call site (`StoreGameDetailsPage.tsx`)
+- `handleInstallRepack` passes `getTitle(game, metadata)` instead of `entry.title` (metadata is in component scope as a prop); added `metadata?.name` to the useCallback deps. Toast still shows the descriptive `entry.title`.
+
+### Why it works now
+- `appId` and `title` persist on the Debrid entry (`updateDebridGameAppId` trims and survives catalog refresh + restart via `debrid-games.json`), so the Library grid/detail resolve `appId`-keyed appInfo + media. The artwork refresh (Part F) materializes the Steam media on install completion without requiring the user to open the detail page.
+
+### Key Files Changed
+- `src/hooks/useDebridInstallSync.ts` — `persistDebridIdentity`, `queueNativeArtworkRefresh`, `appId` threading through startInstall/handleInstallResult/pollInstalledForDone, `appId` in needs-path extras
+- `src/context/DownloadQueueContext.tsx` — startInstall + resumeJob reforward `job.appId`
+- `src/components/store/StoreGameDetailsPage.tsx` — `getTitle(game, metadata)` at install call, deps
+
+### Build
+- `tsc --noEmit` ✅ (only the 22 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.04s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings; verified `useDebridGameAppId`/`updateDebridGameTitle`/`refresh-artwork`/`detectAndQueueMissingMedia` in bundle)

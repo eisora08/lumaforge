@@ -121,7 +121,11 @@ export default function DownloadJobCard({
   // Pause/Resume only applies to debrid-install jobs (the Rust side checkpoints
   // HTTP downloads and keeps fastresume for torrents).
   const canPause = isDebridInstall && canCancel(job.status) && job.status !== "paused";
-  const canResume = isDebridInstall && job.status === "paused";
+  // Paused and failed debrid jobs are both resumable: paused keeps the on-disk
+  // checkpoint (`.part`/`.part.meta` or torrent fastresume), failed jobs after a
+  // network interruption retain the same checkpoint, so resume re-invokes the
+  // install command which continues from where it stopped.
+  const canResume = isDebridInstall && (job.status === "paused" || job.status === "failed");
 
   const snapshotGame = useMemo(() => {
     const snapshot = getBootSnapshot();

@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import { setAmbientEnabled, setAmbientIntensity, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
+import { setAmbientEnabled, setAmbientIntensity, setAmbientMode, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
 import { setHeroTransition, subscribeHeroTransition, getHeroTransitionSnapshot, HERO_TRANSITION_OPTIONS } from "../services/heroTransitionStore";
 import {
   Eye,
@@ -348,10 +348,42 @@ export default function Settings() {
                   {ambientState.enabled && (
                     <div className="lf-surface mt-4 rounded-2xl border p-4">
                       <p className="text-sm font-medium text-(--color-text)">
+                        Modo del fondo ambiental
+                      </p>
+                      <p className="mt-1 text-xs text-(--color-muted)">
+                        Muestra el arte difuminado o el color dominante extraído de la foto.
+                      </p>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        {(
+                          [
+                            { id: "image", label: "Imagen (difuminado)" },
+                            { id: "color", label: "Color dominante" },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setAmbientMode(opt.id)}
+                            className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                              ambientState.mode === opt.id
+                                ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
+                                : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {ambientState.enabled && (
+                    <div className="lf-surface mt-4 rounded-2xl border p-4">
+                      <p className="text-sm font-medium text-(--color-text)">
                         Intensidad del fondo ambiental
                       </p>
                       <p className="mt-1 text-xs text-(--color-muted)">
-                        Controla cuánto se ve y se difumina el arte de fondo.
+                        Controla cuánto se ve y se difumina el fondo ambiental.
                       </p>
                       <div className="mt-3 grid grid-cols-3 gap-2">
                         {(

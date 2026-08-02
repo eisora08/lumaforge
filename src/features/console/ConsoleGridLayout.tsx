@@ -19,7 +19,8 @@ import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
 import { setScrollTarget } from "./useConsoleGamepadInput";
 import { deduplicateByStableId, getFavoriteKey, localPathToUrl, isLocalPath } from "../../services/gameCacheService";
-import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import { setAmbientSource, clearAmbientSource, getAmbientMode } from "../../services/ambientBackgroundStore";
+import { useDynamicPalette } from "../../hooks/useDynamicPalette";
 
 const DEBUG_CONSOLE_GRID_NAV = false;
 const DEBUG_FORCE_TEST_MP4 = false;
@@ -79,6 +80,8 @@ export default function ConsoleGridLayout({
   const [hoverGame, setHoverGame] = useState<LibraryGame | null>(null);
   const backdropGame = hoverGame ?? previewGame;
   const backdropSrc = getConsoleHeroBackground(backdropGame);
+  const ambientMode = getAmbientMode();
+  const panelPalette = useDynamicPalette(ambientMode === "color" ? backdropSrc : null);
 
   useEffect(() => {
     if (!backdropSrc) {
@@ -351,7 +354,24 @@ export default function ConsoleGridLayout({
           {/* Instant hover/focus backdrop layer */}
           {backdropSrc && (
             <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-              <img src={backdropSrc} alt="" className="h-full w-full scale-110 object-cover blur-2xl opacity-40" />
+              {ambientMode === "color" ? (
+                <div className="absolute inset-0 opacity-40">
+                  <div
+                    className="lf-ambient-color absolute inset-0"
+                    style={
+                      {
+                        "--ambient-primary": panelPalette.primary,
+                        "--ambient-secondary": panelPalette.secondary,
+                        "--ambient-glow": panelPalette.glow,
+                      } as React.CSSProperties
+                    }
+                  >
+                    <div className="lf-ambient-glow absolute inset-0" />
+                  </div>
+                </div>
+              ) : (
+                <img src={backdropSrc} alt="" className="h-full w-full scale-110 object-cover blur-2xl opacity-40" />
+              )}
               <div className="absolute inset-0 bg-(--color-bg)/70" />
             </div>
           )}

@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Languages, Puzzle, Star, ShieldAlert } from "lucide-react";
+import { ArrowLeft, FileArchive, Languages, Package, Puzzle, Star, ShieldAlert } from "lucide-react";
 
 import type { PackageGame, PackageSource, RepackEntry } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
@@ -12,13 +12,18 @@ import type { SourceCheckStatus } from "../../services/sourceAvailabilityCacheSe
 import type { StoreDetailsSourceState } from "../../services/storeDetailsSourceState";
 import { openExternalUrl } from "../../services/externalLinks";
 import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
+import {
+  getDebridGame,
+  getDebridGameByAppId,
+  subscribeDebridGames,
+} from "../../services/debridGameStore";
 import { openSteamLibrary, queryRepackCatalogByAppId } from "../../services/tauri";
 import {
   getSteamDbUrl,
   getSteamStoreUrl,
 } from "../../utils/steamLinks";
 import { DEBRID_INSTALL_ENABLED, DEBRID_STORE_ENABLED } from "../../features/debrid/debridFeatureFlag";
-import { getRepacksForGameName, subscribeRepackIndex } from "../../services/repackTitleMatcher";
+import { searchRepacksByTitle } from "../../services/repackCatalogService";
 import { getBestAvailableSource } from "../../utils/sourceHelpers";
 import { resolveGameMetadata, resolveGameMetadataForMedia } from "../../services/gameMetadataResolver";
 import { saveStoreMetadataToStoreCache } from "../../services/storeLocalCacheService";
@@ -44,8 +49,7 @@ import { fetchHubcapAppStatus, checkHubcapAppUpdate, setLocalPackageMetadata, re
 import type { ProviderCheckState } from "./details/StoreGameSummaryPanel";
 
 import { showError, showSuccess, showWarning } from "../toast/GameToast";
-import { useConfirm } from "../../services/confirmService";
-import { resolveDebridInstallUri } from "../../services/debridInstallChoice";
+import { pickDirectDebridUri, pickMagnetDebridUri, type RepackInstallOptions } from "../../services/debridInstallChoice";
 import PackageInstallSuccessModal from "../common/PackageInstallSuccessModal";
 
 import StoreGameMediaGallery from "./details/StoreGameMediaGallery";
@@ -54,7 +58,7 @@ import StoreGameDlcSection from "./details/StoreGameDlcSection";
 import StoreGameTechnicalSection from "./details/StoreGameTechnicalSection";
 import StoreGameSummaryPanel from "./details/StoreGameSummaryPanel";
 import StoreSourceSelectorModal from "./StoreSourceSelectorModal";
-import StoreRepackSelectorModal from "./StoreRepackSelectorModal";
+import StoreRepackCard from "./StoreRepackCard";
 import { InfoBlock } from "./details/StoreGameDetailPrimitives";
 
 import StoreMoreLikeThisSection from "./StoreMoreLikeThisSection";
@@ -284,41 +288,139 @@ export default function StoreGameDetailsPage({
   // Repack catalog state — populated from SQLite repack index when DEBRID_STORE_ENABLED
   const [repackEntries, setRepackEntries] = useState<RepackEntry[]>([]);
   const [repacksLoading, setRepacksLoading] = useState(false);
-  const [repackSelectorOpen, setRepackSelectorOpen] = useState(false);
+
+  // Exclusive aside tab: shows either the package summary card or the repack card.
+  // Resets to "package" whenever the selected game changes.
+  const [detailsTab, setDetailsTab] = useState<"package" | "repack">("package");
+  useEffect(() => {
+    setDetailsTab("package");
+  }, [game.appId]);
+
+  // The repack tab is only offered when the repack card would render (mirrors the
+  // visibility rule inside StoreRepackCard). When false, the aside shows the
+  // package summary card unconditionally.
+  const repackTabVisible =
+    DEBRID_STORE_ENABLED && (repacksLoading || repackEntries.length > 0);
+
+  // Whether the current game's repack is already installed (autoExtract). Live-updates
+  // via the Debrid game store subscription; falls back to matching repack entry ids
+  // when there is no Steam appId to look up.
+  const [repackInstalled, setRepackInstalled] = useState(false);
+  useEffect(() => {
+    const update = () => {
+      const byAppId = game.appId
+        ? getDebridGameByAppId(String(game.appId))
+        : undefined;
+      const byEntry = repackEntries.some((e) => getDebridGame(e.id)?.isInstalled);
+      setRepackInstalled(Boolean(byAppId?.isInstalled || byEntry));
+    };
+    update();
+    const unsubscribe = subscribeDebridGames(update);
+    return unsubscribe;
+  }, [game.appId, repackEntries]);
+
+  // Repack "sources" labels with per-repacker counts, e.g. ["SteamRip (3)", "FitGirl (1)"].
+  const repackSourceLabels = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of repackEntries) {
+      const key = (entry.repacker || "unknown").trim().toLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([key, n]) => `${key.charAt(0).toUpperCase() + key.slice(1)} (${n})`)
+      .sort();
+  }, [repackEntries]);
+
+  // Repack discovery runs on mount so the aside repack card has entries before the user
+  // interacts. The in-flight ref prevents overlapping scans when metadata resolves late.
+  const _repackDiscoverInFlightRef = useRef(false);
+
+  const discoverRepacks = useCallback(async () => {
+    const appId = game.appId;
+    if (!DEBRID_STORE_ENABLED || !appId) return;
+    if (_repackDiscoverInFlightRef.current) return;
+    _repackDiscoverInFlightRef.current = true;
+    try {
+      setRepacksLoading(true);
+      const repacks = await queryRepackCatalogByAppId(Number(appId));
+      if (repacks.length === 0) {
+        // Fallback: if no appId-pinned rows, search the imported SQLite catalog by title.
+        // Guard against empty/short names — `LIKE '%%'` would match the whole catalog.
+        const gameName = (metadata?.name || game.title || "").trim();
+        if (gameName.length < 2) {
+          console.log(`[STORE][REPACK_MATCH_SKIP] appid=${appId} reason=empty-or-short-name name="${gameName}"`);
+          return;
+        }
+        const { results: fuzzyResults } = await searchRepacksByTitle(gameName, 20);
+        if (fuzzyResults.length > 0) {
+          setRepackEntries(fuzzyResults);
+          const repackerNames = [...new Set(fuzzyResults.map((r) => r.repacker))];
+          console.log(`[STORE][REPACK_MATCH] appid=${appId} title="${gameName}" matches=${fuzzyResults.length} source=sqlite-fuzzy repackers=${repackerNames.join(",")}`);
+          return;
+        }
+      }
+      setRepackEntries(repacks);
+      if (repacks.length > 0) {
+        const repackerNames = [...new Set(repacks.map((r) => r.repacker))];
+        console.log(`[STORE][REPACK_DISCOVERY] appid=${appId} repacks=${repacks.length} repackers=${repackerNames.join(",")}`);
+      }
+    } catch (err: unknown) {
+      console.warn(`[STORE][REPACK_DISCOVERY_FAIL] appid=${appId} err=${String(err)}`);
+    } finally {
+      _repackDiscoverInFlightRef.current = false;
+      setRepacksLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.appId, metadata?.name, game.title]);
+
+  useEffect(() => {
+    setRepackEntries([]);
+    discoverRepacks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.appId, metadata?.name]);
 
   const downloadQueue = useDownloadQueueContext();
-  const { confirm } = useConfirm();
 
-  const handleInstallRepack = useCallback(async (entry: RepackEntry) => {
+  const handleInstallRepack = useCallback(async (entry: RepackEntry, options: RepackInstallOptions) => {
     if (!DEBRID_INSTALL_ENABLED) {
       showWarning("Debrid install is not enabled in settings.", { title: "Not available" });
       return;
     }
-    const resolved = await resolveDebridInstallUri(entry.downloadUris, confirm, entry.title);
-    if (!resolved.ok) {
-      if (resolved.reason === "no-uri") {
-        showWarning("No download URI available for this repack.", { title: "Not available" });
-      }
+    const uri =
+      options.method === "direct"
+        ? pickDirectDebridUri(entry.downloadUris)
+        : pickMagnetDebridUri(entry.downloadUris);
+    if (!uri) {
+      showWarning("No download URI available for this repack.", { title: "Not available" });
       return;
     }
     try {
       downloadQueue.addDebridInstallJob(
         entry.id,
-        entry.title,
-        resolved.uri,
+        getTitle(game, metadata),
+        uri,
         entry.installerType || "zip",
         game.appId ?? "",
         game.imageUrl,
         entry.repacker,
-        resolved.method,
+        options.method,
+        options,
       );
-      setRepackSelectorOpen(false);
       showSuccess(`Install started: ${entry.title}`, { title: "Debrid" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       showError(`Failed to start install: ${msg}`, { title: "Debrid" });
     }
-  }, [downloadQueue, game.appId, game.imageUrl, confirm]);
+  }, [downloadQueue, game.appId, game.imageUrl, metadata?.name]);
+
+  const handleSelectSourceKey = useCallback((sourceKey: string) => {
+    onSelectSourceKey?.(sourceKey);
+  }, [onSelectSourceKey]);
+
+  // Forward a download to the provider download path (repacks are handled by StoreRepackCard).
+  const routeSourceDownload = useCallback(async (source: PackageSource) => {
+    return onDownloadSource?.(source);
+  }, [onDownloadSource]);
 
   // Internal source checking â€” used when parent does not provide sourceStatus/onRefreshSources
   const [internalSourceStatus, setInternalSourceStatus] = useState<SourceCheckStatus | undefined>();
@@ -334,6 +436,13 @@ export default function StoreGameDetailsPage({
   const effectiveSources =
     hasParentSourceControl ? game.sources : internalSources;
 
+  const selectableSources = useMemo(
+    () => [...(effectiveSources ?? [])],
+    [effectiveSources],
+  );
+
+  // Repacks are surfaced by StoreRepackCard (aside) and never become a PackageSource — the
+  // effective provider source is always a real provider source or null.
   const effectiveSelectedSource: PackageSource | null | undefined =
     selectedSource ?? getBestAvailableSource({ ...game, sources: effectiveSources });
 
@@ -450,7 +559,6 @@ export default function StoreGameDetailsPage({
 
     const appId = game.appId;
     let cancelled = false;
-    let unsubRepackIndex: (() => void) | null = null;
     sourceLog("origin-independent check", { appId, title: game.title });
 
     async function checkSources() {
@@ -606,64 +714,11 @@ export default function StoreGameDetailsPage({
           updatedAt: Math.floor(Date.now() / 1000),
         });
       }
-
-      // Step 3: Discover repack catalog entries for this appId (independent of provider sources)
-      if (DEBRID_STORE_ENABLED) {
-        try {
-          setRepacksLoading(true);
-          const repacks = await queryRepackCatalogByAppId(Number(appId));
-          if (!cancelled) {
-            // Fallback: if SQLite catalog has no matches, try runtime title matcher against raw JSON
-            if (repacks.length === 0) {
-              const gameName = metadata?.name || game.title || "";
-              const matched = await getRepacksForGameName(Number(appId), gameName);
-              if (!cancelled && matched.length > 0) {
-                setRepackEntries(matched);
-                const repackerNames = [...new Set(matched.map((r) => r.repacker))];
-                console.log(`[STORE][REPACK_MATCH] appid=${appId} title="${gameName}" matches=${matched.length} repackers=${repackerNames.join(",")}`);
-              } else if (!cancelled) {
-                setRepackEntries(repacks);
-              }
-            } else {
-              setRepackEntries(repacks);
-              const repackerNames = [...new Set(repacks.map((r) => r.repacker))];
-              console.log(`[STORE][REPACK_DISCOVERY] appid=${appId} repacks=${repacks.length} repackers=${repackerNames.join(",")}`);
-            }
-          }
-        } catch (err: unknown) {
-          if (!cancelled) {
-            console.warn(`[STORE][REPACK_DISCOVERY_FAIL] appid=${appId} err=${String(err)}`);
-          }
-        } finally {
-          if (!cancelled) {
-            setRepacksLoading(false);
-          }
-        }
-      }
-
-      // Step 4: Subscribe to repack index updates (FitGirl background loading)
-      // When fitgirl.json finishes, re-run matching to pick up new entries.
-      if (DEBRID_STORE_ENABLED) {
-        try {
-          unsubRepackIndex = subscribeRepackIndex(async () => {
-            if (cancelled) return;
-            const gameName = metadata?.name || game.title || "";
-            const matched = await getRepacksForGameName(Number(appId), gameName);
-            if (cancelled) return;
-            if (matched.length > 0) {
-              setRepackEntries(matched);
-              const repackerNames = [...new Set(matched.map((r) => r.repacker))];
-              console.log(`[STORE][REPACK_DEFERRED] appid=${appId} title="${gameName}" matches=${matched.length} repackers=${repackerNames.join(",")}`);
-            }
-          });
-        } catch { /* subscription setup is infallible */ }
-      }
     }
 
     checkSources();
     return () => {
       cancelled = true;
-      unsubRepackIndex?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.appId]);
@@ -960,8 +1015,8 @@ export default function StoreGameDetailsPage({
     load();
   }, [dlcAppIds]);
 
-  const availableSources = (effectiveSources ?? []).filter((source) => source.available);
-  const bestSource = effectiveSelectedSource ?? getBestAvailableSource({ ...game, sources: effectiveSources ?? [] });
+  const availableSources = selectableSources.filter((source) => source.available);
+  const bestSource = effectiveSelectedSource ?? getBestAvailableSource({ ...game, sources: effectiveSources });
 
   async function handleOpenSteam() {
     try {
@@ -1034,7 +1089,7 @@ export default function StoreGameDetailsPage({
   async function handleDownload() {
     const source = effectiveSelectedSource?.available ? effectiveSelectedSource : bestSource;
     if (source) {
-      const result = await onDownloadSource?.(source);
+      const result = await routeSourceDownload(source);
       await reloadProviderStatus();
 
       // Show success modal if download succeeded
@@ -1056,7 +1111,7 @@ export default function StoreGameDetailsPage({
   }
 
   async function handleDownloadFromSource(source: PackageSource) {
-    const result = await onDownloadSource?.(source);
+    const result = await routeSourceDownload(source);
     await reloadProviderStatus();
 
     // Show success modal if download succeeded
@@ -1217,6 +1272,39 @@ export default function StoreGameDetailsPage({
     `[STORE][SUMMARY_PROPS_FORWARD] appid=${game.appId} installStatus=${installStatus} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} steamOwned=${steamOwned}`,
   );
 
+  const summaryPanelProps = {
+    game: { ...game, sources: selectableSources },
+    previewImageUrl: imageUrl,
+    installStatus,
+    isSteamInstalled,
+    luaInstalled,
+    developer,
+    platforms,
+    availableSources: availableSources.length,
+    totalSources: selectableSources.length,
+    selectedSource: effectiveSelectedSource ?? bestSource,
+    sourceStatus: effectiveSourceStatus,
+    isBackgroundChecking,
+    sourceProgress,
+    onDownload: handleDownload,
+    onChangeSource: () => setSourceSelectorOpen(true),
+    onOpenSteam: handleOpenSteam,
+    onOpenSteamDb: handleOpenSteamDb,
+    onOpenSteamLibrary: handleOpenSteamLibrary,
+    onRefreshSources: effectiveRefreshSources,
+    providerCheckState,
+    providerCheckReason,
+    providerRemoteFileModified,
+    providerRemoteFileSize,
+    hasLocalPackage: luaInstalled,
+    steamOwned,
+    isProviderChecking,
+    onCheckForUpdates: handleCheckForUpdates,
+    repackActive: detailsTab === "repack" && repackTabVisible,
+    repackInstalled,
+    repackSourceLabels,
+  };
+
   return (
     <div className="space-y-6 lf-page-in">
       <button
@@ -1278,79 +1366,58 @@ export default function StoreGameDetailsPage({
           </section>
 
           <aside className="space-y-4">
-            <StoreGameSummaryPanel
-              game={{ ...game, sources: effectiveSources }}
-              previewImageUrl={imageUrl}
-              installStatus={installStatus}
-              isSteamInstalled={isSteamInstalled}
-              luaInstalled={luaInstalled}
-              developer={developer}
-              platforms={platforms}
-              availableSources={availableSources.length}
-              totalSources={(effectiveSources ?? []).length}
-              selectedSource={effectiveSelectedSource ?? bestSource}
-              sourceStatus={effectiveSourceStatus}
-              isBackgroundChecking={isBackgroundChecking}
-              sourceProgress={sourceProgress}
-              onDownload={handleDownload}
-              onChangeSource={() => setSourceSelectorOpen(true)}
-              onOpenSteam={handleOpenSteam}
-              onOpenSteamDb={handleOpenSteamDb}
-              onOpenSteamLibrary={handleOpenSteamLibrary}
-              onRefreshSources={effectiveRefreshSources}
-              providerCheckState={providerCheckState}
-              providerCheckReason={providerCheckReason}
-              providerRemoteFileModified={providerRemoteFileModified}
-              providerRemoteFileSize={providerRemoteFileSize}
-              hasLocalPackage={luaInstalled}
-              steamOwned={steamOwned}
-              isProviderChecking={isProviderChecking}
-              onCheckForUpdates={handleCheckForUpdates}
-            />
-
-            {/* Repack catalog card */}
-            {DEBRID_STORE_ENABLED && (repackEntries.length > 0 || repacksLoading) && (
-              <div className="rounded-xl border border-(--surface-active-border) bg-white/5 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400">
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                        <line x1="12" y1="22.08" x2="12" y2="12" />
-                      </svg>
-                    </div>
-                    <span className="text-sm font-medium text-(--color-text)">
-                      Repacks
+            <StoreGameSummaryPanel section="hero" {...summaryPanelProps} />
+            {repackTabVisible && (
+              <div
+                role="tablist"
+                aria-label="Vista de detalles"
+                className="grid grid-cols-2 gap-1 rounded-xl border border-(--surface-active-border) bg-(--color-surface)/60 p-1 backdrop-blur-sm"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={detailsTab === "package"}
+                  onClick={() => setDetailsTab("package")}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                    detailsTab === "package"
+                      ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
+                      : "text-(--color-muted) hover:bg-white/5 hover:text-(--color-text)"
+                  }`}
+                >
+                  <Package className="h-3.5 w-3.5" />
+                  Package
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={detailsTab === "repack"}
+                  onClick={() => setDetailsTab("repack")}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                    detailsTab === "repack"
+                      ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
+                      : "text-(--color-muted) hover:bg-white/5 hover:text-(--color-text)"
+                  }`}
+                >
+                  <FileArchive className="h-3.5 w-3.5" />
+                  Repack
+                  {repackEntries.length > 0 && (
+                    <span className="rounded-full bg-(--color-accent)/20 px-1.5 text-[10px] font-bold leading-4 text-(--color-accent)">
+                      {repackEntries.length}
                     </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setRepackSelectorOpen(true)}
-                    className="inline-flex items-center gap-1 rounded-lg bg-cyan-500/10 px-2.5 py-1 text-xs font-medium text-cyan-400 transition hover:bg-cyan-500/20"
-                  >
-                    {repacksLoading ? (
-                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-400/30 border-t-cyan-400" />
-                    ) : (
-                      <>
-                        {repackEntries.length} available
-                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="9 18 15 12 9 6" />
-                        </svg>
-                      </>
-                    )}
-                  </button>
-                </div>
-                {!repacksLoading && repackEntries.length > 0 && (
-                  <p className="mt-1.5 text-xs text-(--color-muted)">
-                    {repackEntries.length === 1
-                      ? "1 repack installer available from the Debrid catalog"
-                      : `${repackEntries.length} repack installers available from the Debrid catalog`
-                    }
-                  </p>
-                )}
+                  )}
+                </button>
               </div>
             )}
+            {detailsTab === "repack" && repackTabVisible ? (
+              <StoreRepackCard
+                repackEntries={repackEntries}
+                repacksLoading={repacksLoading}
+                onInstall={handleInstallRepack}
+              />
+            ) : (
+              <StoreGameSummaryPanel section="download" {...summaryPanelProps} />
+            )}
+            <StoreGameSummaryPanel section="summary" {...summaryPanelProps} />
           </aside>
         </div>
       </section>
@@ -1368,20 +1435,12 @@ export default function StoreGameDetailsPage({
 
       <StoreSourceSelectorModal
         open={sourceSelectorOpen}
-        game={{ ...game, sources: effectiveSources }}
+        game={{ ...game, sources: selectableSources }}
         selectedSource={effectiveSelectedSource ?? bestSource}
         onClose={() => setSourceSelectorOpen(false)}
-        onSelectSource={onSelectSourceKey}
+        onSelectSource={handleSelectSourceKey}
         onDownloadSource={handleDownloadFromSource}
         onOpenDetails={onOpenGame}
-      />
-
-      <StoreRepackSelectorModal
-        open={repackSelectorOpen}
-        game={game}
-        repackEntries={repackEntries}
-        onClose={() => setRepackSelectorOpen(false)}
-        onInstall={handleInstallRepack}
       />
 
       <PackageInstallSuccessModal

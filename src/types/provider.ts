@@ -3,7 +3,8 @@ export type ApiProviderId =
   | "ryuu"
   | "twentytwo-cloud"
   | "sushi"
-  | "custom";
+  | "custom"
+  | "repack";
 
 export type ProviderCapability =
   | "search"

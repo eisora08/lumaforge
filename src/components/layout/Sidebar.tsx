@@ -264,6 +264,17 @@ export default function Sidebar({
         </div>
       </div>
 
+      {/* Add Manual Game — pinned below the scrollable list, never scrolls */}
+      {showLabels && mode !== "compact" && (
+        <div className="shrink-0 px-4 pt-2">
+          <SidebarLibraryList
+            onOpenGame={handleOpenGame}
+            activePage={activePage}
+            variant="add-button"
+          />
+        </div>
+      )}
+
       {/* Bottom block — shrink-0, pinned at bottom */}
       <div className={`shrink-0 ${
         showLabels ? "px-4 pt-1 pb-4" : "px-3 pt-1 pb-3"

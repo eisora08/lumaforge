@@ -20,6 +20,9 @@ export type PackageSource = {
   requiresApiKey?: boolean;
   authType?: ProviderAuthType;
   hasAuth?: boolean;
+
+  /** When set, this source maps to a Debrid repack catalog entry instead of a provider package. */
+  repackEntryId?: string;
 };
 
 export type PackageGame = {

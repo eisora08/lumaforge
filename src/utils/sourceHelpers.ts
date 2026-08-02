@@ -20,5 +20,6 @@ export function getBestAvailableSource(
 }
 
 export function getSourceKey(source: PackageSource) {
+  if (source.repackEntryId) return `repack:${source.repackEntryId}`;
   return `${source.providerId}-${source.fileType}`;
 }

@@ -62,7 +62,7 @@ type Props = {
   activePage?: AppPage;
   compact?: boolean;
   collapsed?: boolean;
-  variant?: "full" | "header" | "list";
+  variant?: "full" | "header" | "list" | "add-button";
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
 };
@@ -683,21 +683,6 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           );
         })
       )}
-      {/* Add Manual Game button */}
-      {!isCompactMode && !isCollapsedMode && (
-        <button
-          type="button"
-          onClick={() => {
-            setEditDialogGame(null);
-            setEditDialogInitialTab("general");
-            setEditDialogOpen(true);
-          }}
-          className="mt-1 flex w-full items-center gap-2 rounded-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
-        >
-          <Plus className="h-3 w-3" />
-          Add Manual Game
-        </button>
-      )}
     </div>
   );
 
@@ -955,6 +940,42 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       </CardActionMenu>
     )
   );
+
+  // Add Manual Game — pinned button, rendered OUTSIDE the scrollable list
+  // (mounted in Sidebar.tsx below the scroll container, so scrolling never moves it).
+  if (variant === "add-button") {
+    if (isCompactMode || isCollapsedMode) return null;
+    return (
+      <div className="flex flex-col">
+        <button
+          type="button"
+          onClick={() => {
+            setEditDialogGame(null);
+            setEditDialogInitialTab("general");
+            setEditDialogOpen(true);
+          }}
+          className="flex w-full items-center gap-2 rounded-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
+        >
+          <Plus className="h-3 w-3" />
+          Add Manual Game
+        </button>
+        {editDialogOpen && (
+          <GameEditDialog
+            open={editDialogOpen}
+            onClose={() => setEditDialogOpen(false)}
+            initialTab={editDialogInitialTab}
+            settings={{
+              rawgApiKey: appSettings?.rawgApiKey ?? "",
+              igdbClientId: appSettings?.igdbClientId ?? "",
+              igdbClientSecret: appSettings?.igdbClientSecret ?? "",
+              steamGridDbApiKey: appSettings?.steamGridDbApiKey ?? "",
+              steamGridDbArtworkEnabled: appSettings?.steamGridDbArtworkEnabled ?? false,
+            }}
+          />
+        )}
+      </div>
+    );
+  }
 
   // Collapsed mode: render everything inline (icons only)
   if (isCollapsedMode) {
