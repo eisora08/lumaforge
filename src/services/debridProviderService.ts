@@ -17,6 +17,15 @@ export type DebridResolveResult = {
   resolvedUrl?: string;
   fileName?: string;
   fileSize?: number;
+  /** When the repack is split across many volumes (setup.exe + `.bin` parts),
+   *  the resolver reports the full per-file list (and the count) so the caller
+   *  can download each part sequentially through the debrid provider. */
+  resolvedUrls?: string[];
+  /** Per-file filenames aligned 1:1 with `resolvedUrls`. The frontend uses them
+   *  to pick which part to download + extract LAST (the installer exe or the
+   *  first-volume archive) so volumes reassemble in order. */
+  fileNames?: string[];
+  fileCount?: number;
   error?: string;
 };
 

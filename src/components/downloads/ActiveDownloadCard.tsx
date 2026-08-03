@@ -234,13 +234,16 @@ export default function ActiveDownloadCard({
 
       {/* Floating Download Core — single acrylic capsule over the artwork. */}
       <div className="lf-download-capsule lf-download-capsule-in relative z-20 mx-4 mb-4 mt-2 flex min-h-[76px] flex-wrap items-center gap-3 rounded-2xl px-4 py-3 md:mx-[18px] md:h-[76px] md:flex-nowrap md:gap-4 md:px-5 md:py-0">
-        {/* Zone A — current speed */}
+        {/* Zone A — current speed + peak */}
         <div className="flex w-[104px] shrink-0 flex-col">
           <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/40">
             Velocidad
           </span>
           <span className="text-xl font-bold leading-tight tabular-nums text-white">
             {formatSpeed(download.currentSpeedBytes) || "—"}
+          </span>
+          <span className="mt-0.5 text-[10px] uppercase tracking-[0.16em] tabular-nums text-white/40">
+            Pico {formatSpeed(download.peakSpeedBytes) || "—"}
           </span>
         </div>
 
@@ -251,15 +254,32 @@ export default function ActiveDownloadCard({
 
         <div className="h-9 w-px shrink-0 bg-white/10" aria-hidden="true" />
 
-        {/* Zone C — remaining time + peak */}
-        <div className="flex w-[104px] shrink-0 flex-col items-end">
-          <span className="max-w-full truncate text-xs font-semibold tabular-nums text-white/80">
-            {download.timeRemaining || download.message || statusLabel}
-          </span>
-          <span className="mt-0.5 text-[10px] uppercase tracking-[0.16em] tabular-nums text-white/40">
-            Pico {formatSpeed(download.peakSpeedBytes) || "—"}
-          </span>
-        </div>
+        {/* Zone C — live torrent swarm stats (real seeds/peers). Hidden until
+            the first installer-network event arrives for this job. */}
+        {download.isTorrent &&
+          (download.peers != null || download.seeds != null) && (
+            <div className="flex shrink-0 items-center gap-3 md:gap-4">
+              <div className="flex flex-col">
+                <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/40">
+                  Seeds
+                </span>
+                <span className="text-base font-bold leading-tight tabular-nums text-white">
+                  {download.seeds ?? "—"}
+                </span>
+              </div>
+              <div className="h-5 w-px shrink-0 bg-white/10" aria-hidden="true" />
+              <div className="flex flex-col">
+                <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/40">
+                  Peers
+                </span>
+                <span className="text-base font-bold leading-tight tabular-nums text-white">
+                  {download.peers ?? "—"}
+                </span>
+              </div>
+            </div>
+          )}
+
+        <div className="h-9 w-px shrink-0 bg-white/10" aria-hidden="true" />
 
         {/* Zone D — controls. Buttons render when canX (handler optional). */}
         <div className="flex shrink-0 items-center gap-2">
@@ -372,9 +392,19 @@ function SpeedChart({ values, frozen }: { values: number[]; frozen: boolean }) {
   }, []);
 
   const frozenOrHidden = frozen || !visible;
-  const display = values.slice(-barCount);
-  const max = Math.max(1, ...display);
-  const newest = display.length - 1;
+
+  // Fixed-length lane: the most recent `barCount` real samples are left-aligned,
+  // and every trailing slot is a zero-height placeholder. The chart always
+  // spans the full width and visibly fills left → right as samples arrive —
+  // no blank space while the history is short (young downloads, fast
+  // downloads, torrents whose emits used to be percent-change-only).
+  const recent = values.slice(-barCount);
+  const slots: (number | null)[] = [];
+  for (let i = 0; i < barCount; i++) {
+    slots.push(i < recent.length ? recent[i] : null);
+  }
+  const max = Math.max(1, ...recent);
+  const lastReal = recent.length - 1;
 
   return (
     <div
@@ -382,9 +412,18 @@ function SpeedChart({ values, frozen }: { values: number[]; frozen: boolean }) {
         frozenOrHidden ? "lf-download-chart-frozen" : ""
       }`}
     >
-      {display.length > 0 ? (
-        display.map((v, i) => {
-          const isNew = i === newest;
+      {values.length > 0 ? (
+        slots.map((v, i) => {
+          if (v == null) {
+            return (
+              <div
+                key={`empty-${i}`}
+                className="lf-download-chart-bar w-[3px] rounded-t-[2px] bg-white/10 md:w-[4px]"
+                style={{ height: "0%" }}
+              />
+            );
+          }
+          const isNew = i === lastReal;
           const h = Math.max(6, (v / max) * 100);
           return (
             <div
@@ -402,12 +441,12 @@ function SpeedChart({ values, frozen }: { values: number[]; frozen: boolean }) {
         <div className="h-1/2 w-2 animate-pulse rounded-t-[2px] bg-white/25" />
       )}
 
-      {hovered != null && display[hovered] != null && (
+      {hovered != null && slots[hovered] != null && (
         <div
           className="pointer-events-none absolute -top-7 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-white/10 bg-black/85 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white shadow-lg"
-          style={{ left: `${((hovered + 0.5) / display.length) * 100}%` }}
+          style={{ left: `${((hovered + 0.5) / barCount) * 100}%` }}
         >
-          {formatSpeed(display[hovered])}
+          {formatSpeed(slots[hovered] as number)}
         </div>
       )}
     </div>

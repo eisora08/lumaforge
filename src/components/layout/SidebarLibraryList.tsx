@@ -51,6 +51,7 @@ import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLua
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { useConfirm } from "../../services/confirmService";
 
 const ENABLE_VERBOSE_SIDEBAR_MEDIA_LOGS = false;
@@ -893,7 +894,13 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                         destructive: true as const,
                         onClick: () => {
                           handleMenuClose();
-                          showInfo("Debrid catalog entries are managed by the repack catalog. Disable the Debrid integration in Settings > Integrations to remove all entries.", { title: "Debrid" });
+                          const providerGameId = menuGame.providerGameId;
+                          if (providerGameId) {
+                            removeDebridGameFromLibrary(providerGameId);
+                            showSuccess(`"${menuGame.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                          } else {
+                            showError("Could not remove this game from the library.");
+                          }
                         },
                       }]
                     : menuGame.source !== "manual" && menuGame.source !== "epic"

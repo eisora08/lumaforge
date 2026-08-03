@@ -50,6 +50,10 @@ export type DownloadJob = {
   deleteArchive?: boolean;
   /** Install directory on disk (populated when install completes) */
   installDir?: string;
+  /** Connected peers for torrent installs (reported via installer-network) */
+  peers?: number;
+  /** Peers currently serving data (seeds) for torrent installs */
+  seeds?: number;
 
   status: DownloadStatus;
   progress: number;
@@ -70,4 +74,10 @@ export type InstallerProgressEvent = {
   bytes_read: number;
   total_bytes: number;
   message: string;
+};
+
+export type InstallerNetworkEvent = {
+  job_id: string;
+  peers: number;
+  seeds: number;
 };

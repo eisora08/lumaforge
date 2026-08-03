@@ -25,11 +25,12 @@ use tokio::time::{sleep, Duration};
 
 use crate::commands::debrid_installer::{
     auto_run_installer, clear_job_flags, extract_rar_via_7z, extract_rar_with_cli,
-    extract_rar_with_unrar, extract_zip_with_zip_crate, flatten_single_root_folder,
-    is_job_cancelled, is_job_paused, INSTALLER_EXE_NAMES, REPACK_UTILITY_EXES,
+    extract_rar_with_unrar, extract_zip_with_zip_crate, find_installer_exe_recursive,
+    flatten_single_root_folder, is_excluded_exe_name, is_excluded_redist_dir, is_job_cancelled,
+    is_job_paused,
 };
 use crate::models::debrid_install_result::DebridDownloadResult;
-use crate::utils::progress_utils::emit_installer_progress;
+use crate::utils::progress_utils::{emit_installer_network, emit_installer_progress};
 
 /// Kill-switch for in-app torrent downloads. Mirrors the TS feature flag
 /// `DEBRID_TORRENT_ENABLED` in `src/features/debrid/debridFeatureFlag.ts`.
@@ -43,9 +44,37 @@ const TORRENT_MAX_WAIT_SECS: u64 = 6 * 60 * 60;
 /// that has produced bytes is never cut by this limit.
 const TORRENT_METADATA_STALL_SECS: u64 = 3 * 60;
 
+/// How long the download may produce no new bytes (metadata resolved, but the
+/// swarm has no seeds/peers or the connection stalled) before we give up.
+/// Without this, a magnet with no peers would spin at 0% until
+/// `TORRENT_MAX_WAIT_SECS` (6h) with the job stuck in "downloading".
+const TORRENT_DATA_STALL_SECS: u64 = 2 * 60;
+
+/// Minimum interval between progress emits once bytes are flowing. The frontend
+/// speed chart samples one bar per `installer-progress` event, so emitting only
+/// on percent change (a 30 GB repack moves 1% every ~30s) leaves the chart
+/// nearly empty. A time-based cadence keeps ~1 sample/sec.
+const TORRENT_PROGRESS_EMIT_SECS: u64 = 1;
+
+/// Whether a phase has been stalled past the threshold.
+fn stall_exceeded(first_seen: Instant, threshold_secs: u64) -> bool {
+    first_seen.elapsed().as_secs() > threshold_secs
+}
+
 /// Whether the connect phase has been stalled past the threshold.
 fn metadata_stall_exceeded(first_seen: Instant, threshold_secs: u64) -> bool {
-    first_seen.elapsed().as_secs() > threshold_secs
+    stall_exceeded(first_seen, threshold_secs)
+}
+
+/// Whether the download has produced no new bytes for the threshold.
+fn data_stall_exceeded(first_seen: Instant, threshold_secs: u64) -> bool {
+    stall_exceeded(first_seen, threshold_secs)
+}
+
+/// Whether a progress emit is due: the percentage changed OR the throttle
+/// window elapsed (so the frontend chart gets a steady sample stream).
+fn progress_emit_due(last_pct: i32, pct: i32, elapsed_secs: u64, throttle_secs: u64) -> bool {
+    pct != last_pct || elapsed_secs >= throttle_secs
 }
 
 /// Process-lifetime librqbit session (single torrent engine for the whole app).
@@ -58,6 +87,67 @@ fn active_torrents() -> &'static DashMap<String, Arc<ManagedTorrent>> {
     ACTIVE_TORRENTS.get_or_init(DashMap::new)
 }
 
+/// Resolve (and create) the torrent session dir under app data, used for both
+/// the librqbit persistence and the per-job completion markers.
+fn torrent_base_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?
+        .join("librqbit");
+    fs::create_dir_all(&base_dir)
+        .map_err(|e| format!("Failed to create torrent session dir: {e}"))?;
+    Ok(base_dir)
+}
+
+/// Sanitize a job id so it is safe to use as a marker file name.
+fn marker_file_name(job_id: &str) -> String {
+    let mut out = String::with_capacity(job_id.len());
+    for ch in job_id.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
+/// Path to the completion marker for a job. The marker is written ONLY after a
+/// torrent download has fully completed (all pieces verified on disk). It lives
+/// in the session dir (`<appData>/librqbit`), NOT in `dest_dir`, so it never
+/// interferes with `flatten_single_root_folder` (which requires the dest root to
+/// contain only the game folder, with no loose files).
+fn torrent_marker_path(job_id: &str, base_dir: &Path) -> PathBuf {
+    base_dir.join(format!("{}.done", marker_file_name(job_id)))
+}
+
+/// Whether a previous torrent attempt for this job completed successfully.
+fn torrent_marker_exists(job_id: &str, base_dir: &Path) -> bool {
+    torrent_marker_path(job_id, base_dir).is_file()
+}
+
+/// Record that the torrent for this job finished downloading (all pieces
+/// verified). Only this proves the on-disk files are complete and trustworthy.
+fn write_torrent_marker(job_id: &str, base_dir: &Path) {
+    let path = torrent_marker_path(job_id, base_dir);
+    if let Err(e) = fs::write(&path, b"ok") {
+        println!(
+            "[TORRENT][MARKER] Failed to write completion marker {}: {e}",
+            path.display()
+        );
+    }
+}
+
+/// Drop the completion marker (used when a job is cancelled/failed so a later
+/// attempt never short-circuits on stale/partial files).
+fn remove_torrent_marker(job_id: &str, base_dir: &Path) {
+    let path = torrent_marker_path(job_id, base_dir);
+    if path.exists() {
+        let _ = fs::remove_file(&path);
+    }
+}
+
 async fn get_session(app_handle: &AppHandle) -> Result<Arc<Session>, String> {
     if let Some(session) = TORRENT_SESSION.get() {
         return Ok(session.clone());
@@ -65,14 +155,7 @@ async fn get_session(app_handle: &AppHandle) -> Result<Arc<Session>, String> {
     // Persistent session: fastresume + JSON persistence under
     // <appData>/librqbit so a paused download survives an app restart and can be
     // resumed later. This is the single torrent engine for the whole app.
-    let base_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?
-        .join("librqbit");
-    if let Err(e) = fs::create_dir_all(&base_dir) {
-        return Err(format!("Failed to create torrent session dir: {e}"));
-    }
+    let base_dir = torrent_base_dir(app_handle)?;
     let opts = SessionOptions {
         enable_upnp_port_forwarding: false,
         fastresume: true,
@@ -84,8 +167,28 @@ async fn get_session(app_handle: &AppHandle) -> Result<Arc<Session>, String> {
     let session = Session::new_with_opts(base_dir, opts)
         .await
         .map_err(|e| format!("Failed to initialize torrent engine: {e}"))?;
+    // On a fresh process the in-memory `active_torrents()` is empty, so any
+    // torrent librqbit restored from its JSON persistence belongs to a PREVIOUS
+    // session. Drop them so they never resume in the background (and never hold
+    // file locks on the game folder). The download queue is the source of truth
+    // — a job the user resumes re-adds its magnet explicitly below.
+    sweep_restored_torrents(&session).await;
     let _ = TORRENT_SESSION.set(session.clone());
     Ok(session)
+}
+
+/// Delete every torrent currently in the session (without removing their files).
+/// Called right after the session is first created (fresh process) to purge
+/// torrents restored from persistence — nothing can be legitimately active at
+/// that point. Files are kept on disk so an explicit resume later re-adds the
+/// magnet and reuses the partial data; only the session reference (and its file
+/// handles) are released so nothing downloads in the background.
+async fn sweep_restored_torrents(session: &Arc<Session>) {
+    let ids: Vec<_> = session.with_torrents(|it| it.map(|(id, _)| id).collect());
+    for id in ids {
+        println!("[TORRENT][SWEEP] Removing restored torrent id={}", id);
+        let _ = session.delete(TorrentIdOrHash::Id(id), false).await;
+    }
 }
 
 /// Delete recorded torrents that are neither the current job's torrent nor an
@@ -144,26 +247,38 @@ pub async fn start_torrent_download(
     // resume after a prior cancel/pause is never aborted immediately.
     clear_job_flags(&job_id);
 
-    // Step 0: short-circuit if a previous attempt already produced a usable install.
-    if let Some(installer_path) = find_installer_file_recursive(&dest_path) {
-        println!(
-            "[TORRENT][SHORTCIRCUIT] Installer already on disk: {}",
-            installer_path.display()
-        );
-        return Ok(auto_run_installer(&installer_path, &dest_dir));
-    }
-    if let Some(exe_path) = find_largest_exe_recursive(&dest_path) {
-        let exe_path = exe_path.to_string_lossy().to_string();
-        println!("[TORRENT][SHORTCIRCUIT] Game executable already on disk: {}", exe_path);
-        return Ok(DebridDownloadResult {
-            success: true,
-            status: "ready".to_string(),
-            install_dir: dest_dir.clone(),
-            executable_path: Some(exe_path),
-            installer_path: None,
-            installer_pid: None,
-            message: "Already downloaded. Ready to play.".to_string(),
-        });
+    // Shared with `get_session`; also hosts the per-job completion markers.
+    let base_dir = torrent_base_dir(&app_handle)?;
+
+    // Step 0: short-circuit if a previous attempt already produced a usable
+    // install. Only trust the on-disk installer/game exe when the previous
+    // torrent download COMPLETED (marker present). librqbit writes pieces in
+    // place (no `tmp/` folder like the HTTP path), so after a pause/cancel the
+    // files on disk may be partial or corrupt — a matching `setup.exe` there is
+    // NOT proof of success and auto-running it would silently install a broken
+    // build. Without the marker, skip the short-circuit and actually
+    // (re)download the torrent.
+    if torrent_marker_exists(&job_id, &base_dir) {
+        if let Some(installer_path) = find_installer_exe_recursive(&dest_path) {
+            println!(
+                "[TORRENT][SHORTCIRCUIT] Installer already on disk: {}",
+                installer_path.display()
+            );
+            return Ok(auto_run_installer(&installer_path, &dest_dir));
+        }
+        if let Some(exe_path) = find_largest_exe_recursive(&dest_path) {
+            let exe_path = exe_path.to_string_lossy().to_string();
+            println!("[TORRENT][SHORTCIRCUIT] Game executable already on disk: {}", exe_path);
+            return Ok(DebridDownloadResult {
+                success: true,
+                status: "ready".to_string(),
+                install_dir: dest_dir.clone(),
+                executable_path: Some(exe_path),
+                installer_path: None,
+                installer_pid: None,
+                message: "Already downloaded. Ready to play.".to_string(),
+            });
+        }
     }
 
     let session = get_session(&app_handle).await?;
@@ -178,17 +293,49 @@ pub async fn start_torrent_download(
         "Connecting to torrent swarm\u{2026}",
     );
 
-    let response = session
-        .add_torrent(
+    // Resolving the magnet metadata is UNBOUNDED inside librqbit: for a magnet
+    // without an embedded info dict, `add_torrent` awaits `read_metainfo_from_peer_receiver`,
+    // which blocks until a peer delivers the info-hash metadata or the peer-address
+    // stream ends. With DHT enabled (our default) that stream stays open forever, so
+    // a dead/swarmless magnet (or blocked DHT ports) would leave the job stuck on
+    // "Connecting to torrent swarm…" indefinitely. Wrap the add in the same
+    // `TORRENT_METADATA_STALL_SECS` budget used by the poll-loop connect guard so the
+    // metadata-fetch phase is bounded too. No cleanup is needed on timeout: the
+    // torrent is only inserted into `active_torrents()` (and registered in the
+    // session) after this call returns.
+    let add_timeout = tokio::time::timeout(
+        Duration::from_secs(TORRENT_METADATA_STALL_SECS),
+        session.add_torrent(
             AddTorrent::from_url(magnet),
             Some(AddTorrentOptions {
                 overwrite: true,
                 output_folder: Some(dest_dir.clone()),
                 ..Default::default()
             }),
-        )
-        .await
-        .map_err(|e| format!("Failed to add torrent: {e}"))?;
+        ),
+    )
+    .await;
+
+    let response = match add_timeout {
+        Ok(Ok(response)) => response,
+        Ok(Err(e)) => return Err(format!("Failed to add torrent: {e}")),
+        Err(_elapsed) => {
+            println!(
+                "[TORRENT][METADATA_TIMEOUT] job_id={} no swarm metadata after {}s",
+                job_id, TORRENT_METADATA_STALL_SECS
+            );
+            emit_installer_progress(
+                &app_handle,
+                &job_id,
+                "failed",
+                0,
+                0,
+                0,
+                "Could not connect to torrent swarm (no peers/seeds).",
+            );
+            return Err("Could not connect to torrent swarm (no peers/seeds).".to_string());
+        }
+    };
 
     // `into_handle` returns a handle for both freshly-added torrents and
     // `AlreadyManaged` ones (recorded by persistence from a previous attempt).
@@ -233,6 +380,11 @@ pub async fn start_torrent_download(
                 .await;
             active_torrents().remove(&job_id);
 
+            // The download is complete and verified on disk — record the marker
+            // so a later call short-circuits instead of re-downloading.
+            write_torrent_marker(&job_id, &base_dir);
+            println!("[TORRENT][MARKER] job_id={} completed", job_id);
+
             // auto_extract=false → download only, leave the files on disk. Never
             // auto-run an installer or extract an archive; return "downloaded"
             // so the job shows a manual-extraction message without marking the
@@ -265,11 +417,15 @@ pub async fn start_torrent_download(
             process_torrent_files(&app_handle, &job_id, &dest_path, &dest_dir, delete_archive)
         }
         Ok(PollOutcome::Paused) => {
-            // Paused by user — stop the engine but keep the partial data +
-            // fastresume so a later resume reuses them. The torrent stays tracked
-            // in ACTIVE_TORRENTS (protected from orphan cleanup).
-            let _ = session.pause(&torrent).await;
-            println!("[TORRENT][PAUSE] Torrent paused job={}", job_id);
+            // Paused by user — release the file handles so the game folder is
+            // not locked on Windows. Partial data + fastresume stay on disk; a
+            // resume re-adds the magnet via `start_torrent_download` and
+            // librqbit reuses the existing files (piece verification on add).
+            let _ = session
+                .delete(TorrentIdOrHash::Id(torrent.id()), false)
+                .await;
+            active_torrents().remove(&job_id);
+            println!("[TORRENT][PAUSE] Torrent released job={}", job_id);
             Ok(DebridDownloadResult {
                 success: false,
                 status: "paused".to_string(),
@@ -282,6 +438,9 @@ pub async fn start_torrent_download(
         }
         Err(e) => {
             // Cancelled or failed — drop the torrent and clean its partial files.
+            // The marker must go too, otherwise a later attempt would trust the
+            // leftover partial `setup.exe` and auto-run it on corrupt data.
+            remove_torrent_marker(&job_id, &base_dir);
             let _ = session
                 .delete(TorrentIdOrHash::Id(torrent.id()), true)
                 .await;
@@ -309,7 +468,10 @@ async fn poll_torrent_until_done(
 ) -> Result<PollOutcome, String> {
     let started = Instant::now();
     let mut last_pct: i32 = -1;
+    let mut last_emit: Option<Instant> = None;
     let mut metadata_stalled: Option<Instant> = None;
+    let mut data_stalled: Option<Instant> = None;
+    let mut last_progress_bytes: u64 = 0;
 
     loop {
         if is_job_cancelled(job_id) {
@@ -365,17 +527,37 @@ async fn poll_torrent_until_done(
             // Metadata resolved and bytes flowing (or torrent finished) — clear
             // the connect-phase stall guard so a large download is never cut.
             metadata_stalled = None;
+            // But if no NEW bytes have been downloaded for a while, the swarm
+            // has no seeds/peers (or the connection stalled). Cut the job so it
+            // never spins at 0% until TORRENT_MAX_WAIT_SECS.
+            if stats.progress_bytes > last_progress_bytes {
+                data_stalled = None;
+                last_progress_bytes = stats.progress_bytes;
+            } else {
+                let first_seen = *data_stalled.get_or_insert_with(Instant::now);
+                if data_stall_exceeded(first_seen, TORRENT_DATA_STALL_SECS) {
+                    return Err(
+                        "No download progress (no seeds/peers).".to_string(),
+                    );
+                }
+            }
             let pct = if stats.total_bytes > 0 {
                 (stats.progress_bytes.saturating_mul(100) / stats.total_bytes).min(99) as i32
             } else {
                 0
             };
-            if pct != last_pct {
-                let msg = if pct < 5 {
-                    "Starting torrent download\u{2026}"
-                } else {
-                    "Downloading via torrent\u{2026}"
-                };
+            let msg = if pct < 5 {
+                "Starting torrent download\u{2026}"
+            } else {
+                "Downloading via torrent\u{2026}"
+            };
+            let emit_due = progress_emit_due(
+                last_pct,
+                pct,
+                last_emit.map_or(0, |t| t.elapsed().as_secs()),
+                TORRENT_PROGRESS_EMIT_SECS,
+            );
+            if emit_due {
                 emit_installer_progress(
                     app_handle,
                     job_id,
@@ -385,7 +567,26 @@ async fn poll_torrent_until_done(
                     stats.total_bytes,
                     msg,
                 );
+                // Live swarm count (aligned with the emit cadence): PEERS =
+                // connected live peers, SEEDS = live peers serving data. Noise
+                // is gated by the same throttle as the progress emit; `live()`
+                // is cheap (borrows the peer registry).
+                let (peers, seeds) = torrent
+                    .live()
+                    .map(|l| {
+                        let snap = l.per_peer_stats_snapshot(Default::default());
+                        (
+                            snap.peers.len() as u32,
+                            snap.peers
+                                .values()
+                                .filter(|p| p.counters.downloaded_and_checked_pieces > 0)
+                                .count() as u32,
+                        )
+                    })
+                    .unwrap_or((0, 0));
+                emit_installer_network(app_handle, job_id, peers, seeds);
                 last_pct = pct;
+                last_emit = Some(Instant::now());
             }
         }
 
@@ -408,7 +609,10 @@ fn process_torrent_files(
     let game_root = flatten_single_root_folder(dest_path);
 
     // Priority 1: installer / repack-utility present → auto-run installer.
-    if let Some(installer_path) = find_installer_file_recursive(&game_root) {
+    // Uses the canonical helper (root-first, BFS, skips `_Redist`, depth cap)
+    // so a `setup.exe` in a redistributable/nested folder never wins over the
+    // repack's real installer at the root.
+    if let Some(installer_path) = find_installer_exe_recursive(&game_root) {
         println!("[TORRENT][POST] Auto-running installer: {}", installer_path.display());
         emit_installer_progress(app_handle, job_id, "scanning", 95, 0, 0, "Running installer\u{2026}");
         let result = auto_run_installer(&installer_path, dest_dir);
@@ -433,7 +637,7 @@ fn process_torrent_files(
     }
 
     // Priority 3: archive → extract → re-scan.
-    if let Some(archive_path) = find_largest_archive_recursive(&game_root) {
+    if let Some(archive_path) = find_archive_to_extract(&game_root) {
         let is_rar = archive_path
             .extension()
             .and_then(|e| e.to_str())
@@ -494,7 +698,7 @@ fn process_torrent_files(
 
         // Re-scan after extraction (flatten wrapper again).
         let game_root = flatten_single_root_folder(dest_path);
-        if let Some(installer_path) = find_installer_file_recursive(&game_root) {
+        if let Some(installer_path) = find_installer_exe_recursive(&game_root) {
             println!("[TORRENT][POST] Extracted installer: {}", installer_path.display());
             let result = auto_run_installer(&installer_path, dest_dir);
             emit_installer_progress(app_handle, job_id, "done", 100, 0, 0, &result.message);
@@ -558,33 +762,6 @@ fn process_torrent_files(
 
 // ─── Recursive file finders ────────────────────────────────────────────────
 
-/// Recursively find a known installer / repack-utility file (full path).
-fn find_installer_file_recursive(dir: &Path) -> Option<PathBuf> {
-    fn walk(dir: &Path) -> Option<PathBuf> {
-        for entry in fs::read_dir(dir).ok()?.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(found) = walk(&path) {
-                    return Some(found);
-                }
-            } else {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if INSTALLER_EXE_NAMES.iter().any(|n| name == *n)
-                    || REPACK_UTILITY_EXES.iter().any(|n| name == *n)
-                {
-                    return Some(path);
-                }
-            }
-        }
-        None
-    }
-    walk(dir)
-}
-
 /// Recursively find the largest game `.exe` (full path), excluding known
 /// installer / redistributable / repack-utility names.
 fn find_largest_exe_recursive(dir: &Path) -> Option<PathBuf> {
@@ -620,6 +797,10 @@ fn find_largest_exe_recursive(dir: &Path) -> Option<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if is_excluded_redist_dir(&dir_name) {
+                    continue;
+                }
                 walk(&path, excluded, largest);
                 continue;
             }
@@ -632,7 +813,7 @@ fn find_largest_exe_recursive(dir: &Path) -> Option<PathBuf> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            if excluded.contains(&name.as_str()) {
+            if excluded.contains(&name.as_str()) || is_excluded_exe_name(&name) {
                 continue;
             }
             if let Ok(meta) = path.metadata() {
@@ -648,16 +829,35 @@ fn find_largest_exe_recursive(dir: &Path) -> Option<PathBuf> {
     largest.map(|(p, _)| p)
 }
 
-/// Recursively find the largest `.rar` / `.zip` archive (full path).
-fn find_largest_archive_recursive(dir: &Path) -> Option<PathBuf> {
-    fn walk(dir: &Path, largest: &mut Option<(PathBuf, u64)>) {
+/// Whether an archive path is the FIRST volume of a RAR5 multivolume set
+/// (`Game.part01.rar`, `Game.part1.rar`, `Game.part001.rar`). The extractor
+/// (unrar / 7-Zip) must be pointed at the first volume — it auto-follows the
+/// remaining `.partNNN.rar` files, so picking the *largest* volume instead can
+/// fail or produce a partial extract.
+fn archive_is_first_volume(path: &Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let Some((_, part)) = stem.rsplit_once(".part") else {
+        return false;
+    };
+    part.trim_start_matches('0').parse::<u64>().map(|n| n == 1).unwrap_or(false)
+}
+
+/// Recursively find the archive to extract (`.rar` / `.zip`, full path).
+///
+/// - If any RAR5 multivolume set is present, returns the FIRST volume of the
+///   largest such set (the extractor follows the rest).
+/// - Otherwise returns the largest single archive (previous behavior).
+fn find_archive_to_extract(dir: &Path) -> Option<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<(PathBuf, u64)>) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                walk(&path, largest);
+                walk(&path, out);
                 continue;
             }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -665,16 +865,32 @@ fn find_largest_archive_recursive(dir: &Path) -> Option<PathBuf> {
                 continue;
             }
             if let Ok(meta) = path.metadata() {
-                if meta.is_file() && largest.as_ref().map_or(true, |(_, s)| meta.len() > *s) {
-                    *largest = Some((path, meta.len()));
+                if meta.is_file() {
+                    out.push((path, meta.len()));
                 }
             }
         }
     }
 
-    let mut largest: Option<(PathBuf, u64)> = None;
-    walk(dir, &mut largest);
-    largest.map(|(p, _)| p)
+    let mut archives: Vec<(PathBuf, u64)> = Vec::new();
+    walk(dir, &mut archives);
+    if archives.is_empty() {
+        return None;
+    }
+
+    let first_volumes: Vec<(PathBuf, u64)> = archives
+        .iter()
+        .filter(|(p, _)| archive_is_first_volume(p))
+        .cloned()
+        .collect();
+
+    if first_volumes.is_empty() {
+        // No multivolume set: largest single archive (legacy `.r00` sets only
+        // expose the `.rar` here, which IS the first volume).
+        archives.into_iter().max_by_key(|(_, s)| *s).map(|(p, _)| p)
+    } else {
+        first_volumes.into_iter().max_by_key(|(_, s)| *s).map(|(p, _)| p)
+    }
 }
 
 #[cfg(test)]
@@ -700,5 +916,228 @@ mod tests {
         let threshold = 180u64;
         let first_seen = Instant::now() - Duration::from_secs(threshold + 1);
         assert!(metadata_stall_exceeded(first_seen, threshold));
+    }
+
+    // ── data stall guard (Fix 1) ──
+
+    #[test]
+    fn data_stall_below_threshold_is_not_exceeded() {
+        let threshold = TORRENT_DATA_STALL_SECS;
+        let first_seen = Instant::now() - Duration::from_secs(threshold - 1);
+        assert!(!data_stall_exceeded(first_seen, threshold));
+    }
+
+    #[test]
+    fn data_stall_at_threshold_is_not_exceeded() {
+        let threshold = TORRENT_DATA_STALL_SECS;
+        let first_seen = Instant::now() - Duration::from_secs(threshold);
+        assert!(!data_stall_exceeded(first_seen, threshold));
+    }
+
+    #[test]
+    fn data_stall_over_threshold_is_exceeded() {
+        let threshold = TORRENT_DATA_STALL_SECS;
+        let first_seen = Instant::now() - Duration::from_secs(threshold + 1);
+        assert!(data_stall_exceeded(first_seen, threshold));
+    }
+
+    // ── progress_emit_due (time-based chart sampling) ──
+
+    #[test]
+    fn progress_emit_due_true_on_percent_change() {
+        assert!(progress_emit_due(10, 11, 0, TORRENT_PROGRESS_EMIT_SECS));
+        assert!(progress_emit_due(-1, 0, 0, TORRENT_PROGRESS_EMIT_SECS));
+    }
+
+    #[test]
+    fn progress_emit_due_true_when_throttle_elapsed() {
+        assert!(progress_emit_due(10, 10, TORRENT_PROGRESS_EMIT_SECS, TORRENT_PROGRESS_EMIT_SECS));
+        assert!(progress_emit_due(10, 10, 60, TORRENT_PROGRESS_EMIT_SECS));
+    }
+
+    #[test]
+    fn progress_emit_due_false_when_unchanged_and_within_throttle() {
+        assert!(!progress_emit_due(10, 10, 0, TORRENT_PROGRESS_EMIT_SECS));
+        assert!(!progress_emit_due(10, 10, TORRENT_PROGRESS_EMIT_SECS - 1, TORRENT_PROGRESS_EMIT_SECS));
+    }
+
+    #[test]
+    fn progress_emit_due_first_real_percent_is_due() {
+        assert!(progress_emit_due(-1, 0, 0, TORRENT_PROGRESS_EMIT_SECS));
+    }
+
+    // ── archive_is_first_volume ──
+
+    #[test]
+    fn first_volume_part01_and_part1_and_part001_recognized() {
+        for name in ["Game.part01.rar", "Game.part1.rar", "Game.part001.rar"] {
+            assert!(
+                archive_is_first_volume(Path::new(name)),
+                "{name} should be recognized as the first volume"
+            );
+        }
+    }
+
+    #[test]
+    fn first_volume_rejects_later_plain_and_zip() {
+        for name in [
+            "Game.part02.rar",
+            "Game.part10.rar",
+            "Game.rar",
+            "Game.part2.zip",
+            "Game.zip",
+        ] {
+            assert!(
+                !archive_is_first_volume(Path::new(name)),
+                "{name} should NOT be recognized as the first volume"
+            );
+        }
+    }
+
+    // ── find_archive_to_extract ──
+
+    fn temp_case_dir(label: &str) -> PathBuf {
+        let base = std::env::temp_dir().join("lf-torrent-archive-tests");
+        let dir = base.join(format!(
+            "{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn archive_pick_prefers_first_volume_over_larger_later_volume() {
+        let dir = temp_case_dir("multivolume");
+        fs::write(dir.join("Game.part01.rar"), "first-volume").unwrap();
+        fs::write(dir.join("Game.part02.rar"), "much-larger-later-volume-bytes").unwrap();
+        fs::write(dir.join("Game.part03.rar"), "small").unwrap();
+
+        let picked = find_archive_to_extract(&dir).expect("should find an archive");
+        assert_eq!(
+            picked.file_name().unwrap().to_str().unwrap(),
+            "Game.part01.rar",
+            "must pick the FIRST volume, not the largest"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn archive_pick_largest_first_volume_when_multiple_sets() {
+        let dir = temp_case_dir("multi-set");
+        fs::write(dir.join("A.part01.rar"), "aaaa").unwrap();
+        fs::write(dir.join("B.part01.rar"), "bbbbbbbbbbbbbbbb").unwrap();
+        fs::write(dir.join("B.part02.rar"), "b2").unwrap();
+
+        let picked = find_archive_to_extract(&dir).expect("should find an archive");
+        assert_eq!(
+            picked.file_name().unwrap().to_str().unwrap(),
+            "B.part01.rar",
+            "largest first-volume wins across sets"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn archive_pick_largest_single_when_no_multivolume() {
+        let dir = temp_case_dir("single");
+        fs::write(dir.join("small.rar"), "s").unwrap();
+        fs::write(dir.join("big.rar"), "largest-single-archive").unwrap();
+
+        let picked = find_archive_to_extract(&dir).expect("should find an archive");
+        assert_eq!(picked.file_name().unwrap().to_str().unwrap(), "big.rar");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn archive_pick_recurses_and_falls_back_to_zip() {
+        let dir = temp_case_dir("recursive");
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        fs::write(dir.join("nested").join("packed.zip"), "zip-only").unwrap();
+        fs::write(dir.join("note.txt"), "not an archive").unwrap();
+
+        let picked = find_archive_to_extract(&dir).expect("should find the zip");
+        assert_eq!(picked.file_name().unwrap().to_str().unwrap(), "packed.zip");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn archive_pick_none_when_dir_empty() {
+        let dir = temp_case_dir("empty");
+        assert!(find_archive_to_extract(&dir).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── metadata-fetch timeout (add_torrent bounded) ──
+
+    #[test]
+    fn add_metadata_timeout_reuses_connect_guard_budget() {
+        // The unbounded `add_torrent` metadata fetch is wrapped in
+        // `TORRENT_METADATA_STALL_SECS` so a dead/swarmless magnet fails after the
+        // same budget the poll-loop connect guard uses. If this invariant breaks,
+        // a magnet with no reachable peers hangs on "Connecting to torrent swarm…"
+        // forever again.
+        assert_eq!(TORRENT_METADATA_STALL_SECS, 180);
+        assert_eq!(TORRENT_METADATA_STALL_SECS, TORRENT_DATA_STALL_SECS + 60);
+    }
+
+    // ── completion marker (resume never trusts partial files) ──
+
+    fn marker_test_base(label: &str) -> PathBuf {
+        let base = std::env::temp_dir().join("lf-torrent-marker-tests");
+        let dir = base.join(format!(
+            "{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn marker_file_name_sanitizes_job_id() {
+        assert_eq!(
+            marker_file_name("debrid-install-abc-123"),
+            "debrid-install-abc-123"
+        );
+        assert_eq!(
+            marker_file_name("debrid-install:a/b c"),
+            "debrid-install_a_b_c"
+        );
+    }
+
+    #[test]
+    fn torrent_marker_roundtrip() {
+        let base = marker_test_base("roundtrip");
+        let job = "debrid-install-runix";
+        assert!(!torrent_marker_exists(job, &base));
+        write_torrent_marker(job, &base);
+        assert!(torrent_marker_exists(job, &base));
+        remove_torrent_marker(job, &base);
+        assert!(!torrent_marker_exists(job, &base));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn torrent_marker_lives_in_session_dir_not_dest_dir() {
+        // The marker must never leak into dest_dir, otherwise
+        // `flatten_single_root_folder` (which requires the root to contain only
+        // the game folder) would fail to flatten because of the loose marker.
+        let session_dir = marker_test_base("session");
+        let dest_dir = marker_test_base("dest");
+        let job = "debrid-install-x";
+        write_torrent_marker(job, &session_dir);
+        let dest_entries: Vec<_> = fs::read_dir(&dest_dir).unwrap().flatten().collect();
+        assert!(
+            dest_entries.is_empty(),
+            "marker must not be written into dest_dir"
+        );
+        let _ = fs::remove_dir_all(&session_dir);
+        let _ = fs::remove_dir_all(&dest_dir);
     }
 }

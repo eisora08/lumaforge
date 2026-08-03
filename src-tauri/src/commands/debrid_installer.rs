@@ -1,4 +1,4 @@
-﻿use std::collections::HashSet;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -32,7 +32,9 @@ enum DetectedFileType {
     Rar,
     /// ZIP archive (PK\x03\x04 header)
     Zip,
-    /// Unknown type — first 8 bytes as hex string
+    /// FreeArc archive (`ArC\x01` magic)
+    Arc,
+    /// Unknown type � first 8 bytes as hex string
     Unknown(String),
 }
 
@@ -65,7 +67,12 @@ fn detect_file_type(path: &Path) -> DetectedFileType {
         return DetectedFileType::Zip;
     }
 
-    // Unknown — hex preview
+    // FreeArc archive (`ArC\x01`)
+    if buf[0] == 0x41 && buf[1] == 0x72 && buf[2] == 0x43 && buf[3] == 0x01 {
+        return DetectedFileType::Arc;
+    }
+
+    // Unknown � hex preview
     let hex = buf[..8]
         .iter()
         .map(|b| format!("{:02X}", b))
@@ -83,7 +90,7 @@ fn ensure_exe_extension(path: &Path) -> Result<PathBuf, String> {
     let new_path = path.with_extension("exe");
     fs::rename(path, &new_path)
         .map_err(|e| format!("Failed to rename {} to .exe: {}", path.display(), e))?;
-    println!("[DEBRID][INSTALL] Renamed {} → {}", path.display(), new_path.display());
+    println!("[DEBRID][INSTALL] Renamed {} ? {}", path.display(), new_path.display());
     Ok(new_path)
 }
 
@@ -94,7 +101,7 @@ const GOFILE_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5
 /// against the live `wt.obf.js`); the second is a gallery-dl fallback in case it rotates.
 const GOFILE_SALTS: &[&str] = &["9844d94d963d30", "5d4f7g8sd45fsd"];
 
-/// Website-token time window (4h) — `floor(unix_time / window)`.
+/// Website-token time window (4h) � `floor(unix_time / window)`.
 const GOFILE_WINDOW_SECS: u64 = 14_400;
 
 /// Guest session token cache (4h TTL). Refresh on 401 / `error-token`.
@@ -179,7 +186,7 @@ async fn gofile_bearer_token(client: &reqwest::Client) -> Result<String, String>
 }
 
 /// Result of gofile resolution: the direct download URL plus the bearer token the
-/// download step must send (gofile CDN links return 302 → HTML without it).
+/// download step must send (gofile CDN links return 302 ? HTML without it).
 #[derive(Debug, Clone)]
 struct GofileResolved {
     url: String,
@@ -233,7 +240,7 @@ async fn gofile_get_contents(
 ///
 /// Uses the official `.io` API (`https://api.gofile.io/contents/{id}`) with a guest
 /// account token and the obfuscated website-token header. The bearer token is also
-/// returned because gofile CDN links require it on download (302 → HTML otherwise).
+/// returned because gofile CDN links require it on download (302 ? HTML otherwise).
 /// Handles both page URLs (`/d/{contentId}`) and direct download URLs (returned
 /// unchanged, but still carrying the bearer token).
 async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> {
@@ -268,7 +275,7 @@ async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> 
                 Err(e) => {
                     last_err = Some(e);
                     if idx == 0 {
-                        // 401 → likely expired cached token. Refresh once and retry.
+                        // 401 ? likely expired cached token. Refresh once and retry.
                         let refreshed = gofile_create_guest_token(&client).await.ok();
                         if let Some(rt) = refreshed {
                             *gofile_token_cache().lock().unwrap() = Some((rt.clone(), Instant::now()));
@@ -319,7 +326,7 @@ async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> 
     }
 }
 
-// ── Cancellation tracker ──
+// -- Cancellation tracker --
 
 /// Module-level set of cancelled job IDs. Any in-flight `download_file_to_dest`
 /// for a cancelled job_id will abort its HTTP stream, clean up, and return an error.
@@ -340,7 +347,7 @@ pub fn cancel_debrid_download(job_id: String) -> Result<(), String> {
     Ok(())
 }
 
-// ── Pause tracker ──
+// -- Pause tracker --
 
 /// Module-level set of paused job IDs. Any in-flight `download_file_to_dest` or
 /// torrent poll loop for a paused job_id will checkpoint its progress, pause the
@@ -371,21 +378,23 @@ pub(crate) fn clear_job_flags(job_id: &str) {
     paused_jobs().lock().unwrap().remove(job_id);
 }
 
-// ── Download command: download + extract (ZIP/RAR) or just save (EXE/SFX) ──
+// -- Download command: download + extract (ZIP/RAR) or just save (EXE/SFX) --
 
 /// Download a Debrid repack: download file, extract if archive, return result.
 ///
 /// Returns:
-///   - status="ready" + executablePath — game is ready to play (ZIP extracted, .exe found)
-///   - status="ready" — game executable found after extraction/installer auto-run
+///   - status="ready" + executablePath � game is ready to play (ZIP extracted, .exe found)
+///   - status="ready" � game executable found after extraction/installer auto-run
 #[tauri::command]
 pub async fn download_debrid_package(
     app_handle: AppHandle,
     job_id: String,
     download_uri: String,
     dest_dir: String,
+    download_name: Option<String>,
     auto_extract: bool,
     delete_archive: bool,
+    source_key: Option<String>,
 ) -> Result<DebridDownloadResult, String> {
     if job_id.trim().is_empty() {
         return Err("Job ID is empty.".to_string());
@@ -397,13 +406,13 @@ pub async fn download_debrid_package(
         return Err("Destination directory is empty.".to_string());
     }
 
-    // Fresh attempt — clear any stale cancel/pause flags for this job id so a
+    // Fresh attempt � clear any stale cancel/pause flags for this job id so a
     // resume after a prior cancel/pause is never aborted immediately.
     clear_job_flags(&job_id);
 
     let dest_path = PathBuf::from(&dest_dir);
 
-    // ── Resolve gofile URL (gofile.io / gofile.my) to a direct download link ──
+    // -- Resolve gofile URL (gofile.io / gofile.my) to a direct download link --
     let is_gofile = {
         let lower = download_uri.to_lowercase();
         lower.contains("gofile.io") || lower.contains("gofile.my")
@@ -419,32 +428,52 @@ pub async fn download_debrid_package(
         (download_uri.clone(), None)
     };
 
-    // ── Step 0: Short-circuit if already extracted (Bug 3 fix) ──
+    // -- Checkpoint identity --
+    // The checkpoint is keyed on the STABLE source URL (the page/magnet URL the
+    // user started from, or the direct URL), NOT the volatile resolved CDN link.
+    // Gofile URLs re-resolve to a fresh CDN link on every call; keying on that
+    // would invalidate the `.part`/`.part.meta` on every resume and restart the
+    // download from byte 0. `source_key` arrives from the frontend as the job's
+    // original `downloadUrl`; fall back to the incoming `download_uri` when absent.
+    let checkpoint_key = source_key.unwrap_or_else(|| download_uri.clone());
+
+    // -- Step 0: Short-circuit if already extracted (Bug 3 fix) --
     // If dest_dir already has a usable installer or game exe from a previous
-    // successful extraction, skip download+extract entirely.
-    let installer_name = find_installer_exe_in_dir(&dest_path);
-    if let Some(ref name) = installer_name {
-        let installer_path = dest_path.join(name);
-        println!("[DEBRID][SHORTCIRCUIT] Installer already on disk: {}", installer_path.display());
-        return Ok(auto_run_installer(&installer_path, &dest_dir));
+    // successful extraction, skip download+extract entirely. BUT only when the
+    // install is not mid-flight: leftover `.part`/`.part.meta` (or any content
+    // in `tmp/`) means a previous download never finished � short-circuiting
+    // would auto-run setup on partial/corrupt files. In that case fall through
+    // to the full download+extract pipeline.
+    if has_partial_install_artifacts(&dest_path) {
+        println!(
+            "[DEBRID][SHORTCIRCUIT_SKIP] Partial install artifacts present � running full download/extract: {}",
+            dest_path.display()
+        );
+    } else {
+        let installer_name = find_installer_exe_in_dir(&dest_path);
+        if let Some(ref name) = installer_name {
+            let installer_path = dest_path.join(name);
+            println!("[DEBRID][SHORTCIRCUIT] Installer already on disk: {}", installer_path.display());
+            return Ok(auto_run_installer(&installer_path, &dest_dir));
+        }
+
+        let game_exe = find_largest_exe_in_dir(&dest_path);
+        if let Some(exe_name) = game_exe {
+            let exe_path = dest_path.join(&exe_name).to_string_lossy().to_string();
+            println!("[DEBRID][SHORTCIRCUIT] Game executable already on disk: {}", exe_path);
+            return Ok(DebridDownloadResult {
+                success: true,
+                status: "ready".to_string(),
+                install_dir: dest_dir.clone(),
+                executable_path: Some(exe_path),
+                installer_path: None,
+                installer_pid: None,
+                message: "Already extracted. Ready to play.".to_string(),
+            });
+        }
     }
 
-    let game_exe = find_largest_exe_in_dir(&dest_path);
-    if let Some(exe_name) = game_exe {
-        let exe_path = dest_path.join(&exe_name).to_string_lossy().to_string();
-        println!("[DEBRID][SHORTCIRCUIT] Game executable already on disk: {}", exe_path);
-        return Ok(DebridDownloadResult {
-            success: true,
-            status: "ready".to_string(),
-            install_dir: dest_dir.clone(),
-            executable_path: Some(exe_path),
-            installer_path: None,
-            installer_pid: None,
-            message: "Already extracted. Ready to play.".to_string(),
-        });
-    }
-
-    // ── Step 1: Download ──
+    // -- Step 1: Download --
     emit_installer_progress(
         &app_handle,
         &job_id,
@@ -461,12 +490,14 @@ pub async fn download_debrid_package(
         &app_handle,
         &job_id,
         gofile_bearer.as_deref(),
+        download_name.as_deref(),
+        &checkpoint_key,
     )
     .await?
     {
         DownloadFileOutcome::File(f) => f,
         DownloadFileOutcome::Paused => {
-            // Paused by user — return a paused result so the TS queue marks the
+            // Paused by user � return a paused result so the TS queue marks the
             // job as paused (resumable) instead of failed.
             emit_installer_progress(
                 &app_handle,
@@ -489,14 +520,14 @@ pub async fn download_debrid_package(
         }
     };
 
-    // ── Step 1.5: auto_extract=false — download only, keep the archive on disk ──
+    // -- Step 1.5: auto_extract=false � download only, keep the archive on disk --
     // The user opted to download and manually extract later. Skip all
     // extraction/installer auto-run and return status="downloaded" so the TS
     // queue marks the job done (manual extraction) without marking the game
     // as installed.
     if !auto_extract {
         println!(
-            "[DEBRID][DOWNLOAD] auto_extract=false — saved archive only: {}",
+            "[DEBRID][DOWNLOAD] auto_extract=false � saved archive only: {}",
             downloaded.path.display()
         );
         emit_installer_progress(
@@ -519,12 +550,12 @@ pub async fn download_debrid_package(
         });
     }
 
-    // ── Step 2: Detect actual file type via magic bytes ──
+    // -- Step 2: Detect actual file type via magic bytes --
     let detected = detect_file_type(&downloaded.path);
     println!("[DEBRID][DOWNLOAD] detected={:?}", detected);
 
     match detected {
-        // ── EXE/SFX: direct executable — try to run and wait (SFX), or return ready
+        // -- EXE/SFX: direct executable � try to run and wait (SFX), or return ready
         DetectedFileType::Executable => {
             let exe_path = ensure_exe_extension(&downloaded.path)?;
             let exe_name_lower = exe_path.file_name()
@@ -535,9 +566,9 @@ pub async fn download_debrid_package(
             println!("[DEBRID][DOWNLOAD] EXE saved: {} installer={}", exe_path.display(), is_installer);
 
             if is_installer {
-                // Download complete — auto-run the installer
+                // Download complete � auto-run the installer
                 println!(
-                    "[DEBRID][DOWNLOAD] Fresh download — auto-running installer: {}",
+                    "[DEBRID][DOWNLOAD] Fresh download � auto-running installer: {}",
                     exe_path.display()
                 );
 
@@ -556,8 +587,8 @@ pub async fn download_debrid_package(
                 return Ok(result);
             }
 
-            // Not a known installer name — treat as game executable (direct play)
-            println!("[DEBRID][DOWNLOAD] EXE is a game executable — ready to play");
+            // Not a known installer name � treat as game executable (direct play)
+            println!("[DEBRID][DOWNLOAD] EXE is a game executable � ready to play");
             emit_installer_progress(
                 &app_handle,
                 &job_id,
@@ -579,8 +610,8 @@ pub async fn download_debrid_package(
             })
         }
 
-        // ── RAR: CLI-first extraction pipeline
-        //        Chain: CLI (temp+flatten+copy) → unrar crate → 7z CLI ──
+        // -- RAR: CLI-first extraction pipeline
+        //        Chain: CLI (temp+flatten+copy) ? unrar crate ? 7z CLI --
         DetectedFileType::Rar => {
             let rar_path = ensure_archive_extension(&downloaded.path, ".rar");
 
@@ -624,8 +655,8 @@ pub async fn download_debrid_package(
 
             match extract_result {
                 Ok(()) => {
-                    // Keep the downloaded archive on disk for retry — Bug 2 fix
-                    // (do NOT fs::remove_file here — if install fails later,
+                    // Keep the downloaded archive on disk for retry � Bug 2 fix
+                    // (do NOT fs::remove_file here � if install fails later,
                     //  retry can skip re-download since the archive is still present).
                     // Exception: if the user explicitly opted to delete the archive
                     // after a successful extraction, honor it now.
@@ -646,11 +677,10 @@ pub async fn download_debrid_package(
                         "Looking for game executable\u{2026}",
                     );
 
-                    // Priority 1: installer/repack-utility files exist → auto-run installer
-                    let installer_name = find_installer_exe_in_dir(&dest_path);
-                    if let Some(installer_name) = installer_name {
-                        let installer_path = dest_path.join(&installer_name);
-                        println!("[DEBRID][DOWNLOAD] RAR extracted — auto-running installer: {}", installer_path.display());
+                    // Priority 1: installer/repack-utility files exist ? auto-run installer
+                    let installer_path = find_installer_exe_recursive(&dest_path);
+                    if let Some(installer_path) = installer_path {
+                        println!("[DEBRID][DOWNLOAD] RAR extracted � auto-running installer: {}", installer_path.display());
 
                         let result = auto_run_installer(&installer_path, &dest_dir);
 
@@ -667,11 +697,11 @@ pub async fn download_debrid_package(
                         return Ok(result);
                     }
 
-                    // Priority 2: no installer → look for a real game executable (plug-and-play)
+                    // Priority 2: no installer ? look for a real game executable (plug-and-play)
                     let game_exe = find_largest_exe_in_dir(&dest_path);
                     if let Some(exe_name) = game_exe {
                         let exe_path = dest_path.join(&exe_name).to_string_lossy().to_string();
-                        println!("[DEBRID][DOWNLOAD] RAR extracted — game executable found: {}", exe_path);
+                        println!("[DEBRID][DOWNLOAD] RAR extracted � game executable found: {}", exe_path);
 
                         emit_installer_progress(
                             &app_handle,
@@ -694,8 +724,20 @@ pub async fn download_debrid_package(
                         });
                     }
 
-                    // Extracted but no installer or game exe found — still success, files on disk
-                    println!("[DEBRID][DOWNLOAD] RAR extracted but no installer or game exe found");
+                    // Extracted but no installer or game exe found � still success, files on disk.
+                    // If a repack utility (quicksfv/verify) is present, guide the user to run the
+                    // repack's own setup manually instead of auto-running the checksum tool.
+                    let has_util = has_repack_utility(&dest_path);
+                    let msg = if has_util {
+                        "Extraction complete. Open the folder and run the repack's setup.exe manually."
+                            .to_string()
+                    } else {
+                        "Extraction complete. Open folder to find the game executable.".to_string()
+                    };
+                    println!(
+                        "[DEBRID][DOWNLOAD] RAR extracted but no installer or game exe found (repack_utility={})",
+                        has_util
+                    );
                     emit_installer_progress(
                         &app_handle,
                         &job_id,
@@ -703,7 +745,7 @@ pub async fn download_debrid_package(
                         100,
                         downloaded.bytes_read,
                         downloaded.total_bytes,
-                        "Extraction complete. Open folder to find the game executable.",
+                        &msg,
                     );
                     Ok(DebridDownloadResult {
                         success: true,
@@ -712,7 +754,7 @@ pub async fn download_debrid_package(
                         executable_path: None,
                         installer_path: None,
                         installer_pid: None,
-                        message: "Extraction complete. No game executable found automatically.".to_string(),
+                        message: msg,
                     })
                 }
                 Err(e) => {
@@ -735,7 +777,115 @@ pub async fn download_debrid_package(
             }
         }
 
-        // ── ZIP: extract using the zip crate (entry-by-entry streaming) ──
+        // -- FreeArc (.arc): extract via 7-Zip CLI (generic `7z x`) --
+        DetectedFileType::Arc => {
+            emit_installer_progress(
+                &app_handle,
+                &job_id,
+                "extracting",
+                50,
+                downloaded.bytes_read,
+                downloaded.total_bytes,
+                "Extracting FreeArc archive\u{2026}",
+            );
+
+            match extract_rar_via_7z(&downloaded.path, &dest_path) {
+                Ok(()) => {
+                    if delete_archive {
+                        match fs::remove_file(&downloaded.path) {
+                            Ok(_) => println!("[DEBRID][EXTRACT] Removed ARC after extraction: {}", downloaded.path.display()),
+                            Err(e) => println!("[DEBRID][EXTRACT] Failed to remove ARC {}: {}", downloaded.path.display(), e),
+                        }
+                    }
+
+                    emit_installer_progress(
+                        &app_handle,
+                        &job_id,
+                        "scanning",
+                        90,
+                        downloaded.bytes_read,
+                        downloaded.total_bytes,
+                        "Looking for game executable\u{2026}",
+                    );
+
+                    // Priority 1: installer/repack-utility files exist ? auto-run installer
+                    let installer_path = find_installer_exe_recursive(&dest_path);
+                    if let Some(installer_path) = installer_path {
+                        println!("[DEBRID][DOWNLOAD] ARC extracted � auto-running installer: {}", installer_path.display());
+
+                        let result = auto_run_installer(&installer_path, &dest_dir);
+
+                        emit_installer_progress(
+                            &app_handle,
+                            &job_id,
+                            "done",
+                            100,
+                            downloaded.bytes_read,
+                            downloaded.total_bytes,
+                            &result.message,
+                        );
+
+                        return Ok(result);
+                    }
+
+                    // Priority 2: no installer ? look for a real game executable
+                    let game_exe = find_largest_exe_in_dir(&dest_path);
+                    if let Some(exe_name) = game_exe {
+                        let exe_path = dest_path.join(&exe_name).to_string_lossy().to_string();
+                        println!("[DEBRID][DOWNLOAD] ARC extracted � game executable found: {}", exe_path);
+
+                        emit_installer_progress(
+                            &app_handle,
+                            &job_id,
+                            "done",
+                            100,
+                            downloaded.bytes_read,
+                            downloaded.total_bytes,
+                            "Game ready to play!",
+                        );
+
+                        return Ok(DebridDownloadResult {
+                            success: true,
+                            status: "ready".to_string(),
+                            install_dir: dest_dir.clone(),
+                            executable_path: Some(exe_path),
+                            installer_path: None,
+                            installer_pid: None,
+                            message: "Game ready to play!".to_string(),
+                        });
+                    }
+
+                    Ok(DebridDownloadResult {
+                        success: true,
+                        status: "needs-setup".to_string(),
+                        install_dir: dest_dir.clone(),
+                        executable_path: None,
+                        installer_path: None,
+                        installer_pid: None,
+                        message: "Extraction complete. No game executable found automatically.".to_string(),
+                    })
+                }
+                Err(e) => {
+                    println!("[DEBRID][DOWNLOAD] 7-Zip extraction of ARC failed: {}", e);
+                    emit_installer_progress(
+                        &app_handle,
+                        &job_id,
+                        "done",
+                        100,
+                        downloaded.bytes_read,
+                        downloaded.total_bytes,
+                        "ARC extraction failed. Install 7-Zip or extract manually.",
+                    );
+
+                    Err(format!(
+                        "FArc archive saved but could not extract automatically. \
+                         Install 7-Zip (https://7-zip.org) and extract manually. ({})", e
+                    ))
+                }
+            }
+        }
+
+        // -- ZIP: extract using the zip crate (entry-by-entry streaming) --
         DetectedFileType::Zip => {
             emit_installer_progress(
                 &app_handle,
@@ -749,8 +899,8 @@ pub async fn download_debrid_package(
 
             extract_zip_with_zip_crate(&downloaded.path, &dest_path)?;
 
-            // Keep the downloaded archive on disk for retry — Bug 2 fix
-            // (do NOT fs::remove_file here — if install fails later,
+            // Keep the downloaded archive on disk for retry � Bug 2 fix
+            // (do NOT fs::remove_file here � if install fails later,
             //  retry can skip re-download since the archive is still present).
             // Exception: if the user explicitly opted to delete the archive
             // after a successful extraction, honor it now.
@@ -771,11 +921,10 @@ pub async fn download_debrid_package(
                 "Looking for game executable\u{2026}",
             );
 
-            // Priority 1: installer/repack-utility files exist → auto-run installer
-            let installer_name = find_installer_exe_in_dir(&dest_path);
-            if let Some(installer_name) = installer_name {
-                let installer_path = dest_path.join(&installer_name);
-                println!("[DEBRID][DOWNLOAD] ZIP extracted — auto-running installer: {}", installer_path.display());
+            // Priority 1: installer/repack-utility files exist ? auto-run installer
+            let installer_path = find_installer_exe_recursive(&dest_path);
+            if let Some(installer_path) = installer_path {
+                println!("[DEBRID][DOWNLOAD] ZIP extracted � auto-running installer: {}", installer_path.display());
 
                 let result = auto_run_installer(&installer_path, &dest_dir);
 
@@ -792,11 +941,11 @@ pub async fn download_debrid_package(
                 return Ok(result);
             }
 
-            // Priority 2: no installer → look for a real game executable (plug-and-play)
+            // Priority 2: no installer ? look for a real game executable (plug-and-play)
             let game_exe = find_largest_exe_in_dir(&dest_path);
             if let Some(exe_name) = game_exe {
                 let exe_path = dest_path.join(&exe_name).to_string_lossy().to_string();
-                println!("[DEBRID][DOWNLOAD] ZIP extracted — game executable found: {}", exe_path);
+                println!("[DEBRID][DOWNLOAD] ZIP extracted � game executable found: {}", exe_path);
 
                 emit_installer_progress(
                     &app_handle,
@@ -819,7 +968,7 @@ pub async fn download_debrid_package(
                 });
             }
 
-            // Nothing found — still success, files on disk
+            // Nothing found � still success, files on disk
             println!("[DEBRID][DOWNLOAD] ZIP extracted but no game .exe or setup.exe found");
             emit_installer_progress(
                 &app_handle,
@@ -850,14 +999,14 @@ pub async fn download_debrid_package(
     }
 }
 
-// ── Setup command: run the already-extracted installer, no download ──
+// -- Setup command: run the already-extracted installer, no download --
 
 /// Run a previously-downloaded repack installer (setup.exe) in detached mode.
 ///
 /// Unlike `download_debrid_package`, this command does NOT download or extract
-/// anything — it assumes the installer is already on disk from a prior
+/// anything � it assumes the installer is already on disk from a prior
 /// `download_debrid_package` call that returned `status="needs-setup"`.
-/// Returns `status="installing"` with `installer_pid` — TS must poll
+/// Returns `status="installing"` with `installer_pid` � TS must poll
 /// `check_installer_status` to know when the installer finishes.
 #[tauri::command]
 pub fn setup_debrid_game(
@@ -881,7 +1030,7 @@ pub fn setup_debrid_game(
 
     match spawn_installer_detached(installer) {
         Ok(pid) => {
-            println!("[DEBRID][SETUP] Installer PID={} — TS will poll", pid);
+            println!("[DEBRID][SETUP] Installer PID={} � TS will poll", pid);
             Ok(DebridDownloadResult {
                 success: true,
                 status: "installing".to_string(),
@@ -907,12 +1056,12 @@ pub fn setup_debrid_game(
     }
 }
 
-// ── Spawn installer, WAIT for it to close, then scan for game .exe ──
+// -- Spawn installer, WAIT for it to close, then scan for game .exe --
 
 /// Run an installer executable in the foreground and wait for it to complete,
 /// then scan the destination directory for the game executable.
 ///
-/// Called from `setup_debrid_game` — the user sees the installer GUI,
+/// Called from `setup_debrid_game` � the user sees the installer GUI,
 /// Rust waits for the process to exit, then scans for the game .exe
 /// and returns the path.
 #[allow(dead_code)]
@@ -946,7 +1095,7 @@ fn spawn_installer_and_wait(
                 return Err(format!("Failed to spawn installer: {}", e));
             }
 
-            println!("[DEBRID][INSTALL] Elevation required — retrying via PowerShell RunAs");
+            println!("[DEBRID][INSTALL] Elevation required � retrying via PowerShell RunAs");
             let safe_path = installer_path.to_string_lossy().replace('\'', "''");
             std::process::Command::new("powershell")
                 .args([
@@ -973,14 +1122,14 @@ fn spawn_installer_and_wait(
     };
 
     let pid = child.id();
-    println!("[DEBRID][INSTALL] Setup.exe spawned PID={} — waiting for exit", pid);
+    println!("[DEBRID][INSTALL] Setup.exe spawned PID={} � waiting for exit", pid);
 
     let exit_status = child
         .wait()
         .map_err(|e| format!("Failed to wait for installer: {}", e))?;
 
     println!(
-        "[DEBRID][INSTALL] Setup.exe exited with status={:?} — scanning for game .exe",
+        "[DEBRID][INSTALL] Setup.exe exited with status={:?} � scanning for game .exe",
         exit_status.code()
     );
 
@@ -1004,6 +1153,30 @@ pub(crate) fn auto_run_installer(
     installer_path: &Path,
     dest_dir: &str,
 ) -> DebridDownloadResult {
+    // Deterministic guard: never spawn the installer while a download is still
+    // in flight. `has_partial_install_artifacts` reports a non-empty `tmp/`
+    // directory (an in-progress `.part` file). The download removes `tmp/` on
+    // completion, so a legitimately-finished set always passes, and the race
+    // that previously let setup.exe run before the volumes finished is closed
+    // without a timer.
+    if has_partial_install_artifacts(Path::new(dest_dir)) {
+        println!(
+            "[DEBRID][AUTO_INSTALL] SKIP: download still in flight (partial artifacts present) - not spawning {}",
+            installer_path.display()
+        );
+        return DebridDownloadResult {
+            success: true,
+            status: "needs-setup".to_string(),
+            install_dir: dest_dir.to_string(),
+            executable_path: None,
+            installer_path: Some(installer_path.to_string_lossy().to_string()),
+            installer_pid: None,
+            message:
+                "Download still in progress - setup will not run until all parts are on disk. Click Install Now to retry."
+                    .to_string(),
+        };
+    }
+
     println!(
         "[DEBRID][AUTO_INSTALL] Spawning installer detached: {}",
         installer_path.display()
@@ -1011,7 +1184,7 @@ pub(crate) fn auto_run_installer(
 
     match spawn_installer_detached(installer_path) {
         Ok(pid) => {
-            println!("[DEBRID][AUTO_INSTALL] Installer PID={} — tracking in TS", pid);
+            println!("[DEBRID][AUTO_INSTALL] Installer PID={} � tracking in TS", pid);
             DebridDownloadResult {
                 success: true,
                 status: "installing".to_string(),
@@ -1019,7 +1192,7 @@ pub(crate) fn auto_run_installer(
                 executable_path: None,
                 installer_path: Some(installer_path.to_string_lossy().to_string()),
                 installer_pid: Some(pid),
-                message: format!("Installer started (PID {}) — tracking progress", pid),
+                message: format!("Installer started (PID {}) � tracking progress", pid),
             }
         }
         Err(e) => {
@@ -1037,7 +1210,7 @@ pub(crate) fn auto_run_installer(
     }
 }
 
-// ── Detached spawn + polling helpers ──
+// -- Detached spawn + polling helpers --
 
 /// Spawn an installer in detached mode (no wait, process outlives Rust).
 ///
@@ -1049,12 +1222,22 @@ fn spawn_installer_detached(installer_path: &Path) -> Result<u32, String> {
         return Err(format!("Installer not found: {}", installer_path.display()));
     }
 
+    // Many repack installers (setup.exe + `.bin` volumes) resolve their data
+    // files and write output relative to their own working directory. Without
+    // `current_dir` the process inherits this app's CWD, which may not contain
+    // the `.bin` parts ? silent partial installs. Always anchor to the
+    // installer's own folder.
+    let work_dir = installer_path.parent().unwrap_or_else(|| Path::new("."));
+    let work_dir_str = work_dir.to_string_lossy();
+
     println!(
-        "[DEBRID][INSTALL] Detached spawn: {}",
-        installer_path.display()
+        "[DEBRID][INSTALL] Detached spawn: {} (cwd={})",
+        installer_path.display(),
+        work_dir_str
     );
 
     match std::process::Command::new(installer_path)
+        .current_dir(work_dir)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
@@ -1062,7 +1245,7 @@ fn spawn_installer_detached(installer_path: &Path) -> Result<u32, String> {
     {
         Ok(child) => {
             let pid = child.id();
-            // Detach — let the process outlive our command
+            // Detach � let the process outlive our command
             std::mem::forget(child);
             println!("[DEBRID][INSTALL] Detached PID={}", pid);
             Ok(pid)
@@ -1077,8 +1260,9 @@ fn spawn_installer_detached(installer_path: &Path) -> Result<u32, String> {
             }
 
             // Elevation required: use PowerShell Start-Process (no -Wait = detached)
-            println!("[DEBRID][INSTALL] Elevation required — PowerShell RunAs (detached)");
+            println!("[DEBRID][INSTALL] Elevation required � PowerShell RunAs (detached)");
             let safe_path = installer_path.to_string_lossy().replace('\'', "''");
+            let safe_work_dir = work_dir_str.replace('\'', "''");
             let output = std::process::Command::new("powershell")
                 .args([
                     "-NoProfile",
@@ -1086,8 +1270,8 @@ fn spawn_installer_detached(installer_path: &Path) -> Result<u32, String> {
                     "Hidden",
                     "-Command",
                     &format!(
-                        "Start-Process -FilePath '{}' -Verb RunAs -PassThru | Select-Object -ExpandProperty Id",
-                        safe_path
+                        "Start-Process -FilePath '{}' -WorkingDirectory '{}' -Verb RunAs -PassThru | Select-Object -ExpandProperty Id",
+                        safe_path, safe_work_dir
                     ),
                 ])
                 .output()
@@ -1152,10 +1336,10 @@ fn is_process_running(pid: u32) -> bool {
 
 /// Poll an installer process status by PID.
 ///
-/// When the installer is still running → `status: "running"`.
+/// When the installer is still running ? `status: "running"`.
 /// When the installer has exited:
-///   - Game .exe found on disk → `status: "ready"` + `executable_path`
-///   - No .exe found → `status: "needs-path"` (modal will ask user)
+///   - Game .exe found on disk ? `status: "ready"` + `executable_path`
+///   - No .exe found ? `status: "needs-path"` (modal will ask user)
 #[tauri::command]
 pub fn check_installer_status(
     pid: u32,
@@ -1172,8 +1356,8 @@ pub fn check_installer_status(
         });
     }
 
-    // Process has exited — scan for game executable
-    println!("[DEBRID][POLL] PID={} has exited — scanning for game .exe", pid);
+    // Process has exited � scan for game executable
+    println!("[DEBRID][POLL] PID={} has exited � scanning for game .exe", pid);
 
     let dir_path = Path::new(&install_dir);
     if !dir_path.exists() || !dir_path.is_dir() {
@@ -1195,7 +1379,7 @@ pub fn check_installer_status(
             })
         }
         None => {
-            println!("[DEBRID][POLL] No game executable found — needs-path");
+            println!("[DEBRID][POLL] No game executable found � needs-path");
             Ok(InstallerCheckResult {
                 status: "needs-path".to_string(),
                 executable_path: None,
@@ -1255,7 +1439,7 @@ pub fn run_installer_again(
     }
 }
 
-// ── Verify command: check if game .exe exists in install dir ──
+// -- Verify command: check if game .exe exists in install dir --
 
 /// Check whether a game executable exists in a Debrid install directory.
 /// Used for manual "Verify Installation" and post-installer verification.
@@ -1292,7 +1476,7 @@ pub fn verify_debrid_installation(
     })
 }
 
-// ── Internal helpers ──
+// -- Internal helpers --
 
 struct DownloadedFile {
     path: PathBuf,
@@ -1323,7 +1507,7 @@ enum ResumeDecision {
     ResumeFrom(u64),
     /// Discard the partial file and start from byte 0.
     FreshStart,
-    /// The server confirms the partial already covers the whole file — rename to final.
+    /// The server confirms the partial already covers the whole file � rename to final.
     AlreadyComplete,
 }
 
@@ -1333,6 +1517,24 @@ fn part_path(tmp_dir: &Path, file_name: &str) -> PathBuf {
 
 fn meta_path(tmp_dir: &Path, file_name: &str) -> PathBuf {
     tmp_dir.join(format!("{}.part.meta", file_name))
+}
+
+/// True when `dest_dir` holds leftover artifacts of an interrupted install:
+/// any content in `tmp/` (`.part`, `.part.meta`, or a transient `.meta.tmp`)
+/// means a previous download started but never completed. When present, Step 0
+/// must NOT short-circuit to "already extracted" — the on-disk installer/game
+/// exe may be partial or corrupt, and auto-running setup would silently break.
+/// The normal completion path removes `tmp/`, so a non-empty `tmp/` is exactly
+/// the "in-flight or interrupted" signal.
+fn has_partial_install_artifacts(dest_dir: &Path) -> bool {
+    let tmp_dir = dest_dir.join("tmp");
+    if !tmp_dir.exists() {
+        return false;
+    }
+    match fs::read_dir(&tmp_dir) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(_) => false,
+    }
 }
 
 /// Load the resume offset for a download, if any.
@@ -1345,7 +1547,7 @@ fn load_checkpoint(tmp_dir: &Path, file_name: &str, uri: &str) -> Option<u64> {
     let meta = meta_path(tmp_dir, file_name);
 
     if !part.exists() {
-        // Stale meta without a part — nothing to resume.
+        // Stale meta without a part � nothing to resume.
         let _ = fs::remove_file(&meta);
         return None;
     }
@@ -1359,7 +1561,7 @@ fn load_checkpoint(tmp_dir: &Path, file_name: &str, uri: &str) -> Option<u64> {
     }
 
     if !meta.exists() {
-        // Part without meta — can't verify the source; start over.
+        // Part without meta � can't verify the source; start over.
         let _ = fs::remove_file(&part);
         return None;
     }
@@ -1375,14 +1577,14 @@ fn load_checkpoint(tmp_dir: &Path, file_name: &str, uri: &str) -> Option<u64> {
     let cp: DownloadCheckpoint = match serde_json::from_str(&meta_str) {
         Ok(cp) => cp,
         Err(_) => {
-            // Corrupt meta — can't trust the partial.
+            // Corrupt meta � can't trust the partial.
             let _ = fs::remove_file(&part);
             let _ = fs::remove_file(&meta);
             return None;
         }
     };
     if cp.uri != uri {
-        // Different source — the partial belongs to another repack.
+        // Different source � the partial belongs to another repack.
         let _ = fs::remove_file(&part);
         let _ = fs::remove_file(&meta);
         return None;
@@ -1413,6 +1615,24 @@ fn write_checkpoint(tmp_dir: &Path, file_name: &str, uri: &str, downloaded: u64,
     }
 }
 
+/// Shrink-only truncation of the partial file to exactly `bytes_read` bytes.
+///
+/// Called on every non-complete exit (cancel, pause, network/stream error,
+/// write error). A chunk that was partially written before a failure can leave
+/// the on-disk `.part` LONGER than the bytes `bytes_read` acknowledges; resuming
+/// from an offset that disagrees with the checkpoint reassembles the file with a
+/// gap ? corruption. Truncating (never extending) guarantees the on-disk part
+/// size always matches the checkpoint metadata, so `load_checkpoint`'s
+/// on-disk-size-is-authoritative resume stays consistent.
+async fn truncate_part_to(file: &mut tokio::fs::File, bytes_read: u64) {
+    let _ = file.flush().await;
+    if let Ok(meta) = file.metadata().await {
+        if meta.len() > bytes_read {
+            let _ = file.set_len(bytes_read).await;
+        }
+    }
+}
+
 /// Decide how to proceed with a download attempt based on the local partial
 /// (`resume_from`) and the server response.
 fn decide_resume(resume_from: u64, status: reqwest::StatusCode, content_length: Option<u64>) -> ResumeDecision {
@@ -1420,16 +1640,16 @@ fn decide_resume(resume_from: u64, status: reqwest::StatusCode, content_length: 
         return ResumeDecision::FreshStart;
     }
     match status.as_u16() {
-        // Partial Content — the server honors the Range. Content-Length is the
+        // Partial Content � the server honors the Range. Content-Length is the
         // *remaining* bytes (0 means we already have the whole file).
         206 => match content_length {
             Some(rem) if rem == 0 => ResumeDecision::AlreadyComplete,
             _ => ResumeDecision::ResumeFrom(resume_from),
         },
         // 416 Range Not Satisfiable with a resume offset means the local partial
-        // disagrees with the server — safest to restart.
+        // disagrees with the server � safest to restart.
         416 => ResumeDecision::FreshStart,
-        // 200 (or anything else): server ignored the Range header → full restart.
+        // 200 (or anything else): server ignored the Range header ? full restart.
         _ => ResumeDecision::FreshStart,
     }
 }
@@ -1444,7 +1664,7 @@ const DOWNLOAD_MAX_ATTEMPTS: u32 = 3;
 const DOWNLOAD_RETRY_BACKOFF_MS: [u64; 2] = [2_000, 5_000];
 
 /// Backoff (ms) to wait before the next retry attempt, or `None` when no
-/// attempts remain. `attempt` is 1-based (the first attempt has no backoff —
+/// attempts remain. `attempt` is 1-based (the first attempt has no backoff �
 /// it just happened).
 fn retry_backoff_ms(attempt: u32) -> Option<u64> {
     if attempt == 0 || attempt >= DOWNLOAD_MAX_ATTEMPTS {
@@ -1469,6 +1689,8 @@ async fn download_file_to_dest(
     app_handle: &AppHandle,
     job_id: &str,
     bearer: Option<&str>,
+    preferred_filename: Option<&str>,
+    source_key: &str,
 ) -> Result<DownloadFileOutcome, String> {
     fs::create_dir_all(dest_dir)
         .map_err(|e| format!("Failed to create destination dir: {}", e))?;
@@ -1478,10 +1700,46 @@ async fn download_file_to_dest(
     fs::create_dir_all(&tmp_dir)
         .map_err(|e| format!("Failed to create tmp dir: {}", e))?;
 
-    // ── Bug 1 fix: Check if file already exists on disk ──
-    let file_name = clean_download_filename(extract_filename_from_uri(uri));
-    let dest_path = dest_dir.join(&file_name);
-    if dest_path.exists() {
+    // -- Bug 1 fix: Check if file already exists on disk --
+    // Prefer the resolver-provided filename (preserves the real extension, e.g.
+    // `setup.exe` for a FitGirl repack) over what can be derived from the CDN URL.
+    // Prefer the resolver-provided filename. When it carries a nested in-archive
+    // path (e.g. `MD5/checksums.md5`), PRESERVE that relative structure so
+    // checksum folders keep their place instead of being flattened to the root;
+    // a flat name (or the URI-derived slug) stays at the dest root via the plain
+    // sanitizer.
+    let (file_name, dest_path): (String, PathBuf) =
+        match preferred_filename.and_then(normalize_download_relative_path) {
+            Some(rel) => {
+                let joined = dest_dir.join(Path::new(&rel));
+                (rel, joined)
+            }
+            None => {
+                let flat = clean_download_filename(
+                    preferred_filename
+                        .map(|s| s.to_string())
+                        .or_else(|| extract_filename_from_uri(uri)),
+                );
+                let joined = dest_dir.join(&flat);
+                (flat, joined)
+            }
+        };
+    let part = part_path(&tmp_dir, &file_name);
+    let meta = meta_path(&tmp_dir, &file_name);
+
+    // A nested destination path (e.g. `dest_dir/MD5/checksums.md5`) needs its
+    // parent created before the completion rename succeeds.
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create dest parent dir: {}", e))?;
+    }
+
+    // Only treat an existing final file as "already downloaded" when there is no
+    // in-flight partial. A leftover `.part`/`.part.meta` (preserved on cancel,
+    // pause or error) means a previous attempt never finished � trusting the
+    // final file would skip the download and leave corrupt data in place. When a
+    // partial exists, fall through and resume it via the checkpoint below.
+    if dest_path.exists() && !part.exists() && !meta.exists() {
         let metadata = dest_path.metadata().map_err(|e| format!("Failed to read file metadata: {}", e))?;
         let file_len = metadata.len();
         if file_len > 0 {
@@ -1514,14 +1772,14 @@ async fn download_file_to_dest(
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    // ── Resume support ──
+    // -- Resume support --
     // A previous attempt may have left tmp/<file>.part + tmp/<file>.part.meta
     // (preserved on cancel/error). When present, we send an HTTP Range header and
     // append, so interrupted downloads resume instead of restarting from byte 0.
-    let part = part_path(&tmp_dir, &file_name);
-    let meta = meta_path(&tmp_dir, &file_name);
+    // The checkpoint is keyed on `source_key` (stable origin URL), not the volatile
+    // CDN link, so a re-resolved gofile URL still resumes the same `.part`.
 
-    // ── Transient auto-retry ──
+    // -- Transient auto-retry --
     // A brief network drop (Wi-Fi switch, momentary loss, server reset) is absorbed
     // by retrying up to DOWNLOAD_MAX_ATTEMPTS with a small backoff. Each retry
     // re-loads the on-disk checkpoint, so HTTP Range resumes from the last written
@@ -1531,11 +1789,11 @@ async fn download_file_to_dest(
     let mut attempt: u32 = 0;
     'attempt: loop {
         attempt += 1;
-        let mut resume_from = load_checkpoint(&tmp_dir, &file_name, uri).unwrap_or(0);
+        let mut resume_from = load_checkpoint(&tmp_dir, &file_name, source_key).unwrap_or(0);
 
-        // ── Request / resume decision loop ──
+        // -- Request / resume decision loop --
         // Bounded loop (max 2 iterations): send the request, react to the status.
-        // A 416 on a resume attempt means our offset disagrees with the server — drop
+        // A 416 on a resume attempt means our offset disagrees with the server � drop
         // the partial and retry once from zero. Everything else falls through to the
         // streaming phase below. (Async recursion is not allowed, hence the loop.)
         let (response, resume_from) = loop {
@@ -1567,7 +1825,7 @@ async fn download_file_to_dest(
                     match retry_backoff_ms(attempt) {
                         Some(backoff) => {
                             println!(
-                                "[DEBRID][RETRY] Request failed (attempt {}/{}): {} — retrying in {}ms",
+                                "[DEBRID][RETRY] Request failed (attempt {}/{}): {} � retrying in {}ms",
                                 attempt, DOWNLOAD_MAX_ATTEMPTS, e, backoff
                             );
                             tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
@@ -1584,7 +1842,7 @@ async fn download_file_to_dest(
                 }
             };
 
-            // Reject Content-Type text/html — this is an error page or login page, not a file.
+            // Reject Content-Type text/html � this is an error page or login page, not a file.
             if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
                 if let Ok(ct_str) = content_type.to_str() {
                     if ct_str.contains("text/html") {
@@ -1600,7 +1858,7 @@ async fn download_file_to_dest(
             let status = response.status();
             if status.as_u16() == 416 && resume_from > 0 {
                 // 416 on a resume attempt: the server doesn't know our offset.
-                println!("[DEBRID][RESUME] 416 Range Not Satisfiable — restarting from zero");
+                println!("[DEBRID][RESUME] 416 Range Not Satisfiable � restarting from zero");
                 let _ = fs::remove_file(&part);
                 let _ = fs::remove_file(&meta);
                 resume_from = 0;
@@ -1614,7 +1872,7 @@ async fn download_file_to_dest(
             match decide_resume(resume_from, status, response.content_length()) {
                 ResumeDecision::ResumeFrom(n) => break (response, n),
                 ResumeDecision::AlreadyComplete => {
-                    // Server confirms we already hold the entire file — rename part → final.
+                    // Server confirms we already hold the entire file � rename part ? final.
                     println!("[DEBRID][RESUME] Server confirms partial is complete: {}", file_name);
                     drop(response);
                     let _ = fs::remove_file(&meta);
@@ -1630,7 +1888,7 @@ async fn download_file_to_dest(
                 }
                 ResumeDecision::FreshStart => {
                     if resume_from > 0 {
-                        println!("[DEBRID][RESUME] Server ignored Range — restarting from zero");
+                        println!("[DEBRID][RESUME] Server ignored Range � restarting from zero");
                     }
                     let _ = fs::remove_file(&part);
                     let _ = fs::remove_file(&meta);
@@ -1654,6 +1912,15 @@ async fn download_file_to_dest(
         let remaining = total_bytes.saturating_sub(resume_from);
         check_disk_space(dest_dir, remaining)?;
 
+        // Defense-in-depth: make sure the partial's parent directory exists before
+        // opening it. `file_name` is already sanitized to a single component via
+        // `clean_download_filename`, but a residual nested name (e.g. from a stale
+        // checkpoint) must never surface as a silent `os error 3` mid-download.
+        if let Some(parent) = part.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create part dir: {}", e))?;
+        }
+
         // Open the partial in append mode when resuming, else create fresh.
         let mut file = if resume_from > 0 {
             tokio::fs::OpenOptions::new()
@@ -1668,7 +1935,7 @@ async fn download_file_to_dest(
                 .map_err(|e| format!("Failed to create file: {}", e))?
         };
 
-        // ── Stream the response body chunk-by-chunk ──
+        // -- Stream the response body chunk-by-chunk --
         // Each chunk is written to disk immediately (async, non-blocking).
         // No part of the file is retained in memory after writing.
         // Progress is throttled to avoid flooding Tauri IPC.
@@ -1681,24 +1948,26 @@ async fn download_file_to_dest(
             // Check for cancellation on every chunk. The partial file + checkpoint are
             // PRESERVED so a later retry resumes via HTTP Range.
             if is_job_cancelled(job_id) {
-                drop(file);
-                write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                truncate_part_to(&mut file, bytes_read).await;
+                write_checkpoint(&tmp_dir, &file_name, source_key, bytes_read, total_bytes);
                 println!(
                     "[DEBRID][CANCEL] Download aborted by user (partial kept for resume): {} ({} bytes)",
                     file_name, bytes_read
                 );
+                drop(file);
                 return Err("Download cancelled by user.".to_string());
             }
 
             // Paused on every chunk: checkpoint and stop cleanly so a resume reuses
             // the partial via HTTP Range.
             if is_job_paused(job_id) {
-                drop(file);
-                write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                truncate_part_to(&mut file, bytes_read).await;
+                write_checkpoint(&tmp_dir, &file_name, source_key, bytes_read, total_bytes);
                 println!(
                     "[DEBRID][PAUSE] Download paused (partial kept for resume): {} ({} bytes)",
                     file_name, bytes_read
                 );
+                drop(file);
                 return Ok(DownloadFileOutcome::Paused);
             }
 
@@ -1706,9 +1975,11 @@ async fn download_file_to_dest(
                 Ok(c) => c,
                 Err(e) => {
                     // Network/stream error mid-download: keep the partial + checkpoint so
-                    // a retry resumes via HTTP Range. Retry with backoff when attempts
-                    // remain; cancel/pause abort immediately.
-                    write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
+                    // a retry resumes via HTTP Range. Truncate to bytes_read first so the
+                    // on-disk part size matches the checkpointed offset. Retry with
+                    // backoff when attempts remain; cancel/pause abort immediately.
+                    truncate_part_to(&mut file, bytes_read).await;
+                    write_checkpoint(&tmp_dir, &file_name, source_key, bytes_read, total_bytes);
                     if is_job_cancelled(job_id) {
                         return Err(format!("Download stream error: {}", e));
                     }
@@ -1719,7 +1990,7 @@ async fn download_file_to_dest(
                     match retry_backoff_ms(attempt) {
                         Some(backoff) => {
                             println!(
-                                "[DEBRID][RETRY] Stream error (attempt {}/{}): {} — retrying in {}ms",
+                                "[DEBRID][RETRY] Stream error (attempt {}/{}): {} � retrying in {}ms",
                                 attempt, DOWNLOAD_MAX_ATTEMPTS, e, backoff
                             );
                             drop(file);
@@ -1736,12 +2007,13 @@ async fn download_file_to_dest(
                     }
                 }
             };
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| {
-                    write_checkpoint(&tmp_dir, &file_name, uri, bytes_read, total_bytes);
-                    format!("Write error during download: {}", e)
-                })?;
+            if let Err(e) = file.write_all(&chunk).await {
+                // A partial write may have left the file longer than bytes_read �
+                // truncate so the resume offset stays consistent with the checkpoint.
+                truncate_part_to(&mut file, bytes_read).await;
+                write_checkpoint(&tmp_dir, &file_name, source_key, bytes_read, total_bytes);
+                return Err(format!("Write error during download: {}", e));
+            }
             bytes_read += chunk.len() as u64;
 
             // Throttle progress: emit max 4 times per second
@@ -1838,7 +2110,7 @@ fn sanitize_zip_entry_path(path: &str) -> PathBuf {
 
 /// Extract a RAR archive using the `unrar` crate (pure Rust, no external process).
 ///
-/// This is the primary extractor — no CMD window, no external dependencies.
+/// This is the primary extractor � no CMD window, no external dependencies.
 /// If `unrar` fails (corrupt archive, unsupported feature), falls back to
 /// `extract_rar_via_7z` (external process with hidden window).
 pub(crate) fn extract_rar_with_unrar(rar_path: &Path, dest_dir: &Path) -> Result<(), String> {
@@ -1958,7 +2230,7 @@ pub(crate) fn extract_rar_with_unrar(rar_path: &Path, dest_dir: &Path) -> Result
     Ok(())
 }
 
-/// ─── Primary: CLI-based RAR extraction (temp dir + flatten + copy) ───
+/// --- Primary: CLI-based RAR extraction (temp dir + flatten + copy) ---
 ///
 /// 1. Detects the best available CLI tool (UnRAR, 7z, unar)
 /// 2. Extracts to a temporary directory
@@ -1992,12 +2264,12 @@ impl RarCliTool {
 
 /// Search for available RAR-extraction CLI tools on the system.
 ///
-/// Check order: WinRAR → 7-Zip → unar (PATH only).
+/// Check order: WinRAR ? 7-Zip ? unar (PATH only).
 /// Each tool path is verified (file exists or in PATH).
 fn detect_rar_extractors() -> Vec<RarCliTool> {
     let mut tools: Vec<RarCliTool> = Vec::new();
 
-    // ── 1. UnRAR.exe (WinRAR) in Program Files ──
+    // -- 1. UnRAR.exe (WinRAR) in Program Files --
     for base in [
         r"C:\Program Files\WinRAR",
         r"C:\Program Files (x86)\WinRAR",
@@ -2009,7 +2281,7 @@ fn detect_rar_extractors() -> Vec<RarCliTool> {
         }
     }
 
-    // ── 2. 7z.exe (7-Zip) in Program Files ──
+    // -- 2. 7z.exe (7-Zip) in Program Files --
     for base in [
         r"C:\Program Files\7-Zip",
         r"C:\Program Files (x86)\7-Zip",
@@ -2021,12 +2293,12 @@ fn detect_rar_extractors() -> Vec<RarCliTool> {
         }
     }
 
-    // ── 3. unar.exe via PATH ──
+    // -- 3. unar.exe via PATH --
     if let Some(p) = find_in_path("unar.exe") {
         tools.push(RarCliTool::Unar(p));
     }
 
-    // ── 4. Also try bare names via PATH for UnRAR and 7z ──
+    // -- 4. Also try bare names via PATH for UnRAR and 7z --
     if !tools.iter().any(|t| matches!(t, RarCliTool::UnRar(_))) {
         if let Some(p) = find_in_path("UnRAR.exe") {
             tools.push(RarCliTool::UnRar(p));
@@ -2139,10 +2411,10 @@ pub(crate) fn extract_rar_with_cli(rar_path: &Path, dest_dir: &Path) -> Result<(
             continue;
         }
 
-        // ── Flatten single-root folder ──
+        // -- Flatten single-root folder --
         let source = flatten_single_root_folder(&extract_root);
 
-        // ── Copy with rollback ──
+        // -- Copy with rollback --
         match copy_recursive_with_rollback(&source, dest_dir) {
             Ok(copied) => {
                 println!(
@@ -2151,7 +2423,7 @@ pub(crate) fn extract_rar_with_cli(rar_path: &Path, dest_dir: &Path) -> Result<(
                     name,
                     copied
                 );
-                // temp_dir is dropped here → auto-cleanup
+                // temp_dir is dropped here ? auto-cleanup
                 return Ok(());
             }
             Err(e) => {
@@ -2303,7 +2575,7 @@ pub(crate) fn extract_rar_via_7z(rar_path: &Path, dest_dir: &Path) -> Result<(),
 /// Extract a ZIP archive entry-by-entry using the `zip` crate.
 ///
 /// The `zip` crate reads the central directory (small metadata, kilobytes)
-/// then decompresses each entry via a streaming reader — memory usage stays
+/// then decompresses each entry via a streaming reader � memory usage stays
 /// proportional to the buffer size (~64 KB), NOT the archive size.
 /// This avoids the gigabytes of RAM that PowerShell `Expand-Archive` consumes.
 pub(crate) fn extract_zip_with_zip_crate(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
@@ -2369,8 +2641,8 @@ pub(crate) fn extract_zip_with_zip_crate(zip_path: &Path, dest_dir: &Path) -> Re
 }
 
 /// Look for a setup/installer executable in a directory (top-level only).
-/// Known repack utility executables — checksum tools, verify helpers, etc.
-/// These are NOT game executables — they signal that the extracted content needs
+/// Known repack utility executables � checksum tools, verify helpers, etc.
+/// These are NOT game executables � they signal that the extracted content needs
 /// manual setup installation (typically a FitGirl/DODI/ElAmigos repack).
 pub(crate) const REPACK_UTILITY_EXES: &[&str] = &[
     "quicksfv.exe", "quicksfv64.exe",
@@ -2386,28 +2658,102 @@ pub(crate) const INSTALLER_EXE_NAMES: &[&str] = &[
     "autorun.exe",
 ];
 
-/// Check whether `dir` contains any installer or repack-utility file.
+/// Check whether `dir` contains a real setup/installer executable (top-level).
 ///
-/// Returns the name of the first match using a priority order:
-/// setup.exe (most authoritative) → other installer names → repack utilities.
+/// Only returns genuine installer names (`setup.exe`, `installer.exe`, ...).
+/// Repack utility executables (checksum/verify tools) are deliberately NOT
+/// returned here: callers use this to decide whether to AUTO-RUN setup, and
+/// spawning `quicksfv.exe` as if it were the game installer breaks installs.
+/// Detect their presence separately via [`find_repack_utility_exe_in_dir`].
 pub(crate) fn find_installer_exe_in_dir(dir: &Path) -> Option<String> {
-    // Priority 1: real installer EXEs
     for candidate in INSTALLER_EXE_NAMES {
         let path = dir.join(candidate);
         if path.exists() && path.is_file() {
             return Some(candidate.to_string());
         }
     }
+    None
+}
 
-    // Priority 2: repack utilities (checksum tools, verify helpers)
+/// Look for a repack-utility executable (`quicksfv`, `verify`, checksum tools)
+/// in a directory (top-level only). These signal the extracted content still
+/// needs a manual setup installation — they are never auto-run as installers.
+pub(crate) fn find_repack_utility_exe_in_dir(dir: &Path) -> Option<String> {
     for candidate in REPACK_UTILITY_EXES {
         let path = dir.join(candidate);
         if path.exists() && path.is_file() {
             return Some(candidate.to_string());
         }
     }
-
     None
+}
+
+/// Whether `dir` contains a repack-utility file (checksum/verify tool).
+pub(crate) fn has_repack_utility(dir: &Path) -> bool {
+    find_repack_utility_exe_in_dir(dir).is_some()
+}
+
+/// Recursively find an installer/repack-utility EXE, preferring the root dir and
+/// shallow folders. Honors the redistributable-directory and uninstaller/crash
+/// handler exclusions so we never auto-run a `_Redist` .exe or an uninstaller.
+///
+/// Returns the path of the first match (deepest-first is NOT preferred � we walk
+/// breadth-first so a root-level `setup.exe` wins over a nested one).
+pub(crate) fn find_installer_exe_recursive(dir: &Path) -> Option<PathBuf> {
+    // Prefer a direct root match first.
+    if let Some(name) = find_installer_exe_in_dir(dir) {
+        return Some(dir.join(name));
+    }
+
+    fn walk(dir: &Path, depth: usize) -> Option<PathBuf> {
+        if depth > 12 {
+            return None;
+        }
+        let Ok(entries) = fs::read_dir(dir) else {
+            return None;
+        };
+        let subdirs: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|p| p.is_dir())
+            .filter(|p| {
+                let dir_name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                !is_excluded_redist_dir(&dir_name)
+            })
+            .collect();
+
+        // Check each subdir for a direct installer before descending further.
+        for sub in &subdirs {
+            if let Some(name) = find_installer_exe_in_dir(sub) {
+                return Some(sub.join(name));
+            }
+        }
+        for sub in &subdirs {
+            if let Some(found) = walk(sub, depth + 1) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    walk(dir, 0)
+}
+
+/// Whether a directory name is a redistributable folder we must never recurse
+/// into / auto-pick the game executable from (`_Redist`, `_CommonRedist`).
+pub(crate) fn is_excluded_redist_dir(dir_name: &str) -> bool {
+    let lower = dir_name.to_lowercase();
+    lower == "_redist" || lower == "_commonredist"
+}
+
+/// Whether an executable name is one we must never auto-pick as the game path
+/// (uninstallers `unins000*` and Unity crash handlers `UnityCrashHandler64*`).
+pub(crate) fn is_excluded_exe_name(exe_name: &str) -> bool {
+    let lower = exe_name.to_lowercase();
+    lower.starts_with("unins000") || lower.starts_with("unitycrashhandler64")
 }
 
 /// Scan a directory for the largest .exe file (excluding setup/installer/repack-utility names).
@@ -2436,6 +2782,10 @@ pub(crate) fn find_largest_exe_in_dir(dir: &Path) -> Option<String> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if is_excluded_redist_dir(&dir_name) {
+                    continue;
+                }
                 visit_dir(&path, exclude, largest);
                 continue;
             }
@@ -2445,7 +2795,7 @@ pub(crate) fn find_largest_exe_in_dir(dir: &Path) -> Option<String> {
             }
             let name = entry.file_name().to_string_lossy().to_string();
             let name_lower = name.to_lowercase();
-            if exclude.contains(&name_lower.as_str()) {
+            if exclude.contains(&name_lower.as_str()) || is_excluded_exe_name(&name_lower) {
                 continue;
             }
             if let Ok(meta) = path.metadata() {
@@ -2463,7 +2813,7 @@ pub(crate) fn find_largest_exe_in_dir(dir: &Path) -> Option<String> {
     largest.map(|(name, _)| name)
 }
 
-// ─── Launch ────────────────────────────────────────────────────────────
+// --- Launch ------------------------------------------------------------
 
 /// Result of a Debrid game launch attempt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2484,7 +2834,7 @@ pub struct DebridLaunchResult {
 /// Launch an installed Debrid game by running its executable directly.
 ///
 /// Debrid games are installed locally to `games/debrid/<providerGameId>/`,
-/// so no protocol launcher is needed — just `Command::new(executable_path)`.
+/// so no protocol launcher is needed � just `Command::new(executable_path)`.
 #[tauri::command]
 pub fn launch_debrid_game(
     executable_path: String,
@@ -2531,18 +2881,134 @@ fn extract_filename_from_uri(uri: &str) -> Option<String> {
     path.file_name()?.to_str().map(|s| s.to_string())
 }
 
+/// Normalize a raw filename to a safe single path component.
+///
+/// Debrid resolvers can return a full in-archive path (e.g. `Game Folder/Setup.exe`)
+/// or a string with Windows-invalid characters. If that were joined directly onto
+/// `tmp_dir`, `part_path` would build `tmp/<sub>/<file>.part` whose parent dir does
+/// not exist ? `File::create` fails with `os error 3` before any byte downloads.
+///
+/// This keeps only the last path segment, replaces invalid/control characters,
+/// trims Windows-hostile trailing dots/spaces, and falls back to `"repack"` for
+/// empty/reserved/over-long names.
+fn normalize_download_filename(name: &str) -> String {
+    const MAX_LEN: usize = 50;
+    const INVALID_CHARS: &[char] = &[
+        '<', '>', ':', '"', '/', '\\', '|', '?', '*',
+        '\u{0}', '\u{1}', '\u{2}', '\u{3}', '\u{4}', '\u{5}', '\u{6}', '\u{7}',
+        '\u{8}', '\u{9}', '\u{A}', '\u{B}', '\u{C}', '\u{D}', '\u{E}', '\u{F}',
+        '\u{10}', '\u{11}', '\u{12}', '\u{13}', '\u{14}', '\u{15}', '\u{16}', '\u{17}',
+        '\u{18}', '\u{19}', '\u{1A}', '\u{1B}', '\u{1C}', '\u{1D}', '\u{1E}', '\u{1F}',
+    ];
+
+    // 1. Keep only the last path segment � never allow nested directories.
+    let last = name.split(['/', '\\']).last().unwrap_or(name);
+
+    // 2. Replace Windows-invalid and control characters with `_`.
+    let mut cleaned: String = last
+        .chars()
+        .map(|c| if INVALID_CHARS.contains(&c) { '_' } else { c })
+        .collect();
+
+    // 3. Trim trailing dots/spaces (Windows treats these as terminators).
+    while cleaned.ends_with('.') || cleaned.ends_with(' ') {
+        cleaned.pop();
+    }
+
+    // 4. Reject empty / `.` / `..` / reserved device names ? fall back.
+    let normalized = cleaned.to_lowercase();
+    let reserved = matches!(normalized.as_str(), "con" | "nul" | "prn" | "aux")
+        || normalized.starts_with("con.")
+        || normalized.starts_with("lpt")
+        || normalized.starts_with("com");
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." || reserved {
+        return "repack".to_string();
+    }
+
+    // 5. Cap length, preserving the extension when one exists. Bare over-long
+    //    tokens (e.g. gofile CDN names) fall back to `"repack"` instead of a
+    //    50-char gibberish name.
+    if cleaned.len() > MAX_LEN {
+        if let Some(dot) = cleaned.rfind('.') {
+            let ext = &cleaned[dot..];
+            let stem = cleaned[..dot]
+                .chars()
+                .take(MAX_LEN.saturating_sub(ext.len()))
+                .collect::<String>();
+            cleaned = stem + ext;
+        } else {
+            return "repack".to_string();
+        }
+    }
+
+    cleaned
+}
+
+/// Sanitize a full relative download path, PRESERVING directory structure.
+///
+/// Debrid providers return per-file names that may carry a nested in-archive
+/// path (e.g. `MD5/checksums.md5` or `Game Folder/Setup/setup.exe`). For the
+/// multivolume flow those checksum folders are meaningful: flattening them to
+/// the root (as [`normalize_download_filename`] does) drops the `MD5/` folder
+/// entirely and leaves its files scattered in the extract root. This keeps the
+/// relative structure while sanitizing every component with the same rules as
+/// the flat sanitizer (invalid chars, trailing dots/spaces, reserved names,
+/// length caps) and dropping traversal components, so the result is always
+/// safe to join under `dest_dir`.
+///
+/// Returns `None` for a flat single-component name, a leading separator/drive
+/// prefix, an unsafe mid-path component, or an empty result — the caller falls
+/// back to a flat path in those cases.
+fn normalize_download_relative_path(name: &str) -> Option<String> {
+    // A leading separator (`/abs/...`, `\\abs\\...`) is absolute — never relative
+    // to dest_dir. Checked before splitting because the filter would otherwise
+    // drop the empty leading segment and turn it into a relative path.
+    if name.starts_with('/') || name.starts_with('\\') {
+        return None;
+    }
+
+    let parts = name
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect::<Vec<_>>();
+
+    // A single component (or none) is a flat filename — handled by the flat path.
+    if parts.len() < 2 {
+        return None;
+    }
+    // A drive prefix (`C:/...`) is absolute — never relative to dest_dir.
+    if parts[0].ends_with(':') {
+        return None;
+    }
+
+    let mut sanitized: Vec<String> = Vec::with_capacity(parts.len());
+    for part in &parts {
+        let s = normalize_download_filename(part);
+        // A genuinely unsafe component (reserved device name, over-long bare
+        // token) collapses to `"repack"`; that would make a nonsense folder
+        // name mid-path, so bail to the flat path instead.
+        if s == "repack" && *part != "repack" {
+            return None;
+        }
+        sanitized.push(s);
+    }
+
+    let joined = sanitized.join("/");
+    if joined.is_empty() {
+        return None;
+    }
+    Some(joined)
+}
+
 /// Return a short clean download filename.
 ///
-/// Gofile.io download links produce 200+ character tokens with no extension.
-/// This helper replaces those with a short fixed name so we don't hit Windows
-/// MAX_PATH issues or confuse the user.
+/// Gofile.io download links produce 200+ character tokens with no extension;
+/// Debrid resolver filenames may carry an in-archive path or invalid characters.
+/// Always normalized through [`normalize_download_filename`] so we never hit
+/// Windows MAX_PATH issues, nested-path `os error 3`, or confuse the user.
 fn clean_download_filename(raw: Option<String>) -> String {
-    const MAX_LEN: usize = 50;
-
     match raw {
-        Some(ref name) if !name.is_empty() && name.len() <= MAX_LEN && has_file_extension(name) => {
-            name.clone()
-        }
+        Some(ref name) if !name.is_empty() => normalize_download_filename(name),
         _ => "repack".to_string(),
     }
 }
@@ -2566,20 +3032,11 @@ fn ensure_archive_extension(path: &Path, ext: &str) -> PathBuf {
     );
     let _ = fs::rename(path, &new_path);
     println!(
-        "[DEBRID][RENAME] {} → {}",
+        "[DEBRID][RENAME] {} ? {}",
         path.display(),
         new_path.display()
     );
     new_path
-}
-
-/// Does the filename have an extension after the last dot (and the dot isn't at position 0)?
-fn has_file_extension(name: &str) -> bool {
-    if let Some(dot) = name.rfind('.') {
-        dot > 0 && dot < name.len() - 1
-    } else {
-        false
-    }
 }
 
 /// Result from a registry scan match.
@@ -2728,7 +3185,7 @@ mod tests {
     fn detect_rar5_signature() {
         // RAR5 magic: Rar!\x1a\x07\x01\x00 (repack files on gofile are RAR5).
         // Regression: previously only RAR4 (byte6=0x00) was matched, so RAR5
-        // downloads fell through to Unknown → "Unknown file type" error.
+        // downloads fell through to Unknown ? "Unknown file type" error.
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("test.rar");
         let mut bytes = [0u8; 16];
@@ -2749,6 +3206,17 @@ mod tests {
     }
 
     #[test]
+    fn detect_arc_signature() {
+        // FreeArc magic: ArC\x01
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.arc");
+        let mut bytes = [0u8; 16];
+        bytes[..4].copy_from_slice(&[0x41, 0x72, 0x43, 0x01]);
+        std::fs::write(&path, bytes).unwrap();
+        assert!(matches!(detect_file_type(&path), DetectedFileType::Arc));
+    }
+
+    #[test]
     fn detect_unknown_signature() {
         // Unrelated magic bytes must still classify as Unknown.
         let tmp = tempfile::tempdir().unwrap();
@@ -2758,7 +3226,7 @@ mod tests {
         assert!(matches!(detect_file_type(&path), DetectedFileType::Unknown(_)));
     }
 
-    // ── Resume decision ──
+    // -- Resume decision --
 
     #[test]
     fn resume_decision_no_resume_is_fresh() {
@@ -2815,7 +3283,7 @@ mod tests {
         );
     }
 
-    // ── Checkpoint load ──
+    // -- Checkpoint load --
 
     #[test]
     fn checkpoint_load_resumes_from_part_size() {
@@ -2935,7 +3403,217 @@ mod tests {
         );
     }
 
-    // ── Pause tracker / flag cleanup ──
+    #[test]
+    fn checkpoint_load_resumes_across_cdn_rotation() {
+        // Bug 1 fix: the checkpoint is keyed on the STABLE source URL (page URL),
+        // so a re-resolved gofile CDN link on resume still matches and continues.
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        std::fs::write(part_path(tmp.path(), name), vec![0u8; 8192]).unwrap();
+        let cp = DownloadCheckpoint {
+            uri: "https://gofile.io/d/ABC123".to_string(), // stable origin key
+            total_bytes: 50_000,
+            downloaded_bytes: 8192,
+            started_at: 1,
+        };
+        std::fs::write(
+            meta_path(tmp.path(), name),
+            serde_json::to_string(&cp).unwrap(),
+        )
+        .unwrap();
+        // The actual download call uses the (rotated) CDN link as `uri`, but the
+        // checkpoint lookup uses `source_key` — the stable page URL.
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://gofile.io/d/ABC123"),
+            Some(8192)
+        );
+    }
+
+    #[test]
+    fn checkpoint_load_source_key_mismatch_starts_fresh() {
+        // A genuinely different origin (user re-added a different source) must
+        // discard the stale partial instead of resuming unrelated bytes.
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "game.rar";
+        std::fs::write(part_path(tmp.path(), name), vec![0u8; 2048]).unwrap();
+        let cp = DownloadCheckpoint {
+            uri: "https://gofile.io/d/ABC123".to_string(),
+            total_bytes: 50_000,
+            downloaded_bytes: 2048,
+            started_at: 1,
+        };
+        std::fs::write(
+            meta_path(tmp.path(), name),
+            serde_json::to_string(&cp).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_checkpoint(tmp.path(), name, "https://gofile.io/d/OTHER"),
+            None
+        );
+        assert!(!part_path(tmp.path(), name).exists());
+        assert!(!meta_path(tmp.path(), name).exists());
+    }
+
+    // -- Partial install artifacts (Step 0 short-circuit guard) --
+
+    #[test]
+    fn has_partial_artifacts_no_tmp_false() {
+        let dest = tempfile::tempdir().unwrap();
+        // A clean, fully-extracted dest dir has no `tmp/` — not partial.
+        assert!(!has_partial_install_artifacts(dest.path()));
+    }
+
+    #[test]
+    fn has_partial_artifacts_empty_tmp_false() {
+        let dest = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dest.path().join("tmp")).unwrap();
+        // An empty `tmp/` (leftover dir only, no files) is not an interrupted
+        // download — the completion path would have removed it, but tolerate it.
+        assert!(!has_partial_install_artifacts(dest.path()));
+    }
+
+    #[test]
+    fn has_partial_artifacts_part_file_true() {
+        let dest = tempfile::tempdir().unwrap();
+        let tmp = dest.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("game.rar.part"), vec![0u8; 512]).unwrap();
+        // A leftover `.part` means the previous download never finished — Step 0
+        // must NOT short-circuit to "already extracted".
+        assert!(has_partial_install_artifacts(dest.path()));
+    }
+
+    #[test]
+    fn has_partial_artifacts_meta_only_true() {
+        let dest = tempfile::tempdir().unwrap();
+        let tmp = dest.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("game.rar.part.meta"), "{}").unwrap();
+        assert!(has_partial_install_artifacts(dest.path()));
+    }
+
+    // -- auto_run_installer: in-flight download guard --
+
+    #[test]
+    fn auto_run_installer_skips_spawn_when_download_in_flight() {
+        let dest = tempfile::tempdir().unwrap();
+        let tmp = dest.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        // An in-flight `.bin` volume: setup.exe must NOT be spawned yet.
+        std::fs::write(tmp.join("setup-1.bin.part"), vec![0u8; 512]).unwrap();
+
+        let result = auto_run_installer(
+            &dest.path().join("setup.exe"),
+            &dest.path().to_string_lossy(),
+        );
+        assert!(result.success);
+        assert_eq!(result.status, "needs-setup");
+        assert!(result.installer_pid.is_none());
+        assert!(
+            result.message.contains("still in progress"),
+            "unexpected message: {}",
+            result.message
+        );
+    }
+
+    #[test]
+    fn auto_run_installer_passes_when_no_partial_artifacts() {
+        let dest = tempfile::tempdir().unwrap();
+        // No `tmp/`, no partial artifacts -> the guard passes through to the
+        // spawn attempt. A nonexistent exe fails fast on spawn, which proves the
+        // guard did not block it (message differs from the in-flight one).
+        let result = auto_run_installer(
+            &dest.path().join("does-not-exist.exe"),
+            &dest.path().to_string_lossy(),
+        );
+        assert_eq!(result.status, "needs-setup");
+        assert!(
+            !result.message.contains("still in progress"),
+            "guard unexpectedly blocked: {}",
+            result.message
+        );
+    }
+
+    // -- Pause tracker / flag cleanup --
+
+    #[test]
+    fn truncate_part_shrinks_to_acknowledged_bytes() {
+        // A partial write left the file longer than `bytes_read` acknowledges.
+        let tmp = tempfile::tempdir().unwrap();
+        let part = part_path(tmp.path(), "game.rar");
+        std::fs::write(&part, vec![0u8; 8192]).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&part)
+                .await
+                .unwrap();
+            truncate_part_to(&mut file, 4096).await;
+        });
+
+        assert_eq!(std::fs::metadata(&part).unwrap().len(), 4096);
+    }
+
+    #[test]
+    fn truncate_part_noop_when_aligned() {
+        // When on-disk size == bytes_read, truncation must not change anything.
+        let tmp = tempfile::tempdir().unwrap();
+        let part = part_path(tmp.path(), "game.rar");
+        std::fs::write(&part, vec![0u8; 4096]).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&part)
+                .await
+                .unwrap();
+            truncate_part_to(&mut file, 4096).await;
+        });
+
+        assert_eq!(std::fs::metadata(&part).unwrap().len(), 4096);
+    }
+
+    #[test]
+    fn truncate_part_never_extends() {
+        // bytes_read is never larger than on-disk size in practice; the guard must
+        // not extend the file (which would insert zero-gap corruption on resume).
+        let tmp = tempfile::tempdir().unwrap();
+        let part = part_path(tmp.path(), "game.rar");
+        std::fs::write(&part, vec![0u8; 2048]).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&part)
+                .await
+                .unwrap();
+            truncate_part_to(&mut file, 100_000).await;
+        });
+
+        assert_eq!(std::fs::metadata(&part).unwrap().len(), 2048);
+    }
+
+    #[test]
+    fn truncate_part_missing_file_no_panic() {
+        // Missing/unopenable partial should be a no-op, not a panic.
+        let tmp = tempfile::tempdir().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(part_path(tmp.path(), "game.rar"))
+                .await
+                .unwrap();
+            truncate_part_to(&mut file, 0).await;
+        });
+        assert_eq!(std::fs::metadata(part_path(tmp.path(), "game.rar")).unwrap().len(), 0);
+    }
 
     #[test]
     fn pause_flag_tracked_and_checked() {
@@ -2981,7 +3659,7 @@ mod tests {
         assert!(!is_job_paused("idem-job"));
     }
 
-    // ── Transient retry backoff ──
+    // -- Transient retry backoff --
 
     #[test]
     fn retry_backoff_first_attempt_waits_short() {
@@ -2995,7 +3673,7 @@ mod tests {
 
     #[test]
     fn retry_backoff_after_max_attempts_returns_none() {
-        // attempt 3 is the final attempt — no more retries.
+        // attempt 3 is the final attempt � no more retries.
         assert_eq!(retry_backoff_ms(3), None);
         assert_eq!(retry_backoff_ms(4), None);
         assert_eq!(retry_backoff_ms(u32::MAX), None);
@@ -3005,5 +3683,171 @@ mod tests {
     fn retry_backoff_zero_attempt_returns_none() {
         // attempt is 1-based; 0 is an invalid state.
         assert_eq!(retry_backoff_ms(0), None);
+    }
+
+    // -- Filename sanitization (nested-path `os error 3` fix) --
+
+    #[test]
+    fn normalize_filename_strips_nested_subdir() {
+        // Regression: a resolver returning an in-archive path like
+        // `Game Folder/Setup.exe` used to build `tmp/<sub>/Setup.exe.part` whose
+        // parent dir didn't exist ? `File::create` failed with `os error 3` before
+        // any byte downloaded.
+        assert_eq!(normalize_download_filename("Game Folder/Setup.exe"), "Setup.exe");
+        assert_eq!(normalize_download_filename("dir\\sub\\game.iso"), "game.iso");
+        assert_eq!(normalize_download_filename("/abs/path/archive.zip"), "archive.zip");
+    }
+
+    #[test]
+    fn normalize_filename_replaces_invalid_chars() {
+        // Windows-invalid characters (`<>:"/\|?*` + controls) become `_`.
+        assert_eq!(normalize_download_filename("bad:name*.exe"), "bad_name_.exe");
+        assert_eq!(normalize_download_filename("a<b>c|d?e"), "a_b_c_d_e");
+        assert_eq!(normalize_download_filename("tab\there.rar"), "tab_here.rar");
+    }
+
+    #[test]
+    fn normalize_filename_trims_trailing_dots_and_spaces() {
+        assert_eq!(normalize_download_filename("setup.exe."), "setup.exe");
+        assert_eq!(normalize_download_filename("setup.exe "), "setup.exe");
+        assert_eq!(normalize_download_filename("file.  ."), "file");
+    }
+
+    #[test]
+    fn normalize_filename_falls_back_to_repack() {
+        // Empty / `.` / `..` / reserved device names / over-long names ? "repack".
+        assert_eq!(normalize_download_filename(""), "repack");
+        assert_eq!(normalize_download_filename("."), "repack");
+        assert_eq!(normalize_download_filename(".."), "repack");
+        assert_eq!(normalize_download_filename("CON"), "repack");
+        assert_eq!(normalize_download_filename("con.txt"), "repack");
+        assert_eq!(normalize_download_filename("lpt1.txt"), "repack");
+        assert_eq!(normalize_download_filename("com9.log"), "repack");
+        assert_eq!(normalize_download_filename("///"), "repack");
+        assert_eq!(normalize_download_filename("\\\\"), "repack");
+        // 51+ chars without a valid fallback point.
+        let long = "x".repeat(60);
+        assert_eq!(normalize_download_filename(&long), "repack");
+    }
+
+    #[test]
+    fn normalize_filename_caps_length_preserving_extension() {
+        let stem = "a".repeat(60);
+        let name = format!("{}.zip", stem);
+        let out = normalize_download_filename(&name);
+        assert!(out.ends_with(".zip"));
+        assert!(out.len() <= 50);
+        // Extension must survive the truncation.
+        assert!(out.len() >= 4);
+    }
+
+    #[test]
+    fn normalize_filename_keeps_valid_names_unchanged() {
+        assert_eq!(normalize_download_filename("setup.exe"), "setup.exe");
+        assert_eq!(normalize_download_filename("The-Operator-SteamRIP.com.rar"), "The-Operator-SteamRIP.com.rar");
+        assert_eq!(normalize_download_filename("My Game (v1.2).zip"), "My Game (v1.2).zip");
+    }
+
+    #[test]
+    fn clean_download_filename_uses_sanitizer_for_all_inputs() {
+        // Bare long tokens (gofile CDN) still normalize instead of passing raw.
+        let token = "t".repeat(220);
+        assert_eq!(clean_download_filename(Some(token.clone())), "repack");
+        // Short name with extension passes through sanitized.
+        assert_eq!(clean_download_filename(Some("game.zip".to_string())), "game.zip");
+        // None/empty fall back.
+        assert_eq!(clean_download_filename(None), "repack");
+        assert_eq!(clean_download_filename(Some(String::new())), "repack");
+    }
+
+    // -- Relative path preservation (MD5-folder fix) --
+
+    #[test]
+    fn relative_path_preserves_nested_checksum_folder() {
+        // Regression: a multivolume resolver returning `MD5/checksums.md5` must
+        // keep the folder. The previous flat sanitizer dropped `MD5/` entirely,
+        // leaving its files scattered in the extract root and never creating MD5/.
+        assert_eq!(
+            normalize_download_relative_path("MD5/checksums.md5"),
+            Some("MD5/checksums.md5".to_string())
+        );
+        assert_eq!(
+            normalize_download_relative_path("Game Folder/Setup/setup.exe"),
+            Some("Game Folder/Setup/setup.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn relative_path_flat_name_returns_none() {
+        assert_eq!(normalize_download_relative_path("setup.exe"), None);
+        assert_eq!(normalize_download_relative_path("checksums.md5"), None);
+        assert_eq!(normalize_download_relative_path(""), None);
+    }
+
+    #[test]
+    fn relative_path_rejects_abs_and_drive_prefix() {
+        assert_eq!(normalize_download_relative_path("/abs/path/file.bin"), None);
+        assert_eq!(normalize_download_relative_path("\\abs\\path\\file.bin"), None);
+        assert_eq!(normalize_download_relative_path("C:/Game/file.bin"), None);
+    }
+
+    #[test]
+    fn relative_path_drops_traversal_and_sanitizes_components() {
+        // `..`/`.` components are dropped; invalid chars replaced per component.
+        assert_eq!(
+            normalize_download_relative_path("MD5/../checksums.md5"),
+            Some("MD5/checksums.md5".to_string())
+        );
+        assert_eq!(
+            normalize_download_relative_path("bad:col/MD5/checksums.md5"),
+            Some("bad_col/MD5/checksums.md5".to_string())
+        );
+    }
+
+    #[test]
+    fn relative_path_unsafe_component_returns_none() {
+        // A reserved/over-long top-level token can't become a folder -- bail flat.
+        assert_eq!(normalize_download_relative_path("CON/setup.exe"), None);
+    }
+
+    // -- Installer finder never returns repack utilities --
+
+    #[test]
+    fn installer_finder_never_returns_repack_utility() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("quicksfv.exe"), b"x").unwrap();
+        // A checksum utility alone must NOT be treated as a runnable installer,
+        // otherwise `auto_run_installer` spawns it as if it were the game setup.
+        assert_eq!(find_installer_exe_in_dir(dir.path()), None);
+        // The recursive search must not surface it either.
+        assert_eq!(find_installer_exe_recursive(dir.path()), None);
+        // But its presence IS detected by the dedicated helper.
+        assert!(has_repack_utility(dir.path()));
+        assert_eq!(
+            find_repack_utility_exe_in_dir(dir.path()),
+            Some("quicksfv.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn installer_finder_returns_real_setup_over_utility() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("setup.exe"), b"MZ").unwrap();
+        std::fs::write(dir.path().join("quicksfv.exe"), b"x").unwrap();
+        assert_eq!(
+            find_installer_exe_in_dir(dir.path()),
+            Some("setup.exe".to_string())
+        );
+        assert_eq!(
+            find_installer_exe_recursive(dir.path()),
+            Some(dir.path().join("setup.exe"))
+        );
+    }
+
+    #[test]
+    fn has_repack_utility_false_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("setup.exe"), b"MZ").unwrap();
+        assert!(!has_repack_utility(dir.path()));
     }
 }

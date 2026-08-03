@@ -491,7 +491,12 @@ export function addDebridGameToLibrary(...providerGameIds: string[]): void {
 
 /**
  * Remove one or more Debrid games from the user's library.
- * Returns count of actually-removed entries.
+ *
+ * Full purge: clears every trace of the entry so a restart does not bring it
+ * back. Deletes library membership, the render entry, the persisted disk
+ * entry, launch metadata, status, pending setup/completion, and the user
+ * appId/title overrides tied to the removed game. Returns count of
+ * actually-removed entries.
  */
 export function removeDebridGameFromLibrary(...providerGameIds: string[]): number {
   let removed = 0;
@@ -499,6 +504,24 @@ export function removeDebridGameFromLibrary(...providerGameIds: string[]): numbe
     if (_userLibraryAppIds.delete(id)) removed++;
   }
   if (removed > 0) {
+    const ids = new Set(providerGameIds);
+
+    _debridGames = _debridGames.filter((g) => !(g.providerGameId && ids.has(g.providerGameId)));
+    for (const id of ids) {
+      _rawEntries.delete(id);
+      _diskEntryById.delete(id);
+      _debridGameStatuses.delete(id);
+      _launchMetadataByProviderGameId.delete(id);
+      _pendingSetup.delete(id);
+      _debridAppIdOverrides.delete(id);
+      _debridTitleOverrides.delete(id);
+      _diskTitleByProviderGameId.delete(id);
+      _titleEnrichAttemptedThisSession.delete(id);
+      if (_pendingCompletion && _pendingCompletion.providerGameId === id) {
+        _pendingCompletion = null;
+      }
+    }
+
     _debridFingerprint = computeDebridFingerprint(_debridGames);
     if (DEBUG_DEBRID_LIBRARY) {
       console.log(`[DEBRID_STORE] removed from library: ${providerGameIds.join(", ")} remaining=${_userLibraryAppIds.size}`);

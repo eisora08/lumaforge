@@ -65,7 +65,6 @@ export default function PackageInstallSuccessModal({
   const focusedButtonRef = useRef<"library" | "browse">("library");
   const activationLockedRef = useRef(false);
   const openTimeRef = useRef(0);
-  const backdropRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const libraryRef = useRef<HTMLButtonElement>(null);
   const browseRef = useRef<HTMLButtonElement>(null);
@@ -175,15 +174,6 @@ export default function PackageInstallSuccessModal({
     return () => document.removeEventListener("keydown", handler);
   }, [open, jobId, appId]);
 
-  function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === backdropRef.current) {
-      if (DEBUG_PACKAGE_COMPLETION_UI) {
-        console.log(`[PACKAGE_COMPLETION_UI][MODAL_ACTION] jobId=${jobId} appId=${appId} action=close`);
-      }
-      onContinueBrowsing();
-    }
-  }
-
   function handleClose() {
     if (DEBUG_PACKAGE_COMPLETION_UI) {
       console.log(`[PACKAGE_COMPLETION_UI][MODAL_ACTION] jobId=${jobId} appId=${appId} action=close`);
@@ -209,8 +199,6 @@ export default function PackageInstallSuccessModal({
 
   return createPortal(
     <div
-      ref={backdropRef}
-      onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
       aria-labelledby="pkg-success-title"

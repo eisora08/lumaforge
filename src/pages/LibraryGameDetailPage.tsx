@@ -522,7 +522,8 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     }
 
     const meta = selectedGame.metadata;
-    const hasResolvedMetadata = meta && meta.resolved === true && !!meta.name && meta.name !== `Steam App ${appIdNum}`;
+    const hasDescription = !!meta?.about_the_game || !!meta?.detailed_description;
+    const hasResolvedMetadata = meta && meta.resolved === true && !!meta.name && meta.name !== `Steam App ${appIdNum}` && hasDescription;
     if (hasResolvedMetadata) {
       setResolvedGame(selectedGame);
       setMetadataLoading(false);

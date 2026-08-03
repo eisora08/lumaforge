@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Emitter};
 
-use crate::models::install_progress::InstallProgressEvent;
+use crate::models::install_progress::{InstallProgressEvent, InstallerNetworkEvent};
 
 pub fn emit_installer_progress(
     app_handle: &AppHandle,
@@ -21,4 +21,17 @@ pub fn emit_installer_progress(
     };
 
     let _ = app_handle.emit("installer-progress", payload);
+}
+
+/// Emits live torrent swarm stats (connected peers + serving seeds) for a job.
+/// Separate from `installer-progress` so the existing progress signature stays
+/// untouched for all 46+ call sites across the install pipeline.
+pub fn emit_installer_network(app_handle: &AppHandle, job_id: &str, peers: u32, seeds: u32) {
+    let payload = InstallerNetworkEvent {
+        job_id: job_id.to_string(),
+        peers,
+        seeds,
+    };
+
+    let _ = app_handle.emit("installer-network", payload);
 }

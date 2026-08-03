@@ -9,10 +9,11 @@ import { useConsoleGamepadInput, DEBUG_CONSOLE_GAMEPAD } from "./useConsoleGamep
 import { useFavorites } from "../../context/FavoritesContext";
 import { useGameSession, computeGameKey } from "../../context/GameSessionContext";
 import { focusGameWindow } from "../../services/tauri";
-import { showError, showSuccess, showInfo } from "../../components/toast/GameToast";
+import { showError, showSuccess } from "../../components/toast/GameToast";
 import GameEditDialog from "../../components/games/GameEditDialog";
 import { useSettings } from "../../context/SettingsContext";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { getFavoriteKey } from "../../services/gameCacheService";
 import {
   getConsoleGameActionModel, isInFlight, type ConsolePrimaryAction, type ConsoleGameActionModel,
@@ -285,7 +286,13 @@ export default function ConsoleGameOptionsOverlay({
         label: "Remove from Library",
         icon: Trash2,
         action: () => {
-          showInfo("Debrid catalog entries managed by the repack catalog. Disable the Debrid integration in Settings > Integrations to remove all entries.", { title: "Debrid" });
+          const providerGameId = game.providerGameId;
+          if (providerGameId) {
+            removeDebridGameFromLibrary(providerGameId);
+            showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+          } else {
+            showError("Could not remove this game from the library.");
+          }
           onClose();
         },
       });

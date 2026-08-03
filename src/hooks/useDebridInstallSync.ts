@@ -60,12 +60,29 @@ const POLL_TIMEOUT_MS = 600_000; // 10 min — installer likely requires user in
  * and fall back to the built-in torrent client for the same magnet (see
  * `startInstall`), since a raw magnet can never be fed to `download_file_to_dest`.
  */
+/**
+ * Resolves a magnet URI through the configured debrid providers (TorBox,
+ * Real-Debrid, AllDebrid, Premiumize). Non-magnet URIs pass through unchanged.
+ *
+ * Returns the direct download URL (and the provider-provided filename, which
+ * preserves the real extension, e.g. `setup.exe` for a FitGirl repack — the
+ * CDN URL alone has no usable filename). Throws with the resolver's error
+ * message on failure. Callers may catch the throw and fall back to the built-in
+ * torrent client for the same magnet (see `startInstall`), since a raw magnet
+ * can never be fed to `download_file_to_dest`.
+ */
 async function resolveInstallUri(
   downloadUri: string,
   preferredProvider?: ProviderId,
-): Promise<string> {
+): Promise<{
+  url: string;
+  fileName?: string;
+  fileCount?: number;
+  resolvedUrls?: string[];
+  fileNames?: string[];
+}> {
   if (!downloadUri.startsWith("magnet:")) {
-    return downloadUri;
+    return { url: downloadUri };
   }
 
   let settings;
@@ -96,7 +113,13 @@ async function resolveInstallUri(
         `[DEBRID_INSTALL] magnet resolved provider=${result.provider} url=${result.resolvedUrl.slice(0, 80)}\u2026`,
       );
     }
-    return result.resolvedUrl;
+    return {
+      url: result.resolvedUrl,
+      fileName: result.fileName,
+      fileCount: result.fileCount,
+      resolvedUrls: result.resolvedUrls,
+      fileNames: result.fileNames,
+    };
   }
 
   throw new Error(
@@ -104,6 +127,37 @@ async function resolveInstallUri(
       ? `No debrid provider resolved the magnet link: ${result.error}`
       : "No debrid provider resolved the magnet link. Configure a debrid provider in Settings.",
   );
+}
+
+/**
+ * Picks which file of a multivolume repack must be downloaded + extracted LAST.
+ * The volumes (`.bin` parts) are downloaded first with autoExtract=false so they
+ * are all present on disk; the primary part is fetched last with autoExtract=true
+ * so the set reassembles in order and its installer auto-runs. Priority:
+ *
+ *   1. The installer executable (*.exe) — the last one in the list is picked so
+ *      every `.bin` volume it reads already exists on disk. Only files ending in
+ *      `.exe` match: volume parts named like `setup-1.bin`/`installer.bin` must
+ *      NEVER be treated as the installer (they carry no archive/PE magic and
+ *      would fail detection), so the regex anchors on `.exe$` exclusively.
+ *   2. The first-volume archive (.part1.rar / .rar / .r00) — the piece that
+ *      reassembles a multivolume archive set.
+ *   3. Fallback: the last item in the list.
+ */
+function pickPrimaryPartIndex(fileNames: string[]): number {
+  let installerIndex = -1;
+  for (let i = 0; i < fileNames.length; i++) {
+    const n = fileNames[i].toLowerCase();
+    if (/\.exe$/.test(n)) installerIndex = i;
+  }
+  if (installerIndex >= 0) return installerIndex;
+
+  for (let i = 0; i < fileNames.length; i++) {
+    const n = fileNames[i].toLowerCase();
+    if (/part0*1\.rar$|\.rar$|\.r00$/.test(n)) return i;
+  }
+
+  return fileNames.length - 1;
 }
 
 /**
@@ -192,8 +246,14 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
             if (registryMatch?.installLocation) {
               // Look for .exe files in the detected install location
               const exes = await discoverExecutables(registryMatch.installLocation);
-              const best = exes.find((e) => !e.file_name.toLowerCase().includes("setup") && !e.file_name.toLowerCase().includes("uninstall"))
-                ?? exes[0];
+              const best =
+                exes.find(
+                  (e) =>
+                    !e.file_name.toLowerCase().includes("setup") &&
+                    !e.file_name.toLowerCase().includes("uninstall") &&
+                    !/^unins000/i.test(e.file_name) &&
+                    !/^UnityCrashHandler64/i.test(e.file_name),
+                ) ?? exes[0];
               if (best) {
                 updateDebridGame(providerGameId, registryMatch.installLocation, best.exe_path);
                 persistDebridIdentity(providerGameId, title, appId);
@@ -447,9 +507,55 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
         } else {
           // Magnets need to be resolved through a configured debrid provider
           // (TorBox / Real-Debrid / AllDebrid / Premiumize) to get a direct URL.
-          let effectiveUri: string | undefined;
+let effectiveUri: string | undefined;
+          let effectiveFileName: string | undefined;
           try {
-            effectiveUri = await resolveInstallUri(downloadUri, options?.provider);
+            const resolved = await resolveInstallUri(downloadUri, options?.provider);
+            // A multivolume repack (setup.exe + several `.bin` parts) reports
+            // multiple resolvedUrls. Each part is downloaded sequentially through
+            // the debrid provider: every volume first (autoExtract=false, just
+            // saved to disk), then the primary part — the installer exe or the
+            // first-volume archive — LAST (autoExtract=true) so the set
+            // reassembles in order and setup runs once everything is present.
+            const urls = resolved.resolvedUrls ?? [];
+            if (urls.length > 1 && downloadUri.startsWith("magnet:")) {
+              const names = resolved.fileNames ?? [];
+              const primaryIndex = pickPrimaryPartIndex(names);
+              console.log(
+                `[DEBRID_INSTALL] multivolume files=${urls.length} primary=${names[primaryIndex] ?? primaryIndex} jobId=${jobId}`,
+              );
+              // Download every volume first (autoExtract=false, just saved to
+              // disk) and the primary part LAST (autoExtract=true) so the set
+              // reassembles in order and setup.exe auto-runs only once every
+              // volume it reads is verified on disk. The loop is sequential
+              // (await per part), so the queue is empty by construction when the
+              // primary starts — this ordering guarantees that even if the
+              // primary appears first in the file list.
+              const order = [
+                ...urls.map((_, i) => i).filter((i) => i !== primaryIndex),
+                primaryIndex,
+              ];
+              for (const i of order) {
+                const isPrimary = i === primaryIndex;
+                result = await downloadDebridPackage({
+                  jobId,
+                  downloadUri: urls[i],
+                  downloadName: names[i] || undefined,
+                  destDir,
+                  autoExtract: isPrimary ? autoExtract : false,
+                  deleteArchive: isPrimary ? deleteArchive : false,
+                  // Key the resume checkpoint on the STABLE origin URL (job's
+                  // downloadUrl), not the volatile resolved CDN link — a fresh
+                  // resolution on resume must continue the same `.part`, not
+                  // restart. Reusing jobId keeps a single progress bar.
+                  sourceKey: downloadUri,
+                });
+                if (!result?.success) break;
+              }
+            } else {
+              effectiveUri = resolved.url;
+              effectiveFileName = resolved.fileName;
+            }
           } catch (resolveErr) {
             // Debrid resolution failed — if the source is a magnet, fall back to
             // the built-in torrent client so the download always proceeds.
@@ -471,9 +577,14 @@ export function useDebridInstallSync(updateJob: UpdateDebridJobFn): DebridInstal
             result = await downloadDebridPackage({
               jobId,
               downloadUri: effectiveUri,
+              downloadName: effectiveFileName,
               destDir,
               autoExtract,
               deleteArchive,
+              // Key the resume checkpoint on the STABLE origin URL (job's
+              // downloadUrl), not the volatile resolved CDN link — a fresh gofile
+              // resolution on resume must continue the same `.part`, not restart.
+              sourceKey: downloadUri,
             });
           }
         }

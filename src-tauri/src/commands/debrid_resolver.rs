@@ -20,6 +20,23 @@ pub struct DebridResolveResult {
     pub resolved_url: Option<String>,
     pub file_name: Option<String>,
     pub file_size: Option<i64>,
+    /// All direct download URLs resolved from a magnet (multiple when the repack
+    /// is multivolume, e.g. several `.bin` parts + a `setup.exe`). Empty when the
+    /// magnet resolved to a single file (`resolved_url` carries the one anyway).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolved_urls: Vec<String>,
+    /// Per-file display names aligned 1:1 with `resolved_urls` (when present).
+    /// The frontend uses them to pick which part to download last with
+    /// `auto_extract = true` (installer / first-volume archive) so the volumes
+    /// are reassembled in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_names: Vec<String>,
+    /// Number of separate data files the resolved magnet contains. `0` means
+    /// "not reported / single file". The frontend downloads anything `> 1`
+    /// sequentially per-file through the debrid provider (not via the built-in
+    /// torrent client).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -124,6 +141,28 @@ fn torbox_largest_file(files: &[serde_json::Value]) -> Option<(u64, String, i64)
             let name = f["name"].as_str().map(|s| s.to_string())?;
             Some((id, name, f["size"].as_i64().unwrap_or(0)))
         })
+}
+
+/// List of every usable TorBox file (id, name, size) in a `files` array —
+/// the same sample/metadata exclusion as `torbox_largest_file`, but for all
+/// entries so the frontend can tell a multivolume repack apart.
+fn torbox_usable_files(files: &[serde_json::Value]) -> Vec<(u64, String, i64)> {
+    files
+        .iter()
+        .filter(|f| {
+            let name = f["name"].as_str().unwrap_or("").to_lowercase();
+            !name.contains("sample")
+                && !name.ends_with(".txt")
+                && !name.ends_with(".nfo")
+                && !name.ends_with(".diz")
+                && !name.is_empty()
+        })
+        .filter_map(|f| {
+            let id = json_u64(&f["id"])?;
+            let name = f["name"].as_str().map(|s| s.to_string())?;
+            Some((id, name, f["size"].as_i64().unwrap_or(0)))
+        })
+        .collect()
 }
 
 /// TorBox error message extraction (detail, message, or fallback).
@@ -243,6 +282,9 @@ async fn resolve_via_torbox_magnet(
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some(torbox_error_message(&body, &status)),
         });
     }
@@ -257,6 +299,9 @@ async fn resolve_via_torbox_magnet(
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some("No torrent_id returned".to_string()),
         });
     }
@@ -266,7 +311,9 @@ async fn resolve_via_torbox_magnet(
     // created immediately. TorBox reports state in `download_state`
     // (ready = cached / completed / uploading).
     let mut picked: Option<(u64, String, i64)> = None;
+    let mut multi_files: Vec<(u64, String, i64)> = Vec::new();
     let mut last_state = String::new();
+    let mut file_count: usize = 0;
     for _ in 0..TORBOX_POLL_MAX_ATTEMPTS {
         tokio::time::sleep(Duration::from_secs(TORBOX_POLL_INTERVAL_SECS)).await;
 
@@ -303,6 +350,9 @@ async fn resolve_via_torbox_magnet(
                 resolved_url: None,
                 file_name: None,
                 file_size: None,
+                resolved_urls: Vec::new(),
+                file_names: Vec::new(),
+                file_count: None,
                 error: Some(format!("TorBox torrent error: {}", last_state)),
             });
         }
@@ -310,7 +360,18 @@ async fn resolve_via_torbox_magnet(
         let ready = torbox_torrent_is_ready(t);
         if ready {
             if let Some(files) = t["files"].as_array() {
+                let usable = torbox_usable_files(files);
+                if usable.len() > 1 {
+                    // Multivolume repack (setup.exe + several .bin parts etc.):
+                    // collect every usable file so the sequential per-file loop
+                    // downloads each part through the debrid provider, extracting
+                    // the installer/first-volume archive last.
+                    file_count = usable.len();
+                    multi_files = usable;
+                    break;
+                }
                 if let Some((file_id, name, size)) = torbox_largest_file(files) {
+                    file_count = 1;
                     picked = Some((file_id, name, size));
                     break;
                 }
@@ -321,6 +382,70 @@ async fn resolve_via_torbox_magnet(
         }
     }
 
+    // Multivolume repack: resolve a per-file direct download link for each part
+    // (setup.exe + .bin volumes), keeping names aligned 1:1 so the frontend can
+    // pick which one to extract last. No whole-torrent single link.
+    if multi_files.len() > 1 {
+        let mut resolved_urls = Vec::with_capacity(multi_files.len());
+        let mut file_names = Vec::with_capacity(multi_files.len());
+        for (file_id, name, _size) in &multi_files {
+            let req_url = format!(
+                "{}/torrents/requestdl?token={}&torrent_id={}&file_id={}",
+                TORBOX_API_BASE, api_key, torrent_id, file_id
+            );
+            let resp = client
+                .get(&req_url)
+                .send()
+                .await
+                .map_err(|e| format!("TorBox API error: {}", e))?;
+            let body: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("TorBox parse error: {}", e))?;
+            let url = body["data"]["url"]
+                .as_str()
+                .or_else(|| body["data"].as_str())
+                .or_else(|| body["data"]["permalink"].as_str())
+                .map(|s| s.to_string());
+            match url {
+                Some(url) => {
+                    resolved_urls.push(url);
+                    file_names.push(name.clone());
+                }
+                None => {
+                    return Ok(DebridResolveResult {
+                        success: false,
+                        provider: "torbox".to_string(),
+                        resolved_url: None,
+                        file_name: None,
+                        file_size: None,
+                        resolved_urls: Vec::new(),
+                        file_names: Vec::new(),
+                        file_count: None,
+                        error: Some(format!(
+                            "TorBox requestdl returned no download URL for file {}",
+                            file_id
+                        )),
+                    });
+                }
+            }
+        }
+        let first_url = resolved_urls.first().cloned();
+        let first_name = file_names.first().cloned();
+        let count = resolved_urls.len();
+        return Ok(DebridResolveResult {
+            success: true,
+            provider: "torbox".to_string(),
+            resolved_url: first_url,
+            file_name: first_name,
+            file_size: None,
+            resolved_urls,
+            file_names,
+            file_count: if count > 1 { Some(count) } else { None },
+            error: None,
+        });
+    }
+
     let Some((file_id, file_name, file_size)) = picked else {
         return Ok(DebridResolveResult {
             success: false,
@@ -328,6 +453,9 @@ async fn resolve_via_torbox_magnet(
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some(format!(
                 "TorBox torrent not ready after {}s (last status: {}). The torrent may still be downloading to the TorBox cache.",
                 TORBOX_POLL_MAX_ATTEMPTS * TORBOX_POLL_INTERVAL_SECS,
@@ -369,12 +497,16 @@ async fn resolve_via_torbox_magnet(
         None
     };
 
+    let resolved_urls: Vec<String> = resolved_url.clone().into_iter().collect();
     Ok(DebridResolveResult {
         success: resolved_url.is_some(),
         provider: "torbox".to_string(),
         resolved_url,
         file_name: if file_name.is_empty() { None } else { Some(file_name) },
         file_size: if file_size > 0 { Some(file_size) } else { None },
+        resolved_urls,
+        file_names: Vec::new(),
+        file_count: if file_count > 1 { Some(file_count) } else { None },
         error,
     })
 }
@@ -407,6 +539,9 @@ async fn resolve_via_torbox_webdl(
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some(torbox_error_message(&body, &status)),
         });
     }
@@ -419,6 +554,9 @@ async fn resolve_via_torbox_webdl(
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some("No web download id returned".to_string()),
         });
     }
@@ -456,6 +594,9 @@ async fn resolve_via_torbox_webdl(
         resolved_url,
         file_name: body["data"]["filename"].as_str().map(|s| s.to_string()),
         file_size: body["data"]["size"].as_i64(),
+        resolved_urls: Vec::new(),
+        file_names: Vec::new(),
+        file_count: None,
         error,
     })
 }
@@ -529,6 +670,9 @@ async fn resolve_via_real_debrid(api_key: &str, uri: &str) -> Result<DebridResol
                 resolved_url: None,
                 file_name: None,
                 file_size: None,
+                resolved_urls: Vec::new(),
+                file_names: Vec::new(),
+                file_count: None,
                 error: Some(error_msg.to_string()),
             });
         }
@@ -539,6 +683,9 @@ async fn resolve_via_real_debrid(api_key: &str, uri: &str) -> Result<DebridResol
             resolved_url: body["download"].as_str().map(|s| s.to_string()),
             file_name: body["filename"].as_str().map(|s| s.to_string()),
             file_size: body["filesize"].as_i64(),
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: None,
         })
     }
@@ -578,6 +725,9 @@ async fn resolve_via_real_debrid_magnet(
                 resolved_url: None,
                 file_name: None,
                 file_size: None,
+                resolved_urls: Vec::new(),
+                file_names: Vec::new(),
+                file_count: None,
                 error: Some(error_msg.to_string()),
             });
         }
@@ -614,6 +764,9 @@ async fn resolve_via_real_debrid_magnet(
                 resolved_url: None,
                 file_name: None,
                 file_size: None,
+                resolved_urls: Vec::new(),
+                file_names: Vec::new(),
+                file_count: None,
                 error: Some(
                     "Torrent already added but could not be located by hash".to_string(),
                 ),
@@ -629,6 +782,9 @@ async fn resolve_via_real_debrid_magnet(
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some("No torrent id returned".to_string()),
         });
     }
@@ -640,11 +796,18 @@ async fn resolve_via_real_debrid_magnet(
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some(e),
         });
     }
 
-    // Get the download links for the finished torrent.
+    // Get the download links for the finished torrent. A repack is typically
+    // split into a `setup.exe` + several `.bin` volumes → many links. Every link
+    // is unrestricted below so the sequential per-file loop can download each
+    // part through the debrid provider (a single-file fetch would only grab the
+    // first part).
     let links_resp = client
         .get(format!("{}/torrents/links/{}", REAL_DEBRID_API_BASE, torrent_id))
         .header("Authorization", format!("Bearer {}", api_key))
@@ -656,56 +819,100 @@ async fn resolve_via_real_debrid_magnet(
         .await
         .map_err(|e| format!("Real-Debrid parse error: {}", e))?;
 
-    let link = links_body["links"]
+    let all_links: Vec<String> = links_body["links"]
         .as_array()
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
 
-    let Some(link) = link else {
+    if all_links.is_empty() {
         return Ok(DebridResolveResult {
             success: false,
             provider: "realdebrid".to_string(),
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some("No download links returned".to_string()),
-        });
-    };
-
-    // Unrestrict the first link to get a direct URL.
-    let un = client
-        .post(format!("{}/unrestrict/link", REAL_DEBRID_API_BASE))
-        .header("Authorization", format!("Bearer {}", api_key))
-        .form(&[("link", &link)])
-        .send()
-        .await
-        .map_err(|e| format!("Real-Debrid API error: {}", e))?;
-    let un_status = un.status();
-    let un_body: serde_json::Value = un
-        .json()
-        .await
-        .map_err(|e| format!("Real-Debrid parse error: {}", e))?;
-
-    if !un_status.is_success() {
-        let default_msg = format!("HTTP {}", un_status);
-        let error_msg = un_body["error"].as_str().unwrap_or(&default_msg);
-        return Ok(DebridResolveResult {
-            success: false,
-            provider: "realdebrid".to_string(),
-            resolved_url: None,
-            file_name: None,
-            file_size: None,
-            error: Some(error_msg.to_string()),
         });
     }
 
+    // Unrestrict every link to get a direct URL + the per-file filename.
+    let mut resolved_urls = Vec::with_capacity(all_links.len());
+    let mut file_names = Vec::with_capacity(all_links.len());
+    for link in &all_links {
+        let un = client
+            .post(format!("{}/unrestrict/link", REAL_DEBRID_API_BASE))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .form(&[("link", link)])
+            .send()
+            .await
+            .map_err(|e| format!("Real-Debrid API error: {}", e))?;
+        let un_status = un.status();
+        let un_body: serde_json::Value = un
+            .json()
+            .await
+            .map_err(|e| format!("Real-Debrid parse error: {}", e))?;
+
+        if !un_status.is_success() {
+            let default_msg = format!("HTTP {}", un_status);
+            let error_msg = un_body["error"].as_str().unwrap_or(&default_msg);
+            return Ok(DebridResolveResult {
+                success: false,
+                provider: "realdebrid".to_string(),
+                resolved_url: None,
+                file_name: None,
+                file_size: None,
+                resolved_urls: Vec::new(),
+                file_names: Vec::new(),
+                file_count: None,
+                error: Some(error_msg.to_string()),
+            });
+        }
+
+        if let Some(url) = un_body["download"].as_str().map(|s| s.to_string()) {
+            resolved_urls.push(url);
+            file_names.push(
+                un_body["filename"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+        }
+    }
+
+    if resolved_urls.is_empty() {
+        return Ok(DebridResolveResult {
+            success: false,
+            provider: "realdebrid".to_string(),
+            resolved_url: None,
+            file_name: None,
+            file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
+            error: Some("Real-Debrid unrestrict returned no download URLs".to_string()),
+        });
+    }
+
+    let first = resolved_urls.first().cloned();
+    let first_name = file_names.first().cloned();
+    let count = resolved_urls.len();
     Ok(DebridResolveResult {
         success: true,
         provider: "realdebrid".to_string(),
-        resolved_url: un_body["download"].as_str().map(|s| s.to_string()),
-        file_name: un_body["filename"].as_str().map(|s| s.to_string()),
-        file_size: un_body["filesize"].as_i64(),
+        resolved_url: first,
+        file_name: first_name,
+        file_size: None,
+        resolved_urls,
+        file_names,
+        file_count: if count > 1 { Some(count) } else { None },
         error: None,
     })
 }
@@ -814,6 +1021,69 @@ async fn check_real_debrid_status(api_key: &str) -> Result<DebridProviderStatus,
 
 // ── AllDebrid ──
 
+/// AllDebrid `statusCode` values (go-debrid SDK): 4 = Ready (downloadable),
+/// > 4 = error (upload fail, internal error, not downloaded, too big...).
+const ALL_DEBRID_STATUS_READY: u64 = 4;
+
+/// Poll cap for AllDebrid magnet readiness (bounded like Real-Debrid).
+const ALL_DEBRID_POLL_MAX_ATTEMPTS: u64 = 40;
+const ALL_DEBRID_POLL_INTERVAL_SECS: u64 = 3;
+
+/// Pure parser: given an AllDebrid `magnet/status` response body, return the
+/// number of downloadable files when the magnet is Ready (`statusCode == 4`),
+/// 0 otherwise. Ready-but-no-links and error/terminal states both yield 0.
+fn all_debrid_file_count_from_status(body: &serde_json::Value) -> usize {
+    let magnet = &body["data"]["magnets"][0];
+    let status_code = magnet["statusCode"].as_u64().unwrap_or(0);
+    if status_code >= ALL_DEBRID_STATUS_READY {
+        if let Some(links) = magnet["links"].as_array() {
+            return links.len();
+        }
+    }
+    0
+}
+
+/// Count the downloadable files an AllDebrid magnet contains by polling
+/// `magnet/status` until the torrent is Ready (`statusCode == 4`), then reading
+/// `data.magnets[0].links`. Returns the number of files (0 when the magnet never
+/// became ready within the poll window or the response has no links yet).
+async fn all_debrid_magnet_file_count(
+    client: &reqwest::Client,
+    api_key: &str,
+    magnet_id: &str,
+) -> usize {
+    for _ in 0..ALL_DEBRID_POLL_MAX_ATTEMPTS {
+        tokio::time::sleep(Duration::from_secs(ALL_DEBRID_POLL_INTERVAL_SECS)).await;
+
+        let resp = match client
+            .get(format!(
+                "{}/magnet/status?agent=lumaforge&apikey={}&id={}",
+                ALL_DEBRID_API_BASE, api_key, magnet_id
+            ))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let body: serde_json::Value = match resp.json().await {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        let count = all_debrid_file_count_from_status(&body);
+        if count > 0 {
+            return count;
+        }
+        // Terminal error state (statusCode > 4) — stop polling.
+        let status_code = body["data"]["magnets"][0]["statusCode"].as_u64().unwrap_or(0);
+        if status_code > 4 {
+            break;
+        }
+    }
+    0
+}
+
 async fn resolve_via_all_debrid(api_key: &str, uri: &str) -> Result<DebridResolveResult, String> {
     let client = reqwest::Client::new();
 
@@ -853,12 +1123,22 @@ async fn resolve_via_all_debrid(api_key: &str, uri: &str) -> Result<DebridResolv
             resolved_url: None,
             file_name: None,
             file_size: None,
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: Some(error_msg.to_string()),
         });
     }
 
     if uri.starts_with("magnet:") {
         let magnet_id = body["data"]["magnets"][0]["id"].as_str().unwrap_or("");
+        // Multivolume repacks expose a `links[]` array once Ready; count it so the
+        // frontend knows a single HTTP fetch would only grab the first `.bin`.
+        let file_count = if magnet_id.is_empty() {
+            0
+        } else {
+            all_debrid_magnet_file_count(&client, api_key, magnet_id).await
+        };
         Ok(DebridResolveResult {
             success: true,
             provider: "alldebrid".to_string(),
@@ -868,6 +1148,9 @@ async fn resolve_via_all_debrid(api_key: &str, uri: &str) -> Result<DebridResolv
             )),
             file_name: body["data"]["magnets"][0]["filename"].as_str().map(|s| s.to_string()),
             file_size: body["data"]["magnets"][0]["size"].as_i64(),
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: if file_count > 1 { Some(file_count) } else { None },
             error: None,
         })
     } else {
@@ -877,6 +1160,9 @@ async fn resolve_via_all_debrid(api_key: &str, uri: &str) -> Result<DebridResolv
             resolved_url: body["data"]["link"].as_str().map(|s| s.to_string()),
             file_name: body["data"]["filename"].as_str().map(|s| s.to_string()),
             file_size: body["data"]["size"].as_i64(),
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: None,
         })
     }
@@ -935,6 +1221,44 @@ async fn check_all_debrid_status(api_key: &str) -> Result<DebridProviderStatus, 
 
 // ── Premiumize ──
 
+/// Pure parser: given a Premiumize `/transfer/directdl` response body, return the
+/// downloadable files. A magnet torrent exposes `content[]` for every file; a
+/// multivolume repack yields several entries (setup.exe + `.bin`s) that the
+/// frontend downloads sequentially per-file through the debrid provider.
+/// Returns `(first_url, first_filename, first_size, all_urls, all_names, count)`.
+fn premiumize_files_from_body(
+    body: &serde_json::Value,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Vec<String>,
+    Vec<String>,
+    usize,
+) {
+    let content: Vec<serde_json::Value> = body["content"]
+        .as_array()
+        .map(|arr| arr.iter().filter(|c| c["link"].is_string()).cloned().collect())
+        .unwrap_or_default();
+    let first = content.first().cloned().unwrap_or_default();
+    let all_urls: Vec<String> = content
+        .iter()
+        .filter_map(|c| c["link"].as_str().map(|s| s.to_string()))
+        .collect();
+    let all_names: Vec<String> = content
+        .iter()
+        .filter_map(|c| c["filename"].as_str().map(|s| s.to_string()))
+        .collect();
+    (
+        first["link"].as_str().map(|s| s.to_string()),
+        first["filename"].as_str().map(|s| s.to_string()),
+        first["file_size"].as_i64(),
+        all_urls,
+        all_names,
+        content.len(),
+    )
+}
+
 async fn resolve_via_premiumize(api_key: &str, uri: &str) -> Result<DebridResolveResult, String> {
     let client = reqwest::Client::new();
 
@@ -953,13 +1277,17 @@ async fn resolve_via_premiumize(api_key: &str, uri: &str) -> Result<DebridResolv
             .await
             .map_err(|e| format!("Premiumize parse error: {}", e))?;
 
-        let content = body["content"][0].clone();
+        let (first_url, first_name, first_size, resolved_urls, file_names, count) =
+            premiumize_files_from_body(&body);
         Ok(DebridResolveResult {
             success: body["status"] == "success",
             provider: "premiumize".to_string(),
-            resolved_url: content["link"].as_str().map(|s| s.to_string()),
-            file_name: content["filename"].as_str().map(|s| s.to_string()),
-            file_size: content["file_size"].as_i64(),
+            resolved_url: first_url,
+            file_name: first_name,
+            file_size: first_size,
+            resolved_urls,
+            file_names,
+            file_count: if count > 1 { Some(count) } else { None },
             error: if body["status"] != "success" {
                 body["message"].as_str().map(|s| s.to_string())
             } else {
@@ -988,6 +1316,9 @@ async fn resolve_via_premiumize(api_key: &str, uri: &str) -> Result<DebridResolv
             resolved_url: content["link"].as_str().map(|s| s.to_string()),
             file_name: content["filename"].as_str().map(|s| s.to_string()),
             file_size: content["file_size"].as_i64(),
+            resolved_urls: Vec::new(),
+            file_names: Vec::new(),
+            file_count: None,
             error: if body["status"] != "success" {
                 body["message"].as_str().map(|s| s.to_string())
             } else {
@@ -1218,5 +1549,102 @@ mod tests {
         assert!(is_torbox_error_status("metaDL_error"));
         assert!(!is_torbox_error_status("cached"));
         assert!(!is_torbox_error_status(""));
+    }
+
+    #[test]
+    fn all_debrid_file_count_from_ready_links_array() {
+        // Multivolume repack: statusCode 4 (Ready) exposes one link per part.
+        let body = serde_json::json!({
+            "status": "success",
+            "data": { "magnets": [ {
+                "id": "abc123",
+                "statusCode": 4,
+                "links": [
+                    { "link": "https://x/1.bin", "filename": "Setup-1.bin", "size": 100 },
+                    { "link": "https://x/2.bin", "filename": "Setup-2.bin", "size": 100 }
+                ]
+            } ] }
+        });
+        assert_eq!(all_debrid_file_count_from_status(&body), 2);
+    }
+
+    #[test]
+    fn all_debrid_file_count_zero_when_not_ready_or_empty() {
+        // Uploading (statusCode 2) → no links yet → 0 (keep polling).
+        let uploading = serde_json::json!({
+            "data": { "magnets": [ { "id": "x", "statusCode": 2 } ] }
+        });
+        assert_eq!(all_debrid_file_count_from_status(&uploading), 0);
+
+        // Ready but links missing (malformed) → 0.
+        let ready_no_links = serde_json::json!({
+            "data": { "magnets": [ { "id": "x", "statusCode": 4 } ] }
+        });
+        assert_eq!(all_debrid_file_count_from_status(&ready_no_links), 0);
+
+        // Error terminal (statusCode 6) → 0 and the poll aborts.
+        let error = serde_json::json!({
+            "data": { "magnets": [ { "id": "x", "statusCode": 6 } ] }
+        });
+        assert_eq!(all_debrid_file_count_from_status(&error), 0);
+    }
+
+    #[test]
+    fn all_debrid_single_file_magnet_counts_one() {
+        let body = serde_json::json!({
+            "data": { "magnets": [ { "id": "solo", "statusCode": 4, "links": [
+                { "link": "https://x/game.rar", "filename": "game.rar", "size": 500 }
+            ] } ] }
+        });
+        assert_eq!(all_debrid_file_count_from_status(&body), 1);
+    }
+
+    #[test]
+    fn premiumize_multivolume_routes_to_torrent() {
+        let body = serde_json::json!({
+            "status": "success",
+            "content": [
+                { "link": "https://pm/Setup.exe", "filename": "Setup.exe", "file_size": 1000 },
+                { "link": "https://pm/Setup-1.bin", "filename": "Setup-1.bin", "file_size": 1000 },
+                { "link": "https://pm/Setup-2.bin", "filename": "Setup-2.bin", "file_size": 1000 }
+            ]
+        });
+        let (first_url, first_name, first_size, all_urls, all_names, count) =
+            premiumize_files_from_body(&body);
+        assert_eq!(first_url.as_deref(), Some("https://pm/Setup.exe"));
+        assert_eq!(first_name.as_deref(), Some("Setup.exe"));
+        assert_eq!(first_size, Some(1000));
+        assert_eq!(all_urls.len(), 3);
+        assert_eq!(all_names.len(), 3);
+        assert_eq!(all_names.first().map(String::as_str), Some("Setup.exe"));
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn premiumize_single_file_counts_one() {
+        let body = serde_json::json!({
+            "status": "success",
+            "content": [ { "link": "https://pm/game.rar", "filename": "game.rar", "file_size": 500 } ]
+        });
+        let (_, _, _, all_urls, all_names, count) = premiumize_files_from_body(&body);
+        assert_eq!(all_urls.len(), 1);
+        assert_eq!(all_names.len(), 1);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn premiumize_filters_linkless_entries() {
+        let body = serde_json::json!({
+            "status": "success",
+            "content": [
+                { "filename": "dir/folder-entry", "file_size": 0 },
+                { "link": "https://pm/game.rar", "filename": "game.rar", "file_size": 500 }
+            ]
+        });
+        let (first_url, _, _, all_urls, all_names, count) = premiumize_files_from_body(&body);
+        assert_eq!(first_url.as_deref(), Some("https://pm/game.rar"));
+        assert_eq!(all_urls.len(), 1);
+        assert_eq!(all_names.len(), 1);
+        assert_eq!(count, 1);
     }
 }

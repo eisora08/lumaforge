@@ -20,6 +20,8 @@ export type ActiveDownload = {
   isSteam: boolean;
   isDebrid: boolean;
   repacker?: string;
+  peers?: number;
+  seeds?: number;
   speedHistory: number[];
   progressMode: "determinate" | "indeterminate";
   message?: string;
@@ -177,6 +179,8 @@ export function useActiveDownload(job: DownloadJob): ActiveDownload {
       isSteam: job.type === "steam-install",
       isDebrid: job.type === "debrid-install",
       repacker: job.repacker,
+      peers: job.peers,
+      seeds: job.seeds,
       speedHistory: history,
       progressMode: job.progressMode ?? "determinate",
       message: job.message,

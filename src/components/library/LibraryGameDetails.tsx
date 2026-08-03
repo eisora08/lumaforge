@@ -57,7 +57,7 @@ import type { GameAppInfo } from "../../services/gameCacheService";
 import { resolveCanonicalDisplayTitle, isPendingUninstall, clearPendingUninstall, markPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
 import { setAmbientSource, clearAmbientSource, rememberLibraryDetails } from "../../services/ambientBackgroundStore";
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
-import { showInfo } from "../toast/GameToast";
+import { showInfo, showSuccess, showError } from "../toast/GameToast";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
@@ -72,7 +72,7 @@ import {
 } from "../../utils/steamLinks";
 import toast from "react-hot-toast";
 import { open } from "@tauri-apps/plugin-dialog";
-import { updateDebridGame } from "../../services/debridGameStore";
+import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
 
 import AchievementIcon from "../common/AchievementIcon";
 import AchievementTooltip from "../common/AchievementTooltip";
@@ -1668,7 +1668,13 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                           destructive
                           onClick={() => {
                             setShowActions(false);
-                            showInfo("Debrid catalog entries are managed by the repack catalog. Disable the Debrid integration in Settings > Integrations to remove all entries.", { title: "Debrid" });
+                            const providerGameId = game.providerGameId;
+                            if (providerGameId) {
+                              removeDebridGameFromLibrary(providerGameId);
+                              showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                            } else {
+                              showError("Could not remove this game from the library.");
+                            }
                           }}
                         />
                       ) : game.steamInstalled && game.source !== "epic" ? (

@@ -39,7 +39,8 @@ pub fn discover_executables(dir: String) -> Result<Vec<DiscoveredExecutable>, St
     .into_iter()
     .filter_entry(|e| {
       let name = e.file_name().to_string_lossy().to_lowercase();
-      name != "steamapps" && name != "common" && !name.starts_with('.')
+      (name != "steamapps" && name != "common" && !name.starts_with('.'))
+        && (name != "_redist" && name != "_commonredist")
     });
 
   for entry in walker {
@@ -67,6 +68,7 @@ pub fn discover_executables(dir: String) -> Result<Vec<DiscoveredExecutable>, St
     let lower_name = file_name.to_lowercase();
     if lower_name.starts_with("setup")
       || lower_name.starts_with("unins")
+      || lower_name.starts_with("unitycrashhandler")
       || lower_name.starts_with("dxsetup")
       || lower_name.starts_with("vcredist")
       || lower_name.starts_with("dotnet")
@@ -77,7 +79,6 @@ pub fn discover_executables(dir: String) -> Result<Vec<DiscoveredExecutable>, St
       || lower_name == "eosoverlay.exe"
       || lower_name == "eosoverlayrenderer.exe"
       || lower_name == "crashreporter.exe"
-      || lower_name == "unitycrashhandler.exe"
     {
       continue;
     }
@@ -117,6 +118,31 @@ pub fn spawn_game_with_elevation_fallback(
   let trimmed = exe.trim().trim_matches(|c| c == '"' || c == '\'');
   if trimmed.is_empty() {
     return Err("launch failed: executable path is empty".to_string());
+  }
+
+  // Validate the executable actually exists on disk before spawning. A stale or
+  // missing path surfaces as a cryptic `os error 2` (ERROR_FILE_NOT_FOUND) from
+  // both the plain spawn AND the elevated `Start-Process -Verb RunAs` retry, so
+  // fail fast with a clear message instead of dragging the user through a UAC
+  // prompt that can never succeed. Relative paths are resolved against the
+  // working directory when one is provided.
+  let resolved_exe = if Path::new(trimmed).is_absolute() {
+    trimmed.to_string()
+  } else if let Some(wd) = working_directory {
+    let wd_trimmed = wd.trim().trim_matches(|c| c == '"' || c == '\'');
+    if wd_trimmed.is_empty() {
+      trimmed.to_string()
+    } else {
+      Path::new(wd_trimmed).join(Path::new(trimmed)).to_string_lossy().into_owned()
+    }
+  } else {
+    trimmed.to_string()
+  };
+
+  if !Path::new(&resolved_exe).is_file() {
+    return Err(format!(
+      "Executable not found: '{resolved_exe}'. The installed path may be missing or stale — reinstall the game or pick a valid executable."
+    ));
   }
 
   let mut cmd = Command::new(trimmed);

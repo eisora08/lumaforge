@@ -38,6 +38,8 @@ type UpdateDownloadJobInput = {
   progressMode?: DownloadJob["progressMode"];
   artworkUrl?: string;
   installedSize?: number;
+  peers?: number;
+  seeds?: number;
 };
 
 type DownloadQueueContextValue = {

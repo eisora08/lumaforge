@@ -5488,3 +5488,389 @@ Make a Debrid-installed repack game feel "native" in the Library desktop grid + 
 ### Build
 - `tsc --noEmit` ✅ (only the 22 pre-existing extension/test errors, none in touched files)
 - `vite build` ✅ (2.04s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings; verified `useDebridGameAppId`/`updateDebridGameTitle`/`refresh-artwork`/`detectAndQueueMissingMedia` in bundle)
+
+## Session — Debrid download `os error 3` root cause: unsanitized nested filename
+
+### Problem
+Debrid repack install failed instantly with `Failed to create file: The system cannot find the path specified. (os error 3)` — before any byte downloaded. Confirmed the message comes only from `download_file_to_dest` at `debrid_installer.rs:1790` (`tokio::fs::File::create(&part)`), where `part = tmp_dir.join(format!("{}.part", file_name))` with `tmp_dir = dest_dir/tmp` created OK. Failing before the first chunk means `file_name` contained a path separator → parent dir `tmp/<sub>` didn't exist.
+
+### Root cause
+- `file_name` comes from `clean_download_filename(preferred_filename.or(extract_filename_from_uri(uri)))`. Debrid resolvers (`debrid_resolver.rs`) return the full **in-archive path** (e.g. `Game Folder/Setup.exe`) or Windows-invalid characters for magnet/torrent files.
+- Old `clean_download_filename` only checked non-empty + `len ≤ 50` + `has_file_extension` — it did NOT sanitize `/ \ < > : " | ? *` or control chars, trailing dots/spaces, `.`/`..`, or reserved device names. A slash-carrying token passed straight through → `.part` built a nested path → `os error 3`.
+
+### Fix (pure Rust, `debrid_installer.rs`)
+- **`normalize_download_filename(name)`** — single sanitizer:
+  1. Keep only the last path segment (`split(['/', '\\']).last()`).
+  2. Replace Windows-invalid + control chars (`<>:"/\|?*` + C0 controls) with `_`.
+  3. Trim trailing dots/spaces (Windows terminators).
+  4. Fall back to `"repack"` for empty / `.` / `..` / reserved device names (`con`/`nul`/`prn`/`aux`/`con.`/`lpt`/`com`).
+  5. Cap at `MAX_LEN = 50` preserving the extension when present; bare over-long tokens (gofile CDN) → `"repack"`.
+- **`clean_download_filename`** — now always routes through `normalize_download_filename` (no more extension-only fast path; bare/over-long names still sanitize instead of passing raw). The old `has_file_extension` helper was removed (unused).
+- **Defense-in-depth** — before the `File::create`/`OpenOptions` branch in `download_file_to_dest`, `fs::create_dir_all(part.parent())` ensures a residual nested name can never surface as a silent `os error 3`.
+- **7 new regression tests** in `debrid_installer::tests`: nested subdir strip (the exact bug), invalid-char replacement, trailing dot/space trim, `"repack"` fallback (empty/`.`/`..`/reserved/over-long/slash-only), length-cap-preserving-extension, valid names unchanged, `clean_download_filename` sanitizes all inputs.
+
+### Key Files Changed
+- `src-tauri/src/commands/debrid_installer.rs` — `normalize_download_filename`, `clean_download_filename` rewrite, `has_file_extension` removed, part-parent `create_dir_all` guard, 7 tests
+
+### Build
+- `cargo check` ✅ (only 2 pre-existing dead-code warnings)
+- `cargo test` ✅ **197 passed / 0 failed** (was 190; 7 new)
+
+## Session — Debrid bugs: multivolume routing, installer CWD, missing-exe launch error
+
+### Goal
+Fix 3 Debrid install/launch bugs: (1) multivolume repacks downloaded only the first `.bin` via the resolved direct link instead of running through the integrated torrent client, (2) `spawn_installer_detached` ran the repack installer without anchoring its working directory, and (3) launching a Debrid game with a stale/missing `executablePath` surfaced a cryptic `os error 2`.
+
+### Part 1 — Multivolume resolve → torrent routing (Rust + TS)
+- **Root cause**: `DebridResolveResult` only exposed `resolved_url: Option<String>`; TorBox used `torbox_largest_file` (single largest file) and Real-Debrid used `.first()` → a single link, so a multivolume repack resolved to only its first part (`.rar` correctly left in place as incomplete).
+- **Rust** (`debrid_resolver.rs`):
+  - `DebridResolveResult` gained `resolved_urls: Vec<String>` (`#[serde(default, skip_serializing_if = "Vec::is_empty")]`) and `file_count: Option<usize>`.
+  - Helper `torbox_usable_files` collects non-sample/non-metadata TorBox files; when >1, `file_count = Some(usable.len())` and `picked = Some((0, name, size))` (whole-torrent); single file → `file_count = Some(1)`.
+  - Real-Debrid magnet: enumerate `torrents/links/{id}` → `all_links: Vec<String>` + `file_count = Some(len)` when several. WebDL (direct-HTTP, single-file) keeps `resolved_urls::new()`, `file_count: None`.
+- **TS**: `DebridResolveResult` type gained `resolvedUrls?`/`fileCount?` (`debridProviderService.ts:14-25`); `resolveInstallUri` returns `{ url, fileName?, fileCount? }` (`useDebridInstallSync.ts:74-82`); `startInstall` routes to `startTorrentDownload` when `resolved.fileCount > 1` and `downloadUri.startsWith("magnet:")` (~line 475).
+
+### Part 2 — Installer working directory (`debrid_installer.rs:1162`)
+- `spawn_installer_detached` now anchors to the installer's own directory via `current_dir` and, on the elevated PowerShell path, `Start-Process -WorkingDirectory '<workdir>'` with `''` quoting escapes.
+
+### Part 3 — Missing executable path clear error (`process.rs:113`)
+- **Root cause**: `spawn_game_with_elevation_fallback` only special-cased `os error 740`; a nonexistent `executablePath` returned the cryptic `os error 2` from both the plain spawn AND the `Start-Process -Verb RunAs` retry (which would also fail identically).
+- **Fix**: upfront existence validation — resolve the exe against `working_directory` when relative, and `return Err("Executable not found: '<resolved>'. The installed path may be missing or stale — reinstall the game or pick a valid executable.")` before building the command. Fails fast with a clear message instead of dragging the user through an elevation prompt that can never succeed.
+
+### Build
+- `cargo check` ✅ (0 errors)
+- `cargo test` ✅ 197 passed / 0 failed
+
+## Session — Debrid torrent post-process fixes (Part A: multivolume routing + Part B: installer/volume selection)
+
+### Goal
+Fix the FitGirl-via-debrid install pipeline after the integrated torrent client was introduced: multivolume repacks were resolving to a single direct link (only the first `.bin` downloaded) instead of routing through the torrent client, and the torrent post-process picked wrong installers/misplaced files.
+
+### Part A — Multivolume repacks route to torrent client (completed, validated)
+- **Root cause**: `DebridResolveResult` only exposed `resolved_url: Option<String>`; TorBox used `torbox_largest_file` (single largest file) and Real-Debrid used `.first()` → multivolume repack resolved to only its first part.
+- **Rust** (`debrid_resolver.rs`):
+  - `DebridResolveResult` gained `resolved_urls: Vec<String>` (`#[serde(default, skip_serializing_if = "Vec::is_empty")]`) and `file_count: Option<usize>`.
+  - Helper `torbox_usable_files` collects non-sample/non-metadata TorBox files; when >1, `file_count = Some(usable.len())` and `picked = Some((0, name, size))` (whole-torrent); single file → `file_count = Some(1)`.
+  - Real-Debrid magnet: enumerate `torrents/links/{id}` → `all_links: Vec<String>` + `file_count = Some(len)` when several. WebDL (direct-HTTP, single-file) keeps `resolved_urls::new()`, `file_count: None`.
+- **TS**: `DebridResolveResult` type gained `resolvedUrls?`/`fileCount?` (`debridProviderService.ts:14-25`); `resolveInstallUri` returns `{ url, fileName?, fileCount? }` (`useDebridInstallSync.ts:74-82`); `startInstall` routes to `startTorrentDownload` when `resolved.fileCount > 1` and `downloadUri.startsWith("magnet:")` (~line 475).
+
+### Part B — Torrent post-process: installer + volume selection (B1 done, B2 pending)
+- **B1a — installer selection uses canonical helper**: local `find_installer_file_recursive` in `torrent.rs` was a naive DFS that did NOT skip `_Redist` nor prefer the root → could pick a redistributable's `setup.exe` over the repack's real installer (misplaced files, "setup.exe que no funciona"). Replaced all 3 call sites (short-circuit step 0, `process_torrent_files` Priority 1, post-extraction re-scan) with the canonical `find_installer_exe_recursive` (root-first, skips `_Redist`, depth cap) from `debrid_installer.rs`; removed the local function + the now-unused `INSTALLER_EXE_NAMES`/`REPACK_UTILITY_EXES` imports.
+- **B1b — multivolume RAR extraction picks the first volume**: unrar/7-Zip must be pointed at the FIRST volume of a `Game.partNNN.rar` set (auto-follows the rest); picking the largest fails/partial. New `archive_is_first_volume(path)` (`rsplit_once(".part")` on the stem, trims leading zeros, parses u64, `== 1`; covers `part01`/`part1`/`part001`). `find_largest_archive_recursive` → `find_archive_to_extract`: if any RAR first-volumes exist, returns the largest of them; otherwise the largest single archive (legacy `.r00` sets only expose the `.rar`, which IS the first volume).
+- **B2 — pending** (`debrid_installer.rs:1162` `spawn_installer_detached`): validate the installer spawn + working dir for the actual "setup.exe que no funciona" symptom. Not started.
+- **Canonical helpers (verified)**: `REPACK_UTILITY_EXES` `:2517`; `INSTALLER_EXE_NAMES` `:2525` (`setup.exe`, `installer.exe`, `setup_x64.exe`, `setup_x86.exe`, `autorun.exe`); `find_installer_exe_in_dir` `:2535` (priority setup.exe → other installers → repack utilities); `auto_run_installer` `:1118` (detached spawn; success → `status:"installing"` + `installer_pid`; failure → `status:"needs-setup"` + `installer_path`; after installer exit re-scans via `find_largest_exe_in_dir` `:1102`); `flatten_single_root_folder` `:2314`.
+- **TS poll loop**: `pollInstallerUntilDone` (`useDebridInstallSync.ts:165`) polls `checkInstallerStatus({ pid, installDir })`; `"ready"` → `updateDebridGame(...)`; `"needs-path"` → registry auto-detect.
+- **Pipeline** `process_torrent_files`: `flatten_single_root_folder` → Priority 1 installer (`auto_run_installer`) → Priority 2 largest game exe → Priority 3 archive extraction → `delete_archive` → re-scan.
+- **Kill-switch**: `DEBRID_TORRENT_ENABLED = true` (`torrent.rs:37`).
+
+### Tests
+- 7 new regression tests in `torrent.rs`: `archive_is_first_volume` (part01/part1/part001 recognized; later/plain/zip rejected) + `find_archive_to_extract` (prefers first volume over larger later volume, largest first-volume across sets, largest single archive, recursive zip fallback, empty dir → None). Use temp-dir fixtures with `SystemTime`-based unique names.
+- Full suite: **210 passed / 0 failed** (203 previos + 7 nuevos).
+
+### Build
+- `cargo check` ✅ (0 errors; only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `cargo test` ✅ 210 passed / 0 failed
+
+
+## Session � Torrent stall/resume/file-lock fixes (stuck old download + locked folder)
+
+### Problem
+1. Launcher stuck on an old torrent download ("little-big-adventure-...-fitgirl") that never finished and blocked starting new downloads.
+2. Corrupt files could not be deleted until the launcher closed (file lock).
+
+### Root causes
+- **C1**: The metadata stall guard only applied to \Initializing\. Once metadata resolved with no seeds/peers, the poll loop spun at pct 0 emitting nothing until \TORRENT_MAX_WAIT_SECS\ (6h) � job stuck in "downloading" forever with no TS poller to cancel it.
+- **C2**: librqbit session is process-lifetime (\TORRENT_SESSION\/\ACTIVE_TORRENTS\ OnceLock); persistent dir \<appData>/librqbit\ with fastresume + JSON restores old torrents on boot, which resume downloading in the background with no TS job tracking them.
+- **C3**: Torrents remaining in the session hold open file handles on Windows, blocking folder deletion until the launcher closes. The Paused path (\session.pause\) kept the torrent in the session too.
+
+### Fixes (torrent.rs)
+- **Fix 1 � data-stall guard**: new \TORRENT_DATA_STALL_SECS = 2 * 60\, generic \stall_exceeded(first_seen, threshold_secs)\ + \metadata_stall_exceeded\/\data_stall_exceeded\ wrappers. \poll_torrent_until_done\ tracks \data_stalled: Option<Instant>\, reset when \stats.progress_bytes\ advances, \Err("No download progress (no seeds/peers).")\ after 2 min without new bytes in the non-Initializing branch. A download producing bytes is never cut; \metadata_stalled\ clears as soon as the state leaves Initializing.
+- **Fix 2 � restored-torrent sweep**: \sweep_restored_torrents(session)\ called in \get_session\ right after session creation. A fresh process has empty \ctive_torrents()\, so every torrent librqbit restored from persistence belongs to a PREVIOUS session � they are deleted with \session.delete(id, false)\ (files kept on disk; only the session reference + file handles released). Download queue is the source of truth; an explicit resume re-adds its magnet below.
+- **Fix 3 � release handles on pause**: \PollOutcome::Paused\ path now \session.delete(torrent.id(), false)\ + \ctive_torrents().remove(&job_id)\ instead of \session.pause\. Partial data + fastresume stay on disk; resume re-adds the magnet via \start_torrent_download\ and librqbit reuses existing files (piece verification on add).
+- **Fix 4 � verified**: \startInstall\ catch in \useDebridInstallSync.ts\ already marks the job \"failed"\ when \start_torrent_download\ returns \Err\ (stall ? job fails, no eternal "downloading"); Rust \Err\ branch already cleans partial files + removes from \ACTIVE_TORRENTS\.
+
+### Tests
+- 3 new regression tests in \	orrent.rs\: \data_stall_below/at/over_threshold\ (parity with the existing metadata-stall tests). 20 torrent tests total.
+- Full suite: **213 passed / 0 failed** (210 previos + 3 nuevos).
+
+### Build
+- \cargo check\ ? (only 2 pre-existing dead-code warnings: \HydraSourceList\, \DebridProviderConfig\)
+- \cargo test\ ? 213 passed / 0 failed
+- \	sc --noEmit\ ? (only the 22 pre-existing extension/test errors, none in touched files)
+- \ite build\ ?? skipped (no TS changes)
+
+## Session — Torrent metadata-fetch timeout (endless "Connecting to torrent swarm...")
+
+### Problem
+A dead/swarmless magnet (FitGirl/DODI repack with no reachable peers, or blocked DHT ports) left the job stuck forever on "Connecting to torrent swarm...". The previous metadata-stall guard (3-min) never fired for this case.
+
+### Root cause
+`add_torrent().await` (magnet without embedded info dict) is UNBOUNDED inside librqbit: `add_torrent` to `add_torrent_internal` (`metadata: None`) to `resolve_magnet` to `read_metainfo_from_peer_receiver` (dht_utils.rs:30), which blocks until a peer delivers the info-hash metadata OR the peer-address stream ends. With DHT enabled (our default — `SessionOptions` derives `Default` with `disable_dht: false`), that stream stays open forever (DHT keeps discovering peers), so individual peer connect failures never terminate the loop. The poll-loop metadata-stall guard (`torrent.rs:376`) runs only AFTER `add_torrent` returns — it never got the chance.
+
+### Fix (`src-tauri/src/commands/torrent.rs`)
+- Wrapped the `session.add_torrent(...)` call in `tokio::time::timeout(Duration::from_secs(TORRENT_METADATA_STALL_SECS), ...)` — the same 3-min budget the poll-loop connect guard uses, so BOTH phases are bounded identically.
+- On timeout: logs `[TORRENT][METADATA_TIMEOUT] job_id=... no swarm metadata after 180s`, emits `emit_installer_progress(..., "failed", ..., "Could not connect to torrent swarm (no peers/seeds).")`, and returns `Err("Could not connect to torrent swarm (no peers/seeds).")` — the TS `startInstall` catch already marks the job failed on command `Err`.
+- No cleanup needed on timeout: the torrent is only inserted into `active_torrents()` (and registered in the session) after `add_torrent` returns; dropping the timed-out future leaves no orphaned ManagedTorrent. Lingering DHT info-hash lookups are harmless (keyed by hash, never registered).
+- `Duration`/`tokio::time::timeout` were already used in this file — no new imports.
+
+### Regression test (torrent.rs)
+- `add_metadata_timeout_reuses_connect_guard_budget` — asserts `TORRENT_METADATA_STALL_SECS == 180` and that it is 60s longer than `TORRENT_DATA_STALL_SECS`, guarding the invariant that the add-phase budget mirrors the poll-loop connect budget.
+
+### Build
+- `cargo check` (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `cargo test` 214 passed / 0 failed (213 previos + 1 nuevo; 15 torrent tests total)
+- `tsc --noEmit` skipped (no TS changes)
+- `vite build` skipped (no TS changes)
+
+## Session — Bug 4: resume after pause/cancel/network-cut corrupts `.part` files
+
+### Problem
+A Debrid repack download paused/cancelled/hit a network-cut mid-chunk left a `.part` file that, on resume, reassembled the file with corruption (gap/wrong offset). The corruption came from `.part` being dropped WITHOUT truncating to the acknowledged byte count.
+
+### Root cause
+- The download loop writes each chunk via `file.write_all(&chunk)` and only then bumps `bytes_read += chunk.len()`. A `write_all` that FAILS PARTIALLY (or a stream-error path) can leave the on-disk `.part` LONGER than `bytes_read`.
+- The cancel/pause/stream-error/write-error exit branches all did `drop(file)` + `write_checkpoint(bytes_read, ...)` WITHOUT truncating the file first — so the on-disk part size diverged from the checkpointed offset. `load_checkpoint` uses the on-disk `.part` size as authoritative, so a resume from that stale length re-fetched bytes starting at the wrong position → corrupted output.
+- The write-error path used a `map_err(|e| { write_checkpoint(...); format!(...) })` closure, which cannot `await` a truncation — it checkpointed with a file that might still hold an oversized tail.
+
+### Fix (`src-tauri/src/commands/debrid_installer.rs`)
+- **New `truncate_part_to(file, bytes_read)`** async helper: `flush()` then `set_len(bytes_read)` but ONLY when `meta.len() > bytes_read` (shrink-only — never extends, so a larger `bytes_read` can't insert a zero-gap on resume). Placed just before `decide_resume`.
+- **Cancel branch** (in-loop): `truncate_part_to` → `write_checkpoint` → `drop(file)` → `Err`.
+- **Pause branch** (in-loop): `truncate_part_to` → `write_checkpoint` → `drop(file)` → `Ok(DownloadFileOutcome::Paused)`.
+- **Stream-error branch** (chunk read failure): `truncate_part_to` before `write_checkpoint` so the retry/backoff path resumes from a size consistent with the checkpoint.
+- **Write-error path** restructured from `map_err` closure into a `if let Err(e) = file.write_all(&chunk).await { truncate_part_to(...); write_checkpoint(...); return Err(...) }` so truncation can `await` before checkpointing.
+- The HTTP-416 and FreshStart branches already delete part+meta and restart from zero — unchanged.
+
+### Regression tests (4 new in `debrid_installer::tests`)
+- `truncate_part_shrinks_to_acknowledged_bytes` — file 8192B, `bytes_read` 4096 → on-disk becomes 4096 (the exact corruption case).
+- `truncate_part_noop_when_aligned` — on-disk == `bytes_read` → unchanged.
+- `truncate_part_never_extends` — `bytes_read` > on-disk → file NOT extended (guards the zero-gap corruption).
+- `truncate_part_missing_file_no_panic` — newly created empty file truncates to 0, no panic.
+
+### Build
+- `cargo check` ✅ (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `cargo test` ✅ **218 passed / 0 failed** (214 previos + 4 nuevos)
+- `tsc --noEmit` ✅ (only the 22 pre-existing extension/test errors, none in touched files)
+- `vite build` ⏭️ skipped (no TS changes)
+
+## Session — Debrid: gofile resume via stable source_key + never trust partial files
+
+### Problem
+1. **Resume never resumes (Bug 1)**: `download_debrid_package` re-resolved `resolve_gofile_url` on EVERY call (fresh CDN link each time). `load_checkpoint` compared `cp.uri != uri`, so the newly-rotated CDN link never matched the checkpoint → `.part`/`.part.meta` discarded → `resume_from = 0` → the saved progress was never used. The user's whole point of "continue from the saved progress after relaunch" was silently broken.
+2. **Corrupt data trusted (Bug 3 gate)**: Step 0 short-circuited to "already extracted" when `find_installer_exe_*` found ANY exe in `dest_dir`, and `download_file_to_dest` short-circuited "already downloaded" whenever `dest_path` existed with `len > 0`. A leftover `.part` renamed to final (or a partial extraction) was treated as good → setup auto-ran on corrupt files.
+
+### Part 1 — Fix A: checkpoint keyed on stable `source_key`
+- `download_debrid_package` (Rust) gained `source_key: Option<String>` param; `checkpoint_key = source_key.unwrap_or(download_uri)`.
+- `DownloadCheckpoint.uri` now stores the STABLE origin key (page/magnet URL), not the volatile CDN link.
+- `download_file_to_dest` gained `source_key: &str`; `load_checkpoint`/`write_checkpoint` calls now pass `source_key` (the HTTP GET still uses `uri` = CDN).
+- Frontend: `tauri.ts` binding gained `sourceKey?: string`; `useDebridInstallSync.ts` `downloadDebridPackage` call passes `sourceKey: downloadUri` (the job's stable `downloadUrl`).
+- Old-format checkpoints (CDN keyed) are discarded once on first resume (mismatch → restart); direct-HTTP resumes keep working (source_key == original URI).
+
+### Part 2 — Fix B: never trust partial files
+- `has_partial_install_artifacts(dest_dir)` — new helper: true when `tmp/` exists and is non-empty (any `.part`/`.part.meta`/`.meta.tmp`). The completion path removes `tmp/`, so non-empty `tmp/` ⇔ in-flight/interrupted download.
+- Step 0: when partial artifacts are present, logs `[DEBRID][SHORTCIRCUIT_SKIP]` and falls through to the full download+extract pipeline (never auto-runs setup on corrupt data).
+- `download_file_to_dest` "already downloaded" short-circuit now requires `!part.exists() && !meta.exists()` — a leftover partial triggers checkpoint resume instead of trusting the final file. `part`/`meta` computed once before the gate (duplicate computation removed).
+
+### Regression tests (6 new in `debrid_installer::tests`)
+- `checkpoint_load_resumes_across_cdn_rotation` — checkpoint keyed on page URL matches the stable `source_key` (exact Bug 1 case).
+- `checkpoint_load_source_key_mismatch_starts_fresh` — different origin discards the stale partial.
+- `has_partial_artifacts_no_tmp_false` / `has_partial_artifacts_empty_tmp_false` / `has_partial_artifacts_part_file_true` / `has_partial_artifacts_meta_only_true` — Step 0 guard matrix.
+
+### Fix C (verified, no change needed)
+- `start_torrent_download` (librqbit) already resumes via fastresume + piece verification; a resumed torrent re-verifies existing files and never marks corrupt data ready. No analogous trust bug on the torrent path.
+
+### Key Files Changed
+- `src-tauri/src/commands/debrid_installer.rs` — `source_key` param on `download_debrid_package`/`download_file_to_dest`, `checkpoint_key`, `has_partial_install_artifacts`, Step 0 gate, dest_path gate, 6 tests
+- `src/services/tauri.ts` — `sourceKey?: string` on `downloadDebridPackage` params
+- `src/hooks/useDebridInstallSync.ts` — `sourceKey: downloadUri` at the call site
+
+### Build
+- `cargo check` ✅ (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `cargo test` ✅ **224 passed / 0 failed** (218 previos + 6 nuevos)
+- `tsc --noEmit` ✅ (only the 22-23 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.25s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+
+## Session � Torrent resume: never trust partial files (completion marker)
+
+### Problem
+Pausing a torrent/torque (librqbit) download and starting it again falsely reported the game as "descargado" and left a broken `setup.exe`. Uninterrupted downloads worked fine; the bug was isolated to the torrent/TorBox path (the steamrip/gofile HTTP path was fine).
+
+### Root cause
+The torrent Step 0 short-circuit (`torrent.rs:184-204`) trusted any on-disk installer/game exe as "already installed": it ran `find_installer_exe_recursive(&dest_path)` ? `auto_run_installer(...)`. librqbit writes pieces **in place** into `dest_dir` (no `tmp/` folder like the HTTP path), so a paused mid-download leaves a partial-but-real `setup.exe` (correct name, non-zero size). On resume, Step 0 found that corrupt exe ? auto-ran it ? false "installing/descargado". The HTTP path already had the analogous guard (`has_partial_install_artifacts`), but the torrent path had no interrupt signal.
+
+### Fix
+Torrent-specific **completion marker** stored in the librqbit session dir (`<appData>/librqbit/<job_id>.done`), NOT in `dest_dir` (a marker in dest would break `flatten_single_root_folder`, which requires the root to contain only the game folder):
+
+- `torrent_base_dir(app_handle)` � shared resolve/create of the session dir (extracted from `get_session`).
+- `marker_file_name(job_id)` � sanitizes the job id for the filename.
+- `torrent_marker_path` / `torrent_marker_exists` / `write_torrent_marker` / `remove_torrent_marker`.
+- **Step 0 gated**: only short-circuits when the marker exists. Without it (pause/cancel/first run), the short-circuit is skipped and the torrent is actually (re)added/resumed � partial files are re-verified by librqbit piece verification.
+- **Marker written** on `Ok(PollOutcome::Done)` after the flush + `session.delete(..., false)`, before the `auto_extract`/`process_torrent_files` branch.
+- **Marker removed** on the `Err` cancel/fail path (next to `delete(..., true)` partial cleanup).
+- **Pause path unchanged**: no marker ? resume re-adds the magnet.
+
+### Behavior after fix
+- Pause ? resume ? Step 0 skipped ? torrent re-added ? real resume/re-download ? only after `Done` does post-processing run ? valid `setup.exe`.
+- First-time download ? no marker ? normal flow (same as before).
+- Cancelled/failed ? marker removed ? a later attempt re-downloads instead of trusting leftover partials.
+
+### Tests (3 new in torrent::tests)
+- `marker_file_name_sanitizes_job_id` � safe filename from alnum/-/_. and sanitized separators.
+- `torrent_marker_roundtrip` � write ? exists ? remove ? gone.
+- `torrent_marker_lives_in_session_dir_not_dest_dir` � marker never leaks into dest_dir (protects `flatten_single_root_folder`).
+
+### Build
+- `cargo check` ? (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `cargo test` ? **227 passed / 0 failed** (224 previos + 3 nuevos)
+- `tsc --noEmit` ?? skipped (no TS changes)
+- `vite build` ?? skipped (no TS changes)
+
+## Session � Multivolume Debrid repacks: sequential per-file downloads (Option A)
+### Goal
+Replace the automatic `fileCount > 1` ? librqbit torrent fallback (user''s local swarm fails with "Could not connect to torrent swarm (no peers/seeds)") with sequential per-file direct downloads through the debrid provider: multivolume FitGirl repacks (magnet, setup.exe + `.bin` parts) download one-by-one via the existing `downloadDebridPackage` pipeline.
+
+### Rust (already complete, verified this session)
+- `DebridResolveResult` (`debrid_resolver.rs:16-38`) gained `file_names: Vec<String>` (`#[serde(default, skip_serializing_if = "Vec::is_empty")]`) � aligned 1:1 with `resolved_urls`. Frontend downloads anything `> 1` sequentially per-file; primary part chosen by filename.
+- TorBox magnet: multivolume branch emits a per-file `GET /torrents/requestdl` for every usable file + aligned `file_names`; skipped files ? early error result.
+- Real-Debrid magnet: unrestricts EVERY link from `/torrents/links/{id}` (sequential `.form` loop) ? `resolved_urls`/`file_names` aligned 1:1; `file_size=None`; `file_count=Some(n)` only when n > 1.
+- Premiumize: `premiumize_files_from_body` ? 6-tuple (first_url, first_name, first_size, all_urls, all_names, count); `file_names` aligned; links-less entries filtered. AllDebrid stays single-file (`file_names: Vec::new()`).
+- `download_debrid_package` (`debrid_installer.rs:389`) supports `auto_extract=false` ? status `"downloaded"` (archive saved, no extraction). Loop calls it per part with the SAME `job_id`/`destDir`; each call starts with `clear_job_flags(&job_id)` so cancel mid-loop aborts only the in-flight part.
+
+### TS (this session)
+- `debridProviderService.ts` � `DebridResolveResult` mirror gained `fileNames?: string[]`; doc comment updated (per-file sequential semantics + primary-part-by-filename).
+- `useDebridInstallSync.ts`:
+  - `resolveInstallUri` return type + pass-through now include `resolvedUrls`/`fileNames`.
+  - New `pickPrimaryPartIndex(fileNames)` helper � priority: (1) installer exe (setup/installer/`.exe$`, last match wins so volumes precede it), (2) first-volume archive (`part0*1.rar`/`.rar`/`.r00`), (3) fallback last index.
+  - `startInstall` multivolume branch: when `resolved.resolvedUrls.length > 1` and `downloadUri.startsWith("magnet:")`, downloads each part sequentially via `downloadDebridPackage` � every non-primary part with `autoExtract=false` (just saved to disk), then the primary part LAST with `autoExtract=true` (reassembles + auto-runs setup). Same `jobId` (single progress bar via `InstallerProgressListener`), `destDir`, and `sourceKey: downloadUri` (stable checkpoint key). Breaks on `!result?.success` so `handleInstallResult` (called once after the loop) marks failed.
+  - Explicit `installMethod === "torrent"` route and the resolve-failed ? torrent fallback remain unchanged (librqbit stays for the user''s explicit choice only).
+
+### Behavior
+- Multivolume repack via debrid: all `.bin`/volume parts land on disk first (no extraction), then setup.exe (or first-volume archive) downloads last and extracts ? setup runs once every part is present.
+- Single-file repack: unchanged direct download path.
+- Resume: checkpoint keyed on the stable `sourceKey` (job downloadUrl) per part � a CDN rotation on resume continues the same `.part` for the part in flight.
+- Cancel mid-loop: only the in-flight part''s Rust call is aborted (clear_job_flags per call).
+
+### Build
+- `tsc --noEmit` ? (22 pre-existing extension/test errors only, none in touched files)
+- `vite build` ? (2.35s, Rolldown; verified `pickPrimaryPartIndex` regex `/setup|installer|\.exe$/` + 3 `sourceKey` call sites in `index-*.js`; debug string dead-code-eliminated since `DEBUG_DEBRID_INSTALL=false`)
+- `cargo test` ? 227 passed / 0 failed (verified prior session)
+- `cargo check` ? (only 2 pre-existing dead-code warnings)
+
+## Session � Debrid multivolume: MD5 folder preservation + repack-utility never auto-run
+
+### Goal
+Two layered bugs in the Debrid repack install pipeline: (1) the `MD5` checksum folder was dropped � its files were dumped at the extract root and `MD5/` was never created; (2) repack utilities (`quicksfv.exe`) were auto-run as if they were the game installer.
+
+### Root causes
+- **MD5 bug**: multivolume per-file downloads. The resolver returns nested relative paths like `MD5/checksums.md5` (torrents list the checksum folder as separate files), but `download_file_to_dest` routed them through `clean_download_filename` ? `normalize_download_filename`, which keeps only the LAST path segment (`checksums.md5`). The file landed at `dest_dir/checksums.md5`; the `MD5/` parent folder was never created.
+- **QuickSFV bug**: `find_installer_exe_in_dir` Priority 2 returned `REPACK_UTILITY_EXES` names (`quicksfv.exe`, `verify.exe`, `md5.exe`, ...). Every auto-run call site (`Step 0`, RAR-extract Priority 1, `torrent.rs`) uses this function, so a leftover checksum tool in the extract root got spawned as if it were the repack installer.
+
+### Part 1 � `normalize_download_relative_path` + nested dest (debrid_installer.rs)
+- New `normalize_download_relative_path(name) -> Option<String>` beside `normalize_download_filename`: preserves nested directory structure while sanitizing each component (invalid chars ? `_`, trailing dots/spaces trimmed, reserved-device detection, per-component length caps). Drops `.`/`..` components. Returns `None` for: leading-separator absolute paths (`/abs/...`, `\\abs\\...`), drive prefixes (`C:/...`), flat single-component names, unsafe mid-path components (a component collapsing to `"repack"`), empty.
+- `download_file_to_dest`: when the resolver-provided `preferred_filename` yields a nested relative path, sets `dest_path = dest_dir.join(rel)` and `file_name = rel` (drives `.part`/`.part.meta` naming under `tmp/`); otherwise falls back to the flat sanitizer. Adds `create_dir_all(dest_path.parent())` before the completion rename so `dest_dir/MD5/checksums.md5` can be created.
+
+### Part 2 � utilities never auto-run (debrid_installer.rs)
+- `find_installer_exe_in_dir` now returns ONLY genuine `INSTALLER_EXE_NAMES` (`setup.exe`, `installer.exe`, `setup_x64.exe`, `setup_x86.exe`, `autorun.exe`). Repack utilities removed from its results � doc updated.
+- New `find_repack_utility_exe_in_dir(dir) -> Option<String>` and `has_repack_utility(dir) -> bool` (top-level checks over `REPACK_UTILITY_EXES`).
+- RAR-extract no-installer fallback message improved: when `has_repack_utility(&dest_path)` is true ? "Open the folder and run the repack's setup.exe manually" instead of the generic "no executable found" (prevents the false `ready` on a utility-only extract).
+
+### Part 3 � regression tests (8 new)
+- `relative_path_preserves_nested_checksum_folder` (exact MD5 bug), `relative_path_flat_name_returns_none`, `relative_path_rejects_abs_and_drive_prefix`, `relative_path_drops_traversal_and_sanitizes_components`, `relative_path_unsafe_component_returns_none`.
+- `installer_finder_never_returns_repack_utility` (quicksfv alone ? None from both `find_installer_exe_in_dir` and `find_installer_exe_recursive`, detected only by the dedicated helper), `installer_finder_returns_real_setup_over_utility`, `has_repack_utility_false_when_absent`.
+
+### Key Files Changed
+- `src-tauri/src/commands/debrid_installer.rs` � `normalize_download_relative_path`, nested dest wiring in `download_file_to_dest`, `find_installer_exe_in_dir` utility removal, `find_repack_utility_exe_in_dir`/`has_repack_utility`, fallback message, 8 tests
+
+### Build
+- `cargo check` ? (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `cargo test` ? **235 passed / 0 failed** (227 previos + 8 nuevos)
+- `tsc --noEmit` / `vite build` ?? skipped (no TS changes)
+
+## Session � Debrid multivolume: primary-part regex fix + ordering guarantee + in-flight download guard
+
+### Problem
+A FitGirl-style multivolume repack (setup.exe + several .bin volumes) downloaded/extracted fine but setup.exe never auto-ran. User asked whether a cooldown or a queue-empty check could safely auto-launch setup without the premature-execution bug.
+
+### Feasibility answer
+YES � the correct mechanism is **ordering + a deterministic in-flight check**, NOT a cooldown timer (a timer can't distinguish "still downloading" from "finished" and reintroduces the race). The TS loop is already sequential (await per part), so the queue is empty by construction when the primary starts; the ordering fix makes that true even when the primary appears first in the file list.
+
+### Part 1 � pickPrimaryPartIndex regex (root cause)
+- useDebridInstallSync.ts � regex /setup|installer|\.exe$/ matched volume names like `setup-1.bin`/`installer.bin` (the `setup`/`installer` alternatives are substring matches). If a .bin appeared after setup.exe in the resolver file list, the "primary part" picked was a .bin -> detect_file_type (Rust) saw Unknown (no RAR/ZIP/MZ magic) -> download failed -> setup.exe never auto-ran.
+- Changed to /\.exe$/ (only real executables). Rule: last .exe = primary; else first-volume RAR (fallback intact); else last item. Doc comment updated.
+
+### Part 2 � Ordering guarantee: primary ALWAYS last
+- useDebridInstallSync.ts multivolume loop now iterates `[...nonPrimaryIndices, primaryIndex]`: every volume first (autoExtract=false, just saved to disk), the primary LAST (autoExtract=true, reassembles + auto-runs setup).
+- Structural guarantee: when setup.exe is downloaded+extracted, all volumes are verified on disk; the queue is empty by construction (sequential await).
+- The multivolume log is now always-on (was gated behind DEBUG_DEBRID_INSTALL): `[DEBRID_INSTALL] multivolume files=N primary=<name> jobId=...`.
+
+### Part 3 � Deterministic in-flight guard (Rust, defense-in-depth)
+- debrid_installer.rs uto_run_installer � before `spawn_installer_detached`, if `has_partial_install_artifacts(dest_dir)` (non-empty tmp/ = an in-progress .part) returns `needs-setup` with message "Download still in progress - setup will not run until all parts are on disk. Click Install Now to retry." and does NOT spawn.
+- Deterministic (no timer); the download removes tmp/ on completion, so a legitimately-finished set always passes and the legit flow is never blocked.
+
+### Tests (2 new in debrid_installer::tests)
+- uto_run_installer_skips_spawn_when_download_in_flight � .part present -> needs-setup, no pid, in-flight message.
+- uto_run_installer_passes_when_no_partial_artifacts � clean dir -> guard passes through to spawn attempt (nonexistent exe fails fast on spawn, message differs).
+
+### Key Files Changed
+- src/hooks/useDebridInstallSync.ts � regex fix, ordering loop, always-on multivolume log
+- src-tauri/src/commands/debrid_installer.rs � in-flight guard in uto_run_installer, 2 tests
+
+### Build
+- cargo test ? **237 passed / 0 failed** (235 previos + 2 nuevos)
+- 	sc --noEmit ? (only pre-existing extension/test errors, none in touched files)
+- ite build ? (2.77s, Rolldown; only pre-existing chunk warnings)
+
+
+## Session - Torrent speed chart sparse: time-based progress emits + fixed slot-grid SpeedChart
+
+### Problem
+The Downloads page speed chart looked nearly empty for FitGirl-style repacks. Root cause was double:
+
+1. **Sparse event cadence (torrent path)**: `SpeedChart` renders exactly `values.length` bars (`display = values.slice(-barCount)`), and `values` = `speedHistory` sampled once per `installer-progress` event that carries a changed `bytesRead` (`useActiveDownload.ts:119-130`). The torrent poll loop emitted progress ONLY on percent change (`pct != last_pct`), so a 30 GB repack at ~10 MB/s moved 1% every ~30s -> ~2 bars/min -> chart mostly blank. HTTP/debrid emits every 250ms (throttle in `debrid_installer.rs`), so it always looked dense.
+2. **Chart rendered variable-length**: no placeholders, so young/fast downloads and the torrent path left a huge blank area on the right.
+
+### Part 1 - Time-based torrent progress emits (`src-tauri/src/commands/torrent.rs`)
+- New `TORRENT_PROGRESS_EMIT_SECS: u64 = 1` constant (next to `TORRENT_DATA_STALL_SECS`).
+- Pure helper `progress_emit_due(last_pct, pct, elapsed_secs, throttle_secs) -> bool` - emits when the percent changed OR the throttle window elapsed (same budget the stall guards use).
+- Poll loop: added `let mut last_emit: Option<Instant> = None;`; the downloading branch now computes `emit_due` from `last_emit.elapsed()` and emits when `pct != last_pct || due`, updating both `last_pct` and `last_emit = Some(Instant::now())`.
+- `Initializing` branch untouched (still emits once at pct 0).
+- 4 new regression tests: percent-change, throttle-elapsed, unchanged-within-throttle, first-real-percent (last_pct=-1 -> due).
+
+### Part 2 - Fixed slot-grid SpeedChart (`src/components/downloads/ActiveDownloadCard.tsx`)
+- `SpeedChart` now always renders exactly `barCount` slots (24 / 18 / 12 responsive): real samples left-aligned, trailing slots are zero-height placeholders (`bg-white/10`, `height: 0%`, key `empty-${n}`) that occupy width+gap so the chart always spans full width and visibly fills left -> right as samples arrive.
+- Newest real bar still gets the `new-${values.length}` key + slide-in animation; grow-on-mount (`useGrowOnMount`) and `lf-download-chart-frozen`/pulse empty-state preserved.
+- Tooltip now positions over the fixed grid: `left: ((hovered + 0.5) / barCount) * 100%` and only shows for slots with a real value.
+
+### Not changed
+- HTTP/debrid path, sample ring buffer, `useActiveDownload`, `InstallerProgressListener`, `DownloadQueueContext`.
+
+### Build
+- `cargo test` ? **241 passed / 0 failed** (237 previos + 4 nuevos; first attempt had a wrong test - `progress_emit_due_first_emit_is_due` passed `pct=-1` == last_pct -> false; fixed to `first_real_percent` with `pct=0` -> true)
+- `cargo check` ? (only 2 pre-existing dead-code warnings)
+- `tsc --noEmit` ? (only pre-existing extension/test errors, none in touched files)
+- `vite build` ? (2.66s, Rolldown; verified in bundle: slot array with null placeholders, `empty-${n}` key + `bg-white/10` at `height:0%`, tooltip `(o+.5)/i*100`)
+
+## Session - Real torrent seeds/peers (librqbit live snapshot) on the Active Download Card
+
+### Goal
+Replace the mocked seeds/peers on the Downloads hero with real swarm stats read from the librqbit session (`per_peer_stats_snapshot`), using a new dedicated `"installer-network"` Tauri event so the progress emit path stays untouched.
+
+### Model
+- **PEERS** = connected live peers (`snap.peers.len()`); **SEEDS** = live peers serving data (`counters.downloaded_and_checked_pieces > 0`).
+- `PeerStatsFilter` is `Default` -> `PeerStatsFilterState::Live`, so `torrent.live()?.per_peer_stats_snapshot(Default::default())` reads the live registry without naming unexported filter types.
+
+### Rust
+- `src-tauri/src/models/install_progress.rs` — `InstallerNetworkEvent { job_id: String, peers: u32, seeds: u32 }` (Clone + Serialize).
+- `src-tauri/src/utils/progress_utils.rs` — `emit_installer_network(app_handle, job_id, peers, seeds)` emits `"installer-network"`; `emit_installer_progress` signature unchanged (46 existing call sites).
+- `src-tauri/src/commands/torrent.rs` — in `poll_torrent_until_done` downloading branch, inside the existing `if emit_due { ... }` (~1s throttle), computes `(peers, seeds)` via `torrent.live().map(...).unwrap_or((0,0))` and emits after the progress emit. Noise gated by the same cadence; `live()` is cheap (borrows peer registry).
+
+### TS
+- `src/types/download.ts` — `InstallerNetworkEvent { job_id, peers, seeds }` type; `peers?: number` / `seeds?: number` added to `DownloadJob` (backward compatible).
+- `src/context/DownloadQueueContext.tsx` — `UpdateDownloadJobInput` gains `peers?`/`seeds?` (fixes the TS2353 from the listener passing unknown props).
+- `src/components/downloads/InstallerProgressListener.tsx` — second Tauri listener for `"installer-network"` calling `updateJob(payload.job_id, { peers, seeds })`; separate `unlistenProgress`/`unlistenNetwork` cleanup.
+- `src/hooks/useActiveDownload.ts` — `ActiveDownload` gains `peers?`/`seeds?`, mapped from `job.peers`/`job.seeds`.
+- `src/components/downloads/ActiveDownloadCard.tsx` — Zone C swarm stats block (Seeds/Peers, tabular-nums, `"—"` fallback) between the speed chart and the controls, gated by `download.isTorrent && (download.peers != null || download.seeds != null)`.
+
+### Build
+- `cargo test --lib torrent` ? **28 passed / 0 failed** (torrent module)
+- `cargo check` ? (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `tsc --noEmit` ? (zero errors in touched files; only pre-existing extension/test errors remain)
+- `vite build` ? (2.43s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)

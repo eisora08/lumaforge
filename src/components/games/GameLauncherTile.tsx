@@ -66,7 +66,7 @@ import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import GameEditDialog from "./GameEditDialog";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
-import { updateDebridGame } from "../../services/debridGameStore";
+import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { open } from "@tauri-apps/plugin-dialog";
 
 function formatBytes(bytes: number): string {
@@ -959,7 +959,13 @@ function GameLauncherTileInner({
                         onClick: () => {
                           setMenuOpen(false);
                           if (DEBUG_MANUAL_REMOVE) console.log(`[DEBRID][TILE_REMOVE] providerGameId=${game.providerGameId} title="${game.title}"`);
-                          showInfo("Debrid catalog entries are managed by the repack catalog. Remove the game from the provider list in Integrations settings.", { title: "Debrid" });
+                          const providerGameId = game.providerGameId;
+                          if (providerGameId) {
+                            removeDebridGameFromLibrary(providerGameId);
+                            showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                          } else {
+                            showError("Could not remove this game from the library.");
+                          }
                         },
                       }]
                       : game.source !== "manual" && game.source !== "epic"

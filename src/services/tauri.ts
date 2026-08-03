@@ -1338,9 +1338,17 @@ export type DebridVerifyResult = {
 export async function downloadDebridPackage(params: {
   jobId: string;
   downloadUri: string;
+  downloadName?: string;
   destDir: string;
   autoExtract: boolean;
   deleteArchive: boolean;
+  /**
+   * Stable origin URL (the page/magnet the user started from, i.e. the job's
+   * `downloadUrl`), used to key the `.part` resume checkpoint. The resolved
+   * CDN link in `downloadUri` can rotate between calls (gofile); keying the
+   * checkpoint on it would restart the download on every resume.
+   */
+  sourceKey?: string;
 }): Promise<DebridDownloadResult> {
   return await invoke<DebridDownloadResult>("download_debrid_package", params);
 }
