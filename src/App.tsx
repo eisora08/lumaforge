@@ -13,7 +13,6 @@ import Achievements from "./pages/Achievements";
 import ActivityStats from "./pages/ActivityStats";
 import LauncherAchievements from "./pages/LauncherAchievements";
 import Verification from "./pages/Verification";
-import Tools from "./pages/Tools";
 import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
 import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
@@ -28,6 +27,7 @@ import { AchievementToastViewport } from "./components/activity/AchievementToast
 import { AppPage } from "./types/navigation";
 
 import InstallerProgressListener from "./components/downloads/InstallerProgressListener";
+import FixProgressListener from "./components/fixes/FixProgressListener";
 import SplashScreen from "./components/splash/SplashScreen";
 import ModeSwitchSplash from "./components/splash/ModeSwitchSplash";
 import type { ModeSwitchMode } from "./components/splash/ModeSwitchSplash";
@@ -51,7 +51,7 @@ import { localPathToUrl, isLocalPath } from "./services/gameCacheService";
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
   "home", "library", "games", "store", "downloads",
-  "achievements", "activity", "verification", "tools",
+  "achievements", "activity", "verification",
   "settings", "game-details", "library-game-detail", "global-search", "console",
   "launcher-achievements",
 ]);
@@ -303,9 +303,6 @@ function App() {
       case "verification":
         pageComponent = <Verification />;
         break;
-      case "tools":
-        pageComponent = <Tools />;
-        break;
       case "settings":
         pageComponent = <Settings />;
         break;
@@ -351,6 +348,7 @@ function App() {
       </GameDetailsProvider>
       </GameSessionProvider>
       <InstallerProgressListener />
+      <FixProgressListener />
       <GameToastViewport />
       <AchievementToastViewport />
       {/* Mode switch splash — covers Desktop ↔ Console transitions */}

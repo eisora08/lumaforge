@@ -2730,7 +2730,7 @@ export default function GameEditDialog({
     >
       <div
         ref={panelRef}
-        className="relative mx-4 w-full max-w-[900px] flex h-[88vh] flex-col rounded-2xl border border-(--color-border) bg-(--color-bg) shadow-2xl"
+        className="relative mx-4 w-full max-w-[900px] flex h-[88vh] flex-col rounded-2xl border border-(--color-border) lf-surface shadow-2xl"
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-(--color-border) px-6 py-4">

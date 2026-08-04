@@ -7,7 +7,6 @@ export type AppPage =
   | "achievements"
   | "activity"
   | "verification"
-  | "tools"
   | "settings"
   | "game-details"
   | "library-game-detail"

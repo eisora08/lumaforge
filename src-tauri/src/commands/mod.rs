@@ -50,3 +50,5 @@ pub mod debrid_installer;
 pub mod hydra_source;
 pub mod debrid_resolver;
 pub mod torrent;
+pub mod thirdparty;
+pub mod game_fix;

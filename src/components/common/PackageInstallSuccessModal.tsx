@@ -207,8 +207,7 @@ export default function PackageInstallSuccessModal({
       style={{ WebkitBackdropFilter: "blur(12px)" }}
     >
       <div
-        className="relative mx-4 w-full max-w-[480px] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#1a1a1f]/95 shadow-2xl shadow-black/50"
-        style={{ backdropFilter: "blur(40px)" }}
+        className="relative mx-4 w-full max-w-[480px] overflow-hidden rounded-2xl border border-white/[0.08] lf-surface shadow-2xl shadow-black/50"
       >
         {/* Close button */}
         <button

@@ -8,7 +8,6 @@ import {
   Home,
   RotateCcw,
   Settings,
-  Wrench,
   X,
   Flame,
   PanelLeftOpen,
@@ -51,7 +50,6 @@ const mainItems: SidebarItem[] = [
 ];
 
 const toolItems: SidebarItem[] = [
-  { label: "Herramientas", page: "tools", icon: Wrench },
   { label: "Configuración", page: "settings", icon: Settings },
 ];
 
@@ -403,7 +401,6 @@ export default function Sidebar({
         onClose={() => setProfileModalOpen(false)}
       />
 
-
     </div>
   );
 
@@ -471,7 +468,7 @@ function SidebarSection({
       <nav className="space-y-1">
         {items.map((item) => {
           const Icon = item.icon;
-          const isActive = activePage === item.page;
+          const isActive = item.page ? activePage === item.page : false;
 
           return (
             <button

@@ -27,7 +27,8 @@ type TopBarProps = {
 
 export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarDrawerMode }: TopBarProps) {
   const { setQuery } = useSearch();
-  const { selectGame } = useGameDetails();
+  const { selectGame, selectedGame } = useGameDetails();
+  const isGameDetailsActive = activePage === "library-game-detail" || !!selectedGame;
   const showSearch = activePage !== "store";
   const [luaUpdateCount, setLuaUpdateCount] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
@@ -184,7 +185,7 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   const iconHover = "group-hover:text-(--color-text)";
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 select-none items-stretch bg-(--shell-bg)" style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}>
+    <header className={`sticky top-0 z-20 flex h-14 select-none items-stretch transition-colors duration-300 ${isGameDetailsActive ? "bg-transparent" : "bg-(--shell-bg)"}`} style={{ backdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)', WebkitBackdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)' } as React.CSSProperties}>
       <div className="flex items-center gap-3 pl-4 lg:pl-6">
         {sidebarDrawerMode && (
           <button

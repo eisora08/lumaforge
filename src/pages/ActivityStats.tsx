@@ -76,7 +76,7 @@ function formatTimestamp(ts: number): string {
 
 function PanelCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-2xl border border-(--color-border)/15 bg-(--color-surface) p-5 ${className}`}>
+    <div className={`rounded-2xl border border-(--color-border)/15 lf-surface p-5 ${className}`}>
       {children}
     </div>
   );
@@ -399,7 +399,7 @@ export default function ActivityStats() {
 
 function StatCard({ icon, label, value, truncate, accent }: { icon: React.ReactNode; label: string; value: string; truncate?: boolean; accent?: boolean }) {
   return (
-    <div className="rounded-2xl border border-(--color-border)/15 bg-(--color-surface) px-4 py-3">
+    <div className="rounded-2xl border border-(--color-border)/15 lf-surface px-4 py-3">
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-(--color-muted)/60">
         {icon}
         {label}

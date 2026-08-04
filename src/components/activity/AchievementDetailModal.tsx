@@ -76,7 +76,7 @@ export default function AchievementDetailModal({ open, achievement, progress, on
     >
       <div
         ref={panelRef}
-        className="lf-modal-panel mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-(--color-border)/20 bg-(--color-surface) shadow-2xl"
+        className="lf-modal-panel mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-(--color-border)/20 lf-surface shadow-2xl"
       >
         {/* Rarity accent bar */}
         <div className={`relative h-1 ${RARITY_ACCENT_BAR[achievement.rarity]}`}>

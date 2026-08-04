@@ -16,6 +16,7 @@ import {
   Pencil,
   Image,
   Trash2,
+  Wrench,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -42,6 +43,7 @@ import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../se
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import GameEditDialog from "../games/GameEditDialog";
+import ToolsModal from "../tools/ToolsModal";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
 import type { AppPage } from "../../types/navigation";
@@ -154,6 +156,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editDialogInitialTab, setEditDialogInitialTab] = useState<"general" | "media">("general");
   const [editDialogGame, setEditDialogGame] = useState<LibraryGame | null>(null);
+  const [toolsGame, setToolsGame] = useState<LibraryGame | null>(null);
+  const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -782,6 +786,15 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 }}
               />
               <MenuItem
+                label="Game Fixes"
+                icon={<Wrench className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  handleMenuClose();
+                  setToolsGame(menuGame);
+                  setToolsModalOpen(true);
+                }}
+              />
+              <MenuItem
                 label="Create Shortcut"
                 icon={<FileText className="h-3.5 w-3.5" />}
                 onClick={async () => {
@@ -990,6 +1003,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       <div className="flex flex-col">
         {renderGameList()}
         {renderMenu()}
+        {toolsModalOpen && (
+          <ToolsModal open={toolsModalOpen} game={toolsGame} onClose={() => setToolsModalOpen(false)} />
+        )}
         {editDialogOpen && (
           <GameEditDialog
             appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
@@ -1027,6 +1043,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       <div className="flex flex-col">
         {renderGameList()}
         {renderMenu()}
+        {toolsModalOpen && (
+          <ToolsModal open={toolsModalOpen} game={toolsGame} onClose={() => setToolsModalOpen(false)} />
+        )}
         {editDialogOpen && (
           <GameEditDialog
             appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}
@@ -1056,6 +1075,9 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
       {renderHeader()}
       {renderGameList()}
       {renderMenu()}
+      {toolsModalOpen && (
+        <ToolsModal open={toolsModalOpen} game={toolsGame} onClose={() => setToolsModalOpen(false)} />
+      )}
       {editDialogOpen && (
           <GameEditDialog
             appId={editDialogGame?.source !== "manual" && editDialogGame?.source !== "epic" && editDialogGame?.source !== "debrid" ? editDialogGame?.appId : undefined}

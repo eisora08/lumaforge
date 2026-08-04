@@ -473,7 +473,7 @@ export default function AchievementsModal({
       <div className="absolute inset-0" onClick={onClose} />
 
       <div
-        className="relative z-10 flex flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-(--color-bg) shadow-2xl lf-modal-panel"
+        className="relative z-10 flex flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface shadow-2xl lf-modal-panel"
         style={{ width: "min(920px, calc(100vw - 48px))", maxHeight: "86vh" }}
         onClick={(e) => e.stopPropagation()}
       >

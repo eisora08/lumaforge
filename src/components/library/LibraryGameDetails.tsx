@@ -130,6 +130,7 @@ type LibraryGameDetailsProps = {
   onOpenSourceSelector?: (game: LibraryGame) => void;
   onBack: () => void;
   onRefreshArtwork?: () => void;
+  onOpenTools?: (game: LibraryGame) => void;
   onNavigate?: (page: AppPage) => void;
   launchInfo?: GameLaunchInfo;
   onCancelLaunch?: () => void;
@@ -262,6 +263,7 @@ export default function LibraryGameDetails({
   onOpenSteamDb,
   onBack,
   onRefreshArtwork,
+  onOpenTools,
   onNavigate,
   launchInfo,
   onCancelLaunch,
@@ -1195,7 +1197,7 @@ export default function LibraryGameDetails({
         <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] overflow-hidden bg-black">
           <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-black/40" />
         </div>
-        <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
+        <div className="relative z-10 shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
           <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
             <div className="mb-2 h-9 w-24 animate-pulse rounded-xl bg-white/10" />
             <div className="flex flex-wrap gap-x-5 gap-y-1">
@@ -1350,7 +1352,7 @@ export default function LibraryGameDetails({
         </div>
         )}
       </div>
-      <div className="shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
+      <div className="relative z-10 shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
         <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
@@ -1649,7 +1651,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                 {showActions && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setShowActions(false)} />
-                    <div className="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-(--surface-active-border) bg-(--color-bg) p-1 shadow-lg">
+                    <div className="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-(--surface-active-border) lf-surface p-1 shadow-lg">
                       {hasPendingUninstall ? (
                         <DropdownItem
                           label="Cancel tracking"
@@ -1760,6 +1762,15 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                           }
                         }}
                       />
+                      {onOpenTools && (
+                        <DropdownItem
+                          label="Game Fixes"
+                          onClick={() => {
+                            setShowActions(false);
+                            onOpenTools(game);
+                          }}
+                        />
+                      )}
                       <DropdownItem
                         label="Close"
                         onClick={() => setShowActions(false)}

@@ -4,8 +4,6 @@
  * Discovers tools from registered extensions with `surfaces: ["tools"]`
  * and `metadata.toolConfig` in their manifests. Provides detect/apply/revert
  * operations for applying tool files to individual game install directories.
- *
- * Applied fixes are tracked in-memory and persisted to localStorage.
  */
 
 import type { ExtensionManifestV1 } from "../types";
@@ -14,11 +12,9 @@ import type {
   ToolId,
   ToolDetectionResult,
   ToolApplyResult,
-  AppliedFix,
   ToolRegistrySnapshot,
 } from "./types";
 import type { GameContext } from "../runtime/criteriaEvaluator";
-import { APPLIED_FIXES_KEY, MAX_APPLIED_FIXES } from "./types";
 import { tryCreateDeclarativeTool, extractToolConfig } from "./DeclarativeTool";
 import { subscribeExtensionManager, getExtensionsBySurface, getRegisteredExtension } from "../manager/index";
 import { evaluateManifestCriteria } from "../runtime/criteriaEvaluator";
@@ -36,7 +32,6 @@ type Listener = () => void;
 
 const _tools = new Map<ToolId, Tool>();
 const _listeners = new Set<Listener>();
-const _appliedFixes = new Map<string, AppliedFix>(); // key: "toolId:gameId"
 let _initialized = false;
 
 // =============================================================================
@@ -56,38 +51,6 @@ function _notify(): void {
 export function subscribeToolManager(listener: Listener): () => void {
   _listeners.add(listener);
   return () => { _listeners.delete(listener); };
-}
-
-// =============================================================================
-// Applied Fixes Persistence
-// =============================================================================
-
-function _loadAppliedFixes(): void {
-  try {
-    const raw = localStorage.getItem(APPLIED_FIXES_KEY);
-    if (!raw) return;
-    const arr = JSON.parse(raw) as AppliedFix[];
-    for (const fix of arr) {
-      const key = `${fix.toolId}:${fix.gameId}`;
-      _appliedFixes.set(key, fix);
-    }
-  } catch {
-    // Corrupt data — start fresh
-  }
-}
-
-function _persistAppliedFixes(): void {
-  try {
-    const arr = Array.from(_appliedFixes.values());
-    // Enforce max limit
-    if (arr.length > MAX_APPLIED_FIXES) {
-      arr.sort((a, b) => b.appliedAt - a.appliedAt);
-      arr.length = MAX_APPLIED_FIXES;
-    }
-    localStorage.setItem(APPLIED_FIXES_KEY, JSON.stringify(arr));
-  } catch {
-    // localStorage full or unavailable — non-fatal
-  }
 }
 
 // =============================================================================
@@ -130,14 +93,13 @@ export function discoverTools(): void {
 }
 
 /**
- * Initialize the ToolManager: load persisted data, discover tools,
+ * Initialize the ToolManager: discover tools,
  * and subscribe to extension manager changes.
  */
 export function initToolManager(): void {
   if (_initialized) return;
   _initialized = true;
 
-  _loadAppliedFixes();
   discoverTools();
 
   // Re-discover when extensions change
@@ -265,13 +227,11 @@ export async function detectToolsForGame(
  * @param toolId - The tool to apply
  * @param gameInstallDir - The game's install directory
  * @param extensionInstallDir - The directory containing the tool's source files
- * @param gameMeta - Metadata about the game for the applied fix record
  */
 export async function applyTool(
   toolId: ToolId,
   gameInstallDir: string,
   extensionInstallDir: string,
-  gameMeta: { gameId: string; appId?: string; gameTitle: string },
 ): Promise<ToolApplyResult> {
   const tool = _tools.get(toolId);
   if (!tool) {
@@ -281,21 +241,7 @@ export async function applyTool(
   const result = await tool.apply(gameInstallDir, extensionInstallDir);
 
   if (result.success && result.affectedFiles.length > 0) {
-    const fix: AppliedFix = {
-      toolId,
-      toolName: tool.displayName,
-      gameId: gameMeta.gameId,
-      appId: gameMeta.appId,
-      gameTitle: gameMeta.gameTitle,
-      appliedAt: Date.now(),
-      files: result.affectedFiles,
-    };
-    const key = `${toolId}:${gameMeta.gameId}`;
-    _appliedFixes.set(key, fix);
-    _persistAppliedFixes();
-    _notify();
-
-    showSuccess(`${tool.displayName} applied to ${gameMeta.gameTitle}`);
+    showSuccess(`${tool.displayName} applied`);
   } else if (!result.success) {
     showError(`Failed to apply ${tool.displayName}: ${result.error}`);
   }
@@ -309,7 +255,6 @@ export async function applyTool(
 export async function revertTool(
   toolId: ToolId,
   gameInstallDir: string,
-  gameId: string,
 ): Promise<ToolApplyResult> {
   const tool = _tools.get(toolId);
   if (!tool) {
@@ -319,53 +264,12 @@ export async function revertTool(
   const result = await tool.revert(gameInstallDir);
 
   if (result.success) {
-    const key = `${toolId}:${gameId}`;
-    _appliedFixes.delete(key);
-    _persistAppliedFixes();
-    _notify();
-
     showSuccess(`${tool.displayName} reverted`);
   } else {
     showError(`Failed to revert ${tool.displayName}: ${result.error}`);
   }
 
   return result;
-}
-
-// =============================================================================
-// Applied Fixes
-// =============================================================================
-
-/**
- * Get all applied fix records.
- */
-export function getAppliedFixes(): AppliedFix[] {
-  return Array.from(_appliedFixes.values()).sort(
-    (a, b) => b.appliedAt - a.appliedAt,
-  );
-}
-
-/**
- * Get applied fix records for a specific game.
- */
-export function getAppliedFixesForGame(gameId: string): AppliedFix[] {
-  return getAppliedFixes().filter((f) => f.gameId === gameId);
-}
-
-/**
- * Check if a specific tool is applied to a specific game.
- */
-export function isToolApplied(toolId: ToolId, gameId: string): boolean {
-  return _appliedFixes.has(`${toolId}:${gameId}`);
-}
-
-/**
- * Clear all applied fix records (for testing/reset).
- */
-export function clearAppliedFixes(): void {
-  _appliedFixes.clear();
-  _persistAppliedFixes();
-  _notify();
 }
 
 // =============================================================================
@@ -417,12 +321,11 @@ export function unregisterToolForTest(toolId: ToolId): void {
 }
 
 /**
- * Full reset for testing: clears tools, fixes, listeners, and initialized flag.
+ * Full reset for testing: clears tools, listeners, and initialized flag.
  */
 export function resetToolManagerForTest(): void {
   _tools.clear();
   _listeners.clear();
-  _appliedFixes.clear();
   _initialized = false;
   _customHandlers.clear();
 }
@@ -437,17 +340,9 @@ export function resetToolManagerForTest(): void {
 export function getToolManagerDiagnostics(): {
   toolCount: number;
   toolIds: string[];
-  appliedFixCount: number;
-  appliedFixes: Array<{ toolId: string; gameId: string; gameTitle: string }>;
 } {
   return {
     toolCount: _tools.size,
     toolIds: Array.from(_tools.keys()),
-    appliedFixCount: _appliedFixes.size,
-    appliedFixes: Array.from(_appliedFixes.values()).map((f) => ({
-      toolId: f.toolId,
-      gameId: f.gameId,
-      gameTitle: f.gameTitle,
-    })),
   };
 }

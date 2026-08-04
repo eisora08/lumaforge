@@ -186,7 +186,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
       >
         <div
           ref={panelRef}
-          className={`relative mx-4 w-full max-w-lg flex max-h-[85vh] flex-col overflow-y-auto rounded-2xl border border-(--color-border) bg-(--color-bg) shadow-2xl transition-all duration-200 ease-out ${isAnimating ? "scale-95 translate-y-2 opacity-0" : "scale-100 translate-y-0 opacity-100"} ${reducedMotionClass}`}
+          className={`relative mx-4 w-full max-w-lg flex max-h-[85vh] flex-col overflow-y-auto rounded-2xl border border-(--color-border) lf-surface shadow-2xl transition-all duration-200 ease-out ${isAnimating ? "scale-95 translate-y-2 opacity-0" : "scale-100 translate-y-0 opacity-100"} ${reducedMotionClass}`}
         >
           {/* ====== BANNER + AVATAR PREVIEW (clickable) ====== */}
           <div className="relative shrink-0">
@@ -329,7 +329,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
           </div>
 
           {/* ====== FOOTER ====== */}
-          <div className="sticky bottom-0 flex items-center justify-between border-t border-(--color-border) bg-(--color-bg) px-6 py-4">
+          <div className="sticky bottom-0 flex items-center justify-between border-t border-(--color-border) lf-surface px-6 py-4">
             <button
               onClick={handleReset}
               className="flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-rose-400/80 transition hover:bg-rose-500/10 hover:text-rose-400"

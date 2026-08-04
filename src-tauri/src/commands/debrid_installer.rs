@@ -2523,6 +2523,12 @@ fn copy_recursive_impl(src: &Path, dst: &Path, created: &mut Vec<PathBuf>) -> Re
     Ok(())
 }
 
+/// Extract a `.7z` archive using the pure-Rust `sevenz-rust` crate (no 7-Zip CLI needed).
+pub(crate) fn extract_7z_native(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
+    sevenz_rust::decompress_file(zip_path, dest_dir)
+        .map_err(|e| format!("Failed to extract 7z archive: {e}"))
+}
+
 /// Fallback: extract a RAR archive via `7z.exe` (7-Zip CLI) with the CMD window hidden.
 ///
 /// Only called when `extract_rar_with_unrar` fails.

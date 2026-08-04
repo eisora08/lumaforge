@@ -1,4 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
+
+import ThirdPartyToolsSection from "../components/settings/ThirdPartyToolsSection";
 import { setAmbientEnabled, setAmbientIntensity, setAmbientMode, subscribeAmbient, getAmbientSnapshot } from "../services/ambientBackgroundStore";
 import { setHeroTransition, subscribeHeroTransition, getHeroTransitionSnapshot, HERO_TRANSITION_OPTIONS } from "../services/heroTransitionStore";
 import {
@@ -26,6 +28,7 @@ import {
   ExternalLink,
   Code,
   FolderOpen,
+  HardDrive,
   Zap,
   Cloud,
   Puzzle,
@@ -75,6 +78,7 @@ type SettingsSectionId =
   | "artwork"
   | "extensions"
   | "integrations"
+  | "thirdparty"
   | "cloudBackup"
   | "manual"
   | "console"
@@ -97,6 +101,7 @@ const navSections: {
   { key: "artwork", label: "Artwork Providers", icon: <Image className="h-4 w-4" />, description: "SteamGridDB artwork configuration" },
   { key: "extensions", label: "Extensions", icon: <Puzzle className="h-4 w-4" />, description: "External tool integrations" },
   { key: "integrations", label: "Integrations", icon: <Zap className="h-4 w-4" />, description: "Provider integrations and visibility" },
+  { key: "thirdparty", label: "Third-party Tools", icon: <HardDrive className="h-4 w-4" />, description: "Fix utilities and tools management" },
   { key: "cloudBackup", label: "Cloud & Backup", icon: <Cloud className="h-4 w-4" />, description: "Backups, restore and cloud sync" },
   { key: "manual", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, description: "Manually added games info" },
   { key: "console", label: "Console Mode", icon: <MonitorSmartphone className="h-4 w-4" />, description: "Controller-friendly interface" },
@@ -829,6 +834,10 @@ export default function Settings() {
 
             {activeSection === "extensions" && (
               <ExtensionsSettings />
+            )}
+
+            {activeSection === "thirdparty" && (
+              <ThirdPartyToolsSection />
             )}
 
             {activeSection === "cloudBackup" && (

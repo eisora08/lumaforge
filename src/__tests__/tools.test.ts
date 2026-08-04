@@ -35,12 +35,7 @@ import type {
   ToolDetectionResult,
   ToolApplyResult,
   ToolManagedFile,
-  AppliedFix,
   ToolGameStatus,
-} from "../extensions/tools/types";
-import {
-  APPLIED_FIXES_KEY,
-  MAX_APPLIED_FIXES,
 } from "../extensions/tools/types";
 
 import {
@@ -57,9 +52,6 @@ import {
   detectToolsForGame,
   applyTool,
   revertTool,
-  getAppliedFixes,
-  getAppliedFixesForGame,
-  clearAppliedFixes,
   subscribeToolManager,
 } from "../extensions/tools/ToolManager";
 
@@ -267,81 +259,6 @@ describe("ToolManager registry", () => {
   });
 });
 
-describe("Applied fixes persistence", () => {
-  beforeEach(() => {
-    resetToolManagerForTest();
-    vi.clearAllMocks();
-    localStorageStore.clear();
-    initToolManager();
-  });
-
-  it("starts with no applied fixes", () => {
-    const fixes = getAppliedFixes();
-    expect(fixes).toEqual([]);
-  });
-
-  it("getAppliedFixesForGame returns empty for unknown game", () => {
-    const fixes = getAppliedFixesForGame("game-123");
-    expect(fixes).toEqual([]);
-  });
-
-  it("clearAppliedFixes removes all fixes", () => {
-    // Manually inject a fix into localStorage, then reset and re-init
-    const fix: AppliedFix = {
-      toolId: "test",
-      toolName: "Test",
-      gameId: "g1",
-      gameTitle: "Game 1",
-      appliedAt: Date.now(),
-      files: ["test.dll"],
-    };
-    localStorageStore.set(APPLIED_FIXES_KEY, JSON.stringify([fix]));
-    resetToolManagerForTest();
-    initToolManager();
-    expect(getAppliedFixes()).toHaveLength(1);
-
-    clearAppliedFixes();
-    expect(getAppliedFixes()).toHaveLength(0);
-  });
-
-  it("respects MAX_APPLIED_FIXES limit on persist", () => {
-    const fixes: AppliedFix[] = Array.from({ length: MAX_APPLIED_FIXES + 50 }, (_, i) => ({
-      toolId: `tool-${i}`,
-      toolName: `Tool ${i}`,
-      gameId: `game-${i}`,
-      gameTitle: `Game ${i}`,
-      appliedAt: Date.now() + i,
-      files: [`file-${i}.dll`],
-    }));
-    // Loading 550 entries into memory is fine — the limit is enforced on persist
-    localStorageStore.set(APPLIED_FIXES_KEY, JSON.stringify(fixes));
-    resetToolManagerForTest();
-    initToolManager();
-    // All 550 loaded into memory (read is unbounded)
-    expect(getAppliedFixes().length).toBe(MAX_APPLIED_FIXES + 50);
-
-    // Trigger a persist cycle: add one more fix which calls _persistAppliedFixes
-    const overflowFix: AppliedFix = {
-      toolId: "overflow",
-      toolName: "Overflow",
-      gameId: "overflow-game",
-      gameTitle: "Overflow Game",
-      appliedAt: Date.now(),
-      files: ["overflow.dll"],
-    };
-    localStorageStore.set(APPLIED_FIXES_KEY, JSON.stringify([...fixes, overflowFix]));
-
-    // Reset and reload from the persisted (now 551 entries) — persist would truncate
-    // Instead, verify the internal logic: persist stores at most MAX_APPLIED_FIXES
-    const stored = JSON.parse(localStorageStore.get(APPLIED_FIXES_KEY)!) as AppliedFix[];
-    // Manually simulate what _persistAppliedFixes does: sort by appliedAt desc, cap at MAX
-    const sorted = [...stored].sort((a, b) => b.appliedAt - a.appliedAt);
-    sorted.length = MAX_APPLIED_FIXES;
-    expect(sorted.length).toBe(MAX_APPLIED_FIXES);
-    expect(sorted[0].toolId).toBe("tool-549"); // most recent kept (highest appliedAt)
-  });
-});
-
 describe("detectToolsForGame", () => {
   beforeEach(() => {
     resetToolManagerForTest();
@@ -397,62 +314,44 @@ describe("applyTool", () => {
     initToolManager();
   });
 
-  it("calls tool.apply and records fix", async () => {
+  it("calls tool.apply", async () => {
     const tool = makeMockTool("apply-test", {
       apply: vi.fn(async () => ({ success: true, affectedFiles: ["out.dll"] })),
     });
     registerTool(tool);
 
-    const result = await applyTool("apply-test", "/game/dir", "/ext/dir", {
-      gameId: "g1",
-      gameTitle: "Test Game",
-    });
+    const result = await applyTool("apply-test", "/game/dir", "/ext/dir");
 
     expect(result.success).toBe(true);
     expect(result.affectedFiles).toEqual(["out.dll"]);
     expect(tool.apply).toHaveBeenCalledWith("/game/dir", "/ext/dir");
-
-    // Should record fix in applied fixes
-    const fixes = getAppliedFixes();
-    expect(fixes).toHaveLength(1);
-    expect(fixes[0].toolId).toBe("apply-test");
-    expect(fixes[0].gameId).toBe("g1");
-    expect(fixes[0].gameTitle).toBe("Test Game");
-    expect(fixes[0].files).toEqual(["out.dll"]);
   });
 
-  it("does not record fix on failure", async () => {
+  it("returns failure result on failure", async () => {
     const tool = makeMockTool("fail-apply", {
       apply: vi.fn(async () => ({ success: false, error: "Copy failed", affectedFiles: [] })),
     });
     registerTool(tool);
 
-    const result = await applyTool("fail-apply", "/game/dir", "/ext/dir", { gameId: "g1", gameTitle: "G" });
+    const result = await applyTool("fail-apply", "/game/dir", "/ext/dir");
     expect(result.success).toBe(false);
-
-    const fixes = getAppliedFixes();
-    expect(fixes).toHaveLength(0);
   });
 
   it("returns failure for unknown tool id", async () => {
-    const result = await applyTool("nonexistent", "/game", "/ext", { gameId: "g1", gameTitle: "G" });
+    const result = await applyTool("nonexistent", "/game", "/ext");
     expect(result.success).toBe(false);
     expect(result.error).toContain("not found");
   });
 
-  it("notifies subscribers after recording fix", async () => {
+  it("notifies subscribers", async () => {
     const listener = vi.fn();
     subscribeToolManager(listener);
 
     const tool = makeMockTool("notify-apply");
     registerTool(tool);
 
-    await applyTool("notify-apply", "/game", "/ext", {
-      gameId: "g1",
-      gameTitle: "G",
-    });
+    await applyTool("notify-apply", "/game", "/ext");
 
-    // At least 1 notification after apply (for the fix record)
     expect(listener).toHaveBeenCalled();
   });
 });
@@ -465,83 +364,21 @@ describe("revertTool", () => {
     initToolManager();
   });
 
-  it("calls tool.revert and removes matching fixes", async () => {
-    // Pre-record a fix
-    const fix: AppliedFix = {
-      toolId: "rev-test",
-      toolName: "Revert Test",
-      gameId: "g1",
-      gameTitle: "Game 1",
-      appliedAt: Date.now(),
-      files: ["test.dll"],
-    };
-    localStorageStore.set(APPLIED_FIXES_KEY, JSON.stringify([fix]));
-    resetToolManagerForTest();
-    initToolManager();
-    expect(getAppliedFixes()).toHaveLength(1);
-
+  it("calls tool.revert", async () => {
     const tool = makeMockTool("rev-test", {
       revert: vi.fn(async () => ({ success: true, affectedFiles: ["test.dll"] })),
     });
     registerTool(tool);
 
-    const result = await revertTool("rev-test", "/game/dir", "g1");
+    const result = await revertTool("rev-test", "/game/dir");
     expect(result.success).toBe(true);
     expect(tool.revert).toHaveBeenCalledWith("/game/dir");
-
-    // Fix should be removed
-    const remaining = getAppliedFixes();
-    expect(remaining).toHaveLength(0);
-  });
-
-  it("does not remove fixes for other games", async () => {
-    const fix1: AppliedFix = {
-      toolId: "rev-multi",
-      toolName: "Rev",
-      gameId: "g1",
-      gameTitle: "Game 1",
-      appliedAt: Date.now(),
-      files: ["a.dll"],
-    };
-    const fix2: AppliedFix = {
-      toolId: "rev-multi",
-      toolName: "Rev",
-      gameId: "g2",
-      gameTitle: "Game 2",
-      appliedAt: Date.now(),
-      files: ["b.dll"],
-    };
-    localStorageStore.set(APPLIED_FIXES_KEY, JSON.stringify([fix1, fix2]));
-    resetToolManagerForTest();
-    initToolManager();
-
-    const tool = makeMockTool("rev-multi", {
-      revert: vi.fn(async () => ({ success: true, affectedFiles: [] })),
-    });
-    registerTool(tool);
-
-    await revertTool("rev-multi", "/game/dir", "g1");
-
-    const remaining = getAppliedFixes();
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0].gameId).toBe("g2");
   });
 
   it("returns failure for unknown tool id", async () => {
-    const result = await revertTool("nonexistent", "/game", "g1");
+    const result = await revertTool("nonexistent", "/game");
     expect(result.success).toBe(false);
     expect(result.error).toContain("not found");
-  });
-});
-
-describe("Tool constants", () => {
-  it("APPLIED_FIXES_KEY is defined", () => {
-    expect(APPLIED_FIXES_KEY).toBe("lumaforge-applied-fixes-v1");
-  });
-
-  it("MAX_APPLIED_FIXES is positive", () => {
-    expect(MAX_APPLIED_FIXES).toBeGreaterThan(0);
-    expect(MAX_APPLIED_FIXES).toBe(500);
   });
 });
 
@@ -572,21 +409,5 @@ describe("Tool type contracts", () => {
     };
     expect(result.success).toBe(true);
     expect(result.affectedFiles).toContain("x.dll");
-  });
-
-  it("AppliedFix shape", () => {
-    const fix: AppliedFix = {
-      toolId: "t1",
-      toolName: "Tool One",
-      gameId: "g1",
-      appId: "480",
-      gameTitle: "Game One",
-      appliedAt: Date.now(),
-      files: ["f.dll"],
-      originalChecksums: { "f.dll": "abc123" },
-    };
-    expect(fix.toolId).toBe("t1");
-    expect(fix.appId).toBe("480");
-    expect(fix.originalChecksums?.["f.dll"]).toBe("abc123");
   });
 });

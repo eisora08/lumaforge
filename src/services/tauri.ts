@@ -3190,3 +3190,205 @@ export async function launchEpicGame(
     catalogItemId: catalogItemId ?? null,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Library game fixes (src-tauri/commands/game_fix.rs)
+// ---------------------------------------------------------------------------
+
+export type GameFixInfo = {
+  appId: number;
+  name: string;
+  installed: boolean;
+  installPath: string | null;
+  hasLua: boolean;
+  luaCount: number;
+  lastRevision: string | null;
+  hasOnlineFix: boolean;
+  hasSteamApi64: boolean;
+  hasSteamApi32: boolean;
+  gameArch: string | null;
+  mainExe: string | null;
+  /** SteamStub DRM present on the main executable (Steamless applicability). */
+  hasSteamStubDrm: boolean;
+  /** Full path of the resolved main executable (what Steamless would target). */
+  exeName: string | null;
+};
+
+export type GameFixResult = {
+  ok: boolean;
+  tool: string;
+  message: string;
+  filesInstalled: string[];
+  errors: string[];
+  requiresManualSelection: boolean;
+  availableFiles: string[];
+};
+
+export type GameFixEntryInput = {
+  appId: number;
+  installDir: string | null;
+};
+
+export type FixInstallationStatus = {
+  smokeApiInstalled: boolean;
+  steamlessInstalled: boolean;
+  koaloaderInstalled: boolean;
+  goldbergInstalled: boolean;
+  smokeApiPath: string | null;
+  steamlessPath: string | null;
+  koaloaderPath: string | null;
+  goldbergPath: string | null;
+};
+
+export async function libraryGetGameFixInfo(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+  hasLua: boolean;
+  luaCount: number;
+}): Promise<GameFixInfo> {
+  return await invoke<GameFixInfo>("library_get_game_fix_info", params);
+}
+
+export async function libraryApplyOnlineFix(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+  manualFile?: string | null;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_online_fix", {
+    appId: params.appId,
+    name: params.name,
+    installDir: params.installDir,
+    manualFile: params.manualFile ?? null,
+  });
+}
+
+export async function libraryApplySmokeApi(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_smoke_api", params);
+}
+
+export async function libraryApplySteamless(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_steamless", params);
+}
+
+export async function libraryCheckFixInstallations(): Promise<FixInstallationStatus> {
+  return await invoke<FixInstallationStatus>("library_check_fix_installations");
+}
+
+export async function libraryInstallSmokeApi(): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_install_smoke_api");
+}
+
+export async function libraryInstallSteamless(): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_install_steamless");
+}
+
+export async function libraryInstallKoaloader(): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_install_koaloader");
+}
+
+export async function libraryUnfixSteamless(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_steamless", { appId, installDir });
+}
+
+export async function libraryUnfixSmokeApi(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_smoke_api", { appId, installDir });
+}
+
+export async function libraryHasOnlineFixFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_online_fix_fix", { appId, installDir });
+}
+
+export async function libraryHasSmokeApiFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_smoke_api_fix", { appId, installDir });
+}
+
+export async function libraryHasSteamlessFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_steamless_fix", { appId, installDir });
+}
+
+export async function libraryHasGoldbergFix(appId: number, installDir: string): Promise<boolean> {
+  return await invoke<boolean>("library_has_goldberg_fix", { appId, installDir });
+}
+
+export async function libraryApplyGoldberg(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_goldberg", params);
+}
+
+export async function libraryUnfixGoldberg(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_goldberg", { appId, installDir });
+}
+
+export async function libraryGetAppliedFixIds(entries: GameFixEntryInput[]): Promise<number[]> {
+  return await invoke<number[]>("library_get_applied_fix_ids", { entries });
+}
+
+export async function libraryUnfixOnlineFix(appId: number, installDir: string): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_online_fix", { appId, installDir });
+}
+
+export async function libraryOpenSteamLaunchOptions(appId: number): Promise<void> {
+  await invoke<void>("library_open_steam_launch_options", { appId });
+}
+
+// ---------------------------------------------------------------------------
+// Third-party tools (src-tauri/commands/thirdparty.rs)
+// ---------------------------------------------------------------------------
+
+export type ThirdPartyToolInfo = {
+  id: string;
+  name: string;
+  description: string;
+  githubOwner: string;
+  githubRepo: string;
+  installed: boolean;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  installPath: string | null;
+};
+
+export type ThirdPartyToolResult = {
+  ok: boolean;
+  tool: string;
+  message: string;
+  filesInstalled: string[];
+  errors: string[];
+};
+
+export async function listThirdPartyTools(): Promise<ThirdPartyToolInfo[]> {
+  return await invoke<ThirdPartyToolInfo[]>("list_thirdparty_tools");
+}
+
+export async function installThirdPartyTool(toolId: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("install_thirdparty_tool", { toolId });
+}
+
+export async function uninstallThirdPartyTool(toolId: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("uninstall_thirdparty_tool", { toolId });
+}
+
+export async function checkThirdPartyUpdates(): Promise<ThirdPartyToolInfo[]> {
+  return await invoke<ThirdPartyToolInfo[]>("check_thirdparty_updates");
+}
+
+export async function updateThirdPartyTool(toolId: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("update_thirdparty_tool", { toolId });
+}
+
+export async function openThirdPartyFolder(): Promise<void> {
+  await invoke<void>("open_thirdparty_folder");
+}

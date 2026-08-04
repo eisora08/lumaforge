@@ -26,6 +26,7 @@ import type { ResolvedGameMediaBundle } from "../types/gameMedia";
 import { enqueueMediaDownload, cancelMediaJobsForApp, subscribeToMediaQueue } from "../services/mediaDownloadQueue";
 import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
+import ToolsModal from "../components/tools/ToolsModal";
 import { useSettings } from "../context/SettingsContext";
 import { useGameSession, computeGameKey } from "../context/GameSessionContext";
 import { useDownloadQueueContext } from "../context/DownloadQueueContext";
@@ -74,6 +75,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const [localDetailsData, setLocalDetailsData] = useState<unknown>(null);
   const [fallbackBundle, setFallbackBundle] = useState<ResolvedGameMediaBundle | null>(null);
   const [canonicalLoaded, setCanonicalLoaded] = useState(false);
+  const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const currentRequest = useRef<number | null>(null);
   const prevRunningRef = useRef(false);
   const _prevAppIdRef = useRef<string | null>(null);
@@ -1248,11 +1250,17 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
         onOpenSteamDb={handleOpenSteamDb}
         onBack={handleBack}
         onRefreshArtwork={handleRefreshArtwork}
+        onOpenTools={() => setToolsModalOpen(true)}
         onDeleteScript={handleDeleteScript}
         onNavigate={onNavigate}
         launchInfo={launchInfo}
         onCancelLaunch={cancelLaunch}
         onOpenStopModal={handleOpenStopModal}
+      />
+      <ToolsModal
+        open={toolsModalOpen}
+        game={displayGame}
+        onClose={() => setToolsModalOpen(false)}
       />
       <DebridSourceSelectorModal
         open={debridRepacks.length > 0 && Boolean(debridInstallGame)}

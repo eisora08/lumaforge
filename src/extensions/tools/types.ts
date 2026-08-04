@@ -77,33 +77,6 @@ export interface ToolApplyResult {
 }
 
 // =============================================================================
-// Applied Fix Record
-// =============================================================================
-
-/**
- * Record of a tool that has been applied to a specific game.
- * Persisted in localStorage per session and optionally to disk.
- */
-export interface AppliedFix {
-  /** Tool ID (extension ID). */
-  toolId: string;
-  /** Display name of the tool. */
-  toolName: string;
-  /** Game's unique ID (libraryGame.id). */
-  gameId: string;
-  /** Game's Steam appId (if Steam game). */
-  appId?: string;
-  /** Game display title. */
-  gameTitle: string;
-  /** Timestamp of application (ms since epoch). */
-  appliedAt: number;
-  /** Files that were written to the game dir. */
-  files: string[];
-  /** Original file checksums before apply (for revert verification). */
-  originalChecksums?: Record<string, string>;
-}
-
-// =============================================================================
 // Tool Config (from manifest metadata.toolConfig)
 // =============================================================================
 
@@ -275,9 +248,3 @@ export interface ToolRegistrySnapshot {
 // =============================================================================
 // Constants
 // =============================================================================
-
-/** localStorage key for persisted applied fixes. */
-export const APPLIED_FIXES_KEY = "lumaforge-applied-fixes-v1";
-
-/** Maximum number of applied fix records to keep. */
-export const MAX_APPLIED_FIXES = 500;

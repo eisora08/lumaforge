@@ -5874,3 +5874,213 @@ Replace the mocked seeds/peers on the Downloads hero with real swarm stats read 
 - `cargo check` ? (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
 - `tsc --noEmit` ? (zero errors in touched files; only pre-existing extension/test errors remain)
 - `vite build` ? (2.43s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+
+## Session — Tools page → ToolsModal: per-game fix application, no persistent tracking
+
+### Goal
+Replace the Tools page (`src/pages/Tools.tsx`) with a modal opened from the game context menu (`GameLauncherTile`), the library detail page, and the sidebar. Remove all persistent fix tracking (`AppliedFix`, `APPLIED_FIXES_KEY`, `MAX_APPLIED_FIXES`, history, `gameId` in `applyTool`/`revertTool`). The modal only detects/applies fixes per game.
+
+### Part 1: types.ts cleanup
+- Removed `AppliedFix`, `APPLIED_FIXES_KEY`, `MAX_APPLIED_FIXES`.
+- Kept `ToolId`, `ToolGameStatus`, `ToolDetectionResult`, `ToolApplyResult`, `ToolRegistrySnapshot`.
+
+### Part 2: ToolManager.ts cleanup
+- Removed `_appliedFixes`, `_loadAppliedFixes`/`_persistAppliedFixes`, `gameMeta` in `applyTool`, `gameId` in `revertTool`.
+- Removed exports: `getAppliedFixes`, `getAppliedFixesForGame`, `isToolApplied`, `clearAppliedFixes`.
+- Signatures now: `applyTool(toolId, gameInstallDir, extensionInstallDir)`, `revertTool(toolId, gameInstallDir)`.
+- `resetToolManagerForTest` without fix cleanup; `getToolManagerDiagnostics` reduced to `{ toolCount, toolIds }`.
+- `showSuccess` toasts kept in apply/revert.
+
+### Part 3: tests updated
+- `tools.test.ts`: removed "Applied fixes persistence" describe (4 tests), game-removal tests, "Tool constants"; `applyTool`/`revertTool` describes use new signatures.
+- `criteriaToolManagerIntegration.test.ts`: does not use the fixes API — no changes.
+
+### Part 4: ToolsModal.tsx (new)
+- Props `{ open: boolean; game: LibraryGame | null; onClose: () => void }`.
+- `initToolManager()` + `subscribeToolManager`; detection via `detectToolsForGame(game.installDir)` with `cancelled` flag.
+- Default selection = not-applied fixes; `handleApply` iterates `applyTool(tool.id, game.installDir!, extensionDir)` + re-detection.
+- Overlay via `createPortal`; applied fixes shown checked+disabled (no revert from modal); empty state; detection spinner.
+- "Opciones avanzadas" = disabled visual placeholder (no version selector / install pipeline).
+- Footer: `[Cancelar]` left, `[Aplicar Fixes]` right, `[✕]` right of title.
+
+### Part 5: Triggers wired
+- **GameLauncherTile.tsx**: "Game Fixes" item in Manage submenu (`setMenuOpen(false); setToolsModalOpen(true);`), `ToolsModal` rendered alongside `GameEditDialog`.
+- **LibraryGameDetailPage.tsx** + **LibraryGameDetails.tsx**: optional `onOpenTools?: (game: LibraryGame) => void` prop; "Game Fixes" `DropdownItem` after "Manage Artwork"/"Refresh Artwork"; render with `displayGame = resolvedGame || selectedGame`.
+- **SidebarLibraryList.tsx** (context menu — user correction: no nav icon in sidebar): "Game Fixes" `MenuItem` (`Wrench` icon) after "Browse Local Files"; opens `ToolsModal` with `menuGame`; `ToolsModal` rendered in collapsed/list/full branches alongside `GameEditDialog`.
+- **Sidebar.tsx**: unchanged (no "Herramientas" nav item — the earlier item was removed per user clarification).
+
+### Part 6: Tools page removed
+- `src/pages/Tools.tsx` deleted; `App.tsx` without import / `KNOWN_PAGES` / `case "tools"`; `navigation.ts` without `| "tools"`.
+- Remaining `"tools"` references are only the extension `ExtensionSurface = "settings" | "tools" | "library"` concept — unrelated.
+
+### Key Files Changed
+- `src/extensions/tools/types.ts` — cleaned
+- `src/extensions/tools/ToolManager.ts` — cleaned
+- `src/__tests__/tools.test.ts` — updated
+- `src/components/tools/ToolsModal.tsx` — **new**
+- `src/components/games/GameLauncherTile.tsx` — trigger 1 (+ sibling-modals fragment fix)
+- `src/pages/LibraryGameDetailPage.tsx`, `src/components/library/LibraryGameDetails.tsx` — trigger 2
+- `src/components/layout/SidebarLibraryList.tsx` — trigger 3 (context menu "Game Fixes")
+- `src/pages/Tools.tsx` — deleted
+- `src/App.tsx`, `src/types/navigation.ts` — no "tools" page
+
+### Build
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vitest run` ✅ (only pre-existing `tools.test.ts extractToolConfig` failure: expected `{…(5)}` vs actual `{…(15)}`)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
+## Session — Native fixes: Rust backend (GameFixManager + Third-party tools)
+
+### Goal
+Build the Rust backend for the native fixes feature: a `GameFixManager` handling SmokeAPI/Steamless/Online-Fix/Koaloader, plus third-party tool install/update/remove commands (`thirdparty.rs`). No frontend in this session.
+
+### Part 1: `game_fix.rs` (core manager)
+- **SmokeAPI**: versioned asset download from SmokeAPI releases; `get_game_fix_info` reports `smokeApiInstalled`/version; `apply_smoke_api_fix` (32/64 arch) copies SmokeAPI.dll + `.ini` variants into game dir; `unfix_smoke_api` removes them.
+- **Steamless**: portable per-game unpacker (no global install needed); `install_steamless` downloads + runs per game; `unfix_steamless` removes `steamless.exe` + its output files (exe, ini, log).
+- **Online-Fix**: patched-steam_api offline files; `apply_online_fix` copies `steam_api64.dll`/`steam_api.dll` + SteamConfig; `unfix_online_fix` restores originals from backup.
+- **Koaloader**: plugin loader for game dirs; auto-installed into plugins dir when smoke_api/steamless present; versioned asset download.
+- Backup semantics: fixes that overwrite `steam_api64.dll` back up the original once (restored by unfix); Idempotent apply; `[FIX][...]` progress events.
+- `emit_fix_progress(app_handle, app_id, tool, progress, message)` — 31 emit sites with `{appId, tool, progress, message}` payload.
+- Tool download/update emits use `appId: 0` (fetch 10%, download 30%, extract 60%); per-game applies use the real appId.
+
+### Part 2: `thirdparty.rs` (tool registry)
+- GitHub release resolver: `fetch_release_info` (repo owner/name from constants), asset URL extraction by extension; `download_and_extract_to_plugins` for `.7z`/`.zip`; `extract_archive_smart`.
+- Commands: `install_third_party_tool`, `update_third_party_tool`, `remove_third_party_tool`, `get_third_party_tool_status`, `get_all_third_party_tools`, `get_third_party_tool_github_info`.
+- Status returns `{ installed: bool, installedPath?, version? }`; install/update download to `<appData>/thirdparty/<tool>`, remove deletes dir.
+- All 6 commands registered in `lib.rs` (L345-350).
+
+### Part 3: Frontend
+- 16 `game_fix` + 6 `thirdparty` TS bindings in `src/services/tauri.ts` (~L3244-3322); `GameFixInfo`/`GameFixResult`/`FixInstallationStatus` types at L3195-3235.
+- User decision: ToolsModal gating = disabled-with-hint when tool missing/not applicable — do NOT auto-install missing tools; plus one-click "Quitar fix" via unfix commands.
+- `LibraryGame` has NO `luaCount` — pass `luaCount: game.luaScripts?.length ?? 0` to `libraryGetGameFixInfo`.
+- `npm run tauri dev` runs + registers fine.
+
+### Part 4: Fix-progress toast listener (optional, added later)
+- `src/components/fixes/FixProgressListener.tsx` — **new** — listens `library://fix-progress`, shows success toast at progress ≥100, one-shot info toast at first progress event per `tool:appId` (dedup via `seenInitial`); `TOOL_LABELS` maps `smoke_api`/`steamless`/`online_fix`/`koaloader`; returns null, unlisten on unmount.
+- Mounted in `src/App.tsx` next to `<InstallerProgressListener />` (L350).
+
+### Key Files Changed
+- `src-tauri/src/commands/game_fix.rs` — **new** — GameFixManager core
+- `src-tauri/src/commands/thirdparty.rs` — **new** — tool registry
+- `src-tauri/src/lib.rs` — command registration
+- `src/services/tauri.ts` — bindings + types
+- `src/components/fixes/FixProgressListener.tsx` — **new** — progress toast listener
+- `src/App.tsx` — mount FixProgressListener
+
+### Build
+- `cargo clippy --message-format short` ✅ (0 errors; game_fix.rs/thirdparty.rs/lib.rs at 0 warnings)
+- `cargo check` ✅ (0 errors)
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (only pre-existing chunk warnings)
+
+## Session � ToolsModal installDir fix + third-party tool install bugs (temp dir + .7z assets)
+
+### Problem 1: ToolsModal "Este juego no tiene carpeta de instalaci�n"
+- **Diagn�stico**: `SnapshotGame.installPath` is populated by the snapshot build (`startupSnapshotService.ts:1309`), but `snapshotGameToLibraryGame` (`LibraryGamesContext.tsx:639-668`) never mapped it ? games hydrated via the snapshot-fallback boot path (no SQLite cache) had empty `installDir`.
+- **Fix**: `snapshotGameToLibraryGame` now maps `installDir: sg.installPath ?? undefined` and `executablePath: sg.installPath ?? undefined`.
+- **Merge safety** (`applyGamesSafely`, line 434): `existing.installDir === game.installDir` � incoming snapshot games now carry installDir, so the fresh value wins when it differs from an empty cached one. No regression.
+- Unblocks: ToolsModal apply guard (`!game?.installDir`), "Browse Local Files", "Create Shortcut" for snapshot-hydrated games.
+
+### Problem 2: `install_thirdparty_tool` fails with os error 3
+- **Root cause**: `tempdir_in(get_app_data_dir()/temp/thirdparty)` at `thirdparty.rs:562` � the parent dir may not exist ? os error 3.
+- **Fix**: `create_dir_all(&temp_root)` before `tempdir_in`.
+
+### Problem 3: `goldberg_fork` install fails � no `.zip` asset
+- **Root cause**: `Detanup01/gbe_fork` only publishes `.7z`/`.tar.bz2`; the asset filter `ends_with(".zip")` (`thirdparty.rs:250`) never matched ? "No ZIP asset found".
+- **Fix**: asset selection prefers `.zip` then falls back to `.7z`; `ReleaseInfo` gained `archive_ext` (`"zip"`|`"7z"`); extraction branches to `extract_rar_via_7z` (shared helper from `debrid_installer.rs`) for `.7z`, else the `zip` crate.
+
+### Key Files Changed
+- `src/context/LibraryGamesContext.tsx` � `snapshotGameToLibraryGame` maps `installDir`/`executablePath` from `sg.installPath`
+- `src-tauri/src/commands/thirdparty.rs` � `ReleaseInfo.archive_ext`, `.zip`?`.7z` asset fallback, `create_dir_all` before tempdir, `.7z` extraction via 7z CLI
+
+### Build
+- `cargo check` (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `cargo test --lib` 241 passed / 0 failed
+- `tsc --noEmit` (only pre-existing extension/test errors, none in touched files)
+
+## Session — ToolsModal premium redesign: landscape hero + native-fix glass rows, footer buttons removed
+
+### Goal
+Redesign `ToolsModal.tsx` into a premium modal: remove the extension-tools section and the two footer buttons ("Cancelar" + "Aplicar Fixes", user-confirmed), add a landscape hero of the game with the hero-transition preference, glass rows for native fixes, Escape to close, and ambient background feed. Also fix the `goldberg_fork` third-party tool install asset (`.7z`, not `.zip`).
+
+### Part 1 — Rust: `preferred_asset` on ToolDef (`thirdparty.rs`)
+- `ToolDef` gained `preferred_asset: Option<&'static str>` (doc: repos that publish e.g. `emu-win-release.7z`).
+- `TOOL_DEFS`: `goldberg_fork` → `Some("emu-win-release.7z")`; `smokeapi`/`steamless` → `None`.
+- Asset selection (~250-260) priority: exact `preferred_asset` name match → `.zip` → `.7z`.
+- `get_latest_github_release`/`get_github_release_tag` signatures gained `preferred_asset: Option<&str>`; all 3 call sites (~475 list-version, ~551 auto-detect, ~592 install) pass `def.preferred_asset`.
+- `game_fix.rs`'s own local `get_latest_github_release` (no `preferred_asset`) untouched.
+
+### Part 2 — ToolsModal rewrite (`src/components/tools/ToolsModal.tsx`)
+- **Removed** all extension-tools code: `initToolManager`/`subscribeToolManager`/`getAllTools`/`detectToolsForGame`/`applyTool`, `Tool`/`ToolDetectionResult`/`ToolId` types, `TOOL_ICONS`/`getToolIcon`, detection/checkbox/placeholder UI, "Opciones avanzadas", `appliedCount`/`canApply`/`toggleSelected`/`handleApply`.
+- **Removed** footer "Cancelar" + "Aplicar Fixes" buttons (user-confirmed); close is via ✕ header button + backdrop click + **Escape** key.
+- **Landscape hero**: resolves `game.landscapePath ?? backgroundPath ?? coverPath` via `resolveGameMediaUrl(appId, path)`; `heroClass` from `heroTransitionStore` (`crossfade`→`animate-hero-crossfade-in`, `kenburns`→`animate-hero-kenburns-in`, `focus`→`animate-hero-focus-in`); `brightness-[0.35]` + bottom gradient into `--color-bg`; `heroError` state hides the layer.
+- **Ambient feed**: `setAmbientSource("tools-modal", heroUrl)` on mount/art change; `clearAmbientSource("tools-modal")` on unmount only (mirrors GameHero pattern).
+- **Native fixes section**: only renders when `!nativeInfo` has any applicable/applied row (`SmokeAPI` if steam_api present, `Steamless` if installed, `OnlineFix` if `hasOnlineFix`). Glass rows (`GLASS_ROW` bg-black/40 backdrop-blur) with accent icon chip, applied state (`CheckCircle2` + emerald border), busy spinner, "Aplicar fix"/"Quitar fix" buttons (`GLASS_BUTTON`), disabled-with-hint when tool not installed/not applicable.
+- Styling uses hardcoded dark glass (bg-black/40, white text) consistent with the ActiveDownloadCard premium design — ignores theme intentionally.
+
+### Build
+- `cargo check` ✅ (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `tsc --noEmit` ✅ (only 22 pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (2.46s, Rolldown; only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)
+
+## Session � Goldberg dual-DLL apply + Steamless main-exe tier selection
+
+### Goal
+1. Make Goldberg apply the fix to ALL present Steam API DLLs (`steam_api64.dll` x64 AND `steam_api.dll` x86), not just one.
+2. Implement main-exe selection for Steamless as the user specified: `Win64-Shipping.exe` wins; if the game lacks it, an exe inside a `Win64` folder; else size-based.
+
+### Part 1 � Goldberg dual-DLL (`game_fix.rs`)
+- New helper `apply_goldberg_to_present_dlls(game_path, emu_dir, present_dlls, on_progress) -> (Vec<String>, Vec<String>)` � per DLL: `find_file_recursive_bounded` on the emu dir (missing fork copy ? error + continue), then on the game dir (missing real target ? error + continue), `backup_file_if_exists` + `std::fs::copy`. Progress `20 + (i*60/total)`, 100 at the end.
+- `library_apply_goldberg` rewritten: keeps the `No steam_api dll found` guard when neither arch is present; builds `present_dlls` from `has_64`/`has_32`; calls the helper; `installed.is_empty()` ? `ok:false` with per-DLL errors; else `write_fix_log(..., &installed)` + emit 100 + message `"Goldberg emulator applied ({applied}). Originals backed up as .bak."`.
+
+### Part 2 � `exe_win64_priority` suffix/parent-folder tier scoring (`game_fix.rs:199`)
+- Replaced substring matching with a 5-tier rank: `ends_with("win64-shipping.exe")` ? 4; parent-folder basename lower == `"win64"` ? 3; `name.contains("win64")` ? 2; full parent path `contains("win64")` ? 1; else 0. Same-tier tiebreak = larger size (existing `compare_exes_win64_first`).
+- Beneficiaries sharing the comparator: `find_main_exe`, `find_game_exe_dir`, `get_game_imported_dlls`.
+
+### Part 3 � CrashReportClient exclusion (`game_fix.rs:249`)
+- `is_non_game_exe` gained `name_lower.starts_with("crashreportclient")` so `CrashReportClient-Win64-Shipping.exe` variants never compete with the real game binary (Kena test case).
+
+### Tests (6 new + updated, game_fix 12 total)
+- Updated `exe_win64_priority_ranks_shipping_highest` ? 4/3/2/0.
+- `is_non_game_exe_excludes_crash_report_client_prefixes` � prefix rule excludes CrashReportClient but not real shipped binaries.
+- `find_main_exe_prefers_shipping_over_server_and_crash_reporter` � Kena: `Kena-Win64-Shipping.exe` (90k) beats `KenaServer-*`, `*-Cmd`, `CrashReportClient-*`.
+- `find_main_exe_falls_back_to_exe_inside_win64_folder` � exe in `Win64` wins over larger loose `Launcher.exe`.
+- `find_main_exe_falls_back_to_largest_when_no_win64`.
+- `goldberg_applies_to_all_present_steam_api_dlls` / `goldberg_applies_surviving_arch_when_one_dll_missing_from_emu` � both DLLs backed up + replaced; a missing fork arch is skipped, not fatal.
+
+### Build
+- `cargo test --lib` ? **253 passed / 0 failed** (was 241; +6 game_fix, +6 earlier sessions)
+- `cargo check` ? (only 2 pre-existing dead-code warnings: `HydraSourceList`, `DebridProviderConfig`)
+- `tsc --noEmit` ?? (no TS changes this session)
+- `vite build` ?? (no TS changes this session)
+
+## Session — Steamless over ALL candidate executables + UnityCrashHandler filter
+
+### Goal
+Implement Steamless over EVERY candidate exe (Win64 + root) of the game, not just `main_exe`, and remove the `hasSteamStubDrm` gate from the ToolsModal UI button. Also fix the Kena bug where `UnityCrashHandler64.exe` was not filtered and could be chosen as the main exe.
+
+### Part 1 — `find_candidate_exes` + UnityCrashHandler filter (`game_fix.rs`)
+- New `find_candidate_exes(dir) -> Vec<PathBuf>`: `collect_exes_recursive` -> `filter_non_game_exes` -> `sort_by(compare_exes_win64_first)`. `find_main_exe` = `.into_iter().next()` (zero behavior change).
+- `is_non_game_exe` now also excludes prefixes `crashreportclient`, `unitycrashhandler`, `crashpad`, `vcredist`, `vc_redist`, `dotnet` and the suffix `unins000.exe`, in addition to `NON_GAME_EXE_NAMES`.
+- `filter_non_game_exes`: if ALL exes are non-game, keeps the whole list (repack root with only an installer still has a usable candidate).
+- `library_get_game_fix_info`: `has_steam_stub_drm = install_path.map(|p| find_candidate_exes(p).iter().any(|e| has_steamstub_drm(e)))` — now informative across ALL candidates, not just `main_exe_path`.
+
+### Part 2 — `library_apply_steamless` multi-exe loop (`game_fix.rs`)
+- Loop over `candidates`: existing `.bak` -> skip (already applied); `Ok(["__no_drm__", _])` -> `no_drm_exes`, continue; `Ok` real -> `files_installed.extend`; `Err` -> `errors.push(format!("{exe_name}: {e:#}"))`. Never aborts on a single exe.
+- 4 result cases: files_installed -> ok; only already-applied -> ok; only no-drm -> ok; only errors -> `ok:false` "Failed to apply Steamless to any executable".
+- Guard no-windows at top intact. Emits `library://fix-progress` 50 at start (multi-exe) / 100 at end; `write_fix_log` once at the end.
+- `library_unfix_steamless` / `library_has_steamless_fix` already iterate `find_bak_files_recursive` / use `!bak_files.is_empty()` — multi-`.bak` support without changes.
+
+### Part 3 — ToolsModal Steamless row (`ToolsModal.tsx`)
+- `applicable: nativeInfo.installed` — the `hasSteamStubDrm` gate removed (button unlocked whenever Steamless is installed).
+- Hint with 3 branches: SteamStub detected in mainExe / "Steamless will check all candidate executables (Win64 and root)" / no candidates.
+
+### Tests (2 new + 1 fixed; game_fix 14 total)
+- `is_non_game_exe_excludes_unity_crash_handler` — lowercase `unitycrashhandler64.exe`/`crashpad_handler.exe`/`crashpadhandler-win64-shipping.exe` -> true; `kena-win64-shipping.exe`/`game.exe` -> false. (Function expects already-lowercased names — the mixed-case initial version failed.)
+- `find_candidate_exes_returns_multiple_win64_and_root_exes` — temp tree with `Binaries/Win64/Kena-Win64-Shipping.exe` + `UnityCrashHandler64.exe` + `CrashReportClient-Win64-Shipping.exe`, root `Launcher.exe` -> exactly `["Kena-Win64-Shipping.exe", "Launcher.exe"]` in that order.
+
+### Build
+- `cargo check` ✅ (only 2 pre-existing dead-code warnings)
+- `cargo test --lib commands::game_fix` ✅ 14 passed / 0 failed
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+- `vite build` ✅ (only informational INEFFECTIVE_DYNAMIC_IMPORT warnings)

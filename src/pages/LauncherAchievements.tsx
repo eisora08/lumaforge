@@ -105,7 +105,7 @@ function formatUnlockDate(ts: number): string {
 
 function PanelCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-2xl border border-(--color-border)/15 bg-(--color-surface) p-5 ${className}`}>
+    <div className={`rounded-2xl border border-(--color-border)/15 lf-surface p-5 ${className}`}>
       {children}
     </div>
   );
@@ -258,7 +258,7 @@ export default function LauncherAchievements() {
               className={`rounded-xl border px-3 py-2.5 text-center transition ${
                 catFilter === cat.value
                   ? "border-(--color-accent)/40 bg-(--color-accent)/8"
-                  : "border-(--color-border)/15 bg-(--color-surface) hover:border-(--color-border)/30"
+                  : "border-(--color-border)/15 lf-surface hover:border-(--color-border)/30"
               }`}
             >
               {CatIcon && <CatIcon className="h-4 w-4 mx-auto mb-0.5 text-(--color-muted)/60" />}
@@ -359,8 +359,8 @@ function AchievementCard({ achievement, onClick }: { achievement: AchievementWit
       onClick={onClick}
       className={`group relative overflow-hidden rounded-2xl border text-left transition-all duration-200 focus-visible:ring-2 focus-visible:ring-(--color-accent)/50 ${
         isLocked
-          ? "border-(--color-border)/10 bg-(--color-surface)/80 hover:bg-(--color-surface) hover:border-(--color-border)/20"
-          : `bg-(--color-surface) hover:brightness-110 ${rarity.border}`
+          ? "border-(--color-border)/10 lf-surface/80 hover:bg-(--color-surface) hover:border-(--color-border)/20"
+          : `lf-surface hover:brightness-110 ${rarity.border}`
       } ${rarity.glow ? `shadow-md ${rarity.glow}` : "shadow-sm"} hover:shadow-lg hover:scale-[1.01]`}
     >
       {/* Rarity accent bar at top for unlocked */}

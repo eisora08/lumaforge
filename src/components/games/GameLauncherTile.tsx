@@ -18,6 +18,7 @@ import {
   Edit,
   Image,
   Trash2,
+  Wrench,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -65,6 +66,7 @@ import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { useInstallTracker } from "../../hooks/useInstallTracker";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import GameEditDialog from "./GameEditDialog";
+import ToolsModal from "../tools/ToolsModal";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { updateDebridGame, removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -139,6 +141,7 @@ function GameLauncherTileInner({
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editInitialTab, setEditInitialTab] = useState<"general" | "media">("general");
+  const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const _favKey = getFavoriteKey(game);
   const favorite = _favKey ? isFavorite(_favKey) : false;
@@ -919,6 +922,11 @@ function GameLauncherTileInner({
                   icon: <Image className="h-3.5 w-3.5" />,
                   onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); },
                 },
+                {
+                  label: "Game Fixes",
+                  icon: <Wrench className="h-3.5 w-3.5" />,
+                  onClick: () => { setMenuOpen(false); setToolsModalOpen(true); },
+                },
                     ...(game.source === "manual"
                     ? [{
                         label: "Delete Manual Game",
@@ -1013,23 +1021,31 @@ function GameLauncherTileInner({
         </div>
 
         {(game.appId || game.source === "manual" || game.source === "epic" || game.source === "debrid") && (
-          <GameEditDialog
-            appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
-            manualGameId={game.source === "manual" ? game.providerGameId : undefined}
-            epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
-            debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
-            open={editDialogOpen}
-            onClose={() => setEditDialogOpen(false)}
-            initialTab={editInitialTab}
-            game={game}
-            settings={{
-              rawgApiKey: settings.rawgApiKey,
-              igdbClientId: settings.igdbClientId,
-              igdbClientSecret: settings.igdbClientSecret,
-              steamGridDbApiKey: settings.steamGridDbApiKey,
-              steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
-            }}
-          />
+          <>
+            <GameEditDialog
+              appId={game.source === "steam" || game.source === "lua" ? game.appId : undefined}
+              manualGameId={game.source === "manual" ? game.providerGameId : undefined}
+              epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
+              debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
+              open={editDialogOpen}
+              onClose={() => setEditDialogOpen(false)}
+              initialTab={editInitialTab}
+              game={game}
+              settings={{
+                rawgApiKey: settings.rawgApiKey,
+                igdbClientId: settings.igdbClientId,
+                igdbClientSecret: settings.igdbClientSecret,
+                steamGridDbApiKey: settings.steamGridDbApiKey,
+                steamGridDbArtworkEnabled: settings.steamGridDbArtworkEnabled,
+              }}
+            />
+
+            <ToolsModal
+              open={toolsModalOpen}
+              game={game}
+              onClose={() => setToolsModalOpen(false)}
+            />
+          </>
         )}
       </div>
     </div>

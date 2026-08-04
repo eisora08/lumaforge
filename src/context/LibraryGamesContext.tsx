@@ -664,6 +664,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       coverPath: sg.media?.coverPath ?? undefined,
       logoPath: sg.media?.logoPath ?? undefined,
       iconPath: sg.media?.iconPath ?? undefined,
+      installDir: sg.installPath ?? undefined,
+      executablePath: sg.installPath ?? undefined,
     };
   }
 
