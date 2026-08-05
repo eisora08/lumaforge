@@ -367,6 +367,14 @@ pub fn run() {
             commands::game_fix::library_unfix_goldberg,
             commands::game_fix::library_get_applied_fix_ids,
             commands::game_fix::library_open_steam_launch_options,
+            commands::achievements_non_steam::read_non_steam_configs,
+            commands::achievements_non_steam::write_non_steam_configs,
+            commands::achievements_non_steam::save_non_steam_config,
+            commands::achievements_non_steam::delete_non_steam_config,
+            commands::achievements_non_steam::detect_non_steam_achievements,
+            commands::achievements_non_steam::read_non_steam_achievements,
+            commands::achievements_non_steam::read_non_steam_achievement_percentages,
+            commands::achievements_non_steam::generate_achievement_schema,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

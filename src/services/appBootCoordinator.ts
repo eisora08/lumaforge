@@ -26,6 +26,7 @@ export type BootTaskId =
   | "load-local-game-index"
   | "reconcile-lua-games"
   | "load-achievement-summaries"
+  | "load-nonsteam-achievements"
   | "load-cached-media-index"
   | "start-achievement-watcher"
   | "start-background-job-queue"
@@ -789,6 +790,21 @@ export async function runBootTasks(): Promise<void> {
               console.warn("[BOOT] achievement summaries load failed:", String(err));
             }
             logBoot("load achievement summaries end");
+          });
+
+          // Stage 5.5: Load saved non-Steam achievement configs (Goldberg/CODEX/OnlineFix)
+          await track("load-nonsteam-achievements", async () => {
+            logBoot("load nonsteam achievements start");
+            try {
+              const { loadAllSavedConfigs } = await import("./nonSteamAchievementService");
+              const result = await loadAllSavedConfigs();
+              if (result.loaded > 0) {
+                logBoot(`loaded ${result.loaded} nonsteam achievement configs`);
+              }
+            } catch (err) {
+              console.warn("[BOOT] nonsteam achievement load failed:", String(err));
+            }
+            logBoot("load nonsteam achievements end");
           });
 
           // Stage 6: Load cached media index (from snapshot + manifests)

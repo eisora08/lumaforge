@@ -4,3 +4,4 @@ pub mod archive_utils;
 pub mod install_utils;
 pub mod progress_utils;
 pub mod image_utils;
+pub mod binary_vdf;

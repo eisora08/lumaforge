@@ -42,15 +42,28 @@ async function checkFileExists(path: string): Promise<boolean> {
   }
 }
 
-function useResolvedUrl(url: string | null | undefined, appId?: string): { url: string | null | undefined; exists: boolean | null } {
-  const [resolved, setResolved] = useState<{ url: string | null | undefined; exists: boolean | null }>({ url: undefined, exists: null });
+function useResolvedUrl(url: string | null | undefined, appId?: string): { url: string | undefined; exists: boolean | null } {
+  const [resolved, setResolved] = useState<{ url: string | undefined; exists: boolean | null }>({ url: undefined, exists: null });
   useEffect(() => {
-    // No URL → no image
     if (!url) {
-      setResolved({ url: null, exists: false });
+      setResolved({ url: undefined, exists: false });
       return;
     }
-    // Non-local URLs (HTTP, data:, asset:, file://, absolute paths) — no file check needed
+    // Absolute Windows/Linux paths — convert to asset:// URL for WebView
+    if (/^[a-zA-Z]:[\\/]/.test(url) || url.startsWith("/")) {
+      let cancelled = false;
+      (async () => {
+        try {
+          const { localPathToUrl } = await import("../../services/gameCacheService");
+          const assetUrl = localPathToUrl(url);
+          if (!cancelled) setResolved({ url: assetUrl ?? undefined, exists: assetUrl ? null : false });
+        } catch {
+          if (!cancelled) setResolved({ url: undefined, exists: false });
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+    // Non-local URLs (HTTP, data:, asset:, file://) — no file check needed
     if (!url.startsWith("img/") && !url.startsWith("media/")) {
       setResolved({ url, exists: null });
       return;
@@ -58,11 +71,11 @@ function useResolvedUrl(url: string | null | undefined, appId?: string): { url: 
     // Local path without appId — can't resolve, treat as missing
     if (!appId) {
       logVerbose(`[ACH][ICON_LOCAL_MISSING] appid=undefined icon=${url} fallback=placeholder reason=no-appid`);
-      setResolved({ url: null, exists: false });
+      setResolved({ url: undefined, exists: false });
       return;
     }
     // Clear stale state immediately — prevents rendering old icon during async check
-    setResolved({ url: null, exists: null });
+    setResolved({ url: undefined, exists: null });
     let cancelled = false;
     (async () => {
       try {
@@ -76,7 +89,7 @@ function useResolvedUrl(url: string | null | undefined, appId?: string): { url: 
         } else {
           if (!cancelled) {
             logVerbose(`[ACH][ICON_LOCAL_MISSING] appid=${appId} icon=${url} fallback=placeholder`);
-            setResolved({ url: null, exists: false });
+            setResolved({ url: undefined, exists: false });
           }
         }
       } catch {

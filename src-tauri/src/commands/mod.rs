@@ -52,3 +52,4 @@ pub mod debrid_resolver;
 pub mod torrent;
 pub mod thirdparty;
 pub mod game_fix;
+pub mod achievements_non_steam;

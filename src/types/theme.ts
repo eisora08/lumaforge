@@ -8,6 +8,7 @@ export type ThemeId =
 export type SurfaceMode =
   | "solid"
   | "tinted"
+  | "frosted"
   | "liquid-glass";
 
 export type ThemeOption = {

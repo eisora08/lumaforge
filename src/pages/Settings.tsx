@@ -59,6 +59,7 @@ import SteamAccountDetector from "../components/settings/SteamAccountDetector";
 import PageContainer from "../components/layout/PageContainer";
 import IntegrationsSection from "../components/settings/IntegrationsSection";
 import ExtensionsSettings from "../extensions/ui/ExtensionsSettings";
+import NonSteamAchievementsSection from "../components/settings/NonSteamAchievementsSection";
 
 import { defaultApiProviders } from "../data/providers";
 import { ApiProviderUserSettings } from "../types/provider";
@@ -321,7 +322,7 @@ export default function Settings() {
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                       {surfaceModes.map((mode) => (
                         <SurfaceModeOption
                           key={mode.id}
@@ -798,6 +799,13 @@ export default function Settings() {
                       </label>
                     </div>
                   </div>
+                </SettingsSection>
+
+                <SettingsSection
+                  title="Non-Steam Achievements"
+                  description="Track achievements for cracked games, Goldberg, CODEX/RUNE, and OnlineFix."
+                >
+                  <NonSteamAchievementsSection />
                 </SettingsSection>
               </>
             )}

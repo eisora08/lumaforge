@@ -532,16 +532,18 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       // ---- LAYER 1: Kill by stored PID (with ownership verification) ----
       const storedPid =
         session.pid != null && session.pid > 0 ? session.pid : null;
-      const isEpic = session.source === "epic";
-
       if (storedPid != null) {
         try {
           const pidRunning = await isProcessRunning(storedPid);
           if (pidRunning) {
-            // Try strict ownership first, then relaxed for Epic (manifest exe may differ from actual)
+            // Try strict ownership first, then relaxed (exe path may differ from stored path
+            // for Epic manifests, Steam games with wrapper exes, or moved installations)
             let owned = await verifyPidOwnership(storedPid);
-            if (!owned && isEpic) {
+            if (!owned) {
               owned = await verifyPidOwnership(storedPid, true);
+              if (owned) {
+                console.debug("[GameSession] stored PID passed relaxed ownership check", { gameKey, pid: storedPid });
+              }
             }
             if (owned) {
               terminated = await killPidSingleTarget(gameKey, storedPid);
@@ -602,10 +604,17 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
               });
               continue; // never kill low-confidence without ownership proof
             }
-            // Try strict ownership first, then relaxed for Epic
+            // Try strict ownership first, then relaxed (exe path may differ from stored path)
             let owned = await verifyPidOwnership(candidate.pid);
-            if (!owned && isEpic) {
+            if (!owned) {
               owned = await verifyPidOwnership(candidate.pid, true);
+              if (owned) {
+                console.debug("[GameSession] candidate passed relaxed ownership check", {
+                  gameKey,
+                  pid: candidate.pid,
+                  name: candidate.name,
+                });
+              }
             }
             if (!owned) {
               console.warn("[GameSession] candidate failed ownership check", {

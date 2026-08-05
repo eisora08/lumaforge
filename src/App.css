@@ -107,6 +107,25 @@
 
 
 /* =========================
+   SURFACE MODE: FROSTED
+========================= */
+
+:root[data-surface="frosted"] {
+  --page-bg: var(--color-bg);
+
+  --shell-bg: rgba(20, 20, 30, 0.45);
+  --shell-border: rgba(255, 255, 255, 0.08);
+  --shell-blur: blur(6px);
+
+  --surface-active: rgba(20, 20, 30, 0.35);
+  --surface-active-border: rgba(255, 255, 255, 0.08);
+  --surface-active-hover: rgba(255, 255, 255, 0.10);
+  --surface-active-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  --surface-active-blur: blur(6px);
+}
+
+
+/* =========================
    SURFACE MODE: LIQUID GLASS
 ========================= */
 

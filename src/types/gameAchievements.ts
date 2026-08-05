@@ -41,7 +41,11 @@ export type GameAchievementsSummary = {
     | "librarycache-stale"
     | "steam-web-api-stale"
     | "steam-appcache-stale"
-    | "local-cache-stale";
+    | "local-cache-stale"
+    | "non-steam-goldberg"
+    | "non-steam-codex"
+    | "non-steam-onlinefix"
+    | "non-steam-generated";
   errorReason?: string;
   updatedAt?: number;
   newlyUnlocked?: UnlockEvent[];

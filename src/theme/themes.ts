@@ -149,6 +149,11 @@ export const surfaceModes: SurfaceModeOption[] = [
     description: "Superficies con tinte suave del tema activo.",
   },
   {
+    id: "frosted",
+    name: "Frosted",
+    description: "Vidrio esmerilado oscuro con blur sutil. Premium sin distorsión.",
+  },
+  {
     id: "liquid-glass",
     name: "Liquid Glass",
     description: "Superficies translúcidas con blur y profundidad visual.",

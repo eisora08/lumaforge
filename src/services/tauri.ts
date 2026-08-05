@@ -3392,3 +3392,107 @@ export async function updateThirdPartyTool(toolId: string): Promise<ThirdPartyTo
 export async function openThirdPartyFolder(): Promise<void> {
   await invoke<void>("open_thirdparty_folder");
 }
+
+// --- Non-Steam Achievement Detection & Config ---
+
+export type NonSteamAchievementConfig = {
+  appId: number;
+  name?: string;
+  gameDir: string;
+  source?: string;
+  enabled?: boolean;
+  updatedAt?: number;
+  savePath?: string;
+  platform?: string;
+};
+
+export type NonSteamDetectionResult = {
+  hasAchievements: boolean;
+  source?: string;
+  appId?: number;
+  achievementCount: number;
+  message: string;
+};
+
+export type NonSteamAchievement = {
+  apiName: string;
+  displayName?: string;
+  description?: string;
+  unlocked: boolean;
+  unlockTime?: number;
+  icon?: string;
+  iconGray?: string;
+  hidden?: boolean;
+};
+
+export type NonSteamAchievementPercentage = {
+  name: string;
+  percent: number;
+};
+
+export async function readNonSteamConfigs(): Promise<NonSteamAchievementConfig[]> {
+  return await invoke<NonSteamAchievementConfig[]>("read_non_steam_configs");
+}
+
+export async function writeNonSteamConfigs(entries: NonSteamAchievementConfig[]): Promise<void> {
+  return await invoke<void>("write_non_steam_configs", { entries });
+}
+
+export async function saveNonSteamConfig(config: NonSteamAchievementConfig): Promise<void> {
+  return await invoke<void>("save_non_steam_config", { config });
+}
+
+export async function deleteNonSteamConfig(appId: number): Promise<void> {
+  return await invoke<void>("delete_non_steam_config", { appId });
+}
+
+export async function detectNonSteamAchievements(
+  gameDir: string,
+  appId?: number
+): Promise<NonSteamDetectionResult> {
+  return await invoke<NonSteamDetectionResult>("detect_non_steam_achievements", {
+    gameDir,
+    appId: appId ?? null,
+  });
+}
+
+export async function readNonSteamAchievements(
+  gameDir: string,
+  appId: number,
+  source: string
+): Promise<NonSteamAchievement[]> {
+  return await invoke<NonSteamAchievement[]>("read_non_steam_achievements", {
+    gameDir,
+    appId,
+    source,
+  });
+}
+
+export async function readNonSteamAchievementPercentages(
+  appId: number,
+): Promise<NonSteamAchievementPercentage[]> {
+  return await invoke<NonSteamAchievementPercentage[]>(
+    "read_non_steam_achievement_percentages",
+    { appId },
+  );
+}
+
+export async function generateAchievementSchema(
+  appId: number,
+  schemaJson: string,
+  accountId?: number,
+  gameDir?: string,
+  gameName?: string,
+  savePath?: string,
+  platform?: string,
+): Promise<string> {
+  return await invoke<string>("generate_achievement_schema", {
+    appId,
+    schemaJson,
+    accountId: accountId ?? null,
+    gameDir: gameDir ?? null,
+    gameName: gameName ?? null,
+    savePath: savePath ?? null,
+    platform: platform ?? null,
+  });
+}

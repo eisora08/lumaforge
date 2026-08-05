@@ -7,6 +7,7 @@ import { useSettings } from "../context/SettingsContext";
 import { achievementStore } from "../services/achievementStore";
 import { resolveSteamAchievements } from "../services/steamAchievementsResolver";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId } from "../services/achievementImageQueue";
+import toast from "react-hot-toast";
 import AchievementsModal from "../components/library/AchievementsModal";
 import type { LibraryGame } from "../types/libraryGame";
 import type { GameAchievementsSummary } from "../types/gameAchievements";
@@ -79,15 +80,27 @@ export default function Achievements() {
 
     setResolving((prev) => new Set(prev).add(appId));
     try {
-      const summary = await resolveSteamAchievements({
-        appId: Number(appId),
-        steamWebApiKey: settings.steamWebApiKey || undefined,
-        steamId64: settings.steamId64 || undefined,
-        accountId: settings.steamAccountId || undefined,
-        steamPath: settings.steamRoot || undefined,
-        steamAchievementsEnabled: settings.steamAchievementsEnabled,
-        achievementSchemaPath: settings.achievementSchemaPath || undefined,
-      });
+      let summary: GameAchievementsSummary;
+      if (game.source === "steam") {
+        summary = await resolveSteamAchievements({
+          appId: Number(appId),
+          steamWebApiKey: settings.steamWebApiKey || undefined,
+          steamId64: settings.steamId64 || undefined,
+          accountId: settings.steamAccountId || undefined,
+          steamPath: settings.steamRoot || undefined,
+          steamAchievementsEnabled: settings.steamAchievementsEnabled,
+          achievementSchemaPath: settings.achievementSchemaPath || undefined,
+        });
+      } else {
+        const { detectAndLoadAndStore } = await import("../services/nonSteamAchievementService");
+        const result = await detectAndLoadAndStore(Number(appId), game.installDir || "");
+        if (result) {
+          summary = result;
+        } else {
+          console.warn(`[ACH][PAGE] no achievement data for non-Steam game appid=${appId} source=${game.source}`);
+          return;
+        }
+      }
       achievementStore.setSummary(appId, summary);
       setStoreSummaries((prev) => {
         const next = new Map(prev);
@@ -125,15 +138,29 @@ export default function Achievements() {
     if (!selectedGame?.appId) return;
     setRefreshing(true);
     try {
-      const summary = await resolveSteamAchievements({
-        appId: Number(selectedGame.appId),
-        steamWebApiKey: settings.steamWebApiKey || undefined,
-        steamId64: settings.steamId64 || undefined,
-        accountId: settings.steamAccountId || undefined,
-        steamPath: settings.steamRoot || undefined,
-        steamAchievementsEnabled: settings.steamAchievementsEnabled,
-        achievementSchemaPath: settings.achievementSchemaPath || undefined,
-      });
+      let summary: GameAchievementsSummary;
+      if (selectedGame.source === "steam") {
+        summary = await resolveSteamAchievements({
+          appId: Number(selectedGame.appId),
+          steamWebApiKey: settings.steamWebApiKey || undefined,
+          steamId64: settings.steamId64 || undefined,
+          accountId: settings.steamAccountId || undefined,
+          steamPath: settings.steamRoot || undefined,
+          steamAchievementsEnabled: settings.steamAchievementsEnabled,
+          achievementSchemaPath: settings.achievementSchemaPath || undefined,
+        });
+      } else {
+        const { detectAndLoadAndStore } = await import("../services/nonSteamAchievementService");
+        const result = await detectAndLoadAndStore(Number(selectedGame.appId), selectedGame.installDir || "");
+        if (result) {
+          summary = result;
+        } else {
+          console.warn(`[ACH][PAGE] refresh: no achievement data for non-Steam game appid=${selectedGame.appId} source=${selectedGame.source}`);
+          toast("No achievement data available for this game.", { duration: 3000 });
+          setRefreshing(false);
+          return;
+        }
+      }
       achievementStore.setSummary(selectedGame.appId, summary);
       setSelectedSummary(summary);
     } catch (err) {
