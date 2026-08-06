@@ -11,7 +11,7 @@ export const ACHIEVEMENTS_AUTO_ENABLED = true;
 export const ACHIEVEMENT_WATCHER_PROCESS_EVENTS = true;
 
 /** Read achievement cache during boot for first N games */
-export const ACHIEVEMENT_READ_CACHE_ON_BOOT = false;
+export const ACHIEVEMENT_READ_CACHE_ON_BOOT = true;
 
 /** Read achievement cache during Store navigation */
 export const ACHIEVEMENT_READ_CACHE_ON_STORE = false;

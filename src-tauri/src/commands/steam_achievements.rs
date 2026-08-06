@@ -3005,3 +3005,92 @@ pub fn validate_generated_achievement_schema(app_handle: AppHandle, app_id: u32)
     "details": details,
   }))
 }
+
+// ---------------------------------------------------------------------------
+// read_achievement_progress_index — reads the global achievement_progress.json
+// from config/librarycache/. Returns the parsed entries as a map of
+// appId → { unlocked, total, percentage, allUnlocked, cacheTime }.
+// Used by the watcher to detect which games changed when this file is written.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct AchievementProgressEntry {
+  pub app_id: u32,
+  pub unlocked: u32,
+  pub total: u32,
+  pub percentage: f64,
+  pub all_unlocked: bool,
+  pub cache_time: u64,
+}
+
+#[tauri::command]
+pub fn read_achievement_progress_index(
+  steam_path: Option<String>,
+  steam_account_id: String,
+) -> Result<Vec<AchievementProgressEntry>, String> {
+  let steam_root = resolve_steam_root(steam_path.as_deref())
+    .map_err(|e| format!("Steam root not found: {}", e))?;
+
+  let progress_path = steam_root
+    .join("userdata")
+    .join(&steam_account_id)
+    .join("config")
+    .join("librarycache")
+    .join("achievement_progress.json");
+
+  if !progress_path.is_file() {
+    return Ok(vec![]);
+  }
+
+  let raw = std::fs::read_to_string(&progress_path)
+    .map_err(|e| format!("Failed to read achievement_progress.json: {}", e))?;
+
+  let parsed: serde_json::Value = serde_json::from_str(&raw)
+    .map_err(|e| format!("Failed to parse achievement_progress.json: {}", e))?;
+
+  let mut entries = Vec::new();
+
+  // Format: { nVersion: 3, mapCache: [[appid, { appid, unlocked, total, percentage, all_unlocked, cache_time, vetted }], ...] }
+  if let Some(map_cache) = parsed.get("mapCache").and_then(|v| v.as_array()) {
+    for item in map_cache {
+      if let Some(arr) = item.as_array() {
+        if arr.len() >= 2 {
+          if let Some(obj) = arr[1].as_object() {
+            let app_id = obj.get("appid")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0) as u32;
+            let unlocked = obj.get("unlocked")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0) as u32;
+            let total = obj.get("total")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0) as u32;
+            let percentage = obj.get("percentage")
+              .and_then(|v| v.as_f64())
+              .unwrap_or(0.0);
+            let all_unlocked = obj.get("all_unlocked")
+              .and_then(|v| v.as_bool())
+              .unwrap_or(false);
+            let cache_time = obj.get("cache_time")
+              .and_then(|v| v.as_u64())
+              .unwrap_or(0);
+
+            if total > 0 {
+              entries.push(AchievementProgressEntry {
+                app_id,
+                unlocked,
+                total,
+                percentage,
+                all_unlocked,
+                cache_time,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  progress_log!("[ACH][PROGRESS_INDEX] parsed {} entries from achievement_progress.json", entries.len());
+  Ok(entries)
+}

@@ -55,6 +55,10 @@ impl AchievementWatcher {
     appcache_stats_path: PathBuf,
   ) -> Result<(), String> {
     self.stop();
+    // Reset the shutdown flag so the new thread doesn't see the previous
+    // stop()'s true and exit immediately.  (This was the root cause of the
+    // watcher dying instantly on every restart.)
+    self.shutdown.store(false, Ordering::Relaxed);
 
     let (tx, rx) = mpsc::channel();
 
@@ -220,6 +224,30 @@ fn extract_info(path: &Path, lib_path: &Path, stats_path: &Path) -> Option<FileI
   let fname = path.file_name()?.to_string_lossy().to_string();
 
     if parent == lib_path {
+    // Special case: global achievement_progress.json (not a per-game file)
+    if fname == "achievement_progress.json" {
+      if DEBUG_ACH_WATCHER {
+        eprintln!(
+          "[ACH][WATCHER] rawPath={} fileName={} source=achievement-progress",
+          raw_path, fname
+        );
+      }
+      let meta = std::fs::metadata(path).ok()?;
+      let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+      return Some(FileInfo {
+        appid: 0, // sentinel: global file, not per-game
+        source: "achievement-progress".to_string(),
+        modified_at: modified,
+        size: meta.len(),
+      });
+    }
+
     let stem = path.file_stem()?;
     let name = stem.to_str()?;
     let appid = name.parse::<u32>().ok()?;

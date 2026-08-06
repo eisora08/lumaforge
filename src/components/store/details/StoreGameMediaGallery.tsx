@@ -766,7 +766,7 @@ export default function StoreGameMediaGallery({
 
           <div
             ref={railRef}
-            className="store-media-rail flex gap-2 overflow-x-auto px-4 py-3"
+            className="store-media-rail flex gap-2 overflow-x-auto px-4 py-3 scrollbar-none"
           >
             {validItems.map((item, idx) => {
               const thumbSrc = getThumbnailSrc(item);

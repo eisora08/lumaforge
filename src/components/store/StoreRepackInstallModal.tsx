@@ -200,7 +200,7 @@ export default function StoreRepackInstallModal({
           </button>
         </div>
 
-        <div className="max-h-[420px] space-y-4 overflow-y-auto border-t border-(--surface-active-border) px-5 py-4">
+        <div className="max-h-[420px] space-y-4 overflow-y-auto border-t border-(--surface-active-border) px-5 py-4 lf-scroll-area">
           {/* Método de descarga */}
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-(--color-muted)">

@@ -1,4 +1,4 @@
-import { resolveSteamReviewSummaries, readStoreReviewSummary, writeStoreReviewSummary } from "./tauri";
+import { resolveSteamReviewSummaries, readStoreReviewSummary } from "./tauri";
 import type { SteamReviewSummary } from "../types/gameReview";
 
 const ENABLE_VERBOSE_STORE_CACHE_LOGS = false;
@@ -12,6 +12,18 @@ function log(...args: unknown[]) {
 }
 
 async function loadFromAppCache(appId: number): Promise<SteamReviewSummary | null> {
+  // SQLite-first fallback: fast boot reads without scanning 5K JSON files
+  try {
+    const { getStoreReviewFromDb } = await import("./tauri");
+    const dbRow = await getStoreReviewFromDb(String(appId));
+    if (dbRow && dbRow.data) {
+      log("sqlite cache hit for", appId);
+      return JSON.parse(dbRow.data) as SteamReviewSummary;
+    }
+  } catch {
+    // not in SQLite yet
+  }
+  // JSON fallback
   try {
     const cached = await readStoreReviewSummary(appId);
     if (cached && cached.data) {
@@ -26,11 +38,11 @@ async function loadFromAppCache(appId: number): Promise<SteamReviewSummary | nul
 
 async function saveToAppCache(appId: number, data: SteamReviewSummary): Promise<void> {
   try {
-    await writeStoreReviewSummary(appId, {
-      app_id: appId,
-      data,
-      updated_at: Date.now(),
-      version: 1,
+    const { upsertStoreReview } = await import("./tauri");
+    await upsertStoreReview({
+      appId: String(appId),
+      data: JSON.stringify(data),
+      updatedAt: Date.now(),
     });
   } catch {
     // non-critical
@@ -59,11 +71,13 @@ export async function resolveGameReviewSummaries(
 
   const toFetch: number[] = [];
 
-  for (const appId of missingAppIds) {
-    const fromDisk = await loadFromAppCache(appId);
-    if (fromDisk) {
-      inMemoryCache.set(appId, fromDisk);
-      result[appId] = fromDisk;
+  const diskResults = await Promise.allSettled(missingAppIds.map((appId) => loadFromAppCache(appId)));
+  for (let i = 0; i < missingAppIds.length; i++) {
+    const appId = missingAppIds[i];
+    const settled = diskResults[i];
+    if (settled.status === "fulfilled" && settled.value) {
+      inMemoryCache.set(appId, settled.value);
+      result[appId] = settled.value;
     } else {
       toFetch.push(appId);
     }

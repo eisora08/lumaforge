@@ -3,7 +3,7 @@ import type {
   GameAchievementsSummary,
   UnlockEvent,
 } from "../types/gameAchievements";
-import { parseLibraryCacheAchievements, writeAchievementCache, readAchievementCache } from "./tauri";
+import { parseLibraryCacheAchievements, writeAchievementCache, readAchievementCache, upsertAchievementSummary, batchUpsertAchievementEntries, upsertAchievementPercentages } from "./tauri";
 import { ACHIEVEMENTS_AUTO_ENABLED } from "./achievementAutoFlags";
 
 // ---------------------------------------------------------------------------
@@ -190,6 +190,37 @@ class AchievementStoreImpl {
     }
     this.summariesByAppId.set(appId, safeSummary);
     this.notify(appId, safeSummary);
+
+    // ── SQLite dual-write (fire-and-forget) ──
+    const now = Date.now();
+    upsertAchievementSummary({
+      appId,
+      total: safeSummary.total ?? 0,
+      unlocked: safeSummary.unlocked ?? 0,
+      percent: safeSummary.percent,
+      progressAvailable: safeSummary.progressAvailable,
+      source: safeSummary.source,
+      updatedAt: now,
+    }).catch(() => {});
+
+    if (safeSummary.achievements?.length) {
+      batchUpsertAchievementEntries(
+        safeSummary.achievements.map((ach) => ({
+          appId,
+          apiName: ach.apiName,
+          name: ach.name,
+          description: ach.description,
+          iconUrl: ach.iconUrl,
+          iconGray: ach.iconGrayUrl,
+          hidden: false,
+          unlocked: ach.unlocked,
+          unlockTime: ach.unlockTime ? Math.floor(ach.unlockTime / 1000) : null,
+          unlockedAt: ach.unlockTime ? Math.floor(ach.unlockTime / 1000) : null,
+          globalPct: ach.rarityPercent ?? null,
+          updatedAt: now,
+        })),
+      ).catch(() => {});
+    }
   }
 
   // ── Fast progress patch from librarycache ──
@@ -224,13 +255,13 @@ class AchievementStoreImpl {
 
     // ── If no existing summary, try cache or build minimal ──
     if (!current) {
-      // Check if patch only has a subset of achievements (partial librarycache)
-      // Use nTotal/nAchieved for summary, but don't create a partial achievement list.
-      // The resolver will fill in the full list later.
+      // Check if patch only has a subset of achievements (partial librarycache).
+      // Create a minimal summary with correct counts — do NOT return early.
+      // Falling through to the merge/snapshot section ensures the snapshot is saved
+      // and subsequent events can detect unlocks properly.
       const isPartial = patch.progressMap.size > 0 && patch.total > 0 && (patch.progressMap.size / patch.total) < 0.5;
       if (isPartial) {
-        console.debug(`[ACH][STORE_PATCH][${tid}] skipped-minimal-summary reason=partial-librarycache progressMap=${patch.progressMap.size} total=${patch.total}`);
-        // Create a minimal summary with correct counts but no incomplete achievements list
+        console.debug(`[ACH][STORE_PATCH][${tid}] minimal-summary reason=partial-librarycache progressMap=${patch.progressMap.size} total=${patch.total}`);
         current = {
           appId,
           total: patch.total,
@@ -242,9 +273,9 @@ class AchievementStoreImpl {
           updatedAt: Date.now(),
         };
         this.summariesByAppId.set(appId, current);
-        // Don't proceed to merge — just return the minimal total summary
-        console.debug(`[ACH][STORE_PATCH][${tid}] partialSummaryReturned total=${current.total} unlocked=${current.unlocked}`);
-        return current;
+        console.debug(`[ACH][STORE_PATCH][${tid}] partialSummaryCreated total=${current.total} unlocked=${current.unlocked} continuing-to-merge`);
+        // Fall through — the merge logic below will add patch entries to the empty
+        // achievements list, and the snapshot will be saved for future unlock detection.
       }
 
       // Build achievements from patch entries (minimal summary)
@@ -467,11 +498,12 @@ class AchievementStoreImpl {
     if (RT) console.log(`[ACH][RT_SNAPSHOT] appid=${appId} entries=${Object.keys(newAppSnap).length}`);
 
     // ── Write cache in background (fire-and-forget, after snapshot save) ──
+    // Always write disk cache so subsequent boots can read from achievement_cache/
+    // without re-scanning librarycache. Previously gated on !createdMinimalSummary
+    // which prevented first-time entries from being cached — breaking the pipeline.
     if (RT) console.log(`[ACH][RT_CACHE_WRITE_START] appid=${appId} createdMinimal=${createdMinimalSummary}`);
     console.debug(`[ACH][CACHE][${tid}] background write scheduled`);
-    if (!createdMinimalSummary) {
-      this.writeCacheInBackground(appId, patched, tid).catch(() => {});
-    }
+    this.writeCacheInBackground(appId, patched, tid).catch(() => {});
 
     return patched;
   }
@@ -516,8 +548,81 @@ class AchievementStoreImpl {
           achievements: patchedAchievements,
           achievement_percentages: existing.achievement_percentages,
         }, false);
+      } else if (summary.achievements?.length) {
+        // No disk cache exists yet — create one from the summary data so that
+        // the next boot's Stage 5 cache read finds data without re-scanning librarycache.
+        // Achievement entries are minimal (unlock status only) — icons/names will be
+        // filled by a future manual refresh or schema scan.
+        const cacheEntries = summary.achievements.map((ach) => ({
+          id: ach.apiName,
+          api_name: ach.apiName,
+          name: ach.name || ach.apiName,
+          description: ach.description || "",
+          unlocked: !!ach.unlocked,
+          unlock_time: ach.unlockTime ? Math.floor(ach.unlockTime / 1000) : undefined,
+        }));
+        await writeAchievementCache(appIdNum, {
+          summary: {
+            app_id: appId,
+            total: summary.total,
+            unlocked: summary.unlocked ?? 0,
+            percent: summary.percent ?? 0,
+            progress_available: true,
+            source: "librarycache",
+            updated_at: Date.now(),
+          },
+          achievements: cacheEntries,
+          achievement_percentages: [],
+        }, false);
+        console.debug(`[ACH][CACHE][${tid}] created new disk cache appid=${appId}`);
       }
       console.debug(`[ACH][CACHE][${tid}] background write complete`);
+
+      // ── SQLite write (dual-write: JSON stays primary, SQLite is new persistence layer) ──
+      try {
+        const now = Date.now();
+        await upsertAchievementSummary({
+          appId,
+          total: summary.total ?? 0,
+          unlocked: summary.unlocked ?? 0,
+          percent: summary.percent,
+          progressAvailable: summary.progressAvailable,
+          source: summary.source ?? "librarycache",
+          updatedAt: now,
+        });
+
+        if (summary.achievements?.length) {
+          const entryRows = summary.achievements.map((ach) => ({
+            appId,
+            apiName: ach.apiName,
+            name: ach.name,
+            description: ach.description,
+            iconUrl: ach.iconUrl,
+            iconGray: ach.iconGrayUrl,
+            hidden: false,
+            unlocked: ach.unlocked,
+            unlockTime: ach.unlockTime ? Math.floor(ach.unlockTime / 1000) : null,
+            unlockedAt: ach.unlockTime ? Math.floor(ach.unlockTime / 1000) : null,
+            globalPct: ach.rarityPercent ?? null,
+            updatedAt: now,
+          }));
+          await batchUpsertAchievementEntries(entryRows);
+        }
+
+        // Persist percentages if present (from existing cache)
+        const existingCache = await readAchievementCache(Number(appId));
+        if (existingCache?.achievement_percentages?.length) {
+          await upsertAchievementPercentages({
+            appId,
+            entries: JSON.stringify(existingCache.achievement_percentages),
+            updatedAt: now,
+          });
+        }
+
+        console.debug(`[ACH][SQLITE][${tid}] write complete appid=${appId}`);
+      } catch {
+        // SQLite write failure is non-critical — JSON remains authoritative
+      }
     } catch {
       // background write failure is non-critical
     }

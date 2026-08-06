@@ -1078,6 +1078,11 @@ export async function saveStartupSnapshot(snapshot: StartupSnapshot): Promise<vo
   // Write to disk first so a failed write never creates phantom in-memory state
   try {
     await invoke("write_startup_snapshot", { snapshot });
+    // Dual-write: also persist to SQLite for fast boot reads
+    try {
+      const { upsertGameCatalogBlob, CATALOG_KEYS } = await import("./tauri");
+      await upsertGameCatalogBlob(CATALOG_KEYS.startupSnapshot, JSON.stringify(snapshot));
+    } catch { /* non-critical */ }
     console.log(`[BootSnapshot] save ok`);
   } catch {
     // non-critical

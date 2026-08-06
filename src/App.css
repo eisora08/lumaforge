@@ -1337,6 +1337,43 @@ html {
 }
 
 /* =========================
+   STORE SECTION PREMIUM POLISH
+   Skeleton, accent line, hover glow
+========================= */
+
+.lf-store-skeleton-card {
+  border-radius: 0.75rem;
+  background: linear-gradient(110deg, var(--color-surface) 30%, color-mix(in srgb, var(--color-surface) 60%, transparent) 50%, var(--color-surface) 70%);
+  background-size: 200% 100%;
+  animation: lf-shimmer-slide 1.6s ease-in-out infinite;
+  border: 1px solid var(--surface-active-border, rgba(255,255,255,0.06));
+}
+
+.lf-store-section-accent {
+  position: relative;
+}
+.lf-store-section-accent::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  opacity: 0.6;
+}
+
+.lf-store-card-glow {
+  transition: box-shadow 200ms cubic-bezier(.2,.8,.2,1), transform 200ms cubic-bezier(.2,.8,.2,1);
+}
+.lf-store-card-glow:hover {
+  box-shadow: 0 8px 32px -4px color-mix(in srgb, var(--color-accent) 25%, transparent),
+              0 4px 16px -2px rgba(0,0,0,0.3);
+  transform: translateY(-2px);
+}
+
+/* =========================
    COMPACT MODE (Settings toggle)
 ========================= */
 

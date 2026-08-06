@@ -2,52 +2,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 
 const DEBUG_DASH_TOP_PICKS = false;
-const DEBUG_DASH_SECTION_LOGS = false;
 import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
 import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
 import { useSettings } from "../../context/SettingsContext";
 import { deduplicateByAppId } from "../../services/gameCacheService";
-import { getBestStoreImage } from "../../services/storeImageCache";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
 import { subscribeCatalogSections, getCachedCatalogSections } from "../../services/storeCatalogOrchestrator";
+import { getCatalogSectionWithFallback, filterAndSortCatalogGames, resolveBestMedia } from "./dashboardSectionHelpers";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
   maxItems?: number;
 };
 
-const TOOL_KEYWORDS = [
-  "steamworks", "redistributable", "steam cloud", "steamvr",
-  "proton", "runtime", "sdk", "tool", "directx", "vcredist",
-  "framework", "driver", "utility",
-];
-
-function isToolByTitle(title: string): boolean {
-  const lower = title.toLowerCase();
-  for (const kw of TOOL_KEYWORDS) {
-    if (lower.includes(kw)) return true;
-  }
-  return false;
-}
-
-function resolveBestMedia(game: NormalizedCatalogGame): string | null {
-  // Try store image cache first (has Steam CDN fallback — same path as Store cards)
-  if (game.appId) {
-    const storeImage = getBestStoreImage(game.appId, ["capsule", "header", "hero"]);
-    if (storeImage) return storeImage;
-  }
-  // Fall back to orchestrator-provided media fields
-  return game.media.capsuleImageV5 || game.media.headerImage || game.media.libraryHeroImage || game.media.capsuleImage || game.media.backgroundImage || null;
-}
-
 export default function TopPicksDashboardSection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [sections, setSections] = useState(() => getCachedCatalogSections());
+  const [curatedFallback, setCuratedFallback] = useState<NormalizedCatalogGame[] | null>(null);
 
   useEffect(() => {
     const unsub = subscribeCatalogSections((s) => setSections([...s]));
@@ -60,29 +36,40 @@ export default function TopPicksDashboardSection({ onNavigate, maxItems }: Props
     return set;
   }, [libraryGames]);
 
+  // Synchronous orchestrator lookup (fast path)
+  const orchestratorGames = useMemo(() => {
+    const found = sections.find((s) => s.sectionId === "top-picks");
+    if (!found || found.games.length === 0) return null;
+    return found.games.map(mapStoreCatalogGameToCard);
+  }, [sections]);
+
+  // Async curated fallback (only when orchestrator has no data for this section)
+  useEffect(() => {
+    if (orchestratorGames !== null) {
+      setCuratedFallback(null);
+      return;
+    }
+    if (sections.length === 0) return;
+
+    let cancelled = false;
+    getCatalogSectionWithFallback(sections, "top-picks").then((games) => {
+      if (!cancelled) setCuratedFallback(games);
+    });
+    return () => { cancelled = true; };
+  }, [orchestratorGames, sections]);
+
   const displayGames = useMemo(() => {
-    const topPicksSection = sections.find((s) => s.sectionId === "top-picks");
-    if (!topPicksSection || topPicksSection.games.length === 0) return [];
-
-    const cards = topPicksSection.games.map(mapStoreCatalogGameToCard);
-
-    const filtered = cards.filter(
-      (g) => g.appId && g.title && !libraryAppIds.has(g.appId) && !isToolByTitle(g.title),
-    );
-    if (filtered.length === 0) return [];
-
-    const withMedia = filtered.filter((g) => resolveBestMedia(g));
-    const withoutMedia = filtered.filter((g) => !resolveBestMedia(g));
-    const sorted = [...withMedia, ...withoutMedia];
-    return sorted.slice(0, maxItems ?? 10);
-  }, [sections, libraryAppIds, maxItems]);
+    const source = orchestratorGames ?? curatedFallback;
+    if (!source) return [];
+    return filterAndSortCatalogGames(source, libraryAppIds, maxItems ?? 10);
+  }, [orchestratorGames, curatedFallback, libraryAppIds, maxItems]);
 
   const logRef = useRef<string>("");
   useEffect(() => {
     const rendered = displayGames.length;
-    const topPicksSection = sections.find((s) => s.sectionId === "top-picks");
-    const candidates = topPicksSection?.games.length ?? 0;
-    const key = `${rendered}|${candidates}|orchestrator`;
+    const candidates = orchestratorGames?.length ?? curatedFallback?.length ?? 0;
+    const source = orchestratorGames ? "orchestrator" : curatedFallback ? "curated" : "none";
+    const key = `${rendered}|${candidates}|${source}`;
 
     if (sections.length === 0) {
       if (logRef.current !== "loading") logRef.current = "loading";
@@ -92,9 +79,6 @@ export default function TopPicksDashboardSection({ onNavigate, maxItems }: Props
     if (candidates === 0 || rendered === 0) {
       if (logRef.current !== `skip|${key}`) {
         logRef.current = `skip|${key}`;
-        if (DEBUG_DASH_SECTION_LOGS) {
-          console.log(`[DASH][SECTION_SKIP] section=TopPicks reason=no-canonical-section total=${candidates}`);
-        }
       }
       return;
     }
@@ -104,11 +88,11 @@ export default function TopPicksDashboardSection({ onNavigate, maxItems }: Props
       if (DEBUG_DASH_TOP_PICKS) {
         const withMediaCount = displayGames.filter((g) => resolveBestMedia(g)).length;
         console.log(
-          `[DASH][TOP_PICKS] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=orchestrator`,
+          `[DASH][TOP_PICKS] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=${source}`,
         );
       }
     }
-  }, [displayGames, sections]);
+  }, [displayGames, sections, orchestratorGames, curatedFallback]);
 
   if (sections.length === 0 || displayGames.length === 0) return null;
 
@@ -140,8 +124,8 @@ export default function TopPicksDashboardSection({ onNavigate, maxItems }: Props
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {deduplicateByAppId(displayGames).map((game) => {
           const imgSrc = resolveBestMedia(game);
-          if (imgSrc && DEBUG_DASH_SECTION_LOGS) {
-            console.log(`[DASH][GLOBAL_MEDIA] section=TopPicks appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
+          if (imgSrc && DEBUG_DASH_TOP_PICKS) {
+            console.log(`[DASH][TOP_PICKS_MEDIA] appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
           }
           return (
             <div

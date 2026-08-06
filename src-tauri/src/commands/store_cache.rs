@@ -481,7 +481,56 @@ pub fn write_store_catalog_sections_cache(app_handle: AppHandle, data: serde_jso
 }
 
 // ---------------------------------------------------------------------------
-// Clear entire store cache
+// SGDB artwork cache  —  app_data/store/sgdb-artwork-cache.json
+// ---------------------------------------------------------------------------
+
+fn get_sgdb_artwork_cache_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    Ok(get_store_dir(app_handle)?.join("sgdb-artwork-cache.json"))
+}
+
+#[tauri::command]
+pub fn read_store_sgdb_artwork_cache(app_handle: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let path = get_sgdb_artwork_cache_path(&app_handle)?;
+
+    if !path.exists() {
+        log_store("sgdb artwork cache loaded (none on disk)");
+        return Ok(None);
+    }
+
+    match fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(value) => {
+                log_store("sgdb artwork cache loaded");
+                Ok(Some(value))
+            }
+            Err(_) => {
+                log_store("sgdb artwork cache corrupt — ignoring");
+                Ok(None)
+            }
+        },
+        Err(e) => {
+            log_store(&format!("sgdb artwork cache read error: {}", e));
+            Ok(None)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn write_store_sgdb_artwork_cache(app_handle: AppHandle, data: serde_json::Value) -> Result<(), String> {
+    let path = get_sgdb_artwork_cache_path(&app_handle)?;
+
+    let content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("Failed to serialize sgdb artwork cache: {}", e))?;
+
+    fs::write(&path, &content)
+        .map_err(|e| format!("Failed to write sgdb artwork cache: {}", e))?;
+
+    log_store(&format!("sgdb artwork cache saved ({} bytes)", content.len()));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Clear store cache
 // ---------------------------------------------------------------------------
 
 #[tauri::command]

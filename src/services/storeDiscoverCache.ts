@@ -148,9 +148,11 @@ export type SectionSource = "catalog" | "personalized" | "genre" | "lua" | "fall
 export type StoreDiscoverSection = {
   id: string;
   title: string;
-  type: "hero" | "featured" | "rail" | "genre" | "more";
+  type: "hero" | "featured" | "rail" | "genre" | "genre-collection" | "more";
   items: StoreGame[];
   source: SectionSource;
+  /** Genre collection cards — each entry is a genre with its top games for the mosaic. */
+  genreGroups?: { genre: string; items: StoreGame[] }[];
 };
 
 export interface StoreSectionModel {
@@ -173,7 +175,7 @@ export interface CacheEntry {
   allStoreSections: StoreSectionModel[];
   featuredGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
   browseGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
-  luaReadyGames: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
+  luaReadyGames?: { appId: string; title: string; imageUrl?: string; platforms: string[]; sources: any[] }[];
   builtAt: number;
   /** The compiled Discovery Index (enriched metadata + quality-gated scores). */
   discoveryIndex?: StoreDiscoveryIndex;
@@ -305,4 +307,21 @@ export function setCachedStoreMetadata(meta: Record<number, Record<string, unkno
 
 export function clearCachedStoreMetadata(): void {
   _cachedStoreMetadata = null;
+}
+
+// ── Module-level review summary cache (survives mount/unmount) ──
+// Same pattern as metadata — prevents a full discoverSections rebuild on remount
+// when the fingerprint jumps from 0 reviews to N reviews.
+let _cachedReviewSummaries: Record<number, Record<string, unknown>> | null = null;
+
+export function getCachedReviewSummaries(): Record<number, Record<string, unknown>> | null {
+  return _cachedReviewSummaries;
+}
+
+export function setCachedReviewSummaries(summaries: Record<number, Record<string, unknown>>): void {
+  _cachedReviewSummaries = summaries;
+}
+
+export function clearCachedReviewSummaries(): void {
+  _cachedReviewSummaries = null;
 }

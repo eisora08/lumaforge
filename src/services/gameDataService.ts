@@ -4,9 +4,6 @@ import {
 } from "./gameCacheService";
 import type { GameMediaPaths } from "./gameCacheService";
 import {
-  getLibraryAppInfo,
-} from "./libraryLocalCacheService";
-import {
   getStoreAppInfo,
   getStoreGameDetails,
   getStoreReviewSummary,
@@ -386,36 +383,6 @@ async function resolveMetadataFromFallbacks(appId: string): Promise<NormalizedGa
         name: metadataResult.name || null,
         media,
         rawMetadata: metadataResult,
-      };
-    }
-  } catch {
-    // Fall through
-  }
-
-  try {
-    const libEntry = await getLibraryAppInfo(appId);
-    if (libEntry) {
-      const media: NormalizedGameMediaPaths = {
-        cover: libEntry.cover_path || null,
-        background: libEntry.hero_path || null,
-        landscape: libEntry.grid_path || libEntry.header_image || null,
-        logo: libEntry.logo_path || null,
-        icon: libEntry.icon_path || null,
-      };
-
-      if (ENABLE_VERBOSE_GAME_DATA_LOGS) {
-        console.log(`[GameDataService] metadata resolved from library cache for ${appId}`);
-      }
-
-      return {
-        id: appId,
-        title: libEntry.name,
-        provider: "steam",
-        installed: null,
-        lastPlayed: null,
-        name: libEntry.name,
-        media,
-        rawMetadata: null,
       };
     }
   } catch {

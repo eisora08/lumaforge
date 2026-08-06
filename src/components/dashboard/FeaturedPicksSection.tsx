@@ -1,56 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 
-const DEBUG_DASH_GLOBAL_MEDIA = false;
 const DEBUG_DASH_FEATURED = false;
-const DEBUG_DASH_SECTION_LOGS = false;
 import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
 import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
 import { useSettings } from "../../context/SettingsContext";
 import { deduplicateByAppId } from "../../services/gameCacheService";
-import { getBestStoreImage } from "../../services/storeImageCache";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
 import { subscribeCatalogSections, getCachedCatalogSections } from "../../services/storeCatalogOrchestrator";
+import { getCatalogSectionWithFallback, filterAndSortCatalogGames, resolveBestMedia } from "./dashboardSectionHelpers";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
   maxItems?: number;
 };
 
-const TOOL_KEYWORDS = [
-  "steamworks", "redistributable", "steam cloud", "steamvr",
-  "proton", "runtime", "sdk", "tool", "directx", "vcredist",
-  "framework", "driver", "utility",
-];
-
-function isToolByTitle(title: string): boolean {
-  const lower = title.toLowerCase();
-  for (const kw of TOOL_KEYWORDS) {
-    if (lower.includes(kw)) return true;
-  }
-  return false;
-}
-
-function resolveBestMedia(game: NormalizedCatalogGame): string | null {
-  // Try store image cache first (has Steam CDN fallback — same path as Store cards)
-  if (game.appId) {
-    const storeImage = getBestStoreImage(game.appId, ["capsule", "header", "hero"]);
-    if (storeImage) return storeImage;
-  }
-  // Fall back to orchestrator-provided media fields
-  return game.media.capsuleImageV5 || game.media.headerImage || game.media.libraryHeroImage || game.media.capsuleImage || game.media.backgroundImage || null;
-}
-
 export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [sections, setSections] = useState(() => getCachedCatalogSections());
+  const [curatedFallback, setCuratedFallback] = useState<NormalizedCatalogGame[] | null>(null);
 
-  // Subscribe to orchestrator section updates (canonical Store catalog sections)
   useEffect(() => {
     const unsub = subscribeCatalogSections((s) => setSections([...s]));
     return unsub;
@@ -62,52 +36,59 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
     return set;
   }, [libraryGames]);
 
-  const displayGames = useMemo(() => {
-    // Find canonical featured section from orchestrator (matches Store's "Featured" section)
-    const featuredSection = sections.find(
+  // Synchronous orchestrator lookup (fast path)
+  const orchestratorGames = useMemo(() => {
+    const found = sections.find(
       (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
     );
-    if (!featuredSection || featuredSection.games.length === 0) return [];
+    if (!found || found.games.length === 0) return null;
+    return found.games.map(mapStoreCatalogGameToCard);
+  }, [sections]);
 
-    // Map orchestrator games to card model via shared bridge
-    const cards = featuredSection.games.map(mapStoreCatalogGameToCard);
+  // Async curated fallback (only when orchestrator has no data for this section)
+  useEffect(() => {
+    if (orchestratorGames !== null) {
+      setCuratedFallback(null);
+      return;
+    }
+    if (sections.length === 0) return;
 
-    // Filter: non-library, non-tool, has appId+title
-    const filtered = cards.filter(
-      (g) => g.appId && g.title && !libraryAppIds.has(g.appId) && !isToolByTitle(g.title),
-    );
-    if (filtered.length === 0) return [];
+    let cancelled = false;
+    // Try "featured" first, then "top-picks" as secondary
+    getCatalogSectionWithFallback(sections, "featured").then((games) => {
+      if (cancelled) return;
+      if (games) {
+        setCuratedFallback(games);
+      } else {
+        getCatalogSectionWithFallback(sections, "top-picks").then((fallback) => {
+          if (!cancelled) setCuratedFallback(fallback);
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [orchestratorGames, sections]);
 
-    // Sort: games with media first
-    const withMedia = filtered.filter((g) => resolveBestMedia(g));
-    const withoutMedia = filtered.filter((g) => !resolveBestMedia(g));
-    const sorted = [...withMedia, ...withoutMedia];
-    return sorted.slice(0, maxItems ?? 10);
-  }, [sections, libraryAppIds, maxItems]);
+  const displayGames = useMemo(() => {
+    const source = orchestratorGames ?? curatedFallback;
+    if (!source) return [];
+    return filterAndSortCatalogGames(source, libraryAppIds, maxItems ?? 10);
+  }, [orchestratorGames, curatedFallback, libraryAppIds, maxItems]);
 
-  // Change-only diagnostic
   const featLogRef = useRef<string>("");
   useEffect(() => {
     const rendered = displayGames.length;
-    const featuredSection = sections.find(
-      (s) => s.sectionId === "featured" || s.sectionId === "top-picks",
-    );
-    const candidates = featuredSection?.games.length ?? 0;
-    const key = `${rendered}|${candidates}|orchestrator`;
+    const candidates = orchestratorGames?.length ?? curatedFallback?.length ?? 0;
+    const source = orchestratorGames ? "orchestrator" : curatedFallback ? "curated" : "none";
+    const key = `${rendered}|${candidates}|${source}`;
 
     if (sections.length === 0) {
-      if (featLogRef.current !== "loading") {
-        featLogRef.current = "loading";
-      }
+      if (featLogRef.current !== "loading") featLogRef.current = "loading";
       return;
     }
 
     if (candidates === 0 || rendered === 0) {
       if (featLogRef.current !== `skip|${key}`) {
         featLogRef.current = `skip|${key}`;
-        if (DEBUG_DASH_SECTION_LOGS) {
-          console.log(`[DASH][SECTION_SKIP] section=FeaturedPicks reason=no-canonical-section total=${candidates}`);
-        }
       }
       return;
     }
@@ -117,21 +98,17 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
       if (DEBUG_DASH_FEATURED) {
         const withMediaCount = displayGames.filter((g) => resolveBestMedia(g)).length;
         console.log(
-          `[DASH][FEATURED] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=orchestrator`,
+          `[DASH][FEATURED] candidates=${candidates} rendered=${rendered} withMedia=${withMediaCount} source=${source}`,
         );
       }
     }
-  }, [displayGames, sections]);
+  }, [displayGames, sections, orchestratorGames, curatedFallback]);
 
   if (sections.length === 0 || displayGames.length === 0) return null;
 
   function handleOpen(game: NormalizedCatalogGame) {
     if (!game.appId) return;
     const libGame = libraryGames.find((g) => g.appId === game.appId);
-    const hasMedia = !!resolveBestMedia(game);
-    if (DEBUG_DASH_SECTION_LOGS) {
-      console.log(`[DASH][GLOBAL_CLICK] section=FeaturedPicks appid=${game.appId} title="${game.title}" inLibrary=${!!libGame} hasMedia=${hasMedia}`);
-    }
     if (libGame) {
       setSelectedGame(libGame);
       onNavigate?.("library-game-detail");
@@ -157,8 +134,8 @@ export default function FeaturedPicksSection({ onNavigate, maxItems }: Props) {
       <DashboardHorizontalRail gap={settings.dashboardGridGap}>
         {deduplicateByAppId(displayGames).map((game) => {
           const imgSrc = resolveBestMedia(game);
-          if (imgSrc && DEBUG_DASH_GLOBAL_MEDIA) {
-            console.log(`[DASH][GLOBAL_MEDIA] section=FeaturedPicks appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
+          if (imgSrc && DEBUG_DASH_FEATURED) {
+            console.log(`[DASH][FEATURED_MEDIA] appid=${game.appId} src=${imgSrc.slice(0, 80)}`);
           }
           return (
             <div

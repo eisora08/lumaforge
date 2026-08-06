@@ -36,14 +36,6 @@ const SECTION_CAPS: Record<string, number> = {
   "featured": 8,
   "top-picks": 8,
   "new-noteworthy": 8,
-  "genre-action": 8,
-  "genre-rpg": 8,
-  "genre-indie": 8,
-  "genre-adventure": 8,
-  "genre-shooter": 8,
-  "genre-racing": 8,
-  "genre-strategy": 8,
-  "genre-simulation": 8,
   "lua-ready-picks": 8,
   "popular-genres": 20,
 };
@@ -54,14 +46,6 @@ const SECTION_PRIORITY: Record<string, number> = {
   "top-picks": 1,
   "new-noteworthy": 2,
   "lua-ready-picks": 3,
-  "genre-action": 4,
-  "genre-rpg": 4,
-  "genre-indie": 4,
-  "genre-adventure": 4,
-  "genre-shooter": 4,
-  "genre-racing": 4,
-  "genre-strategy": 4,
-  "genre-simulation": 4,
   "popular-genres": 5,
 };
 
@@ -130,20 +114,12 @@ const SECTION_ENDPOINT_MAP: Record<string, ScoringContext["sectionType"]> = {
   "new-noteworthy": "new-noteworthy",
   "top-picks": "top-rated",
   "featured": "featured",
-  "genre-action": "genre",
-  "genre-rpg": "genre",
-  "genre-indie": "genre",
-  "genre-adventure": "genre",
 };
 
 const SECTION_TITLES: Record<string, string> = {
   "new-noteworthy": "New & Noteworthy",
   "top-picks": "Top Picks",
   "featured": "Featured",
-  "genre-action": "Action",
-  "genre-rpg": "RPG",
-  "genre-indie": "Indie",
-  "genre-adventure": "Adventure",
 };
 
 // ── Tauri disk cache helpers ──
@@ -397,9 +373,17 @@ export async function initCatalogOrchestrator(options: CatalogInitOptions = {}):
 
   const diskCache = await readDiskCache();
   if (diskCache && diskCache.sections.length > 0 && diskCache.allGames.length > 0) {
+    // Filter out deprecated sections from disk cache:
+    // - genre-* rails (now served by Browse by Genre mosaic)
+    // - featured/new-noteworthy (now served only in hero carousel, not as rail sections)
+    const filteredSections = diskCache.sections.filter((s) => {
+      if (s.sectionId.startsWith("genre-")) return false;
+      if (s.sectionId === "featured" || s.sectionId === "new-noteworthy") return false;
+      return true;
+    });
     _state = {
       ..._state,
-      cachedSections: diskCache.sections,
+      cachedSections: filteredSections,
       lastRefreshAt: diskCache.builtAt,
       providers: diskCache.providers ?? [],
     };
@@ -506,9 +490,11 @@ export function mergeEnrichedSections(
   const usedAppIds = new Set<string>();
 
   // Sort steamdb sections by priority (featured first, genres later)
-  const sortedSteamdb = [...steamdbSections].sort(
-    (a, b) => getSectionPriority(a.id) - getSectionPriority(b.id),
-  );
+  // Filter deprecated sections: featured/new-noteworthy now served only in hero carousel
+  const DEPRECATED_IDS = new Set(["featured", "new-noteworthy"]);
+  const sortedSteamdb = [...steamdbSections]
+    .filter((s) => !DEPRECATED_IDS.has(s.id))
+    .sort((a, b) => getSectionPriority(a.id) - getSectionPriority(b.id));
 
   const result: StoreDiscoverSection[] = [];
 
@@ -606,6 +592,10 @@ export function mergeEnrichedSections(
   for (const [normalizedId, enriched] of enrichedByNormalizedId) {
     if (consumedEnrichedIds.has(enriched.sectionId)) continue;
     if (fallbackById.has(normalizedId)) continue;
+    // Skip deprecated genre-* rails (genres now served by Browse by Genre mosaic)
+    if (normalizedId.startsWith("genre-")) continue;
+    // Skip featured/new-noteworthy (now served only in hero carousel, not as rail sections)
+    if (normalizedId === "featured" || normalizedId === "new-noteworthy") continue;
 
     // Filter and cap
     const viableGames = enriched.games.filter((g) => g.steamAppId && g.steamAppId.length > 0);

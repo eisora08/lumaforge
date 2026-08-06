@@ -199,38 +199,6 @@ export function buildRawgEndpoints(apiKey: string): RawgEndpoint[] {
         metacritic: "80,100",
       }),
     },
-    {
-      tag: "genre-action",
-      url: buildRawgUrl(apiKey, {
-        genres: "4",
-        ordering: "-rating",
-        page_size: 15,
-      }),
-    },
-    {
-      tag: "genre-rpg",
-      url: buildRawgUrl(apiKey, {
-        genres: "5",
-        ordering: "-rating",
-        page_size: 15,
-      }),
-    },
-    {
-      tag: "genre-indie",
-      url: buildRawgUrl(apiKey, {
-        genres: "2",
-        ordering: "-rating",
-        page_size: 15,
-      }),
-    },
-    {
-      tag: "genre-adventure",
-      url: buildRawgUrl(apiKey, {
-        genres: "3",
-        ordering: "-rating",
-        page_size: 15,
-      }),
-    },
   ];
 }
 

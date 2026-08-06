@@ -3,7 +3,6 @@ import {
   updateStoreAppinfoEntry,
   getStoreDetails,
   readStoreReviewSummary,
-  writeStoreReviewSummary,
 } from "./tauri";
 import {
   persistStoreDetails,
@@ -78,6 +77,17 @@ export async function saveStoreGameDetails(appId: number, metadata: SteamAppMeta
 }
 
 export async function getStoreReviewSummary(appId: number): Promise<StoreReviewEntry | null> {
+  // SQLite-first fallback: fast boot reads without scanning JSON files
+  try {
+    const { getStoreReviewFromDb } = await import("./tauri");
+    const dbRow = await getStoreReviewFromDb(String(appId));
+    if (dbRow && dbRow.data) {
+      return { app_id: Number(dbRow.appId), data: JSON.parse(dbRow.data), updated_at: dbRow.updatedAt, version: 1 };
+    }
+  } catch {
+    // not in SQLite yet
+  }
+  // JSON fallback
   try {
     return await readStoreReviewSummary(appId);
   } catch {
@@ -87,11 +97,11 @@ export async function getStoreReviewSummary(appId: number): Promise<StoreReviewE
 
 export async function saveStoreReviewSummary(appId: number, data: unknown): Promise<boolean> {
   try {
-    await writeStoreReviewSummary(appId, {
-      app_id: appId,
-      data: data,
-      updated_at: Date.now(),
-      version: 1,
+    const { upsertStoreReview } = await import("./tauri");
+    await upsertStoreReview({
+      appId: String(appId),
+      data: JSON.stringify(data),
+      updatedAt: Date.now(),
     });
     return true;
   } catch {
@@ -122,34 +132,10 @@ export function saveStoreMetadataToStoreCache(metadata: SteamAppMetadata): void 
 }
 
 /**
- * Promote Store cache data to Library cache for an installed/library game.
- * Only call this when the appId belongs to a library game or when the user
- * explicitly requests it (e.g., "Add to Library").
+ * @deprecated library/appinfo.json is no longer maintained.
+ * Games get their data from games/{appid}/appinfo.json (canonical) or SQLite.
+ * Kept as no-op stub to avoid import errors in any remaining call sites.
  */
-export async function promoteStoreCacheToLibrary(appId: string): Promise<boolean> {
-  try {
-    const appInfo = await getStoreAppInfo(appId);
-
-    if (!appInfo) {
-      return false;
-    }
-
-    const { updateLibraryAppinfoEntry } = await import("./tauri");
-
-    await updateLibraryAppinfoEntry(appId, {
-      app_id: appId,
-      name: appInfo.name,
-      header_image: appInfo.header_image,
-      cover_path: null,
-      grid_path: null,
-      hero_path: null,
-      logo_path: null,
-      icon_path: null,
-      updated_at: nowTimestamp(),
-    });
-
-    return true;
-  } catch {
-    return false;
-  }
+export async function promoteStoreCacheToLibrary(_appId: string): Promise<boolean> {
+  return false;
 }

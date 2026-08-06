@@ -1,30 +1,33 @@
 import { useState } from "react";
 import {
+  ArrowDownAZ,
+  Calendar,
   Check,
   ChevronDown,
   RotateCcw,
   Search,
+  Star,
   X,
 } from "lucide-react";
 
 export type BrowseFilters = {
   keywords: string;
-  luaReady: boolean;
   installed: boolean;
   hasSource: boolean;
   platforms: string[];
   sourceTypes: string[];
   providers: string[];
+  sort: "name" | "rating" | "recent";
 };
 
 export const DEFAULT_BROWSE_FILTERS: BrowseFilters = {
   keywords: "",
-  luaReady: false,
   installed: false,
   hasSource: false,
   platforms: [],
   sourceTypes: [],
   providers: [],
+  sort: "name",
 };
 
 type StoreBrowseFiltersPanelProps = {
@@ -118,12 +121,12 @@ export default function StoreBrowseFiltersPanel({
   }
 
   const hasAnyFilter =
-    filters.luaReady ||
     filters.installed ||
     filters.hasSource ||
     filters.platforms.length > 0 ||
     filters.sourceTypes.length > 0 ||
     filters.providers.length > 0 ||
+    filters.sort !== "name" ||
     filters.keywords.trim().length > 0;
 
   return (
@@ -167,15 +170,36 @@ export default function StoreBrowseFiltersPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4 lf-scroll-area">
+        <FilterDivider />
+
+        <FilterSection title="Sort by">
+          <div className="flex gap-1 px-3">
+            {[
+              { key: "name" as const, label: "Name", icon: ArrowDownAZ },
+              { key: "rating" as const, label: "Rating", icon: Star },
+              { key: "recent" as const, label: "Recent", icon: Calendar },
+            ].map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => update({ sort: key })}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                  filters.sort === key
+                    ? "bg-(--color-accent)/20 text-(--color-accent)"
+                    : "text-(--color-muted) hover:bg-white/[0.04] hover:text-(--color-text)"
+                }`}
+              >
+                <Icon className="h-3 w-3" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </FilterSection>
+
         <FilterDivider />
 
         <FilterSection title="Availability">
-          <CheckRow
-            checked={filters.luaReady}
-            onChange={() => update({ luaReady: !filters.luaReady })}
-            label="Lua Ready"
-          />
           <CheckRow
             checked={filters.installed}
             onChange={() => update({ installed: !filters.installed })}

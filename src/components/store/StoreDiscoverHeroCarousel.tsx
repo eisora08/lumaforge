@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Download,
   Gamepad2,
+  Star,
 } from "lucide-react";
 import AsyncImage from "../common/AsyncImage";
 import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
@@ -12,9 +13,13 @@ import { useCrossfadeSrc } from "../../hooks/useCrossfadeSrc";
 
 import type { PackageGame } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
+import type { SteamReviewSummary } from "../../types/gameReview";
+import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 type StoreDiscoverHeroCarouselProps = {
   games: PackageGame[];
   storeMetadataByAppId: Record<number, SteamAppMetadata>;
+  reviewSummaryByAppId?: Record<number, SteamReviewSummary>;
+  sgdbArtworkByAppId?: Record<string, SgdbArtworkData>;
   initialIndex?: number;
   onIndexChange?: (index: number) => void;
   onOpenGame: (game: PackageGame) => void;
@@ -27,10 +32,17 @@ const AUTO_ADVANCE_MS = 7000;
 function getGameImage(
   game: PackageGame,
   metadataByAppId: Record<number, SteamAppMetadata>,
+  sgdbArtworkByAppId?: Record<string, SgdbArtworkData>,
 ): string | undefined {
+  const sgdb = sgdbArtworkByAppId?.[game.appId];
+  if (sgdb?.sgdbHeroUrl) return sgdb.sgdbHeroUrl;
+
   const meta = metadataByAppId[Number(game.appId)];
 
   return (
+    meta?.library_hero_image ||
+    meta?.background_image ||
+    meta?.hero_image ||
     meta?.header_image ||
     meta?.capsule_image ||
     meta?.capsule_image_v5 ||
@@ -42,6 +54,8 @@ function getGameImage(
 export default function StoreDiscoverHeroCarousel({
   games,
   storeMetadataByAppId,
+  reviewSummaryByAppId,
+  sgdbArtworkByAppId,
   initialIndex = 0,
   onIndexChange,
   onOpenGame,
@@ -56,7 +70,7 @@ export default function StoreDiscoverHeroCarousel({
   const activeGame =
     games.length > 0 ? games[Math.min(activeIndex, games.length - 1)] : undefined;
   const ambientImage = activeGame
-    ? getGameImage(activeGame, storeMetadataByAppId)
+    ? getGameImage(activeGame, storeMetadataByAppId, sgdbArtworkByAppId)
     : undefined;
 
   // Selectable hero/background transition (Settings → Animaciones). Crossfade
@@ -83,7 +97,7 @@ export default function StoreDiscoverHeroCarousel({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (isPaused || games.length <= 1) {
+    if (isPaused || document.hidden || games.length <= 1) {
       return;
     }
 
@@ -115,14 +129,22 @@ export default function StoreDiscoverHeroCarousel({
   }
 
   const hasAvailableSource = current.sources.some((s) => s.available);
-  const currentImage = getGameImage(current, storeMetadataByAppId);
+  const currentImage = getGameImage(current, storeMetadataByAppId, sgdbArtworkByAppId);
   const railGames = games.slice(0, 5);
 
+  const currentMeta = storeMetadataByAppId[Number(current.appId)];
+  const currentReview = reviewSummaryByAppId?.[Number(current.appId)];
+  const developer = currentMeta?.developer || current.developer;
+  const genres = currentMeta?.genres?.slice(0, 3) ?? [];
+  const shortDesc = currentMeta?.short_description;
+
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_260px]">
+    <div className="grid grid-cols-1 gap-4 px-4 sm:px-6 lg:px-8 xl:grid-cols-[1fr_260px] xl:px-10">
       <section
         onMouseEnter={() => setIsPaused(true)}
         onMouseLeave={() => setIsPaused(false)}
+        aria-roledescription="carousel"
+        aria-label="Featured games"
         className="group relative overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5"
       >
         <div
@@ -134,7 +156,7 @@ export default function StoreDiscoverHeroCarousel({
               onOpenGame(current);
             }
           }}
-          className="relative aspect-[21/9] cursor-pointer overflow-hidden bg-white/5"
+          className="relative aspect-[2/1] cursor-pointer overflow-hidden bg-white/5 sm:aspect-[16/7]"
         >
           {heroTransition === "crossfade" ? (
             <>
@@ -177,22 +199,57 @@ export default function StoreDiscoverHeroCarousel({
             />
           )}
 
-          <div className="absolute inset-0 bg-linear-to-r from-black/75 via-black/35 to-transparent" />
-          <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent" />
+          <div className="absolute inset-0 bg-linear-to-r from-black/80 via-black/40 to-transparent" />
+          <div className="absolute inset-0 bg-linear-to-t from-black/65 via-black/10 to-transparent" />
 
           <div className="absolute bottom-0 left-0 right-0 p-6 lg:p-8">
-            <h2 className="max-w-xl text-2xl font-black text-white lg:text-3xl">
+            <h2 aria-live="polite" className="max-w-xl text-2xl font-black text-white lg:text-3xl">
               {current.title}
             </h2>
 
-            <div className="mt-4 flex flex-wrap gap-2 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100 md:absolute md:bottom-0 md:left-0 md:right-0 md:p-6 md:lg:p-8">
+            {(developer || (currentReview?.positive_percent != null && currentReview.positive_percent > 0)) && (
+              <div className="mt-1.5 flex items-center gap-2.5">
+                {developer && (
+                  <span className="text-sm text-white/60">{developer}</span>
+                )}
+                {currentReview?.positive_percent != null && currentReview.positive_percent > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5 text-xs font-medium backdrop-blur-sm">
+                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                    <span className="text-white">{Math.round(currentReview.positive_percent)}%</span>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {genres.length > 0 && (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {genres.map((g) => (
+                  <span
+                    key={g}
+                    className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-medium text-white/80 backdrop-blur-sm"
+                  >
+                    {g}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {shortDesc && (
+              <p
+                className="mt-2.5 hidden max-w-lg text-sm leading-relaxed text-white/50 line-clamp-2 xl:block"
+                // eslint-disable-next-line react/no-danger
+                dangerouslySetInnerHTML={{ __html: shortDesc }}
+              />
+            )}
+
+            <div className="mt-4 flex items-center gap-3 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenGame(current);
                 }}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-4 py-2 text-sm font-bold text-(--color-accent-text) transition hover:opacity-90"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-2.5 text-sm font-bold text-(--color-accent-text) shadow-lg shadow-black/20 transition duration-150 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white active:scale-[0.97]"
               >
                 Details
               </button>
@@ -204,7 +261,7 @@ export default function StoreDiscoverHeroCarousel({
                     e.stopPropagation();
                     onDownload(current);
                   }}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/15"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-medium text-white backdrop-blur-sm transition duration-150 hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white active:scale-[0.97]"
                 >
                   <Download className="h-4 w-4" />
                   Download
@@ -218,7 +275,7 @@ export default function StoreDiscoverHeroCarousel({
                     e.stopPropagation();
                     onOpenSourceSelector(current);
                   }}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/15 hover:text-white"
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-medium text-white/80 backdrop-blur-sm transition hover:bg-white/15 hover:text-white"
                 >
                   Source
                 </button>
@@ -230,22 +287,24 @@ export default function StoreDiscoverHeroCarousel({
             <>
               <button
                 type="button"
+                aria-label="Previous slide"
                 onClick={(e) => {
                   e.stopPropagation();
                   handlePrev();
                 }}
-                className="absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
+                className="absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition duration-150 hover:bg-black/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white active:scale-[0.95]"
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
 
               <button
                 type="button"
+                aria-label="Next slide"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleNext();
                 }}
-                className="absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition hover:bg-black/70"
+                className="absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/50 text-white/80 backdrop-blur transition duration-150 hover:bg-black/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white active:scale-[0.95]"
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
@@ -258,11 +317,12 @@ export default function StoreDiscoverHeroCarousel({
                 <button
                   key={idx}
                   type="button"
+                  aria-label={`Go to slide ${idx + 1}: ${games[idx].title}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setActiveIndex(idx);
                   }}
-                  className={`h-2 cursor-pointer rounded-full transition-all ${
+                  className={`h-2 cursor-pointer rounded-full transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
                     idx === safeIndex
                       ? "w-6 bg-(--color-accent)"
                       : "w-2 bg-white/40 hover:bg-white/60"
@@ -283,14 +343,15 @@ export default function StoreDiscoverHeroCarousel({
           <div className="space-y-2">
             {railGames.map((game, idx) => {
               const isActive = idx === safeIndex;
-              const railImage = getGameImage(game, storeMetadataByAppId);
+              const railImage = getGameImage(game, storeMetadataByAppId, sgdbArtworkByAppId);
 
               return (
                 <button
                   key={"store:hero-rail:steam:" + game.appId}
                   type="button"
+                  aria-label={`Select ${game.title}`}
                   onClick={() => setActiveIndex(idx)}
-                  className={`flex w-full cursor-pointer items-center gap-3 rounded-xl p-2 text-left transition ${
+                  className={`flex w-full cursor-pointer items-center gap-3 rounded-xl p-2 text-left transition duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) ${
                     isActive
                       ? "bg-(--color-accent)/10 ring-1 ring-(--color-accent)/30"
                       : "hover:bg-white/5"

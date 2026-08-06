@@ -770,6 +770,27 @@ export async function debugAchievementProgress(params: {
   });
 }
 
+// ── Achievement Progress Index ──
+
+export interface AchievementProgressEntry {
+  appId: number;
+  unlocked: number;
+  total: number;
+  percentage: number;
+  allUnlocked: boolean;
+  cacheTime: number;
+}
+
+export async function readAchievementProgressIndex(params: {
+  steamPath?: string;
+  steamAccountId: string;
+}): Promise<AchievementProgressEntry[]> {
+  return await invoke<AchievementProgressEntry[]>("read_achievement_progress_index", {
+    steamPath: params.steamPath ?? null,
+    steamAccountId: params.steamAccountId,
+  });
+}
+
 // ── Verified Steam Achievement Sources ──
 
 export interface RejectedSourceFileTs {
@@ -1094,6 +1115,14 @@ export async function writeStoreDiscoveryIndex(data: unknown): Promise<void> {
   return await invoke<void>("write_store_discovery_index", { data });
 }
 
+export async function readStoreSgdbArtworkCache(): Promise<unknown | null> {
+  return await invoke<unknown | null>("read_store_sgdb_artwork_cache");
+}
+
+export async function writeStoreSgdbArtworkCache(data: unknown): Promise<void> {
+  return await invoke<void>("write_store_sgdb_artwork_cache", { data });
+}
+
 export async function readStoreCatalogSectionsCache(): Promise<unknown | null> {
   return await invoke<unknown | null>("read_store_catalog_sections_cache");
 }
@@ -1188,6 +1217,27 @@ export async function queryCatalogNewNoteworthy(
   limit: number,
 ): Promise<CatalogGameResult[]> {
   return await invoke<CatalogGameResult[]>("query_catalog_new_noteworthy", { limit });
+}
+
+/** Query hidden gems (high review%, moderate review count, niche but beloved). */
+export async function queryCatalogHiddenGems(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_hidden_gems", { limit });
+}
+
+/** Query top rated games (highest review% with significant review count). */
+export async function queryCatalogTopRated(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_top_rated", { limit });
+}
+
+/** Query cult classics (old + high review% + sustained community). */
+export async function queryCatalogCultClassics(
+  limit: number,
+): Promise<CatalogGameResult[]> {
+  return await invoke<CatalogGameResult[]>("query_catalog_cult_classics", { limit });
 }
 
 // --- Repack catalog ---
@@ -2659,6 +2709,260 @@ export async function scanAndBuildFullDataset(
     return 0;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Achievement SQLite tables — volatile per-game progress
+// ---------------------------------------------------------------------------
+
+export type AchievementSummaryRow = {
+  appId: string;
+  unlocked: number;
+  total: number;
+  percent?: number;
+  progressAvailable?: boolean;
+  source?: string;
+  inProgress?: number;
+  completionTime?: number | null;
+  lastUnlockAt?: number | null;
+  updatedAt: number;
+};
+
+export async function upsertAchievementSummary(row: AchievementSummaryRow): Promise<void> {
+  try {
+    await invoke("upsert_achievement_summary", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementSummaryFromDb(appId: string): Promise<AchievementSummaryRow | null> {
+  try {
+    return await invoke<AchievementSummaryRow | null>("get_achievement_summary", { appId });
+  } catch {
+    return null;
+  }
+}
+
+export async function batchGetAchievementSummaries(appIds: string[]): Promise<AchievementSummaryRow[]> {
+  try {
+    return await invoke<AchievementSummaryRow[]>("batch_get_achievement_summaries", { appIds });
+  } catch {
+    return [];
+  }
+}
+
+export type AchievementEntryRow = {
+  appId: string;
+  apiName: string;
+  name?: string | null;
+  description?: string | null;
+  iconUrl?: string | null;
+  iconGray?: string | null;
+  hidden: boolean;
+  unlocked: boolean;
+  unlockTime?: number | null;
+  unlockedAt?: number | null;
+  globalPct?: number | null;
+  updatedAt: number;
+};
+
+export async function upsertAchievementEntry(row: AchievementEntryRow): Promise<void> {
+  try {
+    await invoke("upsert_achievement_entry", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function batchUpsertAchievementEntries(entries: AchievementEntryRow[]): Promise<void> {
+  try {
+    await invoke("batch_upsert_achievement_entries", { entries });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementEntriesFromDb(appId: string): Promise<AchievementEntryRow[]> {
+  try {
+    return await invoke<AchievementEntryRow[]>("get_achievement_entries", { appId });
+  } catch {
+    return [];
+  }
+}
+
+export type AchievementPercentageRow = {
+  appId: string;
+  entries: string;
+  updatedAt: number;
+};
+
+export async function upsertAchievementPercentages(row: AchievementPercentageRow): Promise<void> {
+  try {
+    await invoke("upsert_achievement_percentages", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getAchievementPercentagesFromDb(appId: string): Promise<AchievementPercentageRow | null> {
+  try {
+    return await invoke<AchievementPercentageRow | null>("get_achievement_percentages", { appId });
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Achievement read with SQLite-first fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads achievement cache: tries SQLite tables first, falls back to JSON file.
+ * Returns the same `AppAchievementCache` shape consumers expect.
+ */
+export async function readAchievementCacheWithFallback(appId: number): Promise<AppAchievementCache | null> {
+  const appIdStr = String(appId);
+  try {
+    const [summary, entries, pctRow] = await Promise.all([
+      getAchievementSummaryFromDb(appIdStr),
+      getAchievementEntriesFromDb(appIdStr),
+      getAchievementPercentagesFromDb(appIdStr),
+    ]);
+
+    if (summary && entries.length > 0) {
+      const percentages: AppAchievementPercentagesEntry[] = pctRow?.entries
+        ? JSON.parse(pctRow.entries)
+        : [];
+
+      return {
+        summary: {
+          app_id: summary.appId,
+          total: summary.total,
+          unlocked: summary.unlocked ?? 0,
+          percent: summary.percent ?? (summary.total > 0 ? Math.round((summary.unlocked / summary.total) * 100) : 0),
+          progress_available: summary.progressAvailable ?? (summary.total > 0),
+          source: summary.source ?? "sqlite",
+          updated_at: summary.updatedAt,
+        },
+        achievements: entries.map((e, idx) => ({
+          id: e.apiName || String(idx),
+          api_name: e.apiName,
+          name: e.name ?? e.apiName,
+          description: e.description ?? "",
+          icon: e.iconUrl ?? undefined,
+          icon_url: e.iconUrl ?? undefined,
+          icon_gray: e.iconGray ?? undefined,
+          icon_gray_url: e.iconGray ?? undefined,
+          unlocked: e.unlocked,
+          unlock_time: e.unlockTime ?? undefined,
+          rarity_percent: e.globalPct ?? undefined,
+        })),
+        achievement_percentages: percentages,
+      };
+    }
+  } catch {
+    // SQLite read failed — fall through to JSON
+  }
+
+  // Fallback: read from JSON files
+  return readAchievementCache(appId);
+}
+
+// ---------------------------------------------------------------------------
+// Store reviews — replaces store/reviews/{appid}.json
+// ---------------------------------------------------------------------------
+
+export type StoreReviewRow = {
+  appId: string;
+  data: string;
+  updatedAt: number;
+};
+
+export async function upsertStoreReview(row: StoreReviewRow): Promise<void> {
+  try {
+    await invoke("upsert_store_review", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getStoreReviewFromDb(appId: string): Promise<StoreReviewRow | null> {
+  try {
+    return await invoke<StoreReviewRow | null>("get_store_review", { appId });
+  } catch {
+    return null;
+  }
+}
+
+export async function batchGetStoreReviews(appIds: string[]): Promise<StoreReviewRow[]> {
+  try {
+    return await invoke<StoreReviewRow[]>("batch_get_store_reviews", { appIds });
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Provider status — replaces store/provider-status/{appId}/{providerId}.json
+// ---------------------------------------------------------------------------
+
+export type ProviderStatusRow = {
+  appId: string;
+  providerId: string;
+  data: string;
+  updatedAt: number;
+};
+
+export async function upsertProviderStatus(row: ProviderStatusRow): Promise<void> {
+  try {
+    await invoke("upsert_provider_status", { row });
+  } catch {
+    // silent — best-effort
+  }
+}
+
+export async function getProviderStatusFromDb(appId: string, providerId: string): Promise<ProviderStatusRow | null> {
+  try {
+    return await invoke<ProviderStatusRow | null>("get_provider_status_from_db", { appId, providerId });
+  } catch {
+    return null;
+  }
+}
+
+export async function getAllProviderStatusesFromDb(appId: string): Promise<ProviderStatusRow[]> {
+  try {
+    return await invoke<ProviderStatusRow[]>("get_all_provider_statuses", { appId });
+  } catch {
+    return [];
+  }
+}
+
+// --- Game Catalog Blob (single-row SQLite storage for volatile catalogs) ---
+
+const CATALOG_KEYS = {
+  steamOwned: (steamId: string) => `steam-owned:${steamId}`,
+  debridGames: "debrid-games",
+  installedGames: "installed-games",
+  startupSnapshot: "startup-snapshot",
+} as const;
+
+export async function upsertGameCatalogBlob(catalogKey: string, dataJson: string): Promise<void> {
+  try {
+    await invoke("upsert_game_catalog_blob", { catalogKey, dataJson });
+  } catch {
+    // Non-critical; JSON file is still written
+  }
+}
+
+export async function getGameCatalogBlob(catalogKey: string): Promise<string | null> {
+  try {
+    return await invoke<string | null>("get_game_catalog_blob", { catalogKey });
+  } catch {
+    return null;
+  }
+}
+
+export { CATALOG_KEYS };
 
 // --- Installed Games Registry (file-based) ---
 

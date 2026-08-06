@@ -202,7 +202,7 @@ export default function StoreSourceSelectorModal({
           </button>
         </div>
 
-        <div className="max-h-[420px] overflow-y-auto border-t border-(--surface-active-border) px-5 py-4">
+        <div className="max-h-[420px] overflow-y-auto border-t border-(--surface-active-border) px-5 py-4 lf-scroll-area">
           {providerSources.length === 0 ? (
             <p className="py-6 text-center text-sm text-(--color-muted)">
               No sources available for this game.

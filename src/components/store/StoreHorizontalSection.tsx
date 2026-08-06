@@ -15,6 +15,12 @@ type StoreHorizontalSectionProps = {
   autoScrollToEndKey?: string | number | null;
   /** Optional prefix for composite keys: `${sectionKey}:steam:${index}` */
   sectionKey?: string;
+  /** Show skeleton loading placeholders instead of children */
+  loading?: boolean;
+  /** Number of skeleton cards to show when loading (default 6) */
+  skeletonCount?: number;
+  /** Show accent line under section title */
+  accent?: boolean;
 };
 
 function areSectionPropsEqual(
@@ -25,6 +31,9 @@ function areSectionPropsEqual(
   if (a.title !== b.title) return false;
   if (a.description !== b.description) return false;
   if (a.sectionKey !== b.sectionKey) return false;
+  if (a.loading !== b.loading) return false;
+  if (a.accent !== b.accent) return false;
+  if (a.skeletonCount !== b.skeletonCount) return false;
   // onViewAll handler identity (stable if useCallback-ed in parent)
   if (a.onViewAll !== b.onViewAll) return false;
   // autoScrollToEndKey
@@ -41,6 +50,9 @@ function StoreHorizontalSectionRaw({
   onViewAll,
   autoScrollToEndKey,
   sectionKey,
+  loading = false,
+  skeletonCount = 6,
+  accent = false,
 }: StoreHorizontalSectionProps) {
   countRender("StoreHorizontalSection");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -68,7 +80,7 @@ function StoreHorizontalSectionRaw({
 
   const items = Children.toArray(children);
 
-  if (items.length === 0) {
+  if (items.length === 0 && !loading) {
     return null;
   }
 
@@ -76,7 +88,7 @@ function StoreHorizontalSectionRaw({
     <section className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-xl font-bold text-(--color-text)">
+          <h2 className={`text-xl font-bold text-(--color-text) ${accent ? "lf-store-section-accent" : ""}`}>
             {title}
           </h2>
 
@@ -87,7 +99,7 @@ function StoreHorizontalSectionRaw({
           )}
         </div>
 
-        {onViewAll && (
+        {onViewAll && !loading && (
           <button
             type="button"
             onClick={onViewAll}
@@ -112,15 +124,30 @@ function StoreHorizontalSectionRaw({
           ref={scrollRef}
           className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none [&::-webkit-scrollbar]:hidden"
         >
-          {items.map((item, index) => (
-            <div
-              key={sectionKey ? `${sectionKey}:steam:${index}` : index}
-              className="w-[min(82vw,420px)] shrink-0 snap-start md:w-95 xl:w-105 lf-fade-in"
-              style={{ animationDelay: `${index * 30}ms` }}
-            >
-              {item}
-            </div>
-          ))}
+          {loading
+            ? Array.from({ length: skeletonCount }, (_, i) => (
+                <div
+                  key={`skeleton-${i}`}
+                  className="w-[min(82vw,420px)] shrink-0 snap-start md:w-95 xl:w-105"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  <div className="lf-store-skeleton-card aspect-[460/215] w-full" />
+                  <div className="mt-2.5 space-y-1.5">
+                    <div className="lf-store-skeleton-card h-4 w-3/4 rounded" />
+                    <div className="lf-store-skeleton-card h-3 w-1/2 rounded" />
+                  </div>
+                </div>
+              ))
+            : items.map((item, index) => (
+                <div
+                  key={sectionKey ? `${sectionKey}:steam:${index}` : index}
+                  className="w-[min(82vw,420px)] shrink-0 snap-start md:w-95 xl:w-105 lf-fade-in lf-store-card-glow"
+                  style={{ animationDelay: `${index * 30}ms` }}
+                >
+                  {item}
+                </div>
+              ))
+          }
         </div>
 
         <button

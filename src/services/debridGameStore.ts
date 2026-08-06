@@ -270,9 +270,13 @@ let _persistChain: Promise<void> = Promise.resolve();
 function persistToDisk(): Promise<void> {
   _persistChain = _persistChain
     .then(async () => {
-      const { writeDebridGames } = await import("./tauri");
+      const { writeDebridGames, upsertGameCatalogBlob, CATALOG_KEYS } = await import("./tauri");
       const entries = toDiskEntries();
       await writeDebridGames(entries);
+      // Dual-write: also persist to SQLite for fast boot reads
+      try {
+        await upsertGameCatalogBlob(CATALOG_KEYS.debridGames, JSON.stringify(entries));
+      } catch { /* non-critical */ }
       if (DEBUG_DEBRID_LIBRARY) {
         console.log(`[DEBRID_STORE] persisted ${entries.length} entries to disk`);
       }

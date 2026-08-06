@@ -89,10 +89,6 @@ const SECTION_ID_MAP: Record<string, string> = {
   "new-noteworthy": "new-noteworthy",
   "top-picks": "top-picks",
   "featured": "featured",
-  "genre-action": "genre-action",
-  "genre-rpg": "genre-rpg",
-  "genre-indie": "genre-indie",
-  "genre-adventure": "genre-adventure",
   "popular-year": "top-picks",       // RAWG popular-year → Store top-picks
   "top-rated": "featured",           // RAWG top-rated → Store featured
 };
@@ -113,8 +109,4 @@ export const SECTION_MINIMUMS: Record<string, number> = {
   "new-noteworthy": 6,
   "top-picks": 6,
   "featured": 6,
-  "genre-action": 6,
-  "genre-rpg": 6,
-  "genre-indie": 6,
-  "genre-adventure": 6,
 };

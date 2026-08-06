@@ -75,26 +75,6 @@ function buildIgdbSectionQueries(): IgdbSectionQuery[] {
       title: "Featured",
       query: `fields name, summary, first_release_date, genres.name, rating, popularity, cover.url, screenshots.url, involved_companies.company.name, involved_companies.publisher, involved_companies.developer, external_games.category, external_games.url, external_games.uid; where total_rating_count >= 10 & rating >= 60; sort popularity desc; limit 30;`,
     },
-    {
-      tag: "genre-action",
-      title: "Action",
-      query: `fields name, summary, first_release_date, genres.name, rating, popularity, cover.url, screenshots.url, involved_companies.company.name, involved_companies.publisher, involved_companies.developer, external_games.category, external_games.url, external_games.uid; where genres = (4) & total_rating_count >= 3; sort rating desc; limit 25;`,
-    },
-    {
-      tag: "genre-rpg",
-      title: "RPG",
-      query: `fields name, summary, first_release_date, genres.name, rating, popularity, cover.url, screenshots.url, involved_companies.company.name, involved_companies.publisher, involved_companies.developer, external_games.category, external_games.url, external_games.uid; where genres = (12) & total_rating_count >= 3; sort rating desc; limit 25;`,
-    },
-    {
-      tag: "genre-indie",
-      title: "Indie",
-      query: `fields name, summary, first_release_date, genres.name, rating, popularity, cover.url, screenshots.url, involved_companies.company.name, involved_companies.publisher, involved_companies.developer, external_games.category, external_games.url, external_games.uid; where genres = (32) & total_rating_count >= 3; sort rating desc; limit 25;`,
-    },
-    {
-      tag: "genre-adventure",
-      title: "Adventure",
-      query: `fields name, summary, first_release_date, genres.name, rating, popularity, cover.url, screenshots.url, involved_companies.company.name, involved_companies.publisher, involved_companies.developer, external_games.category, external_games.url, external_games.uid; where genres = (31) & total_rating_count >= 3; sort rating desc; limit 25;`,
-    },
   ];
 }
 

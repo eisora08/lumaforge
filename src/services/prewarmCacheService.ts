@@ -1,6 +1,5 @@
 import { enqueueMediaDownload, clearMediaQueueState } from "./mediaDownloadQueue";
 import { loadGameAppInfoWithMediaFallback } from "./gameCacheService";
-import { getLibraryAppInfo } from "./libraryLocalCacheService";
 import { notifyMediaUpdated } from "./startupSnapshotService";
 import { resolveGameMediaPaths } from "./tauri";
 import type { LibraryGame } from "../types/libraryGame";
@@ -78,8 +77,9 @@ async function resolveStoreUrls(appId: string, game: LibraryGame): Promise<Recor
 
   if (!urls.landscape) {
     try {
-      const appInfoEntry = await getLibraryAppInfo(appId);
-      if (appInfoEntry?.header_image) urls.landscape = appInfoEntry.header_image;
+      const canonicalInfo = await loadGameAppInfoWithMediaFallback(appId);
+      if (canonicalInfo?.media?.landscapePath) urls.landscape = canonicalInfo.media.landscapePath;
+      else if (canonicalInfo?.remote?.header_image) urls.landscape = canonicalInfo.remote.header_image;
     } catch { /* ignore */ }
   }
 

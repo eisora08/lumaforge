@@ -347,9 +347,9 @@ fn query_featured(conn: &Connection, limit: u32) -> SqliteResult<Vec<CatalogGame
                 review_percent, review_count, header_image, capsule_image,
                 developers_json, publishers_json
          FROM store_catalog_games
-         WHERE type IN ('game', 'demo') AND review_count >= 100 AND review_percent >= 75
+         WHERE type IN ('game', 'demo') AND review_count >= 100
            AND header_image != ''
-         ORDER BY review_count DESC, review_percent DESC
+         ORDER BY review_count DESC
          LIMIT ?1",
     )?;
     let rows = stmt.query_map(params![limit], |row| parse_catalog_row(row, ""))?;
@@ -357,18 +357,68 @@ fn query_featured(conn: &Connection, limit: u32) -> SqliteResult<Vec<CatalogGame
 }
 
 fn query_new_noteworthy(conn: &Connection, limit: u32) -> SqliteResult<Vec<CatalogGameResult>> {
-    let cutoff = (chrono_now_ts() / 1000) as i64 - (180 * 24 * 60 * 60);
     let mut stmt = conn.prepare(
         "SELECT app_id, name, type, release_timestamp, coming_soon, is_free,
                 review_percent, review_count, header_image, capsule_image,
                 developers_json, publishers_json
          FROM store_catalog_games
          WHERE type IN ('game', 'demo') AND coming_soon = 0
-           AND release_timestamp > 0 AND release_timestamp > ?1
-         ORDER BY release_timestamp DESC, review_count DESC
+           AND review_count >= 50
+           AND header_image != ''
+         ORDER BY review_count DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |row| parse_catalog_row(row, ""))?;
+    rows.collect()
+}
+
+fn query_hidden_gems(conn: &Connection, limit: u32) -> SqliteResult<Vec<CatalogGameResult>> {
+    let mut stmt = conn.prepare(
+        "SELECT app_id, name, type, release_timestamp, coming_soon, is_free,
+                review_percent, review_count, header_image, capsule_image,
+                developers_json, publishers_json
+         FROM store_catalog_games
+         WHERE type IN ('game', 'demo')
+           AND review_count BETWEEN 50 AND 5000
+           AND header_image != ''
+         ORDER BY review_count DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |row| parse_catalog_row(row, ""))?;
+    rows.collect()
+}
+
+fn query_top_rated(conn: &Connection, limit: u32) -> SqliteResult<Vec<CatalogGameResult>> {
+    let mut stmt = conn.prepare(
+        "SELECT app_id, name, type, release_timestamp, coming_soon, is_free,
+                review_percent, review_count, header_image, capsule_image,
+                developers_json, publishers_json
+         FROM store_catalog_games
+         WHERE type IN ('game', 'demo')
+           AND review_count >= 200
+           AND header_image != ''
+         ORDER BY review_count DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |row| parse_catalog_row(row, ""))?;
+    rows.collect()
+}
+
+fn query_cult_classics(conn: &Connection, limit: u32) -> SqliteResult<Vec<CatalogGameResult>> {
+    let two_years_ago = (chrono_now_ts() / 1000) as i64 - (2 * 365 * 24 * 60 * 60);
+    let mut stmt = conn.prepare(
+        "SELECT app_id, name, type, release_timestamp, coming_soon, is_free,
+                review_percent, review_count, header_image, capsule_image,
+                developers_json, publishers_json
+         FROM store_catalog_games
+         WHERE type IN ('game', 'demo')
+           AND review_count >= 500
+           AND header_image != ''
+           AND release_timestamp > 0 AND release_timestamp < ?1
+         ORDER BY review_count DESC
          LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![cutoff, limit], |row| parse_catalog_row(row, ""))?;
+    let rows = stmt.query_map(params![two_years_ago, limit], |row| parse_catalog_row(row, ""))?;
     rows.collect()
 }
 
@@ -499,6 +549,45 @@ pub fn query_catalog_new_noteworthy(
     };
     query_new_noteworthy(&guard, limit)
         .map_err(|e| format!("Catalog new & noteworthy query error: {}", e))
+}
+
+#[tauri::command]
+pub fn query_catalog_hidden_gems(
+    limit: u32,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<CatalogGameResult>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    query_hidden_gems(&guard, limit)
+        .map_err(|e| format!("Catalog hidden gems query error: {}", e))
+}
+
+#[tauri::command]
+pub fn query_catalog_top_rated(
+    limit: u32,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<CatalogGameResult>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    query_top_rated(&guard, limit)
+        .map_err(|e| format!("Catalog top rated query error: {}", e))
+}
+
+#[tauri::command]
+pub fn query_catalog_cult_classics(
+    limit: u32,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<CatalogGameResult>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    query_cult_classics(&guard, limit)
+        .map_err(|e| format!("Catalog cult classics query error: {}", e))
 }
 
 // ── Helpers ──
@@ -801,9 +890,11 @@ mod tests {
         let now_secs = chrono_now_ts() / 1000;
         let mut recent = make_record(1, "Recent Game", &["Indie"]);
         recent.release_timestamp = now_secs as i64 - 30 * 24 * 3600;
+        recent.review_count = 200;
         recent.coming_soon = false;
         let mut old = make_record(2, "Old Game", &["Indie"]);
         old.release_timestamp = now_secs as i64 - 400 * 24 * 3600;
+        old.review_count = 10;
         old.coming_soon = false;
         import_catalog_inner(&conn, &make_artifact(vec![recent, old]), "x").unwrap();
         let results = query_new_noteworthy(&conn, 24).unwrap();
@@ -868,5 +959,108 @@ mod tests {
         import_catalog_inner(&conn, &build_test_artifact(), "my_checksum_42").unwrap();
         let meta = get_meta(&conn).unwrap().unwrap();
         assert_eq!(meta.checksum, "my_checksum_42");
+    }
+
+    // ── Hidden Gems ──
+
+    #[test]
+    fn test_hidden_gems_high_review_moderate_count() {
+        let conn = test_conn();
+        let mut gem = make_record(1, "Hidden Gem", &["Indie"]);
+        gem.review_percent = 92;
+        gem.review_count = 300;
+        gem.header_image = "https://example.com/gem.jpg".to_string();
+        let mut too_many = make_record(2, "Too Popular", &["Indie"]);
+        too_many.review_percent = 95;
+        too_many.review_count = 8000;
+        too_many.header_image = "https://example.com/pop.jpg".to_string();
+        let mut too_few = make_record(3, "Too Few", &["Indie"]);
+        too_few.review_percent = 70;
+        too_few.review_count = 30;
+        too_few.header_image = "https://example.com/low.jpg".to_string();
+        let mut no_image = make_record(4, "No Image", &["Indie"]);
+        no_image.review_percent = 95;
+        no_image.review_count = 200;
+        no_image.header_image = "".to_string();
+        import_catalog_inner(&conn, &make_artifact(vec![gem, too_many, too_few, no_image]), "x").unwrap();
+        let results = query_hidden_gems(&conn, 24).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].app_id, 1);
+    }
+
+    #[test]
+    fn test_hidden_gems_boundary_review_count() {
+        let conn = test_conn();
+        let mut at_min = make_record(1, "At Min", &["RPG"]);
+        at_min.review_percent = 90;
+        at_min.review_count = 50;
+        at_min.header_image = "https://example.com/min.jpg".to_string();
+        let mut at_max = make_record(2, "At Max", &["RPG"]);
+        at_max.review_percent = 88;
+        at_max.review_count = 5000;
+        at_max.header_image = "https://example.com/max.jpg".to_string();
+        let mut below_min = make_record(3, "Below Min", &["RPG"]);
+        below_min.review_percent = 95;
+        below_min.review_count = 49;
+        below_min.header_image = "https://example.com/below.jpg".to_string();
+        let mut above_max = make_record(4, "Above Max", &["RPG"]);
+        above_max.review_percent = 95;
+        above_max.review_count = 5001;
+        above_max.header_image = "https://example.com/above.jpg".to_string();
+        import_catalog_inner(&conn, &make_artifact(vec![at_min, at_max, below_min, above_max]), "x").unwrap();
+        let results = query_hidden_gems(&conn, 24).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|g| g.app_id == 1));
+        assert!(results.iter().any(|g| g.app_id == 2));
+    }
+
+    // ── Top Rated ──
+
+    #[test]
+    fn test_top_rated_by_review_count() {
+        let conn = test_conn();
+        let mut high = make_record(1, "High", &["Action"]);
+        high.review_percent = 95;
+        high.review_count = 1000;
+        high.header_image = "https://example.com/high.jpg".to_string();
+        let mut low = make_record(2, "Low", &["Action"]);
+        low.review_percent = 70;
+        low.review_count = 100;
+        low.header_image = "https://example.com/low.jpg".to_string();
+        let mut few_reviews = make_record(3, "Few Reviews", &["Action"]);
+        few_reviews.review_percent = 99;
+        few_reviews.review_count = 50;
+        few_reviews.header_image = "https://example.com/few.jpg".to_string();
+        import_catalog_inner(&conn, &make_artifact(vec![high, low, few_reviews]), "x").unwrap();
+        let results = query_top_rated(&conn, 24).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].app_id, 1);
+    }
+
+    // ── Cult Classics ──
+
+    #[test]
+    fn test_cult_classics_old_high_quality() {
+        let conn = test_conn();
+        let now_secs = chrono_now_ts() / 1000;
+        let mut classic = make_record(1, "Cult Classic", &["RPG"]);
+        classic.review_percent = 92;
+        classic.review_count = 2000;
+        classic.release_timestamp = now_secs as i64 - 3 * 365 * 24 * 3600; // 3 years old
+        classic.header_image = "https://example.com/classic.jpg".to_string();
+        let mut too_new = make_record(2, "Too New", &["RPG"]);
+        too_new.review_percent = 92;
+        too_new.review_count = 2000;
+        too_new.release_timestamp = now_secs as i64 - 6 * 30 * 24 * 3600; // 6 months
+        too_new.header_image = "https://example.com/new.jpg".to_string();
+        let mut not_classic = make_record(3, "Not Classic", &["RPG"]);
+        not_classic.review_percent = 92;
+        not_classic.review_count = 200;
+        not_classic.release_timestamp = now_secs as i64 - 3 * 365 * 24 * 3600;
+        not_classic.header_image = "https://example.com/notclassic.jpg".to_string();
+        import_catalog_inner(&conn, &make_artifact(vec![classic, too_new, not_classic]), "x").unwrap();
+        let results = query_cult_classics(&conn, 24).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].app_id, 1);
     }
 }

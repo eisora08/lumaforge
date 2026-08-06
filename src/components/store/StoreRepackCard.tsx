@@ -164,7 +164,7 @@ export default function StoreRepackCard({
         <p className="mt-3 shrink-0 text-xs text-(--color-muted)">Buscando repacks…</p>
       ) : (
         <>
-        <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+        <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 lf-scroll-area">
           {activeEntry && (
             <>
               {/* Selected source (repacker group) */}
@@ -172,7 +172,7 @@ export default function StoreRepackCard({
                 <button
                   type="button"
                   onClick={openSourceMenu}
-                  className="flex w-full items-center justify-between gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-left transition hover:bg-white/10"
+                  className="flex w-full items-center justify-between gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-left transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
                 >
                   <span className="min-w-0">
                     <span className="block text-[10px] uppercase tracking-[0.14em] text-(--color-muted)">
@@ -215,7 +215,7 @@ export default function StoreRepackCard({
                               setSelectedEntryId(entries[0]?.id ?? null);
                               setSourceMenuOpen(false);
                             }}
-                            className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left transition hover:bg-white/10 ${
+                            className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) ${
                               active ? "bg-(--color-accent)/10" : ""
                             }`}
                           >
@@ -290,7 +290,7 @@ export default function StoreRepackCard({
               type="button"
               disabled={installing}
               onClick={() => setModalOpen(true)}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-3 py-3 text-sm font-bold text-(--color-accent-text) shadow-lg shadow-(--color-accent)/25 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-(--color-accent) px-3 py-3 text-sm font-bold text-(--color-accent-text) shadow-lg shadow-(--color-accent)/25 transition duration-150 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {installing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

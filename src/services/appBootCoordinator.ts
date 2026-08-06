@@ -742,7 +742,7 @@ export async function runBootTasks(): Promise<void> {
                 logCacheReadBootSkipOnce();
               } else {
                   const { achievementStore } = await import("./achievementStore");
-                  const { readAchievementCache } = await import("./tauri");
+                   const { readAchievementCacheWithFallback } = await import("./tauri");
                   if (_snapshotLoaded) {
                     const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
                     let loaded = 0;
@@ -750,7 +750,7 @@ export async function runBootTasks(): Promise<void> {
                     // Batch with Promise.all for concurrent Tauri invokes
                     const batch = appIds.slice(0, 20);
                     const results = await Promise.allSettled(
-                      batch.map((appId) => readAchievementCache(Number(appId)))
+                       batch.map((appId) => readAchievementCacheWithFallback(Number(appId)))
                     );
                     for (let i = 0; i < batch.length; i++) {
                       const appId = batch[i];
@@ -760,8 +760,8 @@ export async function runBootTasks(): Promise<void> {
                         if (cache) {
                         const summary = {
                           appId,
-                          total: cache.achievements.length,
-                          unlocked: cache.achievements.filter((a: { unlocked: boolean }) => a.unlocked).length,
+                          total: cache.summary.total,
+                          unlocked: cache.summary.unlocked,
                           progressAvailable: cache.summary.progress_available,
                           achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; rarity_level?: string | null }) => ({
                             apiName: a.api_name,

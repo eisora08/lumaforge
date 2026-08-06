@@ -190,7 +190,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
         </div>
         <button
           type="submit"
-          className="flex h-10 items-center gap-2 rounded-xl bg-cyan-500/20 px-4 text-sm font-medium text-cyan-400 transition hover:bg-cyan-500/30"
+          className="flex h-10 items-center gap-2 rounded-xl bg-cyan-500/20 px-4 text-sm font-medium text-cyan-400 transition duration-150 hover:bg-cyan-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 active:scale-[0.97]"
         >
           <Search className="h-4 w-4" />
           Search
@@ -257,7 +257,7 @@ export default function DebridCatalogSection({ onNavigateToGame }: DebridCatalog
                 type="button"
                 onClick={handleLoadMore}
                 disabled={loading}
-                className="flex items-center gap-2 rounded-xl bg-white/5 px-6 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-white/5 px-6 py-3 text-sm font-medium text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97] disabled:opacity-50"
               >
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -487,7 +487,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
             <button
               type="button"
               onClick={handleDownload}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-cyan-500/20 px-3 py-2 text-xs font-medium text-cyan-400 transition hover:bg-cyan-500/30"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-cyan-500/20 px-3 py-2 text-xs font-medium text-cyan-400 transition duration-150 hover:bg-cyan-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 active:scale-[0.97]"
             >
               <Download className="h-3.5 w-3.5" />
               Download
@@ -504,7 +504,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
               type="button"
               onClick={handleRunSetup}
               disabled={setupLoading}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-amber-500/20 px-3 py-2 text-xs font-medium text-amber-400 transition hover:bg-amber-500/30 disabled:opacity-50"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-amber-500/20 px-3 py-2 text-xs font-medium text-amber-400 transition duration-150 hover:bg-amber-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 active:scale-[0.97] disabled:opacity-50"
             >
               {setupLoading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -518,7 +518,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
             <button
               type="button"
               onClick={handlePlay}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-medium text-emerald-400 transition hover:bg-emerald-500/30"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-medium text-emerald-400 transition duration-150 hover:bg-emerald-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 active:scale-[0.97]"
             >
               <Play className="h-3.5 w-3.5" />
               Play

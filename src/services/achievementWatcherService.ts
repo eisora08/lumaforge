@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { achievementStore, buildProgressPatchFromLibraryCache } from "./achievementStore";
 import type { ProgressPatch } from "./achievementStore";
-import { checkAchievementLibraryCacheMetadata, readAchievementCache, listLibraryCacheAppIds } from "./tauri";
-import type { AppAchievementCache } from "./tauri";
+import { checkAchievementLibraryCacheMetadata, readAchievementCacheWithFallback, listLibraryCacheAppIds, readAchievementProgressIndex, parseUserGameStatsRaw } from "./tauri";
+import type { AppAchievementCache, AchievementProgressEntry } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
 import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "./achievementNotificationService";
 import { showAchievementToast, showGroupedAchievementToast } from "../components/library/AchievementToast";
@@ -46,7 +46,7 @@ import { isSystemToolApp } from "./gameCacheService";
 // ---------------------------------------------------------------------------
 
 export const ACHIEVEMENT_WATCHER_ENABLED = true;
-export const ACHIEVEMENT_WATCHER_FULL_SCAN_ON_STARTUP = false;
+export const ACHIEVEMENT_WATCHER_FULL_SCAN_ON_STARTUP = true;
 export const ACHIEVEMENT_LIBRARYCACHE_SCAN_ON_BOOT = false;
 export const ACHIEVEMENT_PROCESS_MISSING_CACHE_ON_BOOT = false;
 export const DEBUG_ACH_LIBRARYCACHE = false;
@@ -213,6 +213,7 @@ class AchievementWatcherService {
   private unlisten: UnlistenFn | null = null;
   private _started = false;
   private _alreadyStartedOnce = false;
+  private _startingInProgress = false;
   private _steamPath = "";
   private _steamAccountId = "";
   // Debounce: set of appIds currently being processed via watcher events
@@ -232,6 +233,11 @@ class AchievementWatcherService {
   private _pendingUnfocusUnlocks: Array<{ unlock: UnlockEvent; appId: string; source: string }> = [];
   // Toast dedup: track recently-shown (appId:apiName) keys within a 3s window
   private _toastDedupTimers = new Map<string, number>();
+  // Content retry: re-read librarycache after delay when delta=0 (external unlocker timing)
+  private _contentRetryPending = new Set<string>();
+  private _contentRetryCounts = new Map<string, number>();
+  private static CONTENT_RETRY_DELAY_MS = 2500;
+  private static CONTENT_RETRY_MAX = 2;
 
   private isToastRecentlyShown(appId: string, apiName: string): boolean {
     const key = `${appId}:${apiName}`;
@@ -288,6 +294,16 @@ class AchievementWatcherService {
       return;
     }
 
+    // Synchronous guard: prevent a second concurrent caller (boot coordinator
+    // + AchievementWatcherInit useEffect) from reaching Rust twice.  Without
+    // this, both callers pass the _alreadyStartedOnce check before either
+    // sets it, causing the Rust watcher to restart and immediately die because
+    // the shutdown flag was still true from the previous stop().
+    if (this._startingInProgress) {
+      console.log("[ACH][WATCHER] already-running skip reason=starting-in-progress");
+      return;
+    }
+
     // Singleton: already started once this session — skip restart
     if (this._alreadyStartedOnce) {
       if (this._steamPath === steamPath && this._steamAccountId === steamAccountId) {
@@ -301,6 +317,8 @@ class AchievementWatcherService {
     if (this._started) {
       await this.stop();
     }
+
+    this._startingInProgress = true;
 
     this._steamPath = steamPath;
     this._steamAccountId = steamAccountId;
@@ -323,6 +341,7 @@ class AchievementWatcherService {
       });
     } catch (err) {
       console.warn(`[ACH][WATCHER] failed to start: ${err}`);
+      this._startingInProgress = false;
       return;
     }
 
@@ -359,9 +378,22 @@ class AchievementWatcherService {
           // Update poll metadata
           this._lastFileMeta.set(path, { size, modified: modified_at });
 
-          // Process both librarycache and usergamestats events
-          const isAcceptedSource = source === "librarycache" || source === "usergamestats";
+          // Process librarycache, usergamestats, and achievement-progress events
+          const isAcceptedSource = source === "librarycache" || source === "usergamestats" || source === "achievement-progress";
           console.log(`[ACH][PIPELINE] source_check appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
+
+          // Special handling for global achievement_progress.json changes
+          if (source === "achievement-progress") {
+            console.log(`[ACH][PIPELINE] achievement-progress_detected path=${path}`);
+            this.processAchievementProgressChange(path, traceId).catch((err) => {
+              console.warn(`[ACH][PIPELINE] achievement-progress_error reason=${err}`);
+            });
+            if (lastFingerprints.has(path)) {
+              lastFingerprints.set(path, { fingerprint: fp, processed: true });
+            }
+            return;
+          }
+
           if (isAcceptedSource) {
             // Skip non-game appIds (tools, config apps, etc.)
             if (isSystemToolApp(appIdStr)) {
@@ -542,6 +574,7 @@ class AchievementWatcherService {
 
     this._started = true;
     this._alreadyStartedOnce = true;
+    this._startingInProgress = false;
     console.log(`[ACH][FLAGS] ACHIEVEMENTS_AUTO_ENABLED=${ACHIEVEMENTS_AUTO_ENABLED} ACHIEVEMENT_WATCHER_PROCESS_EVENTS=${ACHIEVEMENT_WATCHER_PROCESS_EVENTS} ACHIEVEMENT_AUTO_SYNC_ENABLED=${ACHIEVEMENT_AUTO_SYNC_ENABLED} ACHIEVEMENT_READ_CACHE_ON_BOOT=${ACHIEVEMENT_READ_CACHE_ON_BOOT} ACHIEVEMENT_SCHEMA_MIGRATION_AUTO=${ACHIEVEMENT_SCHEMA_MIGRATION_AUTO}`);
     if (DEBUG_ACH_WATCHER) {
       console.debug("[ACH][WATCHER] started background=true");
@@ -582,6 +615,8 @@ class AchievementWatcherService {
       window.clearTimeout(timer);
     }
     this._toastDedupTimers.clear();
+    this._contentRetryPending.clear();
+    this._contentRetryCounts.clear();
     console.debug("[ACH][WATCHER] stopped");
   }
 
@@ -713,11 +748,6 @@ class AchievementWatcherService {
       for (const appid of appids) {
         const appIdStr = String(appid);
 
-        // Only seed snapshot if it doesn't exist yet
-        if (snapshot[appIdStr]) {
-          continue;
-        }
-
         try {
           const patch = await buildProgressPatchFromLibraryCache(
             appIdStr,
@@ -734,6 +764,17 @@ class AchievementWatcherService {
             snapshot[appIdStr] = appSnap;
             baselineCount++;
             console.debug(`[ACH][WATCHER][${traceId}] baseline appid=${appIdStr} unlocked=${patch.unlocked}`);
+
+            // Always seed the in-memory achievementStore so GameDetails shows progress
+            // immediately on every boot — the store is in-memory only and is cleared
+            // on restart, so we must re-seed from librarycache every time.
+            achievementStore.applyProgressPatch(appIdStr, patch, traceId);
+
+            // Mark the startup snapshot dirty so _processDirtyAppIds updates
+            // achievementSummary on the next write — keeps refresh in sync.
+            import("./startupSnapshotService")
+              .then(({ notifyMediaUpdated }) => notifyMediaUpdated(appIdStr, { source: "achievement-progress" }))
+              .catch(() => {});
           }
         } catch {
           // skip individual file failures
@@ -784,6 +825,84 @@ class AchievementWatcherService {
   /** Expose traceId generation for dev console use */
   get nextTraceId(): string {
     return nextTraceId();
+  }
+
+  // ── Achievement progress index cache (for diffing global achievement_progress.json) ──
+  private _progressIndexCache = new Map<number, AchievementProgressEntry>();
+
+  // ── processAchievementProgressChange: diff global progress index, dispatch per-game ──
+
+  /**
+   * Reads achievement_progress.json, diffs against the in-memory cache,
+   * and triggers processLibrarycacheChange for each game whose unlocked/total changed.
+   * This catches achievement unlocks detected by Steam that the librarycache watcher missed.
+   */
+  private async processAchievementProgressChange(
+    _progressPath: string,
+    traceId: string,
+  ): Promise<void> {
+    const steamAccountId = this._steamAccountId;
+    const steamPath = this._steamPath;
+    if (!steamAccountId || !steamPath) return;
+
+    console.log(`[ACH][PROGRESS_INDEX] reading global achievement_progress.json traceId=${traceId}`);
+
+    let entries: AchievementProgressEntry[];
+    try {
+      entries = await readAchievementProgressIndex({
+        steamPath: steamPath || undefined,
+        steamAccountId,
+      });
+    } catch (err) {
+      console.warn(`[ACH][PROGRESS_INDEX] read_failed reason=${err}`);
+      return;
+    }
+
+    console.log(`[ACH][PROGRESS_INDEX] read_complete entryCount=${entries.length} cachedCount=${this._progressIndexCache.size}`);
+
+    const changedAppIds: string[] = [];
+
+    for (const entry of entries) {
+      const prev = this._progressIndexCache.get(entry.appId);
+      if (!prev) {
+        // New entry — this is a game we haven't seen before. Don't trigger
+        // a full librarycache change (it would be noise on first boot).
+        // Just cache it.
+        this._progressIndexCache.set(entry.appId, entry);
+        continue;
+      }
+
+      // Detect meaningful changes: unlocked count changed, or total changed (schema update)
+      if (prev.unlocked !== entry.unlocked || prev.total !== entry.total) {
+        console.log(`[ACH][PROGRESS_INDEX] changed appid=${entry.appId} prevUnlocked=${prev.unlocked} newUnlocked=${entry.unlocked} prevTotal=${prev.total} newTotal=${entry.total}`);
+        changedAppIds.push(String(entry.appId));
+      }
+
+      this._progressIndexCache.set(entry.appId, entry);
+    }
+
+    if (changedAppIds.length === 0) {
+      console.log(`[ACH][PROGRESS_INDEX] no_changes traceId=${traceId}`);
+      return;
+    }
+
+    console.log(`[ACH][PROGRESS_INDEX] dispatching ${changedAppIds.length} changed games traceId=${traceId}`);
+
+    // Dispatch each changed appId through the normal librarycache pipeline
+    for (const appId of changedAppIds) {
+      if (this._debouncedAppIds.has(appId)) {
+        console.log(`[ACH][PROGRESS_INDEX] skip appid=${appId} reason=already-queued`);
+        continue;
+      }
+      this._debouncedAppIds.add(appId);
+      this.processLibrarycacheChange(appId, `progress-index://${appId}`, "achievement-progress", traceId).then((ok) => {
+        this._debouncedAppIds.delete(appId);
+        console.log(`[ACH][PROGRESS_INDEX] process_complete appid=${appId} ok=${ok}`);
+      }).catch((err) => {
+        this._debouncedAppIds.delete(appId);
+        console.warn(`[ACH][PROGRESS_INDEX] process_error appid=${appId} reason=${err}`);
+      });
+    }
   }
 
   // ── processLibrarycacheChange (Part 4): parse librarycache + patch store immediately ──
@@ -837,7 +956,7 @@ class AchievementWatcherService {
       if (!hasMem) {
         let loaded = false;
         try {
-          const cached = await readAchievementCache(Number(appId));
+          const cached = await readAchievementCacheWithFallback(Number(appId));
           console.log(`[ACH][PIPELINE] canonical_disk appid=${appId} found=${!!cached}`);
           if (cached) {
             const cachedSummary = this.cacheToSummary(appId, cached);
@@ -870,7 +989,43 @@ class AchievementWatcherService {
 
       if (DEBUG_ACH_WATCHER) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=patch-built total=${patch?.total ?? "N/A"} unlocked=${patch?.unlocked ?? "N/A"}`);
       console.log(`[ACH][PIPELINE] patch_built appid=${appId} patch=${!!patch} total=${patch?.total ?? "N/A"} unlocked=${patch?.unlocked ?? "N/A"}`);
-      if (!patch) {
+
+      // Fallback: when librarycache is null/empty, try parsing the binary UserGameStats_*.bin directly
+      let effectivePatch = patch;
+      if (!effectivePatch) {
+        console.log(`[ACH][PIPELINE] usergamestats_fallback appid=${appId} source=${source} trying-binary-stats`);
+        try {
+          const statsResult = await parseUserGameStatsRaw({
+            steamPath: this._steamPath,
+            steamAccountId: this._steamAccountId,
+            appId: Number(appId),
+          });
+          if (statsResult.file_found && statsResult.achievement_entries.length > 0) {
+            const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number }>();
+            for (const entry of statsResult.achievement_entries) {
+              if (!entry.api_name) continue;
+              const unlockTime = entry.unlock_time && entry.unlock_time > 0
+                ? (entry.unlock_time < 1000000000000 ? entry.unlock_time * 1000 : entry.unlock_time)
+                : undefined;
+              progressMap.set(entry.api_name, { unlocked: entry.unlocked, unlockTime });
+            }
+            const unlocked = statsResult.achievement_entries.filter(a => a.unlocked).length;
+            effectivePatch = {
+              appid: appId,
+              total: statsResult.achievement_entries.length,
+              unlocked,
+              progressMap,
+            };
+            console.log(`[ACH][PIPELINE] usergamestats_fallback appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats`);
+          } else {
+            console.log(`[ACH][PIPELINE] usergamestats_fallback appid=${appId} binary-stats-empty file_found=${statsResult.file_found} entries=${statsResult.achievement_entries.length}`);
+          }
+        } catch (e) {
+          console.warn(`[ACH][PIPELINE] usergamestats_fallback appid=${appId} error=${e}`);
+        }
+      }
+
+      if (!effectivePatch) {
         console.log(`[ACH][SYNC_SKIP] appid=${appId} reason=patch-is-null`);
         console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=patch-is-null`);
         console.log(`[ACH][MANUAL_NEEDED_REASON] appid=${appId} reason=patch-is-null scheduleResolverRefresh=true`);
@@ -881,10 +1036,10 @@ class AchievementWatcherService {
 
       // Downgrade guard: reject partial/stale librarycache data that is lower than current known count
       const currentSummary = achievementStore.getSummary(appId);
-      if (currentSummary && patch.unlocked < (currentSummary.unlocked ?? 0)) {
-        console.log(`[ACH][SYNC_SKIP] appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${patch.unlocked}/${patch.total}`);
-        console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${patch.unlocked}/${patch.total}`);
-        console.log(`[ACH][MANUAL_NEEDED_REASON] appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked}/${currentSummary.total} patch=${patch.unlocked}/${patch.total}`);
+      if (currentSummary && effectivePatch.unlocked < (currentSummary.unlocked ?? 0)) {
+        console.log(`[ACH][SYNC_SKIP] appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${effectivePatch.unlocked}/${effectivePatch.total}`);
+        console.log(`[ACH][PIPELINE] process_skipped appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked ?? "?"}/${currentSummary.total} patch=${effectivePatch.unlocked}/${effectivePatch.total}`);
+        console.log(`[ACH][MANUAL_NEEDED_REASON] appid=${appId} reason=stale-librarycache current=${currentSummary.unlocked}/${currentSummary.total} patch=${effectivePatch.unlocked}/${effectivePatch.total}`);
         // Schedule resolver refresh as fallback to get authoritative data
         this._scheduleResolverRefresh(appId, traceId).catch(() => {});
         return false;
@@ -892,19 +1047,20 @@ class AchievementWatcherService {
 
       // Log progress patch
       console.debug(
-        `[ACH][FAST_PROGRESS][${traceId}] parsed total=${patch.total} achieved=${patch.unlocked} entries=${patch.progressMap.size}`,
+        `[ACH][FAST_PROGRESS][${traceId}] parsed total=${effectivePatch.total} achieved=${effectivePatch.unlocked} entries=${effectivePatch.progressMap.size}`,
       );
 
       // Log first few achieved entries
       let logged = 0;
-      for (const [apiName, progress] of patch.progressMap) {
+      for (const [apiName, progress] of effectivePatch.progressMap) {
         if (progress.unlocked && logged < 3) {
           console.debug(`[ACH][FAST_PROGRESS][${traceId}] achieved apiName=${apiName} unlockTime=${progress.unlockTime ?? "null"}`);
           logged++;
         }
       }
 
-      const result = achievementStore.applyProgressPatch(appId, patch, traceId);
+      const previousUnlocked = currentSummary?.unlocked ?? 0;
+      const result = achievementStore.applyProgressPatch(appId, effectivePatch, traceId);
       if (DEBUG_ACH_WATCHER) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=apply-result result=${!!result}`);
       console.log(`[ACH][PIPELINE] apply_result appid=${appId} result=${!!result}`);
       if (!result) {
@@ -912,9 +1068,27 @@ class AchievementWatcherService {
         return false;
       }
 
+      // Content retry: when librarycache file changed but content still shows old count
+      // (external unlocker timing — metadata updates before achievement data is written)
+      const delta = effectivePatch.unlocked - previousUnlocked;
+      const isRetrySource = source === "content-retry";
+      const isWatcherEvent = source === "librarycache" || source === "watcher";
+      if (delta === 0 && isWatcherEvent && !isRetrySource && effectivePatch.progressMap.size > 0) {
+        console.log(`[ACH][CONTENT_RETRY] appid=${appId} delta=0 patch=${effectivePatch.unlocked} previous=${previousUnlocked} source=${source} scheduling-retry`);
+        this._scheduleContentRetry(appId, _path, traceId);
+      } else if (delta > 0) {
+        // Clear retry state on successful unlock (no more retries needed)
+        this._contentRetryCounts.delete(appId);
+        console.log(`[ACH][CONTENT_RETRY] appid=${appId} delta=+${delta} retry-state-cleared`);
+      }
+
       console.log(`[ACH][PIPELINE] process_done appid=${appId} source=${source}`);
       // Fill missing icons from disk cache in background
       achievementStore.fillMissingIconsFromCache(appId, traceId).catch(() => {});
+      // Mark the startup snapshot dirty so achievementSummary stays current across refreshes
+      import("./startupSnapshotService")
+        .then(({ notifyMediaUpdated }) => notifyMediaUpdated(appId, { source: "achievement-progress" }))
+        .catch(() => {});
       return true;
     } catch (err) {
       console.warn(`[ACH][PIPELINE] process_failed appid=${appId} error=${err}`);
@@ -946,6 +1120,31 @@ class AchievementWatcherService {
     console.debug(`[ACH][SIMULATE][${traceId}] started appid=${appId}`);
     const ok = await this.processLibrarycacheChange(appId, `simulated://${appId}`, "manual", traceId);
     console.debug(`[ACH][SIMULATE][${traceId}] completed patched=${ok}`);
+  }
+
+  // ── Content retry: re-read librarycache after delay when delta=0 ──
+
+  private _scheduleContentRetry(appId: string, path: string, traceId: string): void {
+    const retryCount = this._contentRetryCounts.get(appId) ?? 0;
+    if (retryCount >= AchievementWatcherService.CONTENT_RETRY_MAX) {
+      console.log(`[ACH][CONTENT_RETRY] appid=${appId} skipped reason=max-retries-reached count=${retryCount}`);
+      this._contentRetryCounts.delete(appId);
+      return;
+    }
+    if (this._contentRetryPending.has(appId)) {
+      console.log(`[ACH][CONTENT_RETRY] appid=${appId} skipped reason=already-pending`);
+      return;
+    }
+    this._contentRetryPending.add(appId);
+    this._contentRetryCounts.set(appId, retryCount + 1);
+    const delay = AchievementWatcherService.CONTENT_RETRY_DELAY_MS;
+    console.log(`[ACH][CONTENT_RETRY] appid=${appId} scheduled delay=${delay}ms retry=${retryCount + 1}/${AchievementWatcherService.CONTENT_RETRY_MAX}`);
+    window.setTimeout(() => {
+      this._contentRetryPending.delete(appId);
+      this.processLibrarycacheChange(appId, path, "content-retry", traceId).catch((err) => {
+        console.warn(`[ACH][CONTENT_RETRY] appid=${appId} error=${err}`);
+      });
+    }, delay);
   }
 
   // ── Resolver refresh fallback for stale/partial librarycache data ──
@@ -1002,6 +1201,10 @@ class AchievementWatcherService {
       const result = achievementStore.applyProgressPatch(appId, resolverPatch, traceId);
       if (result) {
         console.log(`[ACH][RT_RESOLVER_DONE] appid=${appId} unlocked=${result.unlocked}/${result.total}`);
+        // Mark the startup snapshot dirty so achievementSummary stays current across refreshes
+        import("./startupSnapshotService")
+          .then(({ notifyMediaUpdated }) => notifyMediaUpdated(appId, { source: "achievement-progress" }))
+          .catch(() => {});
       } else {
         console.debug(`[ACH][RT_RESOLVER_NOOP] appid=${appId} reason=applyProgressPatch-null`);
       }

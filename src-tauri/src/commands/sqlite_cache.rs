@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri::Manager;
@@ -98,6 +99,82 @@ fn init_tables(conn: &Connection) -> Result<(), String> {
     if let Err(e) = super::repack_catalog::create_repack_tables(conn) {
         eprintln!("[SqliteCache] repack catalog table init failed (non-fatal): {}", e);
     }
+
+    // Achievement tables — volatile per-game progress
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS achievement_summaries (
+            app_id          TEXT PRIMARY KEY,
+            unlocked        INTEGER NOT NULL DEFAULT 0,
+            total           INTEGER NOT NULL DEFAULT 0,
+            in_progress     INTEGER NOT NULL DEFAULT 0,
+            completion_time INTEGER,
+            last_unlock_at  INTEGER,
+            updated_at      INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS achievement_entries (
+            app_id      TEXT NOT NULL,
+            api_name    TEXT NOT NULL,
+            name        TEXT,
+            description TEXT,
+            icon_url    TEXT,
+            icon_gray   TEXT,
+            hidden      INTEGER NOT NULL DEFAULT 0,
+            unlocked    INTEGER NOT NULL DEFAULT 0,
+            unlock_time INTEGER,
+            unlocked_at INTEGER,
+            global_pct  REAL,
+            updated_at  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (app_id, api_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS achievement_percentages (
+            app_id     TEXT PRIMARY KEY,
+            entries    TEXT NOT NULL DEFAULT '[]',
+            updated_at INTEGER NOT NULL DEFAULT 0
+        );
+        ",
+    )
+    .map_err(|e| format!("Failed to create achievement tables: {}", e))?;
+
+    // Store reviews — replaces store/reviews/{appid}.json
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS store_reviews (
+            app_id     TEXT PRIMARY KEY,
+            data       TEXT NOT NULL DEFAULT '{}',
+            updated_at INTEGER NOT NULL DEFAULT 0
+        );
+        ",
+    )
+    .map_err(|e| format!("Failed to create store_reviews table: {}", e))?;
+
+    // Provider status — replaces store/provider-status/{appId}/{providerId}.json
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS provider_status (
+            app_id      TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            data        TEXT NOT NULL DEFAULT '{}',
+            updated_at  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (app_id, provider_id)
+        );
+        ",
+    )
+    .map_err(|e| format!("Failed to create provider_status table: {}", e))?;
+
+    // Game catalog blobs — single-row per catalog storing the full JSON
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS game_catalog_blobs (
+            catalog_key TEXT PRIMARY KEY,
+            data_json   TEXT NOT NULL,
+            updated_at  INTEGER NOT NULL DEFAULT 0
+        );
+        ",
+    )
+    .map_err(|e| format!("Failed to create game_catalog_blobs table: {}", e))?;
 
     Ok(())
 }
@@ -521,4 +598,477 @@ pub fn get_game_count(
         .map_err(|e| format!("Count error: {}", e))?;
 
     Ok(count)
+}
+
+// ===========================================================================
+// Achievement summaries
+// ===========================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AchievementSummaryRow {
+    pub app_id: String,
+    pub unlocked: i64,
+    pub total: i64,
+    pub in_progress: i64,
+    pub completion_time: Option<i64>,
+    pub last_unlock_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub fn upsert_achievement_summary(
+    row: AchievementSummaryRow,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO achievement_summaries (app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![row.app_id, row.unlocked, row.total, row.in_progress, row.completion_time, row.last_unlock_at, row.updated_at],
+        )
+        .map_err(|e| format!("Upsert achievement_summary error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_achievement_summary(
+    app_id: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Option<AchievementSummaryRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(None),
+    };
+    let mut stmt = guard
+        .prepare("SELECT app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at FROM achievement_summaries WHERE app_id = ?1")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+    let result = stmt
+        .query_row([&app_id], |row| {
+            Ok(AchievementSummaryRow {
+                app_id: row.get(0)?,
+                unlocked: row.get(1)?,
+                total: row.get(2)?,
+                in_progress: row.get(3)?,
+                completion_time: row.get(4)?,
+                last_unlock_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .ok();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn batch_get_achievement_summaries(
+    app_ids: Vec<String>,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<AchievementSummaryRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    let mut results = Vec::new();
+    for app_id in &app_ids {
+        let mut stmt = guard
+            .prepare("SELECT app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at FROM achievement_summaries WHERE app_id = ?1")
+            .map_err(|e| format!("Query prepare error: {}", e))?;
+        if let Some(row) = stmt
+            .query_row([app_id.as_str()], |row| {
+                Ok(AchievementSummaryRow {
+                    app_id: row.get(0)?,
+                    unlocked: row.get(1)?,
+                    total: row.get(2)?,
+                    in_progress: row.get(3)?,
+                    completion_time: row.get(4)?,
+                    last_unlock_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })
+            .ok()
+        {
+            results.push(row);
+        }
+    }
+    Ok(results)
+}
+
+// ===========================================================================
+// Achievement entries
+// ===========================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AchievementEntryRow {
+    pub app_id: String,
+    pub api_name: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub icon_url: Option<String>,
+    pub icon_gray: Option<String>,
+    pub hidden: bool,
+    pub unlocked: bool,
+    pub unlock_time: Option<i64>,
+    pub unlocked_at: Option<i64>,
+    pub global_pct: Option<f64>,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub fn upsert_achievement_entry(
+    row: AchievementEntryRow,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO achievement_entries (app_id, api_name, name, description, icon_url, icon_gray, hidden, unlocked, unlock_time, unlocked_at, global_pct, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![row.app_id, row.api_name, row.name, row.description, row.icon_url, row.icon_gray, row.hidden as i32, row.unlocked as i32, row.unlock_time, row.unlocked_at, row.global_pct, row.updated_at],
+        )
+        .map_err(|e| format!("Upsert achievement_entry error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn batch_upsert_achievement_entries(
+    entries: Vec<AchievementEntryRow>,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    for entry in &entries {
+        guard
+            .execute(
+                "INSERT OR REPLACE INTO achievement_entries (app_id, api_name, name, description, icon_url, icon_gray, hidden, unlocked, unlock_time, unlocked_at, global_pct, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![entry.app_id, entry.api_name, entry.name, entry.description, entry.icon_url, entry.icon_gray, entry.hidden as i32, entry.unlocked as i32, entry.unlock_time, entry.unlocked_at, entry.global_pct, entry.updated_at],
+            )
+            .map_err(|e| format!("Batch upsert achievement_entry error: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_achievement_entries(
+    app_id: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<AchievementEntryRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    let mut stmt = guard
+        .prepare("SELECT app_id, api_name, name, description, icon_url, icon_gray, hidden, unlocked, unlock_time, unlocked_at, global_pct, updated_at FROM achievement_entries WHERE app_id = ?1")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+    let rows = stmt
+        .query_map([&app_id], |row| {
+            Ok(AchievementEntryRow {
+                app_id: row.get(0)?,
+                api_name: row.get(1)?,
+                name: row.get(2)?,
+                description: row.get(3)?,
+                icon_url: row.get(4)?,
+                icon_gray: row.get(5)?,
+                hidden: row.get::<_, i32>(6)? != 0,
+                unlocked: row.get::<_, i32>(7)? != 0,
+                unlock_time: row.get(8)?,
+                unlocked_at: row.get(9)?,
+                global_pct: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        })
+        .map_err(|e| format!("Query error: {}", e))?;
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row.map_err(|e| format!("Row error: {}", e))?);
+    }
+    Ok(results)
+}
+
+// ===========================================================================
+// Achievement percentages (global percentage index)
+// ===========================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AchievementPercentageRow {
+    pub app_id: String,
+    pub entries: String,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub fn upsert_achievement_percentages(
+    row: AchievementPercentageRow,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO achievement_percentages (app_id, entries, updated_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![row.app_id, row.entries, row.updated_at],
+        )
+        .map_err(|e| format!("Upsert achievement_percentages error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_achievement_percentages(
+    app_id: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Option<AchievementPercentageRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(None),
+    };
+    let mut stmt = guard
+        .prepare("SELECT app_id, entries, updated_at FROM achievement_percentages WHERE app_id = ?1")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+    let result = stmt
+        .query_row([&app_id], |row| {
+            Ok(AchievementPercentageRow {
+                app_id: row.get(0)?,
+                entries: row.get(1)?,
+                updated_at: row.get(2)?,
+            })
+        })
+        .ok();
+    Ok(result)
+}
+
+// ===========================================================================
+// Store reviews (replaces store/reviews/{appid}.json)
+// ===========================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreReviewRow {
+    pub app_id: String,
+    pub data: String,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub fn upsert_store_review(
+    row: StoreReviewRow,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO store_reviews (app_id, data, updated_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![row.app_id, row.data, if row.updated_at > 0 { row.updated_at } else { now }],
+        )
+        .map_err(|e| format!("Upsert store_review error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_store_review(
+    app_id: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Option<StoreReviewRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(None),
+    };
+    let mut stmt = guard
+        .prepare("SELECT app_id, data, updated_at FROM store_reviews WHERE app_id = ?1")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+    let result = stmt
+        .query_row([&app_id], |row| {
+            Ok(StoreReviewRow {
+                app_id: row.get(0)?,
+                data: row.get(1)?,
+                updated_at: row.get(2)?,
+            })
+        })
+        .ok();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn batch_get_store_reviews(
+    app_ids: Vec<String>,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<StoreReviewRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    let mut results = Vec::new();
+    for app_id in &app_ids {
+        let mut stmt = guard
+            .prepare("SELECT app_id, data, updated_at FROM store_reviews WHERE app_id = ?1")
+            .map_err(|e| format!("Query prepare error: {}", e))?;
+        if let Some(row) = stmt
+            .query_row([app_id.as_str()], |row| {
+                Ok(StoreReviewRow {
+                    app_id: row.get(0)?,
+                    data: row.get(1)?,
+                    updated_at: row.get(2)?,
+                })
+            })
+            .ok()
+        {
+            results.push(row);
+        }
+    }
+    Ok(results)
+}
+
+// ===========================================================================
+// Provider status (replaces store/provider-status/{appId}/{providerId}.json)
+// ===========================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStatusRow {
+    pub app_id: String,
+    pub provider_id: String,
+    pub data: String,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub fn upsert_provider_status(
+    row: ProviderStatusRow,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO provider_status (app_id, provider_id, data, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![row.app_id, row.provider_id, row.data, if row.updated_at > 0 { row.updated_at } else { now }],
+        )
+        .map_err(|e| format!("Upsert provider_status error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_provider_status_from_db(
+    app_id: String,
+    provider_id: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Option<ProviderStatusRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(None),
+    };
+    let mut stmt = guard
+        .prepare("SELECT app_id, provider_id, data, updated_at FROM provider_status WHERE app_id = ?1 AND provider_id = ?2")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+    let result = stmt
+        .query_row([&app_id, &provider_id], |row| {
+            Ok(ProviderStatusRow {
+                app_id: row.get(0)?,
+                provider_id: row.get(1)?,
+                data: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })
+        .ok();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_all_provider_statuses(
+    app_id: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Vec<ProviderStatusRow>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(Vec::new()),
+    };
+    let mut stmt = guard
+        .prepare("SELECT app_id, provider_id, data, updated_at FROM provider_status WHERE app_id = ?1")
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+    let rows = stmt
+        .query_map([&app_id], |row| {
+            Ok(ProviderStatusRow {
+                app_id: row.get(0)?,
+                provider_id: row.get(1)?,
+                data: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| format!("Query error: {}", e))?;
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row.map_err(|e| format!("Row error: {}", e))?);
+    }
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// Game catalog blob CRUD (steam-owned, debrid, installed, snapshot)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+#[allow(dead_code)]
+pub fn upsert_game_catalog_blob(
+    catalog_key: String,
+    data_json: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<(), String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(()),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    guard
+        .execute(
+            "INSERT OR REPLACE INTO game_catalog_blobs (catalog_key, data_json, updated_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![catalog_key, data_json, now],
+        )
+        .map_err(|e| format!("SQLite upsert error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(dead_code)]
+pub fn get_game_catalog_blob(
+    catalog_key: String,
+    db: tauri::State<'_, SqliteDb>,
+) -> Result<Option<String>, String> {
+    let guard = match &db.0 {
+        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+        None => return Ok(None),
+    };
+    let result = guard
+        .query_row(
+            "SELECT data_json FROM game_catalog_blobs WHERE catalog_key = ?1",
+            [&catalog_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("Query error: {}", e))?;
+    Ok(result)
 }

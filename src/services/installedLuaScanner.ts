@@ -333,7 +333,18 @@ async function saveProviderStatusForLua(
   };
 
   try {
-    await writeProviderStatus(appId, normalizedId, JSON.stringify(status));
+    const statusJson = JSON.stringify(status);
+    await writeProviderStatus(appId, normalizedId, statusJson);
+    // Dual-write: also persist to SQLite for fast boot reads
+    try {
+      const { upsertProviderStatus } = await import("./tauri");
+      await upsertProviderStatus({
+        appId,
+        providerId: normalizedId,
+        data: statusJson,
+        updatedAt: Date.now(),
+      });
+    } catch { /* non-critical */ }
     console.log(`[PACKAGE_SCAN][SAVE] appid=${appId} provider=${normalizedId} result=${result.status} reason=${result.reason}`);
     hubcapLog(`[WRITE] appid=${appId} path=store/provider-status/${appId}/${normalizedId}.json remotePresent=${remote !== null} result=${result.status}`);
   } catch (err) {

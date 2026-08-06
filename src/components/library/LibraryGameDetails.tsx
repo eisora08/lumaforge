@@ -470,6 +470,7 @@ export default function LibraryGameDetails({
   const gameSessionKey = game.id;
   const isManualRunning = game.source === "manual" && !!(gameSessions[gameSessionKey]?.state === "running" || gameSessions[gameSessionKey]?.state === "launching");
   const appIdStr = game.appId;
+  const snapshotHydratedRef = useRef(false);
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
     if (!appIdStr) return null;
     // 1. Check in-memory store first
@@ -480,6 +481,7 @@ export default function LibraryGameDetails({
     const snapGame = snap?.library?.games?.find(g => g.appId === appIdStr);
     if (snapGame?.achievementSummary && snapGame.achievementSummary.total > 0) {
       const a = snapGame.achievementSummary;
+      if (!a.unlocked || a.unlocked === 0) snapshotHydratedRef.current = true;
       return {
         appId: appIdStr,
         source: "local-cache" as const,
@@ -493,7 +495,10 @@ export default function LibraryGameDetails({
     }
     return null;
   });
-  const [achievementsLoading, setAchievementsLoading] = useState(false);
+  // When the initial state came from the snapshot (stale, achievements: []),
+  // the effect below will async-load the real disk cache — show a loading state
+  // so the UI doesn't flash stale numbers.
+  const [achievementsLoading, setAchievementsLoading] = useState(() => snapshotHydratedRef.current);
   const [achievementsRefreshing, setAchievementsRefreshing] = useState(false);
   const achievementsSyncing = achievementsSummary != null && achievementsLoading;
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
@@ -934,9 +939,9 @@ export default function LibraryGameDetails({
       if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP) {
         const appIdNum = Number(appIdStr);
         if (Number.isFinite(appIdNum)) {
-          import("../../services/tauri").then(({ readAchievementCache }) => {
+          import("../../services/tauri").then(({ readAchievementCacheWithFallback }) => {
               if (cancelled) return;
-              readAchievementCache(appIdNum).then((diskCache) => {
+              readAchievementCacheWithFallback(appIdNum).then((diskCache) => {
                 if (cancelled) return;
                 const diskUpdatedAt = diskCache?.summary?.updated_at ?? 0;
                 const storeUpdatedAt = achievementStore.getSummary(appIdStr)?.updatedAt ?? 0;

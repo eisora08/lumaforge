@@ -14,6 +14,9 @@ import {
   queryCatalogGame,
   queryCatalogFeatured,
   queryCatalogNewNoteworthy,
+  queryCatalogHiddenGems,
+  queryCatalogTopRated,
+  queryCatalogCultClassics,
   type CatalogMetaResult,
   type CatalogGameResult,
 } from "./tauri";
@@ -43,6 +46,9 @@ const _genreCache = new Map<string, { ts: number; games: CatalogGameResult[] }>(
 const _searchCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
 const _featuredCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
 const _newNoteworthyCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
+const _hiddenGemsCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
+const _topRatedCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
+const _cultClassicsCache = new Map<string, { ts: number; games: CatalogGameResult[] }>();
 const _metaCache = new Map<string, { ts: number; meta: CatalogMetaResult }>();
 
 function isCacheFresh(entry: { ts: number } | undefined): entry is { ts: number } {
@@ -208,6 +214,75 @@ export async function queryNewNoteworthyGames(
 }
 
 /**
+ * Get hidden gems — high review%, moderate review count, niche but beloved.
+ * Returns cached results when available.
+ */
+export async function queryHiddenGems(
+  limit: number,
+): Promise<CatalogQueryResult> {
+  const cacheKey = `hiddengems:${limit}`;
+  const cached = _hiddenGemsCache.get(cacheKey);
+  if (isCacheFresh(cached)) {
+    return { games: cached.games, fromLocalCatalog: true };
+  }
+
+  try {
+    const games = await queryCatalogHiddenGems(limit);
+    _hiddenGemsCache.set(cacheKey, { ts: Date.now(), games });
+    return { games, fromLocalCatalog: true };
+  } catch (err) {
+    console.error("[CATALOG][HIDDEN_GEMS] Query failed:", err);
+    return { games: [], fromLocalCatalog: false };
+  }
+}
+
+/**
+ * Get top rated games — highest review% with significant review count.
+ * Returns cached results when available.
+ */
+export async function queryTopRatedGames(
+  limit: number,
+): Promise<CatalogQueryResult> {
+  const cacheKey = `toprated:${limit}`;
+  const cached = _topRatedCache.get(cacheKey);
+  if (isCacheFresh(cached)) {
+    return { games: cached.games, fromLocalCatalog: true };
+  }
+
+  try {
+    const games = await queryCatalogTopRated(limit);
+    _topRatedCache.set(cacheKey, { ts: Date.now(), games });
+    return { games, fromLocalCatalog: true };
+  } catch (err) {
+    console.error("[CATALOG][TOP_RATED] Query failed:", err);
+    return { games: [], fromLocalCatalog: false };
+  }
+}
+
+/**
+ * Get cult classics — old games with sustained high quality.
+ * Returns cached results when available.
+ */
+export async function queryCultClassics(
+  limit: number,
+): Promise<CatalogQueryResult> {
+  const cacheKey = `cultclassics:${limit}`;
+  const cached = _cultClassicsCache.get(cacheKey);
+  if (isCacheFresh(cached)) {
+    return { games: cached.games, fromLocalCatalog: true };
+  }
+
+  try {
+    const games = await queryCatalogCultClassics(limit);
+    _cultClassicsCache.set(cacheKey, { ts: Date.now(), games });
+    return { games, fromLocalCatalog: true };
+  } catch (err) {
+    console.error("[CATALOG][CULT_CLASSICS] Query failed:", err);
+    return { games: [], fromLocalCatalog: false };
+  }
+}
+
+/**
  * Clear all caches — called on catalog re-import or app restart.
  */
 function clearCatalogCaches(): void {
@@ -215,6 +290,9 @@ function clearCatalogCaches(): void {
   _searchCache.clear();
   _featuredCache.clear();
   _newNoteworthyCache.clear();
+  _hiddenGemsCache.clear();
+  _topRatedCache.clear();
+  _cultClassicsCache.clear();
   _metaCache.clear();
   _localGenreGroups.clear();
   _localCatalogReady = false;

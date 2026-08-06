@@ -1,18 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
 
-const DEBUG_IMG_FAIL = false;
-
-// Truncate URL for logging while preserving the filename (last path segment).
-function logUrl(url: string | undefined | null, maxLen = 120): string {
-  if (!url) return "(none)";
-  if (url.length <= maxLen) return url;
-  const lastSlash = url.lastIndexOf("/");
-  const filename = lastSlash >= 0 ? url.slice(lastSlash + 1) : url;
-  const prefix = url.slice(0, Math.max(0, maxLen - filename.length - 3));
-  return `${prefix}...${filename}`;
-}
-
 import {
   Flame,
   Gamepad2,
@@ -26,6 +14,7 @@ import {
 import type { PackageGame, PackageSource } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
+import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { useHoverPrefetch } from "../../hooks/useHoverPrefetch";
 
 type StoreBadge = {
@@ -48,6 +37,7 @@ type PackageCardProps = {
   reviewSummary?: SteamReviewSummary;
   badges?: StoreBadge[];
   variant?: "landscape" | "poster";
+  sgdbArtwork?: SgdbArtworkData;
   onOpenGame?: (game: PackageGame) => void;
   onDownload?: (game: PackageGame) => void;
   onOpenDetails?: (game: PackageGame) => void;
@@ -79,14 +69,32 @@ function getBestCardImageChain(
   game: PackageGame,
   metadata?: SteamAppMetadata,
   variant?: "landscape" | "poster",
+  sgdbArtwork?: SgdbArtworkData,
 ): string[] {
-  const candidates = variant === "poster"
-    ? [metadata?.capsule_image_v5, metadata?.capsule_image, game.imageUrl, metadata?.header_image]
-    : [metadata?.header_image, game.imageUrl, metadata?.capsule_image, metadata?.capsule_image_v5];
-  const metadataUrls = candidates.filter((u): u is string => typeof u === "string");
   const cdnUrls = getSteamCdnUrls(game.appId, variant);
-  // Append CDN URLs as last-resort fallbacks, deduplicating against metadata URLs
-  const allUrls = [...metadataUrls];
+  const metadataUrls = (() => {
+    const c = variant === "poster"
+      ? [metadata?.capsule_image_v5, metadata?.capsule_image, game.imageUrl, metadata?.header_image]
+      : [metadata?.header_image, game.imageUrl, metadata?.capsule_image, metadata?.capsule_image_v5];
+    return c.filter((u): u is string => typeof u === "string");
+  })();
+
+  const allUrls: string[] = [];
+
+  // Poster variant: SGDB cover is king (portrait/cover art)
+  if (variant === "poster" && sgdbArtwork?.sgdbCoverUrl) {
+    allUrls.push(sgdbArtwork.sgdbCoverUrl);
+  }
+
+  // Landscape variant: SGDB hero first
+  if (variant === "landscape" && sgdbArtwork?.sgdbHeroUrl) {
+    allUrls.push(sgdbArtwork.sgdbHeroUrl);
+  }
+
+  // Steam metadata + CDN fallbacks
+  for (const url of metadataUrls) {
+    if (!allUrls.includes(url)) allUrls.push(url);
+  }
   for (const url of cdnUrls) {
     if (!allUrls.includes(url)) allUrls.push(url);
   }
@@ -130,9 +138,17 @@ function arePackageCardPropsEqual(
     const aPlats = aMeta.platforms?.slice().sort().join(",") ?? "";
     const bPlats = bMeta.platforms?.slice().sort().join(",") ?? "";
     if (aPlats !== bPlats) return false;
+    const aGenres = aMeta.genres?.slice().sort().join(",") ?? "";
+    const bGenres = bMeta.genres?.slice().sort().join(",") ?? "";
+    if (aGenres !== bGenres) return false;
   }
-  // Review summary — only check if reviewSummary is fully undefined vs present
-  // (the component doesn't currently render reviewSummary fields, so skip deep compare)
+  // Review summary — compare positive_percent for score badge reactivity
+  const aRev = a.reviewSummary?.positive_percent;
+  const bRev = b.reviewSummary?.positive_percent;
+  if (aRev !== bRev) return false;
+  // SGDB artwork — compare cover and hero URLs
+  if (a.sgdbArtwork?.sgdbCoverUrl !== b.sgdbArtwork?.sgdbCoverUrl) return false;
+  if (a.sgdbArtwork?.sgdbHeroUrl !== b.sgdbArtwork?.sgdbHeroUrl) return false;
   return true;
 }
 
@@ -169,8 +185,10 @@ function CardImage({
 function PackageCardRaw({
   game,
   storeMetadata,
+  reviewSummary,
   badges,
   variant = "landscape",
+  sgdbArtwork,
   onOpenGame,
   onOpenDetails,
 }: PackageCardProps) {
@@ -189,8 +207,8 @@ function PackageCardRaw({
   const displayTitle = getStoreTitle(game, storeMetadata);
   const displayDeveloper = getStoreDeveloper(game, storeMetadata);
   const imageFallbackChain = useMemo(
-    () => getBestCardImageChain(game, storeMetadata, variant),
-    [game, storeMetadata, variant],
+    () => getBestCardImageChain(game, storeMetadata, variant, sgdbArtwork),
+    [game, storeMetadata, variant, sgdbArtwork],
   );
   const displayImageUrl: string | undefined = imageFallbackChain[imageFallbackIndex];
   const hasMoreFallbacks = imageFallbackIndex + 1 < imageFallbackChain.length;
@@ -206,126 +224,35 @@ function PackageCardRaw({
   }
 
   if (variant === "poster") {
+    const displayGenres = storeMetadata?.genres?.slice(0, 2) ?? [];
+    const scorePercent = reviewSummary?.positive_percent;
+
     return (
-      <>
-        <article
-          role="button"
-          tabIndex={0}
-          onClick={handleOpenDetails}
-          onMouseEnter={onMouseEnter}
-          onMouseLeave={onMouseLeave}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              handleOpenDetails();
-            }
-          }}
-          className="lf-store-card group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
-        >
-          <div className="relative w-full shrink-0 overflow-hidden">
-            {displayImageUrl && !imageFailed ? (
-              <CardImage
-                src={displayImageUrl}
-                alt={displayTitle}
-                objectClass="object-cover"
-                onError={() => {
-                  // Phase 8: Skip fallback chain during active interaction (scroll/click)
-                  if (isInteractionBusy()) {
-                    if (_mountedRef.current) setImageFailed(true);
-                    return;
-                  }
-                  if (!_mountedRef.current) {
-                    if (DEBUG_IMG_FAIL) console.log(`[PACKAGE_CARD][FALLBACK_CANCEL] reason=unmounted`);
-                    return;
-                  }
-                  if (DEBUG_IMG_FAIL) console.log(`[IMG][FAIL] appid=${game.appId} source=${logUrl(displayImageUrl)}`);
-                  if (hasMoreFallbacks) {
-                    const nextIdx = imageFallbackIndex + 1;
-                    const nextUrl = imageFallbackChain[nextIdx];
-                    if (DEBUG_IMG_FAIL) console.log(`[IMG][FALLBACK_NEXT] appid=${game.appId} nextSource=${logUrl(nextUrl)}`);
-                    setImageFallbackIndex(nextIdx);
-                  } else {
-                    setImageFailed(true);
-                  }
-                }}
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-white/5">
-                <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
-              </div>
-            )}
-
-            {badges && badges.length > 0 && (
-              <div className="pointer-events-none absolute left-2 top-2 z-10 flex gap-1.5">
-                {badges.map((badge) => {
-                  const Icon = BADGE_ICON_MAP[badge.type];
-                  return (
-                    <span
-                      key={badge.type}
-                      className="inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm"
-                    >
-                      {Icon && <Icon className="h-3 w-3" />}
-                      {badge.label}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
-          </div>
-
-          <div className="flex min-h-[60px] flex-col justify-center p-2.5">
-            <h3 className="lf-card-title line-clamp-2 text-sm font-semibold leading-snug text-(--color-text)">
-              {displayTitle}
-            </h3>
-
-            {displayDeveloper && (
-              <p className="mt-0.5 line-clamp-1 text-[11px] text-(--color-muted)">
-                {displayDeveloper}
-              </p>
-            )}
-          </div>
-        </article>
-      </>
-    );
-  }
-
-  return (
-    <>
       <article
         role="button"
         tabIndex={0}
         onClick={handleOpenDetails}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            handleOpenDetails();
-          }
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") handleOpenDetails();
         }}
-        className="lf-store-card group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition hover:bg-white/[0.04] hover:border-(--color-accent)/40 lf-press-effect"
+        className="group relative aspect-[2/3] cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition-all duration-300 hover:border-(--color-accent)/40 hover:shadow-xl hover:shadow-black/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent)"
       >
+        {/* Full-bleed cover image */}
         {displayImageUrl && !imageFailed ? (
           <CardImage
             src={displayImageUrl}
             alt={displayTitle}
             objectClass="object-cover"
             onError={() => {
-              // Phase 8: Skip fallback chain during active interaction (scroll/click)
               if (isInteractionBusy()) {
                 if (_mountedRef.current) setImageFailed(true);
                 return;
               }
-              if (!_mountedRef.current) {
-                if (DEBUG_IMG_FAIL) console.log(`[PACKAGE_CARD][FALLBACK_CANCEL] reason=unmounted`);
-                return;
-              }
-              if (DEBUG_IMG_FAIL) console.log(`[IMG][FAIL] appid=${game.appId} source=${logUrl(displayImageUrl)}`);
+              if (!_mountedRef.current) return;
               if (hasMoreFallbacks) {
-                const nextIdx = imageFallbackIndex + 1;
-                const nextUrl = imageFallbackChain[nextIdx];
-                if (DEBUG_IMG_FAIL) console.log(`[IMG][FALLBACK_NEXT] appid=${game.appId} nextSource=${logUrl(nextUrl)}`);
-                setImageFallbackIndex(nextIdx);
+                setImageFallbackIndex(imageFallbackIndex + 1);
               } else {
                 setImageFailed(true);
               }
@@ -337,16 +264,24 @@ function PackageCardRaw({
           </div>
         )}
 
+        {/* Score badge — always visible */}
+        {scorePercent != null && (
+          <div className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-[10px] font-bold text-white backdrop-blur-sm">
+            {Math.round(scorePercent)}
+          </div>
+        )}
+
+        {/* Section badges — always visible */}
         {badges && badges.length > 0 && (
-          <div className="pointer-events-none absolute left-2 top-2 z-10 flex gap-1.5">
-            {badges.map((badge) => {
+          <div className="absolute left-2 top-2 z-20 flex gap-1">
+            {badges.slice(0, 2).map((badge) => {
               const Icon = BADGE_ICON_MAP[badge.type];
               return (
                 <span
                   key={badge.type}
-                  className="inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm"
+                  className="inline-flex items-center gap-0.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-sm"
                 >
-                  {Icon && <Icon className="h-3 w-3" />}
+                  {Icon && <Icon className="h-2.5 w-2.5" />}
                   {badge.label}
                 </span>
               );
@@ -354,17 +289,135 @@ function PackageCardRaw({
           </div>
         )}
 
-        <div className="absolute inset-0 bg-linear-to-t from-black/85 via-black/20 to-transparent" />
+        {/* Hover overlay — darkens smoothly */}
+        <div className="absolute inset-0 bg-black/0 transition-colors duration-300 group-hover:bg-black/50" />
 
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-4">
-          <h3 className="lf-card-title line-clamp-1 text-lg font-black text-white drop-shadow">
+        {/* Info block — slides up on hover */}
+        <div className="absolute inset-x-0 bottom-0 z-10 translate-y-2 px-3 pb-3 pt-8 opacity-0 transition-all duration-300 ease-out group-hover:translate-y-0 group-hover:opacity-100">
+          <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white drop-shadow-lg">
             {displayTitle}
           </h3>
+          {displayDeveloper && (
+            <p className="mt-0.5 line-clamp-1 text-[11px] text-white/70">
+              {displayDeveloper}
+            </p>
+          )}
+          {displayGenres.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {displayGenres.map((genre) => (
+                <span
+                  key={genre}
+                  className="rounded-full bg-white/15 px-1.5 py-0.5 text-[9px] font-medium text-white/80 backdrop-blur-sm"
+                >
+                  {genre}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
-
-        <div className="pointer-events-none absolute inset-0 bg-black/30 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
       </article>
-    </>
+    );
+  }
+
+  const displayGenres = useMemo(
+    () => storeMetadata?.genres?.slice(0, 3) ?? [],
+    [storeMetadata?.genres],
+  );
+  const scorePercent = reviewSummary?.positive_percent;
+  const scoreColor = scorePercent != null
+    ? scorePercent >= 75 ? "bg-emerald-500" : scorePercent >= 50 ? "bg-amber-500" : "bg-red-500"
+    : null;
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={handleOpenDetails}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          handleOpenDetails();
+        }
+      }}
+      className="group relative aspect-video cursor-pointer overflow-hidden rounded-2xl border border-(--surface-active-border) bg-white/5 transition-all duration-300 hover:border-(--color-accent)/40 hover:shadow-xl hover:shadow-black/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent)"
+    >
+      {displayImageUrl && !imageFailed ? (
+        <CardImage
+          src={displayImageUrl}
+          alt={displayTitle}
+          objectClass="object-cover"
+          onError={() => {
+            if (isInteractionBusy()) {
+              if (_mountedRef.current) setImageFailed(true);
+              return;
+            }
+            if (!_mountedRef.current) return;
+            if (hasMoreFallbacks) {
+              setImageFallbackIndex(imageFallbackIndex + 1);
+            } else {
+              setImageFailed(true);
+            }
+          }}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-white/5">
+          <Gamepad2 className="h-10 w-10 text-(--color-muted)" />
+        </div>
+      )}
+
+      {/* Score badge — always visible */}
+      {scoreColor && scorePercent != null && (
+        <div className={`absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-full ${scoreColor} text-[10px] font-bold text-white shadow-md`}>
+          {Math.round(scorePercent)}
+        </div>
+      )}
+
+      {/* Section badges — always visible */}
+      {badges && badges.length > 0 && (
+        <div className="pointer-events-none absolute left-2 top-2 z-20 flex gap-1.5">
+          {badges.map((badge) => {
+            const Icon = BADGE_ICON_MAP[badge.type];
+            return (
+              <span
+                key={badge.type}
+                className="inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm"
+              >
+                {Icon && <Icon className="h-3 w-3" />}
+                {badge.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Hover overlay — darkens smoothly */}
+      <div className="absolute inset-0 bg-black/0 transition-colors duration-300 group-hover:bg-black/50" />
+
+      {/* Info block — slides up on hover, no padding */}
+      <div className="absolute inset-x-0 bottom-0 z-10 translate-y-2 opacity-0 transition-all duration-300 ease-out group-hover:translate-y-0 group-hover:opacity-100">
+        <h3 className="line-clamp-1 px-3 text-sm font-semibold leading-snug text-white drop-shadow-lg">
+          {displayTitle}
+        </h3>
+        {displayDeveloper && (
+          <p className="mt-0.5 line-clamp-1 px-3 text-[11px] text-white/70">
+            {displayDeveloper}
+          </p>
+        )}
+        {displayGenres.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1 px-3 pb-3">
+            {displayGenres.map((genre) => (
+              <span
+                key={genre}
+                className="rounded-full bg-white/15 px-1.5 py-0.5 text-[9px] font-medium text-white/80 backdrop-blur-sm"
+              >
+                {genre}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </article>
   );
 }
 

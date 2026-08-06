@@ -240,23 +240,6 @@
 
     try {
       const paths = await cacheMediaForGame(appId, game.title || null, landscapeUrls, coverUrls, sgdbRef);
-      // Backward compat: also update old library/appinfo.json
-      if (game.appId) {
-        await updateLibraryAppInfo(game.appId, {
-          app_id: game.appId,
-          name: game.title || null,
-          header_image: game.imageUrl || null,
-          cover_path: paths.coverPath,
-          grid_path: paths.landscapePath,
-          hero_path: null,
-          logo_path: null,
-          icon_path: null,
-          updated_at: nowTimestamp(),
-        }).catch(() => {});
-        if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
-          console.log(`[MediaCache] backward compat appinfo updated for ${appId}`);
-        }
-      }
       return paths;
     } catch (err) {
       if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) {
@@ -325,19 +308,6 @@
 
     try {
       const entry = await cacheLibraryGameMedia(gameKey, game.appId || null, game.title || null, { coverUrl, gridUrl });
-      if (game.appId && (entry.cover_path || entry.grid_path)) {
-        await updateLibraryAppInfo(game.appId, {
-          app_id: game.appId,
-          name: game.title || null,
-          header_image: game.imageUrl || null,
-          cover_path: entry.cover_path,
-          grid_path: entry.grid_path,
-          hero_path: null,
-          logo_path: null,
-          icon_path: null,
-          updated_at: nowTimestamp(),
-        }).catch(() => {});
-      }
       return entry;
     } catch {
       return null;

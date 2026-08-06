@@ -205,33 +205,6 @@ export function hasCanonicalGenre(genres: string[]): boolean {
 
 // ── Display mapping for Store UI ──
 
-/**
- * Maps canonical genres to their display section IDs in the Store.
- * Subset of CANONICAL_GENRES that get their own section rail.
- */
-export const GENRE_SECTION_IDS: Record<CanonicalGenre, string> = {
-  "Action": "genre-action",
-  "RPG": "genre-rpg",
-  "Adventure": "genre-adventure",
-  "Strategy": "genre-strategy",
-  "Indie": "genre-indie",
-  "Racing": "genre-racing",
-  "Simulation": "genre-simulation",
-  "Sports": "genre-sports",
-  "Casual": "genre-casual",
-  "Massively Multiplayer": "genre-mmo",
-};
+// Genre section rails (genre-action, genre-rpg, etc.) are deprecated.
+// Genres are now served by a single "Browse by Genre" mosaic section.
 
-/**
- * Genres that currently have visible section rails in the Store.
- * Extended from the old DISPLAY_GENRES (was 6, now includes all 10).
- */
-export const ACTIVE_GENRE_SECTIONS: CanonicalGenre[] = [
-  "Action",
-  "Indie",
-  "RPG",
-  "Adventure",
-  "Strategy",
-  "Racing",
-  "Simulation",
-];

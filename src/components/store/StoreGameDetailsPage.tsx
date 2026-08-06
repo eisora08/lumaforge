@@ -1221,7 +1221,7 @@ export default function StoreGameDetailsPage({
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             Volver al Store
@@ -1232,7 +1232,7 @@ export default function StoreGameDetailsPage({
             <button
               type="button"
               onClick={onBack}
-              className="mt-2 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-xs text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+              className="mt-2 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-xs text-(--color-muted) transition duration-150 hover:bg-white/10 hover:text-(--color-text) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
             >
               Back to Store
             </button>
@@ -1245,7 +1245,7 @@ export default function StoreGameDetailsPage({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+          className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Volver al Store
@@ -1310,7 +1310,7 @@ export default function StoreGameDetailsPage({
       <button
         type="button"
         onClick={onBack}
-        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
+        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Volver al Store

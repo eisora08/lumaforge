@@ -2,43 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Zap } from "lucide-react";
 
 import type { NormalizedCatalogGame } from "../../services/globalCatalogService";
-import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
 import { useSettings } from "../../context/SettingsContext";
 import { deduplicateByAppId } from "../../services/gameCacheService";
-import { getBestStoreImage } from "../../services/storeImageCache";
 import { setPendingStoreDetailAppId } from "../../services/storeNavigationService";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
 import { subscribeCatalogSections, getCachedCatalogSections } from "../../services/storeCatalogOrchestrator";
+import { mapStoreCatalogGameToCard } from "../../services/globalCatalogService";
+import { getCatalogSectionWithFallback, filterAndSortCatalogGames, resolveBestMedia } from "./dashboardSectionHelpers";
 
 type Props = {
   onNavigate?: (page: AppPage) => void;
   maxItems?: number;
 };
-
-const TOOL_KEYWORDS = [
-  "steamworks", "redistributable", "steam cloud", "steamvr",
-  "proton", "runtime", "sdk", "tool", "directx", "vcredist",
-  "framework", "driver", "utility",
-];
-
-function isToolByTitle(title: string): boolean {
-  const lower = title.toLowerCase();
-  for (const kw of TOOL_KEYWORDS) {
-    if (lower.includes(kw)) return true;
-  }
-  return false;
-}
-
-function resolveBestMedia(game: NormalizedCatalogGame): string | null {
-  if (game.appId) {
-    const storeImage = getBestStoreImage(game.appId, ["capsule", "header", "hero"]);
-    if (storeImage) return storeImage;
-  }
-  return game.media.capsuleImageV5 || game.media.headerImage || game.media.libraryHeroImage || game.media.capsuleImage || game.media.backgroundImage || null;
-}
 
 function formatReleaseDate(date?: string | null): string | null {
   if (!date) return null;
@@ -59,6 +37,7 @@ export default function TrendingRightNowSection({ onNavigate, maxItems }: Props)
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [sections, setSections] = useState(() => getCachedCatalogSections());
+  const [curatedFallback, setCuratedFallback] = useState<NormalizedCatalogGame[] | null>(null);
 
   useEffect(() => {
     const unsub = subscribeCatalogSections((s) => setSections([...s]));
@@ -71,29 +50,42 @@ export default function TrendingRightNowSection({ onNavigate, maxItems }: Props)
     return set;
   }, [libraryGames]);
 
+  // Synchronous orchestrator lookup (fast path)
+  const orchestratorGames = useMemo(() => {
+    const found = sections.find((s) => s.sectionId === "new-noteworthy");
+    if (!found || found.games.length === 0) return null;
+    return found.games.map(mapStoreCatalogGameToCard);
+  }, [sections]);
+
+  // Async curated fallback (only when orchestrator has no data for this section)
+  useEffect(() => {
+    if (orchestratorGames !== null) {
+      setCuratedFallback(null);
+      return;
+    }
+    if (sections.length === 0) return;
+
+    let cancelled = false;
+    getCatalogSectionWithFallback(sections, "new-noteworthy").then((games) => {
+      if (!cancelled && games && orchestratorGames === null) {
+        setCuratedFallback(games);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [orchestratorGames, sections]);
+
   const displayGames = useMemo(() => {
-    const noteworthySection = sections.find((s) => s.sectionId === "new-noteworthy");
-    if (!noteworthySection || noteworthySection.games.length === 0) return [];
-
-    const cards = noteworthySection.games.map(mapStoreCatalogGameToCard);
-
-    const filtered = cards.filter(
-      (g) => g.appId && g.title && !libraryAppIds.has(g.appId) && !isToolByTitle(g.title),
-    );
-    if (filtered.length === 0) return [];
-
-    const withMedia = filtered.filter((g) => resolveBestMedia(g));
-    const withoutMedia = filtered.filter((g) => !resolveBestMedia(g));
-    const sorted = [...withMedia, ...withoutMedia];
-    return sorted.slice(0, maxItems ?? 8);
-  }, [sections, libraryAppIds, maxItems]);
+    const source = orchestratorGames ?? curatedFallback;
+    if (!source) return [];
+    return filterAndSortCatalogGames(source, libraryAppIds, maxItems ?? 8);
+  }, [orchestratorGames, curatedFallback, libraryAppIds, maxItems]);
 
   const logRef = useRef<string>("");
   useEffect(() => {
     const rendered = displayGames.length;
-    const noteworthySection = sections.find((s) => s.sectionId === "new-noteworthy");
-    const candidates = noteworthySection?.games.length ?? 0;
-    const key = `${rendered}|${candidates}|orchestrator`;
+    const candidates = orchestratorGames?.length ?? curatedFallback?.length ?? 0;
+    const source = orchestratorGames ? "orchestrator" : curatedFallback ? "curated" : "none";
+    const key = `${rendered}|${candidates}|${source}`;
 
     if (sections.length === 0) {
       if (logRef.current !== "loading") logRef.current = "loading";
@@ -110,7 +102,7 @@ export default function TrendingRightNowSection({ onNavigate, maxItems }: Props)
     if (logRef.current !== key) {
       logRef.current = key;
     }
-  }, [displayGames, sections]);
+  }, [displayGames, sections, orchestratorGames, curatedFallback]);
 
   if (sections.length === 0 || displayGames.length === 0) return null;
 
