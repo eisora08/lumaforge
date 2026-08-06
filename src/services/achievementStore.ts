@@ -40,11 +40,6 @@ export const SOURCE_PRIORITY: Record<string, number> = {
   "setup-required": 8,
   "disabled": 9,
   "unavailable": 10,
-  // Non-Steam sources: on-disk detection is authoritative for non-Steam games
-  "non-steam-goldberg": 11,
-  "non-steam-codex": 11,
-  "non-steam-onlinefix": 11,
-  "non-steam-generated": 11,
 };
 
 export function isSourceNewerOrEqual(

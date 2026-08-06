@@ -59,7 +59,6 @@ import SteamAccountDetector from "../components/settings/SteamAccountDetector";
 import PageContainer from "../components/layout/PageContainer";
 import IntegrationsSection from "../components/settings/IntegrationsSection";
 import ExtensionsSettings from "../extensions/ui/ExtensionsSettings";
-import NonSteamAchievementsSection from "../components/settings/NonSteamAchievementsSection";
 
 import { defaultApiProviders } from "../data/providers";
 import { ApiProviderUserSettings } from "../types/provider";
@@ -799,13 +798,6 @@ export default function Settings() {
                       </label>
                     </div>
                   </div>
-                </SettingsSection>
-
-                <SettingsSection
-                  title="Non-Steam Achievements"
-                  description="Track achievements for cracked games, Goldberg, CODEX/RUNE, and OnlineFix."
-                >
-                  <NonSteamAchievementsSection />
                 </SettingsSection>
               </>
             )}

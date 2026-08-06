@@ -46,7 +46,6 @@ import {
   Puzzle,
   Heart,
   RefreshCw,
-  Search,
   Square,
   Trophy,
   X,
@@ -99,8 +98,6 @@ import { showAchievementToast, showGroupedAchievementToast, showTestAchievementT
 import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "../../services/achievementNotificationService";
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
-import { detectAndLoad, detectAndLoadAndStore } from "../../services/nonSteamAchievementService";
-import type { NonSteamDetectionResult } from "../../services/tauri";
 import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
 import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSnapshotService";
@@ -245,164 +242,6 @@ function StatInline({ icon, label, value }: { icon: React.ReactNode; label: stri
       <span className="shrink-0">{icon}</span>
       <span className="hidden sm:inline text-[10px] uppercase tracking-wider">{label}:</span>
       <span className="font-medium text-(--color-text)">{value}</span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Non-Steam Achievement Config — inline mini-panel for games without Steam
-// achievement support. Detects Goldberg / CODEX / OnlineFix locally.
-// ---------------------------------------------------------------------------
-
-const _NS_SOURCE_LABELS: Record<string, string> = {
-  goldberg: "Goldberg Emulator",
-  codex: "CODEX / RUNE",
-  onlinefix: "OnlineFix",
-};
-
-function NonSteamAchConfig({
-  game,
-  appIdStr,
-  onDetect,
-}: {
-  game: LibraryGame;
-  appIdStr: string | undefined;
-  onDetect: (summary: GameAchievementsSummary | null) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [gameDir, setGameDir] = useState(game.installDir || "");
-  const [appIdDraft, setAppIdDraft] = useState(appIdStr || "");
-  const [detecting, setDetecting] = useState(false);
-  const [result, setResult] = useState<NonSteamDetectionResult | null>(null);
-
-  const handleDetect = useCallback(async () => {
-    const dir = gameDir.trim();
-    const id = parseInt(appIdDraft, 10);
-    if (!dir || isNaN(id) || id <= 0) return;
-
-    setDetecting(true);
-    try {
-      const out = await detectAndLoad(id, dir);
-      setResult(out.detection);
-      if (out.summary) {
-        onDetect(out.summary);
-      }
-    } catch (e) {
-      console.error("[NON_STEAM_ACH][GAMEDETAILS_DETECT_ERROR]", e);
-    } finally {
-      setDetecting(false);
-    }
-  }, [gameDir, appIdDraft, onDetect]);
-
-  if (!expanded) {
-    return (
-      <div className="mt-3">
-        <p className="text-xs text-(--color-muted)">
-          Achievements are not natively supported for this game.
-        </p>
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
-        >
-          <Search className="h-3.5 w-3.5" />
-          Configure non-Steam achievements
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-3 space-y-3">
-      <p className="text-[10px] text-(--color-muted)/60">
-        Detect achievements from Goldberg, CODEX/RUNE, or OnlineFix crack files in the game directory.
-        A Steam AppID is required for schema lookup.
-      </p>
-
-      <div className="space-y-2">
-        <div>
-          <label className="mb-0.5 block text-[10px] font-medium text-(--color-muted)">
-            Game Directory
-          </label>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="text"
-              value={gameDir}
-              onChange={(e) => setGameDir(e.target.value)}
-              className="h-8 flex-1 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted)/40 focus:border-(--color-accent)/50"
-              placeholder="C:\Games\My Game"
-            />
-            <button
-              type="button"
-              onClick={async () => {
-                const { pickFolder } = await import("../../services/tauri");
-                const folder = await pickFolder("Select Game Directory");
-                if (folder) setGameDir(folder);
-              }}
-              className="shrink-0 rounded-lg border border-(--surface-active-border) bg-white/[0.04] px-2 py-1.5 text-[10px] font-medium text-(--color-text) transition hover:bg-white/10"
-            >
-              <FolderOpen className="inline h-3 w-3" />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex items-end gap-2">
-          <div className="flex-1">
-            <label className="mb-0.5 block text-[10px] font-medium text-(--color-muted)">
-              AppID
-            </label>
-            <input
-              type="number"
-              value={appIdDraft}
-              onChange={(e) => setAppIdDraft(e.target.value)}
-              className="h-8 w-full rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 text-xs text-(--color-text) outline-none placeholder:text-(--color-muted)/40 focus:border-(--color-accent)/50"
-              placeholder="480"
-              min={1}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={handleDetect}
-            disabled={detecting || !gameDir.trim() || !appIdDraft}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-(--color-accent) px-3 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-          >
-            {detecting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Search className="h-3.5 w-3.5" />
-            )}
-            Detect
-          </button>
-        </div>
-      </div>
-
-      {result && (
-        <div className={`rounded-xl border p-3 text-xs ${
-          result.hasAchievements
-            ? "border-emerald-400/20 bg-emerald-500/8 text-emerald-400"
-            : "border-amber-400/20 bg-amber-500/8 text-amber-400"
-        }`}>
-          <p className="font-medium">
-            {result.hasAchievements
-              ? `${result.achievementCount} achievements found`
-              : "No achievements found"}
-          </p>
-          {result.source && (
-            <p className="mt-0.5 text-[10px] opacity-80">
-              Source: {_NS_SOURCE_LABELS[result.source] || result.source}
-            </p>
-          )}
-          <p className="mt-0.5 text-[10px] opacity-70">{result.message}</p>
-        </div>
-      )}
-
-      <button
-        type="button"
-        onClick={() => { setExpanded(false); setResult(null); }}
-        className="text-[10px] text-(--color-muted)/60 transition hover:text-(--color-muted)"
-      >
-        Collapse
-      </button>
     </div>
   );
 }
@@ -1070,21 +909,6 @@ export default function LibraryGameDetails({
       });
     return () => { cancelled = true; };
   }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
-
-  // Auto-detect non-Steam achievements when no summary exists and game has an install dir.
-  // Runs after the store check + support-check resolve so we know if Steam achievements are supported.
-  useEffect(() => {
-    if (!appIdStr || !game.installDir) return;
-    if (achievementsSummary) return; // already loaded
-    if (game.achievementsSupported || localAchSupportFound) return; // Steam game
-    let cancelled = false;
-    detectAndLoadAndStore(Number(appIdStr), game.installDir).then((summary) => {
-      if (cancelled || !summary) return;
-      setAchievementsSummary(summary);
-      console.log(`[NON_STEAM_ACH][AUTO_DETECT] appid=${appIdStr} source=${summary.source} total=${summary.total} unlocked=${summary.unlocked}`);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [appIdStr, game.installDir, game.achievementsSupported, localAchSupportFound, achievementsSummary]);
 
   // Auto-sync: subscribe to auto-sync events to update achievements state
   useEffect(() => {
@@ -2498,39 +2322,26 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                     <button
                       type="button"
                       onClick={async () => {
+                        const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
                         if (!appIdStr) return;
                         setAchievementsLoading(true);
                         try {
-                          let s: GameAchievementsSummary;
-                          if (game.source === "steam") {
-                            // Steam games: use the real Steam achievement resolver directly.
-                            // NEVER call detectAndLoadAndStore for Steam games -- its auto-generate
-                            // fallback creates a fake "generated-schema" entry in the non-steam
-                            // achievement dir, overwriting real Steam achievement data.
-                            const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
-                            achievementStore.deleteSummary(appIdStr);
-                            s = await resolveSteamAchievements({
-                              appId: appIdStr,
-                              steamWebApiKey: settings.steamWebApiKey || undefined,
-                              steamId64: settings.steamId64 || undefined,
-                              accountId: settings.steamAccountId || undefined,
-                              steamPath: settings.steamRoot || undefined,
-                              forceRefresh: true,
-                              steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                              achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                            });
-                          } else {
-                            // Non-Steam games: detect Goldberg/CODEX/OnlineFix data first.
-                            const { detectAndLoadAndStore } = await import("../../services/nonSteamAchievementService");
-                            const result = await detectAndLoadAndStore(Number(appIdStr), game.installDir || "");
-                            if (result) {
-                              s = result;
-                            } else {
-                              console.warn(`[ACH][REFRESH] no achievement data for non-Steam game appid=${appIdStr} source=${game.source}`);
-                              setAchievementsLoading(false);
-                              return;
-                            }
-                          }
+                          // CRITICAL: delete existing store entry BEFORE resolving.
+                          // resolveSteamAchievements has a post-call store-freshness check (line ~968)
+                          // that returns store data if it has higher source priority.
+                          // Without this delete, a "librarycache" entry (priority 0) would
+                          // cause the resolver to return stale 13/42 instead of fresh 15/42.
+                          achievementStore.deleteSummary(appIdStr);
+                          const s = await resolveSteamAchievements({
+                            appId: appIdStr,
+                            steamWebApiKey: settings.steamWebApiKey || undefined,
+                            steamId64: settings.steamId64 || undefined,
+                            accountId: settings.steamAccountId || undefined,
+                            steamPath: settings.steamRoot || undefined,
+                            forceRefresh: true,
+                            steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                            achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                          });
                           if (appIdStr) {
                             if (appIdStr === "268910") {
                               const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
@@ -2560,16 +2371,11 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                     </button>
                   </div>
                 ) : (
-                  <NonSteamAchConfig
-                    game={game}
-                    appIdStr={appIdStr}
-                    onDetect={(summary) => {
-                      if (summary) {
-                        setAchievementsSummary(summary);
-                        if (appIdStr) achievementStore.setSummary(appIdStr, summary);
-                      }
-                    }}
-                  />
+                  <div className="mt-3">
+                    <p className="text-xs text-(--color-muted)">
+                      Achievements are not supported for this game.
+                    </p>
+                  </div>
                 )}
               </div>
               )}
@@ -2699,30 +2505,16 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
               toast.error("Failed to refresh achievements", { duration: 3000 });
             };
 
-            if (game.source === "steam") {
-              resolveSteamAchievements({
-                appId: appIdStr!,
-                steamWebApiKey: settings.steamWebApiKey || undefined,
-                steamId64: settings.steamId64 || undefined,
-                accountId: settings.steamAccountId || undefined,
-                steamPath: settings.steamRoot || undefined,
-                forceRefresh: true,
-                steamAchievementsEnabled: settings.steamAchievementsEnabled,
-                achievementSchemaPath: settings.achievementSchemaPath || undefined,
-              }).then(handleResult).catch(handleError);
-            } else {
-              import("../../services/nonSteamAchievementService").then(({ detectAndLoadAndStore }) =>
-                detectAndLoadAndStore(Number(appIdStr), game.installDir || "")
-              ).then((result) => {
-                if (result) {
-                  handleResult(result);
-                } else {
-                  console.warn(`[ACH][REFRESH] no achievement data for non-Steam game appid=${appIdStr} source=${game.source}`);
-                  toast("No achievement data available for this game.", { duration: 3000 });
-                  setAchievementsRefreshing(false);
-                }
-              }).catch(handleError);
-            }
+            resolveSteamAchievements({
+              appId: appIdStr!,
+              steamWebApiKey: settings.steamWebApiKey || undefined,
+              steamId64: settings.steamId64 || undefined,
+              accountId: settings.steamAccountId || undefined,
+              steamPath: settings.steamRoot || undefined,
+              forceRefresh: true,
+              steamAchievementsEnabled: settings.steamAchievementsEnabled,
+              achievementSchemaPath: settings.achievementSchemaPath || undefined,
+            }).then(handleResult).catch(handleError);
           }}
           refreshing={achievementsRefreshing}
         />
