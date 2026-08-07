@@ -3683,3 +3683,11 @@ export async function generateAchievementSchema(
     platform: platform ?? null,
   });
 }
+
+export async function downloadStoreImage(
+  url: string,
+  appId: string,
+  role: string,
+): Promise<string> {
+  return await invoke<string>("download_store_image", { url, appId, role });
+}

@@ -660,6 +660,49 @@ pub fn update_game_appinfo_media(
 }
 
 // ---------------------------------------------------------------------------
+// Store image download — bypasses CORS by downloading via Rust reqwest
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn download_store_image(
+    _app_handle: AppHandle,
+    url: String,
+    app_id: String,
+    role: String,
+) -> Result<String, String> {
+    let app_dir = _app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let images_dir = app_dir.join("store").join("images");
+    std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
+
+    let safe_name = format!("{}_{}", app_id.replace('/', "_"), role.replace('/', "_"));
+    let local_path = images_dir.join(format!("{}.jpg", safe_name));
+
+    // Already downloaded — return absolute path (TS converts to asset://)
+    if local_path.exists() && local_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+        return Ok(local_path.to_string_lossy().to_string());
+    }
+
+    // Download via async reqwest
+    let client = reqwest::Client::builder()
+        .user_agent("LumaForge/0.1.0")
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    std::fs::write(&local_path, &bytes).map_err(|e| e.to_string())?;
+
+    // Return absolute path — TS uses convertFileSrc() to get asset:// URL
+    Ok(local_path.to_string_lossy().to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Batch name update — single transaction for boot enrichment
 // ---------------------------------------------------------------------------
 

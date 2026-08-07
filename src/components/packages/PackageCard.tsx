@@ -16,6 +16,7 @@ import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
 import { useHoverPrefetch } from "../../hooks/useHoverPrefetch";
+import { resolveStoreImageUrl } from "../../services/storeImageDownloader";
 
 type StoreBadge = {
   type: string;
@@ -196,6 +197,7 @@ function PackageCardRaw({
 
   const [imageFailed, setImageFailed] = useState(false);
   const [imageFallbackIndex, setImageFallbackIndex] = useState(0);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
 
   const _mountedRef = useRef(true);
@@ -212,6 +214,19 @@ function PackageCardRaw({
   );
   const displayImageUrl: string | undefined = imageFallbackChain[imageFallbackIndex];
   const hasMoreFallbacks = imageFallbackIndex + 1 < imageFallbackChain.length;
+
+  // Resolve Store card images via Rust (bypasses CORS, serves via asset://)
+  useEffect(() => {
+    if (!displayImageUrl || displayImageUrl.startsWith("asset://") || displayImageUrl.startsWith("file://")) {
+      setResolvedUrl(null);
+      return;
+    }
+    let cancelled = false;
+    resolveStoreImageUrl(game.appId, "capsule", displayImageUrl).then((url) => {
+      if (!cancelled) setResolvedUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [displayImageUrl, game.appId]);
 
   function handleOpenDetails(event?: React.MouseEvent) {
     event?.stopPropagation();
@@ -242,7 +257,7 @@ function PackageCardRaw({
         {/* Full-bleed cover image */}
         {displayImageUrl && !imageFailed ? (
           <CardImage
-            src={displayImageUrl}
+            src={resolvedUrl ?? displayImageUrl}
             alt={displayTitle}
             objectClass="object-cover"
             onError={() => {
@@ -340,7 +355,7 @@ function PackageCardRaw({
     >
       {displayImageUrl && !imageFailed ? (
         <CardImage
-          src={displayImageUrl}
+          src={resolvedUrl ?? displayImageUrl}
           alt={displayTitle}
           objectClass="object-cover"
           onError={() => {

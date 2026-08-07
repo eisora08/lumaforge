@@ -15,6 +15,7 @@ import type { PackageGame } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
+import { resolveStoreImageUrl } from "../../services/storeImageDownloader";
 type StoreDiscoverHeroCarouselProps = {
   games: PackageGame[];
   storeMetadataByAppId: Record<number, SteamAppMetadata>;
@@ -73,20 +74,36 @@ export default function StoreDiscoverHeroCarousel({
     ? getGameImage(activeGame, storeMetadataByAppId, sgdbArtworkByAppId)
     : undefined;
 
+  // Resolve hero image via Rust (bypasses CORS, serves via asset://)
+  const [resolvedHeroUrl, setResolvedHeroUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!ambientImage || ambientImage.startsWith("asset://") || ambientImage.startsWith("file://")) {
+      setResolvedHeroUrl(null);
+      return;
+    }
+    let cancelled = false;
+    const appId = activeGame?.appId ?? "0";
+    resolveStoreImageUrl(appId, "hero", ambientImage).then((url) => {
+      if (!cancelled) setResolvedHeroUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [ambientImage, activeGame?.appId]);
+  const resolvedImage = resolvedHeroUrl ?? ambientImage;
+
   // Selectable hero/background transition (Settings → Animaciones). Crossfade
   // (default) uses the two-layer fade — the previous image stays mounted with
   // fade-out while the new one fades in on each auto-advance/manual click.
   useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
   const heroTransition = getHeroTransitionSnapshot().id;
-  const { prevSrc } = useCrossfadeSrc(ambientImage);
+  const { prevSrc } = useCrossfadeSrc(resolvedImage);
 
   // Feed the ambient background with the current hero artwork. Emitted on every
   // image change (manual clicks + 7s auto-advance). The single _detail slot
   // model means this wins while the carousel is mounted; it is cleared on
   // unmount so the store-details feed / context fallback can take over.
   useEffect(() => {
-    setAmbientSource("store-hero", ambientImage ?? null);
-  }, [ambientImage]);
+    setAmbientSource("store-hero", resolvedImage ?? null);
+  }, [resolvedImage]);
   useEffect(() => () => clearAmbientSource("store-hero"), []);
 
   useEffect(() => {
@@ -129,7 +146,7 @@ export default function StoreDiscoverHeroCarousel({
   }
 
   const hasAvailableSource = current.sources.some((s) => s.available);
-  const currentImage = getGameImage(current, storeMetadataByAppId, sgdbArtworkByAppId);
+  const currentImage = resolvedImage ?? getGameImage(current, storeMetadataByAppId, sgdbArtworkByAppId);
   const railGames = games;
 
   // Dev-only: verify hero slides, pagination, and sidebar always match
