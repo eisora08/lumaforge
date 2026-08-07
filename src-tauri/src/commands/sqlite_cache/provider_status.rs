@@ -16,7 +16,8 @@ pub struct ProviderStatusRow {
     pub updated_at: i64,
 }
 
-fn get_provider_status_inner(
+/// Public helper for use by other modules (e.g. provider_status_cache.rs).
+pub fn get_provider_status_inner(
     conn: &Connection,
     app_id: &str,
     provider_id: &str,
@@ -36,6 +37,29 @@ fn get_provider_status_inner(
     )
     .optional()
     .map_err(|e| format!("Query error: {}", e))
+}
+
+/// Public helper for use by other modules (e.g. provider_status_cache.rs).
+pub fn upsert_provider_status_inner(
+    conn: &Connection,
+    app_id: &str,
+    provider_id: &str,
+    data_json: &str,
+) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    conn.execute(
+        "INSERT INTO provider_status (app_id, provider_id, data, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(app_id, provider_id) DO UPDATE SET
+            data = excluded.data,
+            updated_at = excluded.updated_at",
+        rusqlite::params![app_id, provider_id, data_json, now],
+    )
+    .map_err(|e| format!("Upsert provider_status error: {}", e))?;
+    Ok(())
 }
 
 #[tauri::command]

@@ -6,7 +6,8 @@ use super::SqliteStoreDb;
 // Game catalog blob CRUD (steam-owned, debrid, installed, snapshot)
 // ---------------------------------------------------------------------------
 
-fn get_catalog_blob_inner(conn: &Connection, catalog_key: &str) -> Result<Option<String>, String> {
+/// Public helper for use by other modules (e.g. store_cache.rs).
+pub fn get_catalog_blob_inner(conn: &Connection, catalog_key: &str) -> Result<Option<String>, String> {
     conn.query_row(
         "SELECT data_json FROM game_catalog_blobs WHERE catalog_key = ?1",
         [catalog_key],
@@ -14,6 +15,24 @@ fn get_catalog_blob_inner(conn: &Connection, catalog_key: &str) -> Result<Option
     )
     .optional()
     .map_err(|e| format!("Query error: {}", e))
+}
+
+/// Public helper for use by other modules (e.g. store_cache.rs).
+pub fn upsert_catalog_blob_inner(conn: &Connection, catalog_key: &str, data_json: &str) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    conn.execute(
+        "INSERT INTO game_catalog_blobs (catalog_key, data_json, updated_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(catalog_key) DO UPDATE SET
+            data_json = excluded.data_json,
+            updated_at = excluded.updated_at",
+        rusqlite::params![catalog_key, data_json, now],
+    )
+    .map_err(|e| format!("SQLite upsert error: {}", e))?;
+    Ok(())
 }
 
 #[tauri::command]

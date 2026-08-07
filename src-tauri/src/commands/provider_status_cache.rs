@@ -1,22 +1,12 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+
+use crate::commands::sqlite_cache;
+use crate::commands::sqlite_cache::SqliteStoreDb;
 
 const DEBUG_PROVIDER_STATUS: bool = false;
-
-fn get_snapshot_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    let dir = app_dir.join("store").join("provider-status");
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create provider-status dir: {}", e))?;
-    Ok(dir.join("snapshot.json"))
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,63 +112,43 @@ pub struct ProviderStatusFile {
     pub result: Option<ProviderStatusResult>,
 }
 
-fn get_provider_status_dir(app_handle: &AppHandle, app_id: &str) -> Result<PathBuf, String> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-
-    let dir = app_dir.join("store").join("provider-status").join(app_id);
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create provider-status dir: {}", e))?;
-
-    Ok(dir)
-}
-
-fn get_provider_status_path(
-    app_handle: &AppHandle,
-    app_id: &str,
-    provider_id: &str,
-) -> Result<PathBuf, String> {
-    let filename = format!("{}.json", provider_id);
-    Ok(get_provider_status_dir(app_handle, app_id)?.join(filename))
-}
+// ─── Snapshot commands (SQLite via provider_snapshot) ──
 
 #[tauri::command]
 pub fn read_provider_status_snapshot(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Option<ProviderStatusSnapshot>, String> {
-    let path = get_snapshot_path(&app_handle)?;
-
-    if !path.exists() {
-        println!("[PROVIDER_STATUS][SNAPSHOT_LOAD] found=false path=\"{}\"", path.display());
+    let Some(inner) = store_db.0.as_ref() else {
         return Ok(None);
-    }
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read provider-status snapshot: {}", e))?;
+    let json_opt = sqlite_cache::provider_snapshot::read_provider_status_snapshot(&conn)?;
 
-    match serde_json::from_str(&content) {
+    let Some(json) = json_opt else {
+        println!("[PROVIDER_STATUS][SNAPSHOT_LOAD] found=false source=sqlite");
+        return Ok(None);
+    };
+
+    match serde_json::from_str::<ProviderStatusSnapshot>(&json) {
         Ok(data @ ProviderStatusSnapshot { schema_version: 1, .. }) => {
             println!(
-                "[PROVIDER_STATUS][SNAPSHOT_LOAD] found=true entries={} path=\"{}\"",
-                data.entries.len(),
-                path.display()
+                "[PROVIDER_STATUS][SNAPSHOT_LOAD] found=true entries={} source=sqlite",
+                data.entries.len()
             );
             Ok(Some(data))
         }
         Ok(_) => {
             println!(
-                "[PROVIDER_STATUS][SNAPSHOT_LOAD] found=true valid=false reason=bad-schema path=\"{}\"",
-                path.display()
+                "[PROVIDER_STATUS][SNAPSHOT_LOAD] found=true valid=false reason=bad-schema source=sqlite"
             );
             Ok(None)
         }
         Err(e) => {
             println!(
-                "[PROVIDER_STATUS][SNAPSHOT_LOAD] found=corrupt error=\"{}\" path=\"{}\"",
-                e,
-                path.display()
+                "[PROVIDER_STATUS][SNAPSHOT_LOAD] found=corrupt error=\"{}\" source=sqlite",
+                e
             );
             Ok(None)
         }
@@ -187,59 +157,60 @@ pub fn read_provider_status_snapshot(
 
 #[tauri::command]
 pub fn write_provider_status_snapshot(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     payload: String,
 ) -> Result<(), String> {
-    let path = get_snapshot_path(&app_handle)?;
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    fs::write(&path, &payload)
-        .map_err(|e| format!("Failed to write provider-status snapshot: {}", e))?;
+    sqlite_cache::provider_snapshot::write_provider_status_snapshot(&conn, &payload)?;
 
     Ok(())
 }
 
+// ─── Per-game provider status (SQLite via provider_status) ──
+
 #[tauri::command]
 pub fn read_provider_status(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     app_id: String,
     provider_id: String,
 ) -> Result<Option<ProviderStatusFile>, String> {
-    let path = get_provider_status_path(&app_handle, &app_id, &provider_id)?;
+    let Some(inner) = store_db.0.as_ref() else {
+        return Ok(None);
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    if !path.exists() {
+    let row = sqlite_cache::provider_status::get_provider_status_inner(&conn, &app_id, &provider_id)?;
+
+    let Some(row) = row else {
         if DEBUG_PROVIDER_STATUS {
             println!(
-                "[PROVIDER_STATUS][LOAD] appid={} provider={} found=false path=\"{}\"",
-                app_id,
-                provider_id,
-                path.display()
+                "[PROVIDER_STATUS][LOAD] appid={} provider={} found=false source=sqlite",
+                app_id, provider_id
             );
         }
         return Ok(None);
-    }
+    };
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read provider-status file: {}", e))?;
-
-    match serde_json::from_str(&content) {
+    match serde_json::from_str::<ProviderStatusFile>(&row.data) {
         Ok(data) => {
             if DEBUG_PROVIDER_STATUS {
                 println!(
-                    "[PROVIDER_STATUS][LOAD] appid={} provider={} found=true path=\"{}\"",
-                    app_id,
-                    provider_id,
-                    path.display()
+                    "[PROVIDER_STATUS][LOAD] appid={} provider={} found=true source=sqlite",
+                    app_id, provider_id
                 );
             }
             Ok(Some(data))
         }
         Err(e) => {
             println!(
-                "[PROVIDER_STATUS][LOAD] appid={} provider={} found=corrupt error=\"{}\" path=\"{}\"",
-                app_id,
-                provider_id,
-                e,
-                path.display()
+                "[PROVIDER_STATUS][LOAD] appid={} provider={} found=corrupt error=\"{}\" source=sqlite",
+                app_id, provider_id, e
             );
             Ok(None)
         }
@@ -248,34 +219,28 @@ pub fn read_provider_status(
 
 #[tauri::command]
 pub fn write_provider_status(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     app_id: String,
     provider_id: String,
     payload: String,
 ) -> Result<(), String> {
-    let path = get_provider_status_path(&app_handle, &app_id, &provider_id)?;
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     println!(
-        "[PROVIDER_STATUS][WRITE_CALL] appid={} provider={} path=\"{}\"",
-        app_id,
-        provider_id,
-        path.display()
+        "[PROVIDER_STATUS][WRITE_CALL] appid={} provider={} source=sqlite",
+        app_id, provider_id
     );
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create provider-status dir: {}", e))?;
-    }
-
-    fs::write(&path, &payload)
-        .map_err(|e| format!("Failed to write provider-status file: {}", e))?;
+    sqlite_cache::provider_status::upsert_provider_status_inner(&conn, &app_id, &provider_id, &payload)?;
 
     if DEBUG_PROVIDER_STATUS {
         println!(
-            "[PROVIDER_STATUS][WRITE_OK] appid={} provider={} path=\"{}\"",
-            app_id,
-            provider_id,
-            path.display()
+            "[PROVIDER_STATUS][WRITE_OK] appid={} provider={} source=sqlite",
+            app_id, provider_id
         );
     }
 

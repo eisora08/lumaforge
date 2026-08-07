@@ -6,6 +6,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use crate::commands::sqlite_cache;
+use crate::commands::sqlite_cache::SqliteStoreDb;
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -58,7 +61,7 @@ fn log_store(msg: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Path helpers — all under app_data/store/
+// Path helpers — only for image downloads and reviews (kept on disk)
 // ---------------------------------------------------------------------------
 
 fn get_store_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
@@ -86,18 +89,6 @@ fn get_reviews_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn get_appinfo_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_store_dir(app_handle)?.join("appinfo.json"))
-}
-
-fn get_discovery_index_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_store_dir(app_handle)?.join("discovery-index.json"))
-}
-
-fn get_catalog_sections_cache_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_store_dir(app_handle)?.join("catalog-sections-cache.json"))
-}
-
 fn get_review_path(app_handle: &AppHandle, app_id: u32) -> Result<PathBuf, String> {
     Ok(get_reviews_dir(app_handle)?.join(format!("{}.json", app_id)))
 }
@@ -121,84 +112,83 @@ fn get_media_game_dir(app_handle: &AppHandle, app_id: u32) -> Result<PathBuf, St
     Ok(dir)
 }
 
-fn get_media_metadata_path(app_handle: &AppHandle, app_id: u32) -> Result<PathBuf, String> {
-    Ok(get_media_game_dir(app_handle, app_id)?.join("metadata.json"))
-}
-
 // ---------------------------------------------------------------------------
-// appinfo.json  —  app_data/store/appinfo.json
+// appinfo.json  —  SQLite via store_appinfo_cache
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn read_store_appinfo(app_handle: AppHandle) -> Result<StoreAppInfoMap, String> {
-    let path = get_appinfo_path(&app_handle)?;
-
-    if !path.exists() {
-        log_store("appinfo loaded (empty)");
+pub fn read_store_appinfo(
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
+) -> Result<StoreAppInfoMap, String> {
+    let Some(inner) = store_db.0.as_ref() else {
+        log_store("appinfo loaded (empty — no DB)");
         return Ok(StoreAppInfoMap::new());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    let rows = sqlite_cache::store_appinfo_cache::read_all_store_appinfo(&conn)?;
+
+    let mut map = StoreAppInfoMap::new();
+    for (app_id, data_json) in rows {
+        match serde_json::from_str::<StoreAppInfoEntry>(&data_json) {
+            Ok(entry) => {
+                map.insert(app_id, entry);
+            }
+            Err(_) => {
+                log_store(&format!("appinfo entry corrupt for {}", app_id));
+            }
+        }
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read store appinfo: {}", e))?;
-
-    match serde_json::from_str(&content) {
-        Ok(map) => {
-            log_store("appinfo loaded");
-            Ok(map)
-        }
-        Err(_) => {
-            log_store("appinfo corrupt — ignoring, will replace on write");
-            Ok(StoreAppInfoMap::new())
-        }
-    }
+    log_store(&format!("appinfo loaded ({} entries)", map.len()));
+    Ok(map)
 }
 
 #[tauri::command]
 pub fn write_store_appinfo(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     appinfo: StoreAppInfoMap,
 ) -> Result<(), String> {
-    let path = get_appinfo_path(&app_handle)?;
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    let content = serde_json::to_string_pretty(&appinfo)
-        .map_err(|e| format!("Failed to serialize store appinfo: {}", e))?;
+    for (app_id, entry) in &appinfo {
+        let data_json = serde_json::to_string(entry)
+            .map_err(|e| format!("Failed to serialize store appinfo entry {}: {}", app_id, e))?;
+        sqlite_cache::store_appinfo_cache::write_store_appinfo(&conn, app_id, &data_json)?;
+    }
 
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write store appinfo: {}", e))?;
-
-    log_store("appinfo saved");
+    log_store(&format!("appinfo saved ({} entries)", appinfo.len()));
     Ok(())
 }
 
 #[tauri::command]
 pub fn update_store_appinfo_entry(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     app_id: String,
     entry: StoreAppInfoEntry,
 ) -> Result<(), String> {
-    let path = get_appinfo_path(&app_handle)?;
-
-    let mut map: StoreAppInfoMap = if path.exists() {
-        let content = fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        StoreAppInfoMap::new()
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
     };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    map.insert(app_id, entry);
+    let data_json = serde_json::to_string(&entry)
+        .map_err(|e| format!("Failed to serialize store appinfo entry: {}", e))?;
 
-    let content = serde_json::to_string_pretty(&map)
-        .map_err(|e| format!("Failed to serialize store appinfo: {}", e))?;
-
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write store appinfo: {}", e))?;
+    sqlite_cache::store_appinfo_cache::write_store_appinfo(&conn, &app_id, &data_json)?;
 
     log_store("appinfo entry updated");
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Store review summaries  —  app_data/store/reviews/{appid}.json
+// Store review summaries  —  app_data/store/reviews/{appid}.json (UNCHANGED)
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -263,27 +253,29 @@ pub fn write_store_review_summary(
 }
 
 // ---------------------------------------------------------------------------
-// Store media cache  —  app_data/store/media/steam-{appid}/
+// Store media cache  —  SQLite metadata + disk image downloads
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
 pub fn get_store_media_cache(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     app_id: u32,
 ) -> Result<Option<StoreMediaCacheEntry>, String> {
-    let path = get_media_metadata_path(&app_handle, app_id)?;
+    let Some(inner) = store_db.0.as_ref() else {
+        return Ok(None);
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    if !path.exists() {
+    let key = format!("{}", app_id);
+    let json_opt = sqlite_cache::store_media_cache::read_store_media_cache(&conn, &key)?;
+
+    let Some(json) = json_opt else {
         log_store(&format!("media miss for {}", app_id));
         return Ok(None);
-    }
-
-    let content = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Ok(None),
     };
 
-    match serde_json::from_str(&content) {
+    match serde_json::from_str::<StoreMediaCacheEntry>(&json) {
         Ok(entry) => {
             log_store(&format!("media hit for {}", app_id));
             Ok(Some(entry))
@@ -298,6 +290,7 @@ pub fn get_store_media_cache(
 #[tauri::command]
 pub fn cache_store_remote_media(
     app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
     app_id: u32,
     capsule_url: Option<String>,
     header_url: Option<String>,
@@ -350,22 +343,22 @@ pub fn cache_store_remote_media(
             if let Ok(client) = &http_client {
                 match client.get(url).send() {
                     Ok(response) => {
-                    if let Ok(bytes) = response.bytes() {
-                        if fs::write(&dest_path, &bytes).is_ok() {
-                            let path_str = dest_path.to_string_lossy().to_string();
-                            match *field {
-                                "capsule" => entry.capsule_path = Some(path_str),
-                                "header" => entry.header_path = Some(path_str),
-                                "hero" => entry.hero_path = Some(path_str),
-                                "background" => entry.background_path = Some(path_str),
-                                "logo" => entry.logo_path = Some(path_str),
-                                _ => {}
+                        if let Ok(bytes) = response.bytes() {
+                            if fs::write(&dest_path, &bytes).is_ok() {
+                                let path_str = dest_path.to_string_lossy().to_string();
+                                match *field {
+                                    "capsule" => entry.capsule_path = Some(path_str),
+                                    "header" => entry.header_path = Some(path_str),
+                                    "hero" => entry.hero_path = Some(path_str),
+                                    "background" => entry.background_path = Some(path_str),
+                                    "logo" => entry.logo_path = Some(path_str),
+                                    _ => {}
+                                }
                             }
                         }
                     }
+                    Err(_) => {}
                 }
-                Err(_) => {}
-            }
             }
         }
     }
@@ -376,10 +369,13 @@ pub fn cache_store_remote_media(
         .as_secs();
     entry.updated_at = Some(now);
 
-    // Save metadata.json
-    let metadata_path = game_dir.join("metadata.json");
-    if let Ok(content) = serde_json::to_string_pretty(&entry) {
-        let _ = fs::write(&metadata_path, &content);
+    // Save metadata to SQLite
+    let key = format!("{}", app_id);
+    if let Some(inner) = store_db.0.as_ref() {
+        let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
+        if let Ok(json) = serde_json::to_string(&entry) {
+            let _ = sqlite_cache::store_media_cache::write_store_media_cache(&conn, &key, &json);
+        }
     }
 
     log_store(&format!("media cached for {}", app_id));
@@ -387,150 +383,175 @@ pub fn cache_store_remote_media(
 }
 
 // ---------------------------------------------------------------------------
-// Discovery index  —  app_data/store/discovery-index.json
+// Discovery index  —  SQLite via catalog_blobs
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
-pub fn read_store_discovery_index(app_handle: AppHandle) -> Result<Option<serde_json::Value>, String> {
-    let path = get_discovery_index_path(&app_handle)?;
+const DISCOVERY_INDEX_KEY: &str = "discovery-index";
 
-    if !path.exists() {
+#[tauri::command]
+pub fn read_store_discovery_index(
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(inner) = store_db.0.as_ref() else {
+        log_store("discovery index loaded (none — no DB)");
+        return Ok(None);
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    let json_opt = sqlite_cache::catalog_blobs::get_catalog_blob_inner(&conn, DISCOVERY_INDEX_KEY)?;
+
+    let Some(json) = json_opt else {
         log_store("discovery index loaded (none on disk)");
         return Ok(None);
-    }
+    };
 
-    match fs::read_to_string(&path) {
-        Ok(content) => match serde_json::from_str(&content) {
-            Ok(value) => {
-                log_store("discovery index loaded");
-                Ok(Some(value))
-            }
-            Err(_) => {
-                log_store("discovery index corrupt — ignoring");
-                Ok(None)
-            }
-        },
-        Err(e) => {
-            log_store(&format!("discovery index read error: {}", e));
+    match serde_json::from_str(&json) {
+        Ok(value) => {
+            log_store("discovery index loaded");
+            Ok(Some(value))
+        }
+        Err(_) => {
+            log_store("discovery index corrupt — ignoring");
             Ok(None)
         }
     }
 }
 
 #[tauri::command]
-pub fn write_store_discovery_index(app_handle: AppHandle, data: serde_json::Value) -> Result<(), String> {
-    let path = get_discovery_index_path(&app_handle)?;
+pub fn write_store_discovery_index(
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
+    data: serde_json::Value,
+) -> Result<(), String> {
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     let content = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("Failed to serialize discovery index: {}", e))?;
 
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write discovery index: {}", e))?;
+    sqlite_cache::catalog_blobs::upsert_catalog_blob_inner(&conn, DISCOVERY_INDEX_KEY, &content)?;
 
     log_store(&format!("discovery index saved ({} bytes)", content.len()));
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Catalog sections cache  —  app_data/store/catalog-sections-cache.json
+// Catalog sections cache  —  SQLite via catalog_blobs
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
-pub fn read_store_catalog_sections_cache(app_handle: AppHandle) -> Result<Option<serde_json::Value>, String> {
-    let path = get_catalog_sections_cache_path(&app_handle)?;
+const CATALOG_SECTIONS_KEY: &str = "catalog-sections-cache";
 
-    if !path.exists() {
+#[tauri::command]
+pub fn read_store_catalog_sections_cache(
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(inner) = store_db.0.as_ref() else {
+        log_store("catalog sections cache loaded (none — no DB)");
+        return Ok(None);
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    let json_opt = sqlite_cache::catalog_blobs::get_catalog_blob_inner(&conn, CATALOG_SECTIONS_KEY)?;
+
+    let Some(json) = json_opt else {
         log_store("catalog sections cache loaded (none on disk)");
         return Ok(None);
-    }
+    };
 
-    match fs::read_to_string(&path) {
-        Ok(content) => match serde_json::from_str(&content) {
-            Ok(value) => {
-                log_store("catalog sections cache loaded");
-                Ok(Some(value))
-            }
-            Err(_) => {
-                log_store("catalog sections cache corrupt — ignoring");
-                Ok(None)
-            }
-        },
-        Err(e) => {
-            log_store(&format!("catalog sections cache read error: {}", e));
+    match serde_json::from_str(&json) {
+        Ok(value) => {
+            log_store("catalog sections cache loaded");
+            Ok(Some(value))
+        }
+        Err(_) => {
+            log_store("catalog sections cache corrupt — ignoring");
             Ok(None)
         }
     }
 }
 
 #[tauri::command]
-pub fn write_store_catalog_sections_cache(app_handle: AppHandle, data: serde_json::Value) -> Result<(), String> {
-    let path = get_catalog_sections_cache_path(&app_handle)?;
+pub fn write_store_catalog_sections_cache(
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
+    data: serde_json::Value,
+) -> Result<(), String> {
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     let content = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("Failed to serialize catalog sections cache: {}", e))?;
 
-    // Atomic write via temp file + rename
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, &content)
-        .map_err(|e| format!("Failed to write catalog sections cache: {}", e))?;
-    fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Failed to rename catalog sections cache: {}", e))?;
+    sqlite_cache::catalog_blobs::upsert_catalog_blob_inner(&conn, CATALOG_SECTIONS_KEY, &content)?;
 
     log_store(&format!("catalog sections cache saved ({} bytes)", content.len()));
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// SGDB artwork cache  —  app_data/store/sgdb-artwork-cache.json
+// SGDB artwork cache  —  SQLite via catalog_blobs
 // ---------------------------------------------------------------------------
 
-fn get_sgdb_artwork_cache_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_store_dir(app_handle)?.join("sgdb-artwork-cache.json"))
-}
+const SGDB_ARTWORK_KEY: &str = "sgdb-artwork-cache";
 
 #[tauri::command]
-pub fn read_store_sgdb_artwork_cache(app_handle: AppHandle) -> Result<Option<serde_json::Value>, String> {
-    let path = get_sgdb_artwork_cache_path(&app_handle)?;
+pub fn read_store_sgdb_artwork_cache(
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(inner) = store_db.0.as_ref() else {
+        log_store("sgdb artwork cache loaded (none — no DB)");
+        return Ok(None);
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    if !path.exists() {
+    let json_opt = sqlite_cache::catalog_blobs::get_catalog_blob_inner(&conn, SGDB_ARTWORK_KEY)?;
+
+    let Some(json) = json_opt else {
         log_store("sgdb artwork cache loaded (none on disk)");
         return Ok(None);
-    }
+    };
 
-    match fs::read_to_string(&path) {
-        Ok(content) => match serde_json::from_str(&content) {
-            Ok(value) => {
-                log_store("sgdb artwork cache loaded");
-                Ok(Some(value))
-            }
-            Err(_) => {
-                log_store("sgdb artwork cache corrupt — ignoring");
-                Ok(None)
-            }
-        },
-        Err(e) => {
-            log_store(&format!("sgdb artwork cache read error: {}", e));
+    match serde_json::from_str(&json) {
+        Ok(value) => {
+            log_store("sgdb artwork cache loaded");
+            Ok(Some(value))
+        }
+        Err(_) => {
+            log_store("sgdb artwork cache corrupt — ignoring");
             Ok(None)
         }
     }
 }
 
 #[tauri::command]
-pub fn write_store_sgdb_artwork_cache(app_handle: AppHandle, data: serde_json::Value) -> Result<(), String> {
-    let path = get_sgdb_artwork_cache_path(&app_handle)?;
+pub fn write_store_sgdb_artwork_cache(
+    _app_handle: AppHandle,
+    store_db: tauri::State<'_, SqliteStoreDb>,
+    data: serde_json::Value,
+) -> Result<(), String> {
+    let Some(inner) = store_db.0.as_ref() else {
+        return Err("SQLite store DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     let content = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("Failed to serialize sgdb artwork cache: {}", e))?;
 
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write sgdb artwork cache: {}", e))?;
+    sqlite_cache::catalog_blobs::upsert_catalog_blob_inner(&conn, SGDB_ARTWORK_KEY, &content)?;
 
     log_store(&format!("sgdb artwork cache saved ({} bytes)", content.len()));
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Clear store cache
+// Clear store cache  —  clears disk cache only (SQLite is authoritative)
 // ---------------------------------------------------------------------------
 
 #[tauri::command]

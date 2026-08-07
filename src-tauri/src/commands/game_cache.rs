@@ -192,23 +192,28 @@ pub fn save_game_app_info(
 
 #[tauri::command]
 pub fn get_store_details(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     app_id: String,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<Option<StoreDetails>, String> {
-    let path = get_store_details_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        log(&format!("store-details miss for {}", app_id));
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read store details: {}", e))?;
-    match serde_json::from_str(&content) {
-        Ok(entry) => {
-            log(&format!("store-details hit for {}", app_id));
-            Ok(Some(entry))
+    let conn = db.0.as_ref().ok_or("SQLite not available")?.lock().map_err(|e| e.to_string())?;
+    let json = crate::commands::sqlite_cache::store_details_cache::read_store_details(&conn, &app_id)
+        .map_err(|e| format!("Failed to read store details from SQLite: {}", e))?;
+    match json {
+        Some(raw) => {
+            match serde_json::from_str::<StoreDetails>(&raw) {
+                Ok(entry) => {
+                    log(&format!("store-details hit for {} (sqlite)", app_id));
+                    Ok(Some(entry))
+                }
+                Err(_) => {
+                    log(&format!("store-details corrupt for {} — ignoring (sqlite)", app_id));
+                    Ok(None)
+                }
+            }
         }
-        Err(_) => {
-            log(&format!("store-details corrupt for {} — ignoring", app_id));
+        None => {
+            log(&format!("store-details miss for {} (sqlite)", app_id));
             Ok(None)
         }
     }
@@ -216,16 +221,17 @@ pub fn get_store_details(
 
 #[tauri::command]
 pub fn save_store_details(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     app_id: String,
     entry: StoreDetails,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_store_details_path(&app_handle, &app_id)?;
     let content = serde_json::to_string_pretty(&entry)
         .map_err(|e| format!("Failed to serialize store details: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write store details: {}", e))?;
-    log(&format!("store-details saved for {}", app_id));
+    let conn = db.0.as_ref().ok_or("SQLite not available")?.lock().map_err(|e| e.to_string())?;
+    crate::commands::sqlite_cache::store_details_cache::write_store_details(&conn, &app_id, &content)
+        .map_err(|e| format!("Failed to write store details to SQLite: {}", e))?;
+    log(&format!("store-details saved for {} (sqlite)", app_id));
     Ok(())
 }
 
@@ -235,40 +241,20 @@ pub fn save_store_details(
 
 #[tauri::command]
 pub fn get_game_artwork(
-    app_handle: AppHandle,
-    app_id: String,
+    _app_handle: AppHandle,
+    _app_id: String,
 ) -> Result<Option<GameArtwork>, String> {
-    let path = get_artwork_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        log(&format!("artwork miss for {}", app_id));
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read game artwork: {}", e))?;
-    match serde_json::from_str(&content) {
-        Ok(entry) => {
-            log(&format!("artwork hit for {}", app_id));
-            Ok(Some(entry))
-        }
-        Err(_) => {
-            log(&format!("artwork corrupt for {} — ignoring", app_id));
-            Ok(None)
-        }
-    }
+    println!("[MEDIA][ARTWORK_DEPRECATED] get_game_artwork called — artwork is no longer persisted as a separate JSON file. Returning None.");
+    Ok(None)
 }
 
 #[tauri::command]
 pub fn save_game_artwork(
-    app_handle: AppHandle,
-    app_id: String,
-    entry: GameArtwork,
+    _app_handle: AppHandle,
+    _app_id: String,
+    _entry: GameArtwork,
 ) -> Result<(), String> {
-    let path = get_artwork_path(&app_handle, &app_id)?;
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game artwork: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game artwork: {}", e))?;
-    log(&format!("artwork saved for {}", app_id));
+    println!("[MEDIA][ARTWORK_DEPRECATED] save_game_artwork called — artwork is no longer persisted as a separate JSON file. Ignoring.");
     Ok(())
 }
 
@@ -736,32 +722,12 @@ pub fn get_media_manifests_batch(
 
 #[tauri::command]
 pub fn update_game_artwork(
-    app_handle: AppHandle,
-    app_id: String,
-    sgdb: Option<SteamGridDbRef>,
-    paths: GameMediaPaths,
+    _app_handle: AppHandle,
+    _app_id: String,
+    _sgdb: Option<SteamGridDbRef>,
+    _paths: GameMediaPaths,
 ) -> Result<(), String> {
-    let path = get_artwork_path(&app_handle, &app_id)?;
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let entry = GameArtwork {
-        app_id: app_id.clone(),
-        updated_at: now,
-        sources: Default::default(),
-        steam_grid_db: sgdb,
-        paths,
-    };
-
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game artwork: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game artwork: {}", e))?;
-
-    log(&format!("artwork updated for {}", app_id));
+    println!("[MEDIA][ARTWORK_DEPRECATED] update_game_artwork called — artwork is no longer persisted as a separate JSON file. Ignoring.");
     Ok(())
 }
 

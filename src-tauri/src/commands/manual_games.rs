@@ -1,10 +1,8 @@
-use std::fs;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use tauri::Manager;
+
+use crate::commands::sqlite_cache;
+use crate::commands::sqlite_cache::SqliteCoreDb;
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -97,67 +95,42 @@ pub struct ManualGamesFile {
     pub entries: Vec<ManualGameEntry>,
 }
 
-const FILENAME: &str = "manual-games.json";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-fn get_manual_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    let dir = app_dir.join("games").join("manual");
-    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create manual games dir: {}", e))?;
-    Ok(dir)
-}
-
-fn get_manual_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    Ok(get_manual_dir(app_handle)?.join(FILENAME))
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 // ─── Commands ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn read_manual_games(app_handle: AppHandle) -> Result<Vec<ManualGameEntry>, String> {
-    let path = get_manual_path(&app_handle)?;
-
-    if !path.exists() {
+pub fn read_manual_games(
+    _app_handle: AppHandle,
+    db: tauri::State<'_, SqliteCoreDb>,
+) -> Result<Vec<ManualGameEntry>, String> {
+    let Some(inner) = db.0.as_ref() else {
         return Ok(vec![]);
-    }
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read manual games file: {}", e))?;
+    let json_opt = sqlite_cache::manual_games_cache::read_manual_games(&conn)?;
 
-    let file: ManualGamesFile = serde_json::from_str(&content).map_err(|e| {
-        // Corrupt file — back up and return empty
-        let timestamp = now_secs();
-        let backup_name = format!("manual-games.corrupt.{}.json", timestamp);
-        if let Ok(dir) = get_manual_dir(&app_handle) {
-            let backup_path = dir.join(&backup_name);
-            let _ = fs::copy(&path, &backup_path);
-            let _ = fs::rename(&path, &backup_path);
-            println!(
-                "[ManualGames] corrupt file backed up to {}, returning empty",
-                backup_name
-            );
-        }
-        format!("Corrupt manual games file: {}", e)
+    let Some(json) = json_opt else {
+        return Ok(vec![]);
+    };
+
+    let file: ManualGamesFile = serde_json::from_str(&json).map_err(|e| {
+        println!("[ManualGames] corrupt data in SQLite, returning empty: {}", e);
+        format!("Corrupt manual games data: {}", e)
     })?;
 
     Ok(file.entries)
 }
 
 #[tauri::command]
-pub fn write_manual_games(app_handle: AppHandle, entries: Vec<ManualGameEntry>) -> Result<(), String> {
-    let path = get_manual_path(&app_handle)?;
-    let tmp_path = path.with_extension("tmp.json");
+pub fn write_manual_games(
+    _app_handle: AppHandle,
+    db: tauri::State<'_, SqliteCoreDb>,
+    entries: Vec<ManualGameEntry>,
+) -> Result<(), String> {
+    let Some(inner) = db.0.as_ref() else {
+        return Err("SQLite core DB not initialized".to_string());
+    };
+    let conn = inner.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     let file = ManualGamesFile {
         version: 1,
@@ -167,27 +140,12 @@ pub fn write_manual_games(app_handle: AppHandle, entries: Vec<ManualGameEntry>) 
     let json =
         serde_json::to_string_pretty(&file).map_err(|e| format!("Failed to serialize: {}", e))?;
 
-    fs::write(&tmp_path, &json).map_err(|e| format!("Failed to write temp file: {}", e))?;
-    fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename file: {}", e))?;
+    sqlite_cache::manual_games_cache::write_manual_games(&conn, &json)?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn backup_manual_games(app_handle: AppHandle) -> Result<String, String> {
-    let path = get_manual_path(&app_handle)?;
-
-    if !path.exists() {
-        return Ok("no-file".to_string());
-    }
-
-    let timestamp = now_secs();
-    let backup_name = format!("manual-games.backup.{}.json", timestamp);
-    let backup_path = get_manual_dir(&app_handle)?.join(&backup_name);
-
-    fs::copy(&path, &backup_path)
-        .map_err(|e| format!("Failed to backup manual games: {}", e))?;
-
-    println!("[ManualGames] backed up to {}", backup_name);
-    Ok(backup_name)
+pub fn backup_manual_games(_app_handle: AppHandle) -> Result<String, String> {
+    Ok("backup no longer needed, data is in SQLite".to_string())
 }

@@ -8,14 +8,22 @@ use tauri::Manager;
 
 pub mod achievements;
 pub mod catalog_blobs;
+pub mod debrid_games_cache;
 pub mod game_appinfo;
 pub mod games;
 pub mod library_cache;
+pub mod manual_games_cache;
 pub mod media;
 pub mod media_manifests;
 pub mod metadata;
+pub mod playtime;
+pub mod provider_snapshot;
 pub mod provider_status;
+pub mod source_availability;
 pub mod startup_snapshots;
+pub mod store_appinfo_cache;
+pub mod store_details_cache;
+pub mod store_media_cache;
 pub mod store_reviews;
 
 // Re-export every command and model so existing consumers keep resolving via
@@ -50,6 +58,7 @@ pub use provider_status::{
 pub use store_reviews::{
     StoreReviewRow, batch_get_store_reviews, get_store_review, upsert_store_review,
 };
+// Submodules are used directly by command files via crate::commands::sqlite_cache::<module>::*
 
 // ---------------------------------------------------------------------------
 // Tauri `__cmd__` handler re-exports
@@ -383,6 +392,16 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create startup_snapshots table: {}", e))?;
 
+    // Playtime tables — per-game session/playtime tracking
+    if let Err(e) = playtime::create_tables(conn) {
+        eprintln!("[SqliteCache] playtime table init failed (non-fatal): {}", e);
+    }
+
+    // Manual games cache — singleton blob for manual game entries
+    if let Err(e) = manual_games_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] manual_games table init failed (non-fatal): {}", e);
+    }
+
     Ok(())
 }
 
@@ -569,6 +588,270 @@ fn migrate_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Migration for P0-P2 JSON stores → SQLite (runs once on first boot after update)
+// ---------------------------------------------------------------------------
+
+fn migrate_remaining_json_to_sqlite(conn: &Connection, app_handle: &AppHandle) {
+    let app_dir = match app_handle.path().app_data_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    // --- Migrate playtime.json → playtime tables ---
+    let playtime_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM playtime_entries", [], |row| row.get(0))
+        .unwrap_or(0);
+    if playtime_count == 0 {
+        let pt_path = app_dir.join("activity").join("playtime").join("playtime.json");
+        if pt_path.exists() {
+            if let Ok(content) = fs::read_to_string(&pt_path) {
+                if let Ok(store) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(games) = store.get("games").and_then(|g| g.as_object()) {
+                        let mut migrated = 0u32;
+                        for (key, entry_val) in games {
+                            let app_id = entry_val.get("app_id").or(entry_val.get("appId")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let provider = entry_val.get("provider").and_then(|v| v.as_str()).unwrap_or("steam").to_string();
+                            let title = entry_val.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let playtime_source = entry_val.get("playtime_source").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let ext_secs = entry_val.get("external_playtime_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let ext_source = entry_val.get("external_source").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let ext_imported = entry_val.get("external_imported_at").and_then(|v| v.as_u64());
+                            let local_secs = entry_val.get("local_playtime_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let total_secs = entry_val.get("total_playtime_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let last_played = entry_val.get("last_played_at").and_then(|v| v.as_u64());
+                            let last_session = entry_val.get("last_session_seconds").and_then(|v| v.as_u64());
+
+                            let _ = conn.execute(
+                                "INSERT OR REPLACE INTO playtime_entries \
+                                 (game_key, app_id, provider, title, playtime_source, \
+                                  external_playtime_seconds, external_source, external_imported_at, \
+                                  local_playtime_seconds, total_playtime_seconds, last_played_at, \
+                                  last_session_seconds, updated_at) \
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)",
+                                rusqlite::params![key, app_id, provider, title, playtime_source, ext_secs, ext_source, ext_imported, local_secs, total_secs, last_played, last_session],
+                            );
+
+                            // Migrate sessions
+                            if let Some(sessions) = entry_val.get("sessions").and_then(|s| s.as_array()) {
+                                for sess in sessions {
+                                    let sid = sess.get("session_id").or(sess.get("sessionId")).and_then(|v| v.as_str()).unwrap_or("");
+                                    let started = sess.get("started_at").or(sess.get("startedAt")).and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let ended = sess.get("ended_at").or(sess.get("endedAt")).and_then(|v| v.as_u64());
+                                    let dur = sess.get("duration_seconds").or(sess.get("durationSeconds")).and_then(|v| v.as_u64());
+                                    let reason = sess.get("exit_reason").or(sess.get("exitReason")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    let _ = conn.execute(
+                                        "INSERT OR IGNORE INTO playtime_sessions \
+                                         (session_id, game_key, started_at, ended_at, duration_seconds, exit_reason) \
+                                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                                        rusqlite::params![sid, key, started, ended, dur, reason],
+                                    );
+                                }
+                            }
+                            migrated += 1;
+                        }
+                        if migrated > 0 {
+                            println!("[SqliteCache] migrated {} playtime games → playtime_entries + playtime_sessions", migrated);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Migrate debrid-games.json → debrid_games table ---
+    let debrid_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM debrid_games", [], |row| row.get(0))
+        .unwrap_or(0);
+    if debrid_count == 0 {
+        let path = app_dir.join("games").join("debrid").join("debrid-games.json");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+                let _ = conn.execute(
+                    "INSERT INTO debrid_games (id, data_json, updated_at) VALUES (1, ?1, ?2)",
+                    rusqlite::params![content, now],
+                );
+                println!("[SqliteCache] migrated debrid-games.json → debrid_games table");
+            }
+        }
+    }
+
+    // --- Migrate manual-games.json → manual_games table ---
+    let manual_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM manual_games", [], |row| row.get(0))
+        .unwrap_or(0);
+    if manual_count == 0 {
+        let path = app_dir.join("games").join("manual").join("manual-games.json");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+                let _ = conn.execute(
+                    "INSERT INTO manual_games (id, data_json, updated_at) VALUES (1, ?1, ?2)",
+                    rusqlite::params![content, now],
+                );
+                println!("[SqliteCache] migrated manual-games.json → manual_games table");
+            }
+        }
+    }
+
+    // --- Migrate source-index.json → source_availability table ---
+    let source_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM source_availability", [], |row| row.get(0))
+        .unwrap_or(0);
+    if source_count == 0 {
+        let path = app_dir.join("sources").join("source-index.json");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(index) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(games) = index.get("games").and_then(|g| g.as_object()) {
+                        let mut migrated = 0u32;
+                        for (app_id, game_val) in games {
+                            let entry_json = serde_json::to_string(game_val).unwrap_or_default();
+                            let _ = conn.execute(
+                                "INSERT OR REPLACE INTO source_availability (app_id, data_json, updated_at) VALUES (?1, ?2, 0)",
+                                rusqlite::params![app_id, entry_json],
+                            );
+                            migrated += 1;
+                        }
+                        if migrated > 0 {
+                            println!("[SqliteCache] migrated {} source entries → source_availability table", migrated);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Migrate provider-status/snapshot.json → provider_status_snapshot table ---
+    let snap_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM provider_status_snapshot", [], |row| row.get(0))
+        .unwrap_or(0);
+    if snap_count == 0 {
+        let path = app_dir.join("store").join("provider-status").join("snapshot.json");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+                let _ = conn.execute(
+                    "INSERT INTO provider_status_snapshot (id, data_json, updated_at) VALUES (1, ?1, ?2)",
+                    rusqlite::params![content, now],
+                );
+                println!("[SqliteCache] migrated provider-status/snapshot.json → provider_status_snapshot table");
+            }
+        }
+    }
+
+    // --- Migrate store/appinfo.json → store_appinfo table ---
+    let store_app_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM store_appinfo", [], |row| row.get(0))
+        .unwrap_or(0);
+    if store_app_count == 0 {
+        let path = app_dir.join("store").join("appinfo.json");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(map) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(obj) = map.as_object() {
+                        let mut migrated = 0u32;
+                        for (app_id, val) in obj {
+                            let entry_json = serde_json::to_string(val).unwrap_or_default();
+                            let _ = conn.execute(
+                                "INSERT OR REPLACE INTO store_appinfo (app_id, data_json, updated_at) VALUES (?1, ?2, 0)",
+                                rusqlite::params![app_id, entry_json],
+                            );
+                            migrated += 1;
+                        }
+                        if migrated > 0 {
+                            println!("[SqliteCache] migrated {} store appinfo entries → store_appinfo table", migrated);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Migrate discovery-index, catalog-sections, sgdb-artwork → game_catalog_blobs ---
+    let blob_migrations: &[(&str, &str)] = &[
+        ("discovery-index", "store/discovery-index.json"),
+        ("catalog-sections-cache", "store/catalog-sections-cache.json"),
+        ("sgdb-artwork-cache", "store/sgdb-artwork-cache.json"),
+    ];
+    for (key, rel_path) in blob_migrations {
+        let existing: i64 = conn
+            .query_row("SELECT COUNT(*) FROM game_catalog_blobs WHERE catalog_key = ?1", [key], |row| row.get(0))
+            .unwrap_or(0);
+        if existing == 0 {
+            let path = app_dir.join(rel_path);
+            if path.exists() {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO game_catalog_blobs (catalog_key, data_json, updated_at) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![key, content, now],
+                    );
+                    println!("[SqliteCache] migrated {} → game_catalog_blobs", rel_path);
+                }
+            }
+        }
+    }
+
+    // --- Migrate store-details.json files → store_details table ---
+    let sd_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM store_details", [], |row| row.get(0))
+        .unwrap_or(0);
+    if sd_count == 0 {
+        let games_dir = app_dir.join("games").join("steam");
+        if games_dir.is_dir() {
+            let mut migrated = 0u32;
+            for entry in fs::read_dir(&games_dir).unwrap_or_else(|_| fs::read_dir(".").unwrap()).flatten() {
+                let game_dir = entry.path();
+                if !game_dir.is_dir() { continue; }
+                let dir_name = game_dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                if dir_name.is_empty() || dir_name == "steam" { continue; }
+                let sd_path = game_dir.join("store-details.json");
+                if !sd_path.exists() { continue; }
+                if let Ok(content) = fs::read_to_string(&sd_path) {
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO store_details (app_id, data_json, updated_at) VALUES (?1, ?2, 0)",
+                        rusqlite::params![dir_name, content],
+                    );
+                    migrated += 1;
+                }
+            }
+            if migrated > 0 {
+                println!("[SqliteCache] migrated {} store-details.json → store_details table", migrated);
+            }
+        }
+    }
+
+    // --- Migrate library/details/*.json → library_game_details table ---
+    let lgd_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM library_game_details", [], |row| row.get(0))
+        .unwrap_or(0);
+    if lgd_count == 0 {
+        let details_dir = app_dir.join("library").join("details");
+        if details_dir.is_dir() {
+            let mut migrated = 0u32;
+            for entry in fs::read_dir(&details_dir).unwrap_or_else(|_| fs::read_dir(".").unwrap()).flatten() {
+                let file_path = entry.path();
+                if !file_path.is_file() { continue; }
+                let stem = file_path.file_stem().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                if stem.is_empty() { continue; }
+                let app_id = stem.trim_end_matches(".json").to_string();
+                if let Ok(content) = fs::read_to_string(&file_path) {
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO library_game_details (app_id, data_json, updated_at) VALUES (?1, ?2, 0)",
+                        rusqlite::params![app_id, content],
+                    );
+                    migrated += 1;
+                }
+            }
+            if migrated > 0 {
+                println!("[SqliteCache] migrated {} library/details/*.json → library_game_details table", migrated);
+            }
+        }
+    }
+}
+
 fn init_achievement_tables(conn: &Connection) -> Result<(), String> {
     // Achievement tables — volatile per-game progress
     conn.execute_batch(
@@ -660,6 +943,36 @@ fn init_store_tables(conn: &Connection) -> Result<(), String> {
         eprintln!("[SqliteCache] repack catalog table init failed (non-fatal): {}", e);
     }
 
+    // Source availability — per-game download source index
+    if let Err(e) = source_availability::create_tables(conn) {
+        eprintln!("[SqliteCache] source_availability table init failed (non-fatal): {}", e);
+    }
+
+    // Store appinfo cache — Steam appdetails API responses
+    if let Err(e) = store_appinfo_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] store_appinfo table init failed (non-fatal): {}", e);
+    }
+
+    // Store media cache — store media resolution per game
+    if let Err(e) = store_media_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] store_media_cache table init failed (non-fatal): {}", e);
+    }
+
+    // Provider status snapshot — singleton blob for provider status index
+    if let Err(e) = provider_snapshot::create_tables(conn) {
+        eprintln!("[SqliteCache] provider_status_snapshot table init failed (non-fatal): {}", e);
+    }
+
+    // Debrid games cache — singleton blob for debrid game entries
+    if let Err(e) = debrid_games_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] debrid_games table init failed (non-fatal): {}", e);
+    }
+
+    // Store details + library game details — per-game detail page cache
+    if let Err(e) = store_details_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] store_details tables init failed (non-fatal): {}", e);
+    }
+
     Ok(())
 }
 
@@ -680,6 +993,7 @@ pub fn initialize_core_sqlite(app_handle: &AppHandle) -> SqliteCoreDb {
 
             // Migrate existing JSON files to SQLite on first boot after update
             migrate_json_to_sqlite(&conn, app_handle);
+            migrate_remaining_json_to_sqlite(&conn, app_handle);
 
             println!(
                 "[SqliteCache] core database ready at {:?}",
