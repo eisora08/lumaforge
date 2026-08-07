@@ -160,6 +160,7 @@ pub fn run() {
             commands::game_cache::cache_logo_image,
             commands::game_cache::cache_icon_image,
             commands::game_cache::update_game_appinfo_media,
+            commands::game_cache::batch_update_game_names,
             commands::game_cache::update_game_artwork,
             commands::game_cache::migrate_to_canonical_cache,
             commands::game_cache::safe_download_image,

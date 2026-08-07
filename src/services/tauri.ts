@@ -2013,6 +2013,10 @@ export async function updateGameAppinfoMedia(appId: string, name: string | null,
   return await invoke("update_game_appinfo_media", { appId, name, media, remote: remote ?? null, mediaSources: mediaSources ?? null });
 }
 
+export async function batchUpdateGameNames(apps: [string, string | null][]): Promise<number> {
+  return await invoke<number>("batch_update_game_names", { apps });
+}
+
 export async function saveGameMediaFile(appId: string, role: string, contentBase64: string, ext: string): Promise<string> {
   return await invoke<string>("save_game_media_file", { appId, role, contentBase64, ext });
 }

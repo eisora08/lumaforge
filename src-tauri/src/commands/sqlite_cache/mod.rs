@@ -402,6 +402,11 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
         eprintln!("[SqliteCache] manual_games table init failed (non-fatal): {}", e);
     }
 
+    // Debrid games cache — singleton blob for debrid game entries (uses SqliteCoreDb)
+    if let Err(e) = debrid_games_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] debrid_games table init failed (non-fatal): {}", e);
+    }
+
     Ok(())
 }
 
@@ -961,11 +966,6 @@ fn init_store_tables(conn: &Connection) -> Result<(), String> {
     // Provider status snapshot — singleton blob for provider status index
     if let Err(e) = provider_snapshot::create_tables(conn) {
         eprintln!("[SqliteCache] provider_status_snapshot table init failed (non-fatal): {}", e);
-    }
-
-    // Debrid games cache — singleton blob for debrid game entries
-    if let Err(e) = debrid_games_cache::create_tables(conn) {
-        eprintln!("[SqliteCache] debrid_games table init failed (non-fatal): {}", e);
     }
 
     // Store details + library game details — per-game detail page cache

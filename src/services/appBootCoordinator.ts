@@ -297,10 +297,9 @@ export async function runBootTasks(): Promise<void> {
           await track("enrich-snapshot-titles", async () => {
             logBoot("enrich snapshot titles start");
             if (_snapshotLoaded?.library?.games) {
-              const { isPlaceholderSteamTitle, updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
-              const { getStoreDetails } = await import("./tauri");
+              const { isPlaceholderSteamTitle } = await import("./gameCacheService");
+              const { getStoreDetails, batchUpdateGameNames } = await import("./tauri");
               const { resolveGameMetadata } = await import("./gameMetadataResolver");
-              const { getCachedBootAppInfos } = await import("./startupSnapshotService");
               const placeholderGames = _snapshotLoaded.library.games.filter(
                 (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
               );
@@ -313,6 +312,7 @@ export async function runBootTasks(): Promise<void> {
                     metadataResolution = await resolveGameMetadata(numIds);
                   } catch { /* non-critical */ }
                 }
+                const batchNames: [string, string | null][] = [];
                 let enrichedCount = 0;
                 for (const game of placeholderGames) {
                   if (!game.appId) continue;
@@ -320,21 +320,8 @@ export async function runBootTasks(): Promise<void> {
                   if (meta?.name && !isPlaceholderSteamTitle(meta.name, game.appId)) {
                     game.title = meta.name;
                     enrichedCount++;
-                    logBoot(`enriched title: appid=${game.appId} name=${meta.name} source=metadata`);
-                      _enrichedTitleAppIds.set(game.appId, meta.name);
-                    console.log(`[BOOT][TITLE_ENRICHED] stage=3.5 appid=${game.appId} source=metadata`);
-                    // Persist canonical name to appinfo (preserving existing media)
-                    try {
-                      const bootCache = getCachedBootAppInfos();
-                      const bootEntry = bootCache?.[game.appId] as { media?: Record<string, string | null> } | undefined;
-                      const m = bootEntry?.media ?? {} as Record<string, string | null>;
-                      await updateGameAppinfoMediaIfChanged(
-                        game.appId, meta.name,
-                        { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
-                        null, undefined, "bootStage35Enrichment",
-                      ).catch((err) => console.warn(err));
-                      console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=metadata`);
-                    } catch { /* non-critical */ }
+                    _enrichedTitleAppIds.set(game.appId, meta.name);
+                    batchNames.push([game.appId, meta.name]);
                     continue;
                   }
                   try {
@@ -343,23 +330,17 @@ export async function runBootTasks(): Promise<void> {
                     if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
                       game.title = sdData.name;
                       enrichedCount++;
-                      logBoot(`enriched title: appid=${game.appId} name=${sdData.name} source=store`);
                       _enrichedTitleAppIds.set(game.appId, sdData.name);
-                      console.log(`[BOOT][TITLE_ENRICHED] stage=3.5 appid=${game.appId} source=store`);
-                      // Persist canonical name to appinfo (preserving existing media)
-                      try {
-                        const bootCache = getCachedBootAppInfos();
-                        const bootEntry = bootCache?.[game.appId] as { media?: Record<string, string | null> } | undefined;
-                        const m = bootEntry?.media ?? {} as Record<string, string | null>;
-                        await updateGameAppinfoMediaIfChanged(
-                          game.appId, sdData.name,
-                          { coverPath: m.coverPath ?? null, backgroundPath: m.backgroundPath ?? null, logoPath: m.logoPath ?? null, iconPath: m.iconPath ?? null, landscapePath: m.landscapePath ?? null },
-                          null, undefined, "bootStage35Enrichment",
-                        ).catch((err) => console.warn(err));
-                        console.log(`[BOOT][TITLE_APPINFO_WRITE] appid=${game.appId} source=store`);
-                      } catch { /* non-critical */ }
+                      batchNames.push([game.appId, sdData.name]);
                     }
                   } catch { /* ignore */ }
+                }
+                // Single batch write instead of N per-game writes
+                if (batchNames.length > 0) {
+                  try {
+                    await batchUpdateGameNames(batchNames);
+                    console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length}`);
+                  } catch { /* non-critical */ }
                 }
                 if (enrichedCount > 0) {
                   const { saveStartupSnapshot } = await import("./startupSnapshotService");
@@ -607,7 +588,6 @@ export async function runBootTasks(): Promise<void> {
                 if (reconciledGames && reconciledGames.length > 0) {
                   const { isPlaceholderSteamTitle } = await import("./gameCacheService");
                   const { readCanonicalAppinfos, getStoreDetails } = await import("./tauri");
-                  const { updateGameAppinfoMediaIfChanged } = await import("./gameCacheService");
                   const { resolveGameMetadata } = await import("./gameMetadataResolver");
                   const emptyTitleGames = reconciledGames.filter(
                     (g) => g.appId && isPlaceholderSteamTitle(g.title, g.appId),
@@ -644,6 +624,7 @@ export async function runBootTasks(): Promise<void> {
                     if (numIds.length > 0) {
                       try { metadataResolution = await resolveGameMetadata(numIds); } catch { /* non-critical */ }
                     }
+                    const batchNames: [string, string | null][] = [];
                     for (const game of emptyTitleGames) {
                       if (!game.appId) continue;
                       // Skip if Stage 3.5 already enriched this game
@@ -651,7 +632,6 @@ export async function runBootTasks(): Promise<void> {
                         const realName = _enrichedTitleAppIds.get(game.appId);
                         if (realName) {
                           game.title = realName;
-                          console.log(`[BOOT][TITLE_ENRICH_SKIP] stage=4.5 appid=${game.appId} reason=already-enriched`);
                         }
                         continue;
                       }
@@ -679,25 +659,18 @@ export async function runBootTasks(): Promise<void> {
                       if (resolvedName) {
                         console.log(`[NAME][CANONICAL_WRITE] appid=${game.appId} name=${resolvedName} source=${source}`);
                         game.title = resolvedName;
-                        // Read existing appinfo to preserve media paths (only update name)
-                        const existingForName = appinfos[game.appId];
-                        const existingMedia = existingForName?.media ?? {};
-                        updateGameAppinfoMediaIfChanged(
-                          game.appId, resolvedName,
-                          {
-                            coverPath: existingMedia.coverPath ?? null,
-                            backgroundPath: existingMedia.backgroundPath ?? null,
-                            logoPath: existingMedia.logoPath ?? null,
-                            iconPath: existingMedia.iconPath ?? null,
-                            landscapePath: existingMedia.landscapePath ?? null,
-                          },
-                          null,
-                          undefined,
-                          "bootStage45Enrichment",
-                        ).catch((err) => console.warn(err));
+                        batchNames.push([game.appId, resolvedName]);
                       } else {
                         console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
                       }
+                    }
+                    // Single batch write instead of N per-game writes
+                    if (batchNames.length > 0) {
+                      try {
+                        const { batchUpdateGameNames } = await import("./tauri");
+                        await batchUpdateGameNames(batchNames);
+                        console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length} stage=4.5`);
+                      } catch { /* non-critical */ }
                     }
                     setReconciledGames(reconciledGames);
 

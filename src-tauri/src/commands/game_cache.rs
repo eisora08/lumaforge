@@ -514,30 +514,35 @@ pub fn update_game_appinfo_media(
     media_sources: Option<GameMediaSourcesInput>,
     db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_appinfo_path(&app_handle, &app_id)?;
-
-    let mut entry: GameAppInfo = if path.exists() {
-        let content = fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or_else(|_| GameAppInfo {
-            app_id: app_id.clone(),
-            provider: "steam".to_string(),
-            name: name.clone(),
-            updated_at: None,
-            media: None,
-            media_sources: None,
-            remote: None,
-            user_data: None,
-        })
+    // Read from SQLite first (fast path — no filesystem I/O)
+    let mut entry: GameAppInfo = if let Some(existing) = crate::commands::sqlite_cache::game_appinfo::read_game_appinfo(&db, &app_id) {
+        existing
     } else {
-        GameAppInfo {
-            app_id: app_id.clone(),
-            provider: "steam".to_string(),
-            name: name.clone(),
-            updated_at: None,
-            media: None,
-            media_sources: None,
-            remote: None,
-            user_data: None,
+        // Fallback: try legacy JSON file for upgraders
+        let path = get_appinfo_path(&app_handle, &app_id)?;
+        if path.exists() {
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            serde_json::from_str(&content).unwrap_or_else(|_| GameAppInfo {
+                app_id: app_id.clone(),
+                provider: "steam".to_string(),
+                name: name.clone(),
+                updated_at: None,
+                media: None,
+                media_sources: None,
+                remote: None,
+                user_data: None,
+            })
+        } else {
+            GameAppInfo {
+                app_id: app_id.clone(),
+                provider: "steam".to_string(),
+                name: name.clone(),
+                updated_at: None,
+                media: None,
+                media_sources: None,
+                remote: None,
+                user_data: None,
+            }
         }
     };
 
@@ -547,15 +552,17 @@ pub fn update_game_appinfo_media(
     } else if let Some(ref n) = name {
         entry.name = Some(n.clone());
     } else {
-        // Try store-details for name
-        let store_path = get_store_details_path(&app_handle, &app_id);
-        if let Ok(sp) = store_path {
-            if sp.exists() {
-                if let Ok(sc) = fs::read_to_string(&sp) {
-                    if let Ok(sd) = serde_json::from_str::<StoreDetails>(&sc) {
+        // Try store-details from SQLite for name
+        if let Some(conn_ref) = db.0.as_ref() {
+            if let Ok(conn) = conn_ref.lock() {
+                if let Ok(Some(sd_json)) = conn.query_row(
+                    "SELECT data_json FROM store_details WHERE app_id = ?1",
+                    [&app_id],
+                    |row| row.get::<_, Option<String>>(0),
+                ) {
+                    if let Ok(sd) = serde_json::from_str::<StoreDetails>(&sd_json) {
                         if let Some(n) = sd.data.get("name").and_then(|v| v.as_str()) {
                             entry.name = Some(n.to_string());
-                            media_log(&format!("[AppInfoUpdate] resolved name from store-details: {}", n));
                         }
                     }
                 }
@@ -662,6 +669,57 @@ pub fn update_game_appinfo_media(
 
     println!("[MEDIA][APPINFO_WRITE] appid={}", app_id);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Batch name update — single transaction for boot enrichment
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn batch_update_game_names(
+    apps: Vec<(String, Option<String>)>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
+) -> Result<u32, String> {
+    let conn_ref = db.0.as_ref().ok_or("SQLite not available")?;
+    let conn = conn_ref.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    let mut updated = 0u32;
+    conn.execute_batch("BEGIN TRANSACTION").map_err(|e| e.to_string())?;
+
+    for (app_id, name) in &apps {
+        if name.is_none() || name.as_deref().unwrap_or("").is_empty() {
+            continue;
+        }
+        // Only update when current name is empty/placeholder
+        let current_name: Option<String> = conn
+            .query_row(
+                "SELECT name FROM games WHERE appId = ?1",
+                [app_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let needs_update = match &current_name {
+            None => true,
+            Some(n) => n.is_empty() || n.starts_with("Steam App "),
+        };
+
+        if needs_update {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO games (appId, name, updated_at) VALUES (?1, ?2, 0)",
+                rusqlite::params![app_id, name],
+            );
+            let _ = conn.execute(
+                "UPDATE games SET name = ?2 WHERE appId = ?1 AND (name IS NULL OR name = '' OR name LIKE 'Steam App %')",
+                rusqlite::params![app_id, name],
+            );
+            updated += 1;
+        }
+    }
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    println!("[MEDIA][BATCH_NAMES] updated={}/{}", updated, apps.len());
+    Ok(updated)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
