@@ -1166,20 +1166,54 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
-  // Subscribe to SQLite data changes — refresh library when games are upserted
+  // Subscribe to SQLite data changes — read directly from SQLite (no re-scan)
   useEffect(() => {
     let lastRefresh = 0;
-    const unsub = subscribeDataChanges((type) => {
+    const unsub = subscribeDataChanges(async (type) => {
       if (type === "games-upserted") {
         const now = Date.now();
         if (now - lastRefresh > 3000) {
           lastRefresh = now;
-          refresh({ force: true });
+          try {
+            const { readAllGames } = await import("../services/tauri");
+            const { loadSteamGameIndex, indexEntryToLibraryGame } = await import("../services/fullSteamGameIndex");
+            const entries = await readAllGames();
+            if (entries.length === 0) return;
+            const index = await loadSteamGameIndex();
+            // Build Lua overlay from current games (preserve existing Lua state)
+            const currentByAppId = new Map<string, LibraryGame>();
+            for (const g of gamesRef.current) {
+              if (g.appId) currentByAppId.set(g.appId, g);
+            }
+            const games = index.map((entry) => {
+              const existing = currentByAppId.get(entry.appId);
+              const libGame = indexEntryToLibraryGame(entry, {});
+              // Preserve Lua state and metadata from existing games
+              if (existing) {
+                libGame.hasLua = existing.hasLua;
+                libGame.luaScripts = existing.luaScripts;
+                libGame.isLuaActive = existing.isLuaActive;
+                libGame.isLuaDisabled = existing.isLuaDisabled;
+                libGame.hasLuaSource = existing.hasLuaSource;
+                libGame.metadata = existing.metadata ?? libGame.metadata;
+                libGame.imageUrl = existing.imageUrl ?? libGame.imageUrl;
+                libGame.isFavorite = existing.isFavorite;
+                libGame.sizeOnDisk = existing.sizeOnDisk;
+                libGame.executablePath = existing.executablePath;
+                libGame.installDir = existing.installDir;
+              }
+              return libGame;
+            });
+            applyGamesSafely(games, "sqlite-refresh");
+            console.log(`[LIBRARY_CONTEXT][SQLITE_REFRESH] games=${games.length}`);
+          } catch (err) {
+            console.warn("[LIBRARY_CONTEXT] sqlite refresh failed:", err);
+          }
         }
       }
     });
     return unsub;
-  }, [refresh]);
+  }, [applyGamesSafely]);
 
   const updateGame = useCallback((appId: string, updates: Partial<LibraryGame>) => {
     setGames((prev) => {
