@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { countRender } from "../services/perfCounters";
-import { Activity } from "lucide-react";
+
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
 import FavoritesSection from "../components/dashboard/FavoritesSection";
@@ -10,11 +10,11 @@ import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSecti
 import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
 import TopPicksDashboardSection from "../components/dashboard/TopPicksDashboardSection";
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
-import QuickActionsCompact from "../components/dashboard/QuickActionsCompact";
+
 import { getCachedSnapshot, subscribeSnapshotUpdated } from "../services/startupSnapshotService";
 import type { StartupSnapshot } from "../services/startupSnapshotService";
 import { importSnapshotPlaytime } from "../services/playtimeService";
-import { useGameActivity } from "../context/GameActivityContext";
+
 import { useGameSession } from "../context/GameSessionContext";
 import { useSettings } from "../context/SettingsContext";
 import { subscribeCatalogState, getCatalogState, discoverGlobalCatalog } from "../services/globalCatalogService";
@@ -32,12 +32,7 @@ type Props = {
   onNavigate?: (page: AppPage) => void;
 };
 
-type DedupedActivity = {
-  id: string;
-  title: string;
-  count: number;
-  createdAt: number;
-};
+
 
 /* ================================================================== */
 /*  DEFERRED SECTION WRAPPER                                           */
@@ -91,33 +86,7 @@ function DeferredSection({
 /*  HELPERS                                                            */
 /* ================================================================== */
 
-function formatTimestamp(ts: number) {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return new Date(ts).toLocaleDateString();
-}
 
-function deduplicateActivities(activities: { id: string; title: string; createdAt: number }[]): DedupedActivity[] {
-  const seen = new Map<string, DedupedActivity>();
-  for (const a of activities) {
-    const key = a.title;
-    const existing = seen.get(key);
-    if (existing) {
-      existing.count++;
-    } else {
-      seen.set(key, { id: a.id, title: a.title, count: 1, createdAt: a.createdAt });
-    }
-  }
-  return Array.from(seen.values())
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 3);
-}
 
 function isSectionVisible(sectionId: string, visibility: Record<string, boolean>): boolean {
   if (sectionId in visibility) return visibility[sectionId];
@@ -158,7 +127,7 @@ function SectionWrap({
 export default function Home({ onNavigate }: Props) {
   countRender("Home");
   const [snapshot, setSnapshot] = useState<StartupSnapshot | null>(() => getCachedSnapshot());
-  const { activities } = useGameActivity();
+  
   const { sessions } = useGameSession();
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(() => getCatalogState().status);
   const [orchestratorHasData, setOrchestratorHasData] = useState(() => getCachedCatalogSections().length > 0);
@@ -268,12 +237,7 @@ export default function Home({ onNavigate }: Props) {
     return ids;
   }, [snapshot, runningAppId]);
 
-  const dedupedActivity = useMemo(() => deduplicateActivities(activities), [activities]);
-
-  const installedCount = snapshot?.library?.games?.filter((g) => g.installed).length ?? 0;
-  const lastSync = snapshot?.updatedAt
-    ? new Date(snapshot.updatedAt * 1000).toLocaleString()
-    : null;
+  
 
   const maxWidth = settings.useExpandedDashboard ? undefined : settings.dashboardContentWidth;
 
@@ -402,10 +366,10 @@ export default function Home({ onNavigate }: Props) {
           </SectionWrap>
         )}
 
-        <QuickActionsCompact onNavigate={onNavigate} />
+        {/* <QuickActionsCompact onNavigate={onNavigate} /> */}
 
         {/* Compact system strip */}
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-5 py-3">
+        {/* <div className="flex flex-wrap items-center gap-4 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-5 py-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -439,7 +403,7 @@ export default function Home({ onNavigate }: Props) {
               ))}
             </div>
           )}
-        </div>
+        </div> */}
       </div>
     </div>
   );

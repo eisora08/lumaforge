@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use super::sqlite_cache::SqliteDb;
+use super::sqlite_cache::SqliteStoreDb;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OwnedGame {
@@ -67,7 +67,7 @@ pub fn fetch_steam_owned_games(
     app_handle: AppHandle,
     api_key: String,
     steam_id: String,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<OwnedGame>, String> {
     let cache_path = get_cache_path(&app_handle)?;
     let now = SystemTime::now()

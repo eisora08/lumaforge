@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Search } from "lucide-react";
+import { ArrowRight, Clock, Search, X } from "lucide-react";
 
 import type { StoreSearchDropdownItem } from "./PackagesToolbar";
 import {
@@ -15,25 +15,64 @@ type PackagesToolbarSearchProps = {
   className?: string;
   placeholder?: string;
   autoFocus?: boolean;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
   onSelectItem?: (item: StoreSearchDropdownItem) => void;
   onSubmit?: (query: string) => void;
   onViewAll?: (query: string) => void;
 };
 
 const MAX_VISIBLE_SEARCH_ITEMS = 6;
+const MAX_RECENT_SEARCHES = 8;
+const RECENT_SEARCHES_KEY = "lumaforge-recent-searches";
 const SEARCH_DEBOUNCE_MS = 300;
+
+function getRecentSearches(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_SEARCHES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string" && s.trim().length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSearch(query: string): void {
+  const trimmed = query.trim();
+  if (!trimmed) return;
+  const existing = getRecentSearches();
+  const filtered = existing.filter((s) => s.toLowerCase() !== trimmed.toLowerCase());
+  const updated = [trimmed, ...filtered].slice(0, MAX_RECENT_SEARCHES);
+  localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+}
+
+function removeRecentSearch(query: string): void {
+  const existing = getRecentSearches();
+  const updated = existing.filter((s) => s !== query);
+  localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+}
 
 export default function PackagesToolbarSearch({
   variant = "toolbar",
   className,
   placeholder = "Search the Store...",
   autoFocus,
+  inputRef: externalInputRef,
   onSelectItem,
   onSubmit,
   onViewAll,
 }: PackagesToolbarSearchProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches());
+  const internalInputRef = useRef<HTMLInputElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Sync internal ref to external ref when provided
+  useEffect(() => {
+    if (externalInputRef) {
+      (externalInputRef as React.MutableRefObject<HTMLInputElement | null>).current = internalInputRef.current;
+    }
+  });
 
   const {
     query,
@@ -92,25 +131,50 @@ export default function PackagesToolbarSearch({
 
   const hasMoreResults = results.length > MAX_VISIBLE_SEARCH_ITEMS;
 
+  const hasRecentSearches = recentSearches.length > 0;
+
   const shouldShowDropdown =
     dropdownOpen &&
-    normalizedQuery.length > 0 &&
-    (searchLoading || visibleSearchItems.length > 0);
+    (normalizedQuery.length > 0
+      ? searchLoading || visibleSearchItems.length > 0
+      : hasRecentSearches);
 
   function handleSelectItem(item: StoreSearchDropdownItem) {
+    saveRecentSearch(item.title);
+    setRecentSearches(getRecentSearches());
     setDropdownOpen(false);
     setQuery("");
     onSelectItem?.(item);
   }
 
   function handleSubmit() {
+    if (normalizedQuery.trim()) {
+      saveRecentSearch(normalizedQuery);
+      setRecentSearches(getRecentSearches());
+    }
     setDropdownOpen(false);
     onSubmit?.(normalizedQuery);
   }
 
   function handleViewAll() {
+    if (normalizedQuery.trim()) {
+      saveRecentSearch(normalizedQuery);
+      setRecentSearches(getRecentSearches());
+    }
     setDropdownOpen(false);
     onViewAll?.(normalizedQuery);
+  }
+
+  function handleSelectRecent(query: string) {
+    setQuery(query);
+    setDropdownOpen(false);
+    onSubmit?.(query);
+  }
+
+  function handleRemoveRecent(e: React.MouseEvent, query: string) {
+    e.stopPropagation();
+    removeRecentSearch(query);
+    setRecentSearches(getRecentSearches());
   }
 
   const isTopbar = variant === "topbar";
@@ -123,6 +187,7 @@ export default function PackagesToolbarSearch({
         <Search className="h-4 w-4 shrink-0 text-(--color-muted)" />
 
         <input
+          ref={internalInputRef}
           value={query}
           autoFocus={autoFocus}
           onChange={(event) => {
@@ -130,9 +195,7 @@ export default function PackagesToolbarSearch({
             setDropdownOpen(true);
           }}
           onFocus={() => {
-            if (normalizedQuery.length > 0) {
-              setDropdownOpen(true);
-            }
+            setDropdownOpen(true);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -168,6 +231,48 @@ export default function PackagesToolbarSearch({
                 </div>
               ))}
             </div>
+          ) : normalizedQuery.length === 0 && hasRecentSearches ? (
+            <>
+              <div className="max-h-[420px] overflow-y-auto overscroll-contain [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-track]:bg-transparent">
+                <div className="p-2">
+                  <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-(--color-muted)">
+                      Recent Searches
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        localStorage.removeItem(RECENT_SEARCHES_KEY);
+                        setRecentSearches([]);
+                      }}
+                      className="text-[11px] text-(--color-muted) transition hover:text-(--color-text)"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  {recentSearches.map((query) => (
+                    <button
+                      key={query}
+                      type="button"
+                      onClick={() => handleSelectRecent(query)}
+                      className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-(--color-accent)/8 active:bg-(--color-accent)/15"
+                    >
+                      <Clock className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
+                      <span className="min-w-0 flex-1 truncate text-sm text-(--color-text)">
+                        {query}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => handleRemoveRecent(e, query)}
+                        className="shrink-0 rounded-md p-0.5 text-(--color-muted) opacity-0 transition hover:bg-white/10 hover:text-(--color-text) group-hover:opacity-100"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
           ) : (
             <>
               <div className="max-h-[420px] overflow-y-auto overscroll-contain [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-track]:bg-transparent">

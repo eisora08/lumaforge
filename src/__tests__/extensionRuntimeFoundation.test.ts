@@ -17,8 +17,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   resetRuntimeStore,
   registerExtensionRuntime,
-  enableExtension,
-  disableExtension,
   snapshot,
   getExtensionRuntime,
   getAllExtensionRuntimes,

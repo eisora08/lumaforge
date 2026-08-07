@@ -130,7 +130,14 @@ export default function StoreDiscoverHeroCarousel({
 
   const hasAvailableSource = current.sources.some((s) => s.available);
   const currentImage = getGameImage(current, storeMetadataByAppId, sgdbArtworkByAppId);
-  const railGames = games.slice(0, 5);
+  const railGames = games;
+
+  // Dev-only: verify hero slides, pagination, and sidebar always match
+  if (import.meta.env.DEV && railGames.length !== games.length) {
+    console.warn(
+      `[HERO_SYNC] Mismatch: hero=${games.length} sidebar=${railGames.length} — both must derive from the same featuredGames array`,
+    );
+  }
 
   const currentMeta = storeMetadataByAppId[Number(current.appId)];
   const currentReview = reviewSummaryByAppId?.[Number(current.appId)];
@@ -156,23 +163,46 @@ export default function StoreDiscoverHeroCarousel({
               onOpenGame(current);
             }
           }}
-          className="relative aspect-[2/1] cursor-pointer overflow-hidden bg-white/5 sm:aspect-[16/7]"
+          className="relative min-h-[300px] cursor-pointer overflow-hidden bg-white/5 sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px]"
         >
           {heroTransition === "crossfade" ? (
             <>
               {prevSrc && prevSrc !== currentImage && (
-                <AsyncImage
-                  src={prevSrc}
-                  alt=""
-                  className="absolute inset-0 animate-hero-media-out"
-                  loading="eager"
-                  fallback={<div className="h-full w-full" />}
-                />
+                <div className="absolute inset-0 animate-hero-media-out">
+                  <AsyncImage
+                    src={prevSrc}
+                    alt=""
+                    className="h-full w-full"
+                    loading="eager"
+                    fallback={<div className="h-full w-full" />}
+                  />
+                </div>
               )}
+              <div key={safeIndex} className="absolute inset-0 animate-hero-crossfade-in">
+                <div
+                  className={`h-full w-full ${isPaused ? "" : "animate-hero-slow-zoom"}`}
+                  style={isPaused ? undefined : { animationDuration: `${AUTO_ADVANCE_MS}ms` }}
+                >
+                  <AsyncImage
+                    src={currentImage}
+                    alt={current.title}
+                    className="h-full w-full"
+                    loading="eager"
+                    fallback={
+                      <div className="flex h-full w-full items-center justify-center">
+                        <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
+                      </div>
+                    }
+                  />
+                </div>
+              </div>
+            </>
+          ) : heroTransition === "kenburns" ? (
+            <div className="absolute inset-0 animate-hero-kenburns-in">
               <AsyncImage
                 src={currentImage}
                 alt={current.title}
-                className="absolute inset-0 animate-hero-crossfade-in"
+                className="h-full w-full"
                 loading="eager"
                 fallback={
                   <div className="flex h-full w-full items-center justify-center">
@@ -180,23 +210,26 @@ export default function StoreDiscoverHeroCarousel({
                   </div>
                 }
               />
-            </>
+            </div>
           ) : (
-            <AsyncImage
-              src={currentImage}
-              alt={current.title}
-              className={`absolute inset-0 ${
-                heroTransition === "kenburns"
-                  ? "animate-hero-kenburns-in"
-                  : "animate-hero-focus-in"
-              }`}
-              loading="eager"
-              fallback={
-                <div className="flex h-full w-full items-center justify-center">
-                  <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
-                </div>
-              }
-            />
+            <div className="absolute inset-0 animate-hero-focus-in">
+              <div
+                className={`h-full w-full ${isPaused ? "" : "animate-hero-slow-zoom"}`}
+                style={isPaused ? undefined : { animationDuration: `${AUTO_ADVANCE_MS}ms` }}
+              >
+                <AsyncImage
+                  src={currentImage}
+                  alt={current.title}
+                  className="h-full w-full"
+                  loading="eager"
+                  fallback={
+                    <div className="flex h-full w-full items-center justify-center">
+                      <Gamepad2 className="h-16 w-16 text-(--color-muted)" />
+                    </div>
+                  }
+                />
+              </div>
+            </div>
           )}
 
           <div className="absolute inset-0 bg-linear-to-r from-black/80 via-black/40 to-transparent" />
@@ -242,45 +275,36 @@ export default function StoreDiscoverHeroCarousel({
               />
             )}
 
-            <div className="mt-4 flex items-center gap-3 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenGame(current);
-                }}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-5 py-2.5 text-sm font-bold text-(--color-accent-text) shadow-lg shadow-black/20 transition duration-150 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white active:scale-[0.97]"
-              >
-                Details
-              </button>
+            {(hasAvailableSource || current.sources.length > 0) && (
+              <div className="mt-4 flex items-center gap-3 opacity-0 transition duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
+                {hasAvailableSource && onDownload && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDownload(current);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-medium text-white backdrop-blur-sm transition duration-150 hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white active:scale-[0.97]"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download
+                  </button>
+                )}
 
-              {hasAvailableSource && onDownload && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDownload(current);
-                  }}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-medium text-white backdrop-blur-sm transition duration-150 hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white active:scale-[0.97]"
-                >
-                  <Download className="h-4 w-4" />
-                  Download
-                </button>
-              )}
-
-              {current.sources.length > 0 && onOpenSourceSelector && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenSourceSelector(current);
-                  }}
-                  className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-medium text-white/80 backdrop-blur-sm transition hover:bg-white/15 hover:text-white"
-                >
-                  Source
-                </button>
-              )}
-            </div>
+                {current.sources.length > 0 && onOpenSourceSelector && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenSourceSelector(current);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-medium text-white/80 backdrop-blur-sm transition hover:bg-white/15 hover:text-white"
+                  >
+                    Source
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {games.length > 1 && (
@@ -329,6 +353,18 @@ export default function StoreDiscoverHeroCarousel({
                   }`}
                 />
               ))}
+            </div>
+          )}
+
+          {games.length > 1 && (
+            <div
+              key={`progress-${safeIndex}`}
+              className="absolute bottom-0 left-0 right-0 z-20 h-[2px] overflow-hidden bg-white/10"
+            >
+              <div
+                className={`h-full bg-(--color-accent) ${isPaused ? "" : "animate-hero-progress"}`}
+                style={isPaused ? { transform: "scaleX(1)" } : { animationDuration: `${AUTO_ADVANCE_MS}ms` }}
+              />
             </div>
           )}
         </div>

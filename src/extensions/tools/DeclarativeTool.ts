@@ -421,7 +421,7 @@ export class DeclarativeTool implements Tool {
   private async applyFromIndex(
     appId: string,
     gameInstallDir: string,
-    extensionInstallDir: string,
+    _extensionInstallDir: string,
   ): Promise<ToolApplyResult> {
     const affectedFiles: string[] = [];
     const indexUrl = this.config.indexUrl;

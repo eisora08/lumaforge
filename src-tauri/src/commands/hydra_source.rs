@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager, Url, WebviewUrl};
 use tokio::sync::oneshot;
 
 use crate::commands::repack_catalog::RepackCatalogArtifact;
-use crate::commands::sqlite_cache::SqliteDb;
+use crate::commands::sqlite_cache::SqliteStoreDb;
 
 // ── Types ──
 
@@ -517,7 +517,7 @@ pub async fn fetch_and_import_hydra_source(
     fs::write(&cache_path, &text).map_err(|e| format!("Cache write: {}", e))?;
 
     // Step 4: Import entries into the repack catalog (sync DB work after async)
-    let db = app_handle.state::<SqliteDb>();
+    let db = app_handle.state::<SqliteStoreDb>();
     let db_guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("DB lock: {}", e))?,
         None => return Err("Database not available".to_string()),
@@ -592,7 +592,7 @@ pub async fn import_repack_feed(
     };
     let total_count = rows.len() as u32;
 
-    let db = app_handle.state::<SqliteDb>();
+    let db = app_handle.state::<SqliteStoreDb>();
     let db_guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("DB lock: {}", e))?,
         None => return Err("Database not available".to_string()),
@@ -620,7 +620,7 @@ pub async fn import_repack_feed(
 /// grouped by feed name with per-feed game counts.
 #[tauri::command]
 pub fn list_imported_feeds(app_handle: AppHandle) -> Result<Vec<ImportedFeedSummary>, String> {
-    let db = app_handle.state::<SqliteDb>();
+    let db = app_handle.state::<SqliteStoreDb>();
     let db_guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("DB lock: {}", e))?,
         None => return Ok(Vec::new()),
@@ -656,7 +656,7 @@ pub fn list_imported_feeds(app_handle: AppHandle) -> Result<Vec<ImportedFeedSumm
 /// Remove a pasted repack feed, purging all of its rows from the repack catalog.
 #[tauri::command]
 pub fn remove_imported_feed(app_handle: AppHandle, name: String) -> Result<u32, String> {
-    let db = app_handle.state::<SqliteDb>();
+    let db = app_handle.state::<SqliteStoreDb>();
     let db_guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("DB lock: {}", e))?,
         None => return Err("Database not available".to_string()),
@@ -714,7 +714,7 @@ pub fn remove_hydra_source(app_handle: AppHandle, id: String) -> Result<(), Stri
     save_hydra_sources(&app_handle, &sources)?;
 
     if let Some(url) = removed_url {
-        let db = app_handle.state::<SqliteDb>();
+        let db = app_handle.state::<SqliteStoreDb>();
         let db_guard = match &db.0 {
             Some(mutex) => mutex.lock().map_err(|e| format!("DB lock: {}", e))?,
             None => return Err("Database not available".to_string()),
@@ -806,7 +806,7 @@ async fn import_hydra_source_entries(
     let _ = fs::write(&cache_path, &text);
 
     // Insert entries into DB
-    let db = app_handle.state::<SqliteDb>();
+    let db = app_handle.state::<SqliteStoreDb>();
     let db_guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("DB lock: {}", e))?,
         None => return Err("Database not available".to_string()),

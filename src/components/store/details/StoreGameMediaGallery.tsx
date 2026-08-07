@@ -68,7 +68,7 @@ export default function StoreGameMediaGallery({
   const railRef = useRef<HTMLDivElement>(null);
   const thumbRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const lastScrollState = useRef<string>("");
-  const controlsTimerRef = useRef<number>(0);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastSelectedLogId = useRef<string>("");
   const lastOverlayLogRef = useRef<string>("");

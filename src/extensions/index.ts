@@ -84,7 +84,6 @@ export {
 export type {
   RegisteredExtension,
   ExtensionManagerSnapshot,
-  ExtensionSurface,
 } from "./manager";
 export {
   subscribeExtensionManager,

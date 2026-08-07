@@ -63,7 +63,6 @@ export function resolveContributions(
 
     // Check required capabilities
     const requiredCapabilities = manifest.capabilities?.map((c) => c.id) ?? [];
-    const hasAllCapabilities = requiredCapabilities.every(() => true); // All declared capabilities are active
 
     // Check required permissions
     const requiredPermissions = manifest.permissions?.map((p) => p.id) ?? [];

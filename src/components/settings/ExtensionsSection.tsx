@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { Puzzle, CheckCircle, XCircle, AlertTriangle, Eye, EyeOff, Info } from "lucide-react";
+import { CheckCircle, XCircle, AlertTriangle, Eye, EyeOff, Info } from "lucide-react";
 import SettingsSection from "./SettingsSection";
 import {
   snapshot,

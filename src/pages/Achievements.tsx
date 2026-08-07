@@ -133,6 +133,7 @@ export default function Achievements() {
         steamPath: settings.steamRoot || undefined,
         steamAchievementsEnabled: settings.steamAchievementsEnabled,
         achievementSchemaPath: settings.achievementSchemaPath || undefined,
+        forceRefresh: true,
       });
       achievementStore.setSummary(selectedGame.appId, summary);
       setSelectedSummary(summary);

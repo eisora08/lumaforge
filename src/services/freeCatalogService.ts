@@ -119,7 +119,29 @@ function catalogToStoreGame(game: CatalogGameResult): StoreGame {
 // ── SteamSpy sections (real-time player data) ──
 
 /**
- * Top by Players: same endpoint, sorted by total 2-week owners.
+ * Recent Games: new releases and recent updates getting attention in the last 48 hours.
+ * Source: SteamSpy `top100in2days` (short-window signal — captures fresh releases).
+ * Distinct from Trending (2-week window): recent games may not yet have sustained momentum.
+ */
+export async function getRecentGames(limit = 20): Promise<{ games: StoreGame[] }> {
+  const entries = await fetchWithCache("top100in2days", "https://steamspy.com/api.php?request=top100in2days");
+  const sorted = [...entries].sort((a, b) => b.ccu - a.ccu);
+  return { games: sorted.slice(0, limit).map(spyToStoreGame) };
+}
+
+/**
+ * Trending Now: games with sustained momentum over the last 2 weeks.
+ * Source: SteamSpy `top100in2weeks` (real-time signal).
+ * Distinct from Recent (48h): trending games have proven staying power.
+ */
+export async function getTrendingGames(limit = 20): Promise<{ games: StoreGame[] }> {
+  const entries = await fetchWithCache("top100in2weeks", "https://steamspy.com/api.php?request=top100in2weeks");
+  const sorted = [...entries].sort((a, b) => b.players_2weeks - a.players_2weeks);
+  return { games: sorted.slice(0, limit).map(spyToStoreGame) };
+}
+
+/**
+ * Top by Players: same 2-week endpoint, sorted by total 2-week owners.
  * Source: SteamSpy `top100in2weeks` (real-time signal).
  */
 export async function getTopByPlayers(limit = 20): Promise<{ games: StoreGame[] }> {
@@ -183,6 +205,34 @@ export async function getMostPlayed(limit = 16): Promise<{ games: StoreGame[] }>
   } catch {
     return { games: [] };
   }
+}
+
+/**
+ * Most Played Right Now: real-time concurrent players across ALL Steam.
+ * Source: SteamSpy `all` endpoint (full dataset, not limited to top100).
+ * Distinct from free-top-players (top100in2weeks): this covers every game with current CCU data.
+ */
+export async function getMostPlayedNow(limit = 20): Promise<{ games: StoreGame[] }> {
+  const entries = await fetchWithCache("all", "https://steamspy.com/api.php?request=all");
+  const sorted = [...entries].sort((a, b) => b.ccu - a.ccu);
+  return { games: sorted.filter((e) => e.ccu > 0).slice(0, limit).map(spyToStoreGame) };
+}
+
+/**
+ * Rising Stars: games gaining traction relative to their all-time player base.
+ * Source: SteamSpy `all` endpoint — ratio of 2-week players to total owners.
+ * High ratio = new viral momentum; low ratio = fading legacy popularity.
+ */
+export async function getRisingStars(limit = 20): Promise<{ games: StoreGame[] }> {
+  const entries = await fetchWithCache("all", "https://steamspy.com/api.php?request=all");
+  const withRatio = entries
+    .filter((e) => e.players_2weeks > 5000 && e.players_forever > 10000)
+    .map((e) => ({
+      entry: e,
+      ratio: e.players_2weeks / Math.max(e.players_forever, 1),
+    }));
+  withRatio.sort((a, b) => b.ratio - a.ratio);
+  return { games: withRatio.slice(0, limit).map((w) => spyToStoreGame(w.entry)) };
 }
 
 /**

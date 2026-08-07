@@ -11,7 +11,7 @@ import {
 import PackageCard from "../components/packages/PackageCard";
 import PackagesToolbar from "../components/packages/PackagesToolbar";
 import type { StoreSearchDropdownItem } from "../components/packages/PackagesToolbar";
-import ProviderSearchReport from "../components/packages/ProviderSearchReport";
+
 import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
 import StoreGridSection from "../components/store/StoreGridSection";
 import { GenreCollectionCard } from "../components/store/GenreCollectionCard";
@@ -58,6 +58,7 @@ import type { SourceAvailabilityGameEntry, SourceCheckStatus } from "../services
 import {
   getCachedStoreDiscover,
   setCachedStoreDiscover,
+  getPersistedDiscoverFeatured,
   buildCatalogFingerprint,
   getCachedStoreUI,
   setCachedStoreUI,
@@ -105,6 +106,7 @@ import {
 } from "../services/storeImageCache";
 import { resolveArtworkForAppIds } from "../services/storeArtworkResolver";
 import type { SgdbArtworkData } from "../services/storeArtworkResolver";
+import { buildSteamCdnUrl } from "../services/gameCacheService";
 import { getAllDebridGames } from "../services/debridGameStore";
 import { downloadFromSource as sharedDownloadFromSource } from "../features/download/downloadFromSource";
 import {
@@ -244,7 +246,6 @@ const INITIAL_VISIBLE_COUNT = 40;
  * Keeps React reconciliation fast when scrolling through hundreds of catalog items.
  */
 const MORE_TO_EXPLORE_MOUNT_LIMIT = 24;
-const SECTION_GRID_COUNT = 24;
 
 const DISPLAY_GENRES = ["Action", "Indie", "Racing", "Shooter", "RPG", "Adventure"];
 /** Max catalog entries to score in highQualityPool — avoids processing all 162K+ on every review/metadata change */
@@ -277,11 +278,32 @@ const EVENT_WEIGHTS: Record<InteractionEvent["type"], number> = {
 
 const TRENDING_LAMBDA = 0.00003;
 const TRENDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const TRENDING_RECALC_MS = 30000;
+const TRENDING_RECALC_MS = 120000;
 const MAX_EVENTS_PER_GAME = 200;
 
 const INTENT_WINDOW_MS = 30 * 60 * 1000;
 const PREDICTION_BOOST_MULTIPLIER = 3;
+
+const INTERACTION_STORAGE_KEY = "lumaforge-store-interactions-v1";
+const INTERACTION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const INTERACTION_PERSIST_DEBOUNCE_MS = 2000;
+
+function loadPersistedInteractions(): { scores: Record<string, number>; events: Record<string, InteractionEvent[]> } {
+  try {
+    const raw = localStorage.getItem(INTERACTION_STORAGE_KEY);
+    if (!raw) return { scores: {}, events: {} };
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    // Prune old events on load
+    const events: Record<string, InteractionEvent[]> = {};
+    const scores: Record<string, number> = parsed.scores ?? {};
+    for (const [appId, evts] of Object.entries(parsed.events ?? {})) {
+      const pruned = (evts as InteractionEvent[]).filter((e) => now - e.timestamp < INTERACTION_MAX_AGE_MS);
+      if (pruned.length > 0) events[appId] = pruned;
+    }
+    return { scores, events };
+  } catch { return { scores: {}, events: {} }; }
+}
 
 function mapSteamDropdownItemToPackageGame(
   item: StoreSearchDropdownItem
@@ -360,7 +382,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     selectedProvider,
     results,
     loading,
-    providerReports,
     setQuery,
     setSelectedProvider,
   } = useProviderSearch();
@@ -534,11 +555,27 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     };
   }, []);
 
-  const [interactionScoreByAppId, setInteractionScoreByAppId] = useState<Record<string, number>>({});
+  const _persistedInteractionsRef = useRef(loadPersistedInteractions());
+  const [interactionScoreByAppId, setInteractionScoreByAppId] = useState<Record<string, number>>(() => _persistedInteractionsRef.current.scores);
   const [interactionEventsByAppId, setInteractionEventsByAppId] = useState<
     Record<string, InteractionEvent[]>
-  >({});
+  >(() => _persistedInteractionsRef.current.events);
   const [trendRecalcKey, setTrendRecalcKey] = useState(0);
+
+  // Persist interaction data to localStorage (debounced, cross-session)
+  const _persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (_persistTimerRef.current) clearTimeout(_persistTimerRef.current);
+    _persistTimerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem(INTERACTION_STORAGE_KEY, JSON.stringify({
+          scores: interactionScoreByAppId,
+          events: interactionEventsByAppId,
+        }));
+      } catch { /* quota exceeded — best-effort */ }
+    }, INTERACTION_PERSIST_DEBOUNCE_MS);
+    return () => { if (_persistTimerRef.current) clearTimeout(_persistTimerRef.current); };
+  }, [interactionScoreByAppId, interactionEventsByAppId]);
 
   const sourceCacheLoadedRef = useRef(false);
   useEffect(() => {
@@ -608,12 +645,15 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       return sec?.items ?? [];
     } catch { return []; }
   }
+  const [freeRecentGames, setFreeRecentGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-recent"));
   const [freeTrendingGames, setFreeTrendingGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-trending"));
   const [freeTopByPlayersGames, setFreeTopByPlayersGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-top-players"));
   const [freeLeaderboardGames, setFreeLeaderboardGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-leaderboard"));
   const [freeFeaturedGames, setFreeFeaturedGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-featured"));
   const [freeHiddenGems, setFreeHiddenGems] = useState<StoreGame[]>(() => _seedFreeFromCache("free-hidden-gems"));
   const [freeMostPlayed, setFreeMostPlayed] = useState<StoreGame[]>(() => _seedFreeFromCache("free-most-played"));
+  const [mostPlayedNow, setMostPlayedNow] = useState<StoreGame[]>(() => _seedFreeFromCache("most-played-now"));
+  const [risingStars, setRisingStars] = useState<StoreGame[]>(() => _seedFreeFromCache("rising-stars"));
   const [freeCatalogLoading, setFreeCatalogLoading] = useState(false);
 
 
@@ -672,54 +712,56 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     return () => { cancelled = true; };
   }, [storeFirstPaintDone, settings.rawgApiKey, settings.igdbClientId, settings.igdbClientSecret]);
 
-  // ── Free catalog data fetch (SteamSpy for top-players only, local catalog for trending/leaderboard/featured/hidden-gems/most-played) ──
+  // ── Free catalog data fetch (SteamSpy for recent/trending/top-players, local catalog for leaderboard/featured/hidden-gems/most-played) ──
   useEffect(() => {
     if (!storeFirstPaintDone) return;
     let cancelled = false;
     setFreeCatalogLoading(true);
     (async () => {
-      const { getTopByPlayers, getLeaderboard, getFeaturedGames, getHiddenGems, getMostPlayed } = await import("../services/freeCatalogService");
+      const { getRecentGames, getTrendingGames, getTopByPlayers, getLeaderboard, getFeaturedGames, getHiddenGems, getMostPlayed, getMostPlayedNow, getRisingStars } = await import("../services/freeCatalogService");
       try {
-        // Trending = local catalog new & noteworthy (last 180 days, sorted by review count)
-        const trendingPromise = queryNewNoteworthyGames(20).then(({ games }): StoreGame[] =>
-          games.map((g) => ({
-            appId: String(g.appId),
-            title: g.name || `App ${g.appId}`,
-            imageUrl: g.headerImage || g.capsuleImage || undefined,
-            platforms: [] as string[],
-            sources: [] as PackageSource[],
-          }))
-        ).catch(() => [] as StoreGame[]);
+        // Recent = SteamSpy top100in2days (48h window — fresh releases)
+        const recentPromise = getRecentGames(20).catch(() => ({ games: [] as StoreGame[] }));
+        // Trending = SteamSpy top100in2weeks (2-week window — sustained momentum)
+        const trendingPromise = getTrendingGames(20).catch(() => ({ games: [] as StoreGame[] }));
 
-        const [trending, players, leaderboard, featured, hiddenGems, mostPlayed] = await Promise.allSettled([
+        const [recent, trending, players, leaderboard, featured, hiddenGems, mostPlayed, mpNow, rising] = await Promise.allSettled([
+          recentPromise,
           trendingPromise,
           getTopByPlayers(20),
           getLeaderboard(20),
           getFeaturedGames(20),
           getHiddenGems(16),
           getMostPlayed(16),
+          getMostPlayedNow(20),
+          getRisingStars(20),
         ]);
         if (cancelled) return;
 
         // Dedup: when data is seeded from cache, skip setState if lengths match
-        // — avoids triggering a 300-line discoverSections rebuild for identical data.
-        const newTrending = trending.status === "fulfilled" ? trending.value : [];
+        const newRecent = recent.status === "fulfilled" ? recent.value.games : [];
+        const newTrending = trending.status === "fulfilled" ? trending.value.games : [];
         const newPlayers = players.status === "fulfilled" ? players.value.games : [];
         const newLeaderboard = leaderboard.status === "fulfilled" ? leaderboard.value.games : [];
         const newFeatured = featured.status === "fulfilled" ? featured.value.games : [];
         const newHiddenGems = hiddenGems.status === "fulfilled" ? hiddenGems.value.games : [];
         const newMostPlayed = mostPlayed.status === "fulfilled" ? mostPlayed.value.games : [];
+        const newMpNow = mpNow.status === "fulfilled" ? mpNow.value.games : [];
+        const newRising = rising.status === "fulfilled" ? rising.value.games : [];
 
         let changed = false;
+        if (newRecent.length > 0 && newRecent.length !== freeRecentGames.length) { setFreeRecentGames(newRecent); changed = true; }
         if (newTrending.length > 0 && newTrending.length !== freeTrendingGames.length) { setFreeTrendingGames(newTrending); changed = true; }
         if (newPlayers.length > 0 && newPlayers.length !== freeTopByPlayersGames.length) { setFreeTopByPlayersGames(newPlayers); changed = true; }
         if (newLeaderboard.length > 0 && newLeaderboard.length !== freeLeaderboardGames.length) { setFreeLeaderboardGames(newLeaderboard); changed = true; }
         if (newFeatured.length > 0 && newFeatured.length !== freeFeaturedGames.length) { setFreeFeaturedGames(newFeatured); changed = true; }
         if (newHiddenGems.length > 0 && newHiddenGems.length !== freeHiddenGems.length) { setFreeHiddenGems(newHiddenGems); changed = true; }
         if (newMostPlayed.length > 0 && newMostPlayed.length !== freeMostPlayed.length) { setFreeMostPlayed(newMostPlayed); changed = true; }
+        if (newMpNow.length > 0 && newMpNow.length !== mostPlayedNow.length) { setMostPlayedNow(newMpNow); changed = true; }
+        if (newRising.length > 0 && newRising.length !== risingStars.length) { setRisingStars(newRising); changed = true; }
 
-        const totalGames = newTrending.length + newPlayers.length + newLeaderboard.length;
-        console.log(`[STORE][FREE_CATALOG] loaded=${totalGames} trending=${newTrending.length} players=${newPlayers.length} leaderboard=${newLeaderboard.length} changed=${changed}`);
+        const totalGames = newRecent.length + newTrending.length + newPlayers.length + newLeaderboard.length;
+        console.log(`[STORE][FREE_CATALOG] loaded=${totalGames} recent=${newRecent.length} trending=${newTrending.length} players=${newPlayers.length} leaderboard=${newLeaderboard.length} mpNow=${newMpNow.length} rising=${newRising.length} changed=${changed}`);
       } catch (err) {
         console.warn("[STORE][FREE_CATALOG] failed:", err);
       } finally {
@@ -1279,8 +1321,37 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     return sections.filter((section) => section.games.length > 0);
   }, [results, installedStatusByAppId]);
 
+  // Hydration gate for the hero (mirrors the discoverSections rail gate):
+  // on a remount the pool starts as the curated baseline (Sekiro→Cyberpunk) while
+  // enrichedCatalogSections (provider games Hades/CS2) hydrate async over ~500ms.
+  // Without this restore, boot and navigating-back produced DIFFERENT hero content.
+  // Restore the stable cached featuredGames (boot == return) until all critical
+  // inputs are read; then recompute from the live, fully-loaded pool. Computed
+  // OUTSIDE the memo so it participates in the dependency array — otherwise the
+  // hero would stay persisted because none of the async inputs are memo deps.
+  const featuredInputsReady =
+    Object.keys(storeMetadataByAppId).length > 20 &&
+    Object.keys(reviewSummaryByAppId).length > 0 &&
+    installedStatusByAppId.size > 0 &&
+    Object.keys(providerOverlayByAppId).length > 0 &&
+    !freeCatalogLoading;
+
   const featuredGames = useMemo(() => {
     const HERO_MAX = 8;
+
+    if (!featuredInputsReady) {
+      const cachedFeatured = getCachedStoreDiscover();
+      if (cachedFeatured && cachedFeatured.catalogFingerprint === catalogFingerprint && cachedFeatured.featuredGames && cachedFeatured.featuredGames.length >= 4 && !cachedFeatured.isPartialCache) {
+        return cachedFeatured.featuredGames;
+      }
+      // Cold boot: the module-level cache is null and catalogFingerprint is "" until
+      // steamdb.json loads, so the in-memory restore above can never hit. Fall back to
+      // the persisted hero source (same list the return path recomputes) -> boot == return.
+      const persistedFeatured = getPersistedDiscoverFeatured();
+      if (persistedFeatured && persistedFeatured.length >= 4) {
+        return persistedFeatured;
+      }
+    }
 
     // Deterministic day-seeded shuffle: Fisher-Yates with a hash of YYYY-MM-DD
     function daySeededShuffle<T>(arr: T[], seed: number): T[] {
@@ -1358,7 +1429,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     // Shuffle deterministically by day, pick first HERO_MAX
     const shuffled = daySeededShuffle(unique, todaySeed());
     return shuffled.slice(0, HERO_MAX);
-  }, [highQualityPool, catalogFingerprint, enrichedCatalogSections]);
+  }, [highQualityPool, catalogFingerprint, enrichedCatalogSections, featuredInputsReady]);
 
   // ── Genre name normalization ──
   function normalizeGenreName(raw: string): string | null {
@@ -1398,16 +1469,28 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // Phase 2+3: Input fingerprint to skip expensive 300-line section builder when material inputs unchanged.
   const _sectionBuildFpRef = useRef({ fp: "", sections: null as StoreDiscoverSection[] | null });
   const _lastSectionBuildMsRef = useRef(0);
+  // Freeze "For You" per catalog fingerprint: computed once per catalog, cached for the session.
+  // Prevents the async hydration (~500ms) from re-windowing the personalized rail on every recomposition.
+  const _forYouCacheRef = useRef({ fp: "", items: null as StoreGame[] | null });
   const discoverSections = useMemo(() => {
-    // Skip stale cache when enriched provider data is available — always recompute
-    const hasEnrichedData = enrichedCatalogSections.length > 0;
     const cached = getCachedStoreDiscover();
-    const hasReviewsLoaded = Object.keys(reviewSummaryByAppId).length > 0;
-    // Bypass partial/incomplete cache — rebuild sections when metadata or reviews become available.
-    // Only return cached data when no reviews have been loaded yet (cold cache from prior session).
-    // Once reviews arrive, rebuild to apply review-based quality gates.
-    // Also skip cache when enriched data exists — merge must run to produce provider-first sections.
-    if (!hasEnrichedData && cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache && !hasReviewsLoaded) {
+
+    // Hydration gate: keep returning cached sections until ALL critical async inputs are ready.
+    // On remount, 5+ state slices hydrate over ~500ms (metadata, reviews, installed scripts,
+    // provider overlays, enriched catalog). Each triggers a different section composition.
+    // Returning cached sections until all inputs are present prevents 3-4 visible section
+    // recompositions — the user sees the same stable sections from T+0 until the full rebuild.
+    const _gateMeta = Object.keys(storeMetadataByAppId).length;
+    const _gateReviews = Object.keys(reviewSummaryByAppId).length;
+    const _gateInstalled = installedStatusByAppId.size;
+    const _gateProviders = Object.keys(providerOverlayByAppId).length;
+    // Free-catalog datasets load async AFTER first paint (SteamSpy / local catalog).
+    // Holding cached sections while `freeCatalogLoading` prevents the async fetch from
+    // replacing the stable cached sections with a progressively-built version on boot —
+    // the same composition the user sees when navigating back into the Store.
+    const allCriticalReady = _gateMeta > 20 && _gateReviews > 0 && _gateInstalled > 0 && _gateProviders > 0 && featuredGames.length > 0 && !freeCatalogLoading;
+
+    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.discoverSections && cached.discoverSections.length > 0 && !cached.isPartialCache && !allCriticalReady) {
       // Filter deprecated sections that may exist in stale caches
       const _COLD_DEPRECATED = new Set(["featured", "new-noteworthy"]);
       return cached.discoverSections.filter((s) => !_COLD_DEPRECATED.has(s.id));
@@ -1427,9 +1510,15 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       compiledDiscoveryIndex?.sections.topPicks.length ?? 0,
       highQualityPool.length,
       catalogFingerprint,
+      freeRecentGames.length,
       freeTrendingGames.length,
       freeTopByPlayersGames.length,
       freeLeaderboardGames.length,
+      freeFeaturedGames.length,
+      freeHiddenGems.length,
+      freeMostPlayed.length,
+      mostPlayedNow.length,
+      risingStars.length,
     ].join(":");
     if (_sectionBuildFpRef.current.fp === inputFp && _sectionBuildFpRef.current.sections) {
       return _sectionBuildFpRef.current.sections;
@@ -1460,19 +1549,31 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     const sections: StoreDiscoverSection[] = [];
 
     // ── Curated baseline (immediate, no network, no metadata required) ──
-    // Provides high-quality games on first paint — enriched catalog replaces where quality is better
+    // Provides high-quality games on first load — enriched catalog replaces where quality is better.
+    // The "featured" rail rotates DAILY with the same day-seeded set as the hero (featuredGames),
+    // so the rail always mirrors the hero art instead of a static curated list.
     for (const cs of _curatedBaseline) {
+      let items: StoreGame[] = cs.games.map((g) => ({
+        appId: g.steamAppId ?? g.id,
+        title: g.title,
+        imageUrl: undefined,
+        platforms: [] as string[],
+        sources: [] as PackageSource[],
+      }));
+      if (cs.sectionId === "featured" && featuredGames.length > 0) {
+        items = featuredGames.map((g) => ({
+          appId: g.appId,
+          title: g.title,
+          imageUrl: g.imageUrl,
+          platforms: g.platforms,
+          sources: g.sources,
+        }));
+      }
       sections.push({
         id: cs.sectionId,
         title: cs.title,
         type: inferCuratedSectionType(cs.sectionId),
-        items: cs.games.map((g) => ({
-          appId: g.steamAppId ?? g.id,
-          title: g.title,
-          imageUrl: undefined,
-          platforms: [] as string[],
-          sources: [] as PackageSource[],
-        })),
+        items,
         source: "curated" as const,
       });
       // Mark curated games as used — steamdb sections won't duplicate them
@@ -1493,7 +1594,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       sources: [] as PackageSource[],
     }));
 
-    // ── Free catalog sections (local catalog: trending, leaderboard, featured, hidden gems, most played; SteamSpy: top players) ──
+    // ── Free catalog sections (SteamSpy: recent (48h), trending (2wk), top-players; local catalog: leaderboard, featured, hidden gems, most played) ──
+    if (freeRecentGames.length > 0) {
+      const items = takeUnique(freeRecentGames, 20);
+      if (items.length > 0) {
+        sections.push({ id: "free-recent", title: "Recent Games", type: "rail", items, source: "catalog" as const });
+      }
+    }
     if (freeTrendingGames.length > 0) {
       const items = takeUnique(freeTrendingGames, 20);
       if (items.length > 0) {
@@ -1530,6 +1637,18 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       const items = takeUnique(freeMostPlayed, 16);
       if (items.length > 0) {
         sections.push({ id: "free-most-played", title: "Dedicated Fan Bases", type: "rail", items, source: "catalog" as const });
+      }
+    }
+    if (mostPlayedNow.length > 0) {
+      const items = takeUnique(mostPlayedNow, 6);
+      if (items.length > 0) {
+        sections.push({ id: "most-played-now", title: "Most Played Right Now", type: "rail", items, source: "catalog" as const });
+      }
+    }
+    if (risingStars.length > 0) {
+      const items = takeUnique(risingStars, 6);
+      if (items.length > 0) {
+        sections.push({ id: "rising-stars", title: "Rising Stars", type: "rail", items, source: "catalog" as const });
       }
     }
 
@@ -1590,36 +1709,46 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     }
 
     // --- For You (personalized genre overlap, was "Recommended for You") ---
-    const preferredGenres = new Set<string>();
-    for (const [appIdStr, score] of Object.entries(interactionScoreByAppId)) {
-      if (score > 0) {
+    // Frozen per catalog fingerprint: reuse the first computed window for this catalog so the
+    // personalized rail is stable across async hydration, recomputing only when the catalog truly changes.
+    if (_forYouCacheRef.current.items && _forYouCacheRef.current.fp === catalogFingerprint) {
+      const frozen = _forYouCacheRef.current.items;
+      if (frozen.length > 0) {
+        sections.push({ id: "for-you", title: "For You", type: "rail", items: frozen, source: "personalized" });
+      }
+    } else {
+      const preferredGenres = new Set<string>();
+      for (const [appIdStr, score] of Object.entries(interactionScoreByAppId)) {
+        if (score > 0) {
+          const meta = storeMetadataByAppId[Number(appIdStr)];
+          if (meta?.genres) meta.genres.forEach((g) => preferredGenres.add(g));
+        }
+      }
+      for (const [appIdStr] of installedStatusByAppId) {
         const meta = storeMetadataByAppId[Number(appIdStr)];
         if (meta?.genres) meta.genres.forEach((g) => preferredGenres.add(g));
       }
-    }
-    for (const [appIdStr] of installedStatusByAppId) {
-      const meta = storeMetadataByAppId[Number(appIdStr)];
-      if (meta?.genres) meta.genres.forEach((g) => preferredGenres.add(g));
-    }
 
-    if (preferredGenres.size > 0 || Object.keys(interactionScoreByAppId).length > 0) {
-      const scored = topGames.map((g) => {
-        let matchScore = 0;
-        const meta = storeMetadataByAppId[Number(g.appId)];
-        const gs = meta?.genres ?? [];
-        const overlap = gs.filter((gen) => preferredGenres.has(gen)).length;
-        matchScore += overlap * 3;
-        const interaction = interactionScoreByAppId[g.appId] ?? 0;
-        matchScore += interaction * 5;
-        const predBoost = gs.reduce((sum, gen) => sum + (genreConfidence[gen] ?? 0), 0) * PREDICTION_BOOST_MULTIPLIER;
-        matchScore += predBoost;
-        if (installedStatusByAppId.has(g.appId)) matchScore = -999;
-        return { game: g, score: matchScore };
-      });
-      scored.sort((a, b) => b.score - a.score);
-      const rec = takeUnique(scored.filter((s) => s.score >= 0).map((s) => s.game), 20);
-      if (rec.length > 0) {
-        sections.push({ id: "for-you", title: "For You", type: "rail", items: rec, source: "personalized" });
+      if (preferredGenres.size > 0 || Object.keys(interactionScoreByAppId).length > 0) {
+        const scored = topGames.map((g) => {
+          let matchScore = 0;
+          const meta = storeMetadataByAppId[Number(g.appId)];
+          const gs = meta?.genres ?? [];
+          const overlap = gs.filter((gen) => preferredGenres.has(gen)).length;
+          matchScore += overlap * 3;
+          const interaction = interactionScoreByAppId[g.appId] ?? 0;
+          matchScore += interaction * 5;
+          const predBoost = gs.reduce((sum, gen) => sum + (genreConfidence[gen] ?? 0), 0) * PREDICTION_BOOST_MULTIPLIER;
+          matchScore += predBoost;
+          if (installedStatusByAppId.has(g.appId)) matchScore = -999;
+          return { game: g, score: matchScore };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        const rec = takeUnique(scored.filter((s) => s.score >= 0).map((s) => s.game), 20);
+        if (rec.length > 0) {
+          _forYouCacheRef.current = { fp: catalogFingerprint, items: rec };
+          sections.push({ id: "for-you", title: "For You", type: "rail", items: rec, source: "personalized" });
+        }
       }
     }
 
@@ -1746,7 +1875,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (DEBUG_STORE_DISCOVERY) console.log(`[STORE_CATALOG][FINAL_SECTION] curated=true sections=${dedupedSections.length} curatedGames=${curatedCount}`);
     _sectionBuildFpRef.current = { fp: inputFp, sections: dedupedSections };
     return dedupedSections;
-  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections, catalogFeaturedGames, catalogNewNoteworthyGames, freeTrendingGames, freeTopByPlayersGames, freeLeaderboardGames, freeFeaturedGames, freeHiddenGems, freeMostPlayed]);
+  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections, catalogFeaturedGames, catalogNewNoteworthyGames, freeRecentGames, freeTrendingGames, freeTopByPlayersGames, freeLeaderboardGames, freeFeaturedGames, freeHiddenGems, freeMostPlayed, mostPlayedNow, risingStars]);
 
   // Backward-compat StoreSectionModel[] for consumers that still need it
   const sectionModels = useMemo<StoreSectionModel[]>(
@@ -1869,25 +1998,22 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     const t0 = performance.now();
     const gameMap = new Map<string, PackageGame>();
 
-    // Use local catalog (SQLite) — only curated catalog games, no 162K steamdb.json
-    const localGenres = getLocalGenreGroups();
-    if (localGenres) {
-      for (const [, catalogGames] of localGenres) {
-        for (const g of catalogGames) {
-          const appId = String(g.appId);
-          if (!gameMap.has(appId)) {
-            gameMap.set(appId, {
-              appId,
-              title: g.name || `App ${g.appId}`,
-              imageUrl: g.headerImage || g.capsuleImage || undefined,
-              platforms: [] as string[],
-              sources: [] as PackageSource[],
-            });
-          }
-        }
+    // Source from steamdb.json (162K+ games) with Steam CDN image URLs
+    for (const entry of steamCatalog) {
+      const appId = String(entry.appid);
+      if (!gameMap.has(appId)) {
+        const capsuleUrl = buildSteamCdnUrl(appId, "capsule") || undefined;
+        gameMap.set(appId, {
+          appId,
+          title: entry.name || `App ${entry.appid}`,
+          imageUrl: capsuleUrl,
+          platforms: ["windows"],
+          sources: [] as PackageSource[],
+        });
       }
     }
 
+    // Merge provider overlays (games with known sources get their full data)
     lumaForgeSections.forEach((section) => {
       section.games.forEach((game) => {
         gameMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
@@ -1898,10 +2024,16 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       gameMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
     });
 
-    const games = Array.from(gameMap.values());
+    // Sort by appid descending — most recent games first (reverse order)
+    const games = Array.from(gameMap.values()).sort((a, b) => {
+      const aId = Number(a.appId) || 0;
+      const bId = Number(b.appId) || 0;
+      return bId - aId;
+    });
+
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] browseGames count=${games.length} elapsed=${(performance.now() - t0).toFixed(1)}ms`);
     return games;
-  }, [lumaForgeSections, results, providerOverlayByAppId, catalogFingerprint]);
+  }, [steamCatalog, lumaForgeSections, results, providerOverlayByAppId, catalogFingerprint]);
 
 
   // ── Performance logs and cache save ──
@@ -2093,24 +2225,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       });
     }
 
-    if (browseFilters.sourceTypes.length > 0) {
-      const typeSet = new Set(browseFilters.sourceTypes);
-
-      games = games.filter((g) => {
-        const overlayed = providerOverlayByAppId[g.appId] ?? g;
-        return overlayed.sources.some((s) => typeSet.has(s.fileType));
-      });
-    }
-
-    if (browseFilters.providers.length > 0) {
-      const providerSet = new Set(browseFilters.providers);
-
-      games = games.filter((g) => {
-        const overlayed = providerOverlayByAppId[g.appId] ?? g;
-        return overlayed.sources.some((s) => providerSet.has(s.providerId));
-      });
-    }
-
     if (browseFilters.sort !== "name") {
       games = [...games].sort((a, b) => {
         if (browseFilters.sort === "rating") {
@@ -2121,9 +2235,15 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           return bScore - aScore;
         }
         if (browseFilters.sort === "recent") {
-          const aDate = storeMetadataByAppId[Number(a.appId)]?.release_date ?? "";
-          const bDate = storeMetadataByAppId[Number(b.appId)]?.release_date ?? "";
-          return bDate.localeCompare(aDate);
+          const aMeta = storeMetadataByAppId[Number(a.appId)];
+          const bMeta = storeMetadataByAppId[Number(b.appId)];
+          const aDate = aMeta?.release_date ?? "";
+          const bDate = bMeta?.release_date ?? "";
+          // When both have metadata dates, compare dates; otherwise fall back to appid (higher = newer)
+          if (aDate && bDate) return bDate.localeCompare(aDate);
+          if (aDate) return -1;
+          if (bDate) return 1;
+          return (Number(b.appId) || 0) - (Number(a.appId) || 0);
         }
         return a.title.localeCompare(b.title);
       });
@@ -2163,21 +2283,30 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     viewAllPageRef.current = 1;
     setViewAllHasMore(true);
 
-    // Determine genre from section ID (e.g., "genre-action" → "Action")
+    // Genre sections: paginated catalog query
     const genreMatch = activeSectionId.match(/^genre-(.+)$/);
-    if (!genreMatch) return; // Non-genre sections use static section items
+    if (genreMatch) {
+      const genre = DISPLAY_GENRES.find((g) => g.toLowerCase() === genreMatch[1]) ?? genreMatch[1];
+      setViewAllLoading(true);
+      queryByGenre(genre, viewAllPageSize, 0)
+        .then(({ games }) => {
+          setViewAllGames(games);
+          setViewAllHasMore(games.length >= viewAllPageSize);
+        })
+        .catch(() => setViewAllHasMore(false))
+        .finally(() => setViewAllLoading(false));
+      return;
+    }
 
-    const genre = DISPLAY_GENRES.find((g) => g.toLowerCase() === genreMatch[1]) ?? genreMatch[1];
-
-    setViewAllLoading(true);
-    queryByGenre(genre, viewAllPageSize, 0)
-      .then(({ games }) => {
-        setViewAllGames(games);
-        setViewAllHasMore(games.length >= viewAllPageSize);
-      })
-      .catch(() => setViewAllHasMore(false))
-      .finally(() => setViewAllLoading(false));
-  }, [activeSectionId]);
+    // Non-genre sections (free-*, for-you, top-picks, etc.): use section's own games
+    // Note: viewAllGames is set here for type compat, but the render path uses
+    // activeSection.games directly (line ~3596) — so this is a safe cast.
+    const section = allStoreSections.find((s) => s.id === activeSectionId);
+    if (section && section.games.length > 0) {
+      setViewAllGames(section.games as unknown as CatalogGameResult[]);
+      setViewAllHasMore(false); // static — no more pages
+    }
+  }, [activeSectionId, allStoreSections]);
 
   // Load more page for View All
   const loadMoreViewAll = useCallback(async () => {
@@ -3579,6 +3708,60 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         />
       ) : loading ? (
         <StoreLoadingState />
+      ) : activeSectionId?.startsWith("genre-") ? (
+        (() => {
+          const genreLabel = activeSectionId.replace(/^genre-/, "");
+          const displayName = DISPLAY_GENRES.find((g) => g.toLowerCase() === genreLabel) ?? genreLabel.charAt(0).toUpperCase() + genreLabel.slice(1);
+          const displayGames = viewAllGames.map(catalogGameToStoreGame);
+
+          return (
+            <section className="space-y-5 lf-page-in">
+              <button
+                type="button"
+                onClick={() => setActiveSectionId(null)}
+                className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Volver al Store
+              </button>
+
+              <div>
+                <h2 className="text-2xl font-bold text-(--color-text)">
+                  {displayName}
+                </h2>
+                <p className="mt-1 text-sm text-(--color-muted)">
+                  {viewAllGames.length > 0
+                    ? `${viewAllGames.length} games from local catalog`
+                    : "Loading games..."}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6 lf-card-stagger">
+                {displayGames.map((game) => (
+                  <div key={"store:genre:" + game.appId}>{renderStoreCard(game)}</div>
+                ))}
+              </div>
+
+              {viewAllLoading && (
+                <div className="flex justify-center py-4">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-accent) border-t-transparent" />
+                </div>
+              )}
+
+              {viewAllHasMore && !viewAllLoading && (
+                <div className="flex justify-center pb-4">
+                  <button
+                    type="button"
+                    onClick={loadMoreViewAll}
+                    className="cursor-pointer rounded-full border border-(--surface-active-border) bg-white/5 px-6 py-2 text-sm text-(--color-muted) transition duration-150 hover:border-(--color-accent) hover:text-(--color-accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
+                  >
+                    Load More
+                  </button>
+                </div>
+              )}
+            </section>
+          );
+        })()
       ) : activeSection ? (
         (() => {
           const isGenreView = activeSectionId?.startsWith("genre-");
@@ -3906,8 +4089,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                                   ? "Under-the-radar gems worth discovering."
                                     : section.id === "vgi-most-played"
                                     ? "Games with deeply dedicated fan bases."
-                                    : section.id === "free-trending"
+                                    : section.id === "free-recent"
                                     ? "Fresh releases getting attention right now."
+                                    : section.id === "free-trending"
+                                    ? "Games with sustained momentum over 2 weeks."
                                     : section.id === "free-top-players"
                                     ? "Most played games today."
                                     : section.id === "free-leaderboard"
@@ -3918,6 +4103,10 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                                     ? "Under-the-radar gems worth discovering."
                                     : section.id === "free-most-played"
                                     ? "Games with deeply dedicated fan bases."
+                                    : section.id === "most-played-now"
+                                    ? "Highest concurrent players across all of Steam."
+                                    : section.id === "rising-stars"
+                                    ? "Games gaining momentum relative to their all-time base."
                                     : section.id.startsWith("genre-")
                                     ? `Popular ${section.title} games.`
                                     : "";
@@ -3934,8 +4123,8 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                 skeletonCount={isFreeCatalog ? 12 : 8}
                 accent={isFreeCatalog}
               >
-                {section.items.slice(0, SECTION_GRID_COUNT).map((game, i) => {
-                  if (DEBUG_STORE_RENDER_VERBOSE && i === 0) console.log(`[STORE][CARD_MOUNT_BUDGET] section=${section.id} total=${section.items.length} limit=${SECTION_GRID_COUNT}`);
+                {section.items.slice(0, 6).map((game, i) => {
+                  if (DEBUG_STORE_RENDER_VERBOSE && i === 0) console.log(`[STORE][CARD_MOUNT_BUDGET] section=${section.id} total=${section.items.length} limit=6`);
                   return renderStoreCard(game);
                 })}
               </StoreGridSection>
@@ -3950,7 +4139,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
               </LazySectionWrapper>
             );
           })}
-
+{/* 
           {providerReports.length > 0 && (
             <details className="lf-surface rounded-2xl border p-4">
               <summary className="cursor-pointer text-sm font-medium text-(--color-muted)">
@@ -3961,7 +4150,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                 <ProviderSearchReport reports={providerReports} />
               </div>
             </details>
-          )}
+          )} */}
         </div></div>
       )}
 

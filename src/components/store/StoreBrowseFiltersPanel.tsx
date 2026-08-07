@@ -1,9 +1,7 @@
-import { useState } from "react";
 import {
   ArrowDownAZ,
   Calendar,
   Check,
-  ChevronDown,
   RotateCcw,
   Search,
   Star,
@@ -15,8 +13,6 @@ export type BrowseFilters = {
   installed: boolean;
   hasSource: boolean;
   platforms: string[];
-  sourceTypes: string[];
-  providers: string[];
   sort: "name" | "rating" | "recent";
 };
 
@@ -25,9 +21,7 @@ export const DEFAULT_BROWSE_FILTERS: BrowseFilters = {
   installed: false,
   hasSource: false,
   platforms: [],
-  sourceTypes: [],
-  providers: [],
-  sort: "name",
+  sort: "recent",
 };
 
 type StoreBrowseFiltersPanelProps = {
@@ -43,15 +37,6 @@ const PLATFORM_LABELS: Record<string, string> = {
   mac: "macOS",
   linux: "Linux",
 };
-const SOURCE_TYPE_OPTIONS = ["lua", "zip", "manifest"];
-const PROVIDER_OPTIONS = [
-  { id: "hubcapdb", label: "HubcapDB" },
-  { id: "ryuu", label: "Ryuu" },
-  { id: "sushi", label: "Sushi" },
-  { id: "twentytwo-cloud", label: "TwentyTwo Cloud" },
-  { id: "custom", label: "Custom API" },
-];
-
 function toggleArrayItem<T>(arr: T[], item: T): T[] {
   if (arr.includes(item)) {
     return arr.filter((i) => i !== item);
@@ -110,8 +95,6 @@ export default function StoreBrowseFiltersPanel({
   totalGames,
   filteredGames,
 }: StoreBrowseFiltersPanelProps) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
   function update(partial: Partial<BrowseFilters>) {
     onFiltersChange({ ...filters, ...partial });
   }
@@ -124,8 +107,6 @@ export default function StoreBrowseFiltersPanel({
     filters.installed ||
     filters.hasSource ||
     filters.platforms.length > 0 ||
-    filters.sourceTypes.length > 0 ||
-    filters.providers.length > 0 ||
     filters.sort !== "name" ||
     filters.keywords.trim().length > 0;
 
@@ -235,53 +216,6 @@ export default function StoreBrowseFiltersPanel({
         </FilterSection>
 
         <FilterDivider />
-
-        <FilterSection title="Source Type">
-          {SOURCE_TYPE_OPTIONS.map((type) => (
-            <CheckRow
-              key={type}
-              checked={filters.sourceTypes.includes(type)}
-              onChange={() =>
-                update({
-                  sourceTypes: toggleArrayItem(filters.sourceTypes, type),
-                })
-              }
-              label={`.${type}`}
-            />
-          ))}
-        </FilterSection>
-
-        <FilterDivider />
-
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-(--color-muted) transition hover:bg-white/[0.04] hover:text-(--color-text)"
-          >
-            Advanced Providers
-            <ChevronDown
-              className={`h-3.5 w-3.5 transition ${showAdvanced ? "rotate-180" : ""}`}
-            />
-          </button>
-
-          {showAdvanced && (
-            <div className="mt-0.5 space-y-0.5">
-              {PROVIDER_OPTIONS.map((provider) => (
-                <CheckRow
-                  key={provider.id}
-                  checked={filters.providers.includes(provider.id)}
-                  onChange={() =>
-                    update({
-                      providers: toggleArrayItem(filters.providers, provider.id),
-                    })
-                  }
-                  label={provider.label}
-                />
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="shrink-0 border-t border-(--surface-active-border) px-5 py-3">

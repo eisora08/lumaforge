@@ -37,6 +37,29 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   const mountedRef = useRef(true);
   const winRef = useRef<TauriWindow | null>(null);
   const isMaximizedRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Cmd+K / Ctrl+K → focus search input
+  useEffect(() => {
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        if (showSearch) {
+          // Focus the search input inside PackagesToolbarSearch
+          const input = searchInputRef.current;
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        } else {
+          // On Store page — navigate to home first, then focus
+          onNavigate?.("home");
+        }
+      }
+    }
+    document.addEventListener("keydown", handleGlobalKeyDown);
+    return () => document.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [showSearch, onNavigate]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -210,6 +233,7 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
             <PackagesToolbarSearch
               variant="topbar"
               placeholder="Search Steam games..."
+              inputRef={searchInputRef}
               onSelectItem={handleSelectItem}
               onSubmit={handleSubmit}
               onViewAll={handleViewAll}

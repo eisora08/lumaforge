@@ -1,5 +1,5 @@
 import { resolveSteamAchievements } from "./steamAchievementsResolver";
-import { checkAchievementLibraryCacheMetadata, readAchievementCacheWithFallback, writeAchievementCache } from "./tauri";
+import { checkAchievementLibraryCacheMetadata, readAchievementCache, writeAchievementCache } from "./tauri";
 import { achievementStore } from "./achievementStore";
 import type { GameAchievementsSummary } from "../types/gameAchievements";
 import {
@@ -155,7 +155,7 @@ class AchievementAutoSyncService {
    */
   private async performLocalCacheRefresh(appId: string, reason: string): Promise<void> {
     try {
-      const cached = await readAchievementCacheWithFallback(Number(appId));
+      const cached = await readAchievementCache(Number(appId));
       if (!cached) {
         console.log(`[ACH][LOCAL_CACHE_READ] appid=${appId} cacheFound=false updatedAt=null`);
         return;

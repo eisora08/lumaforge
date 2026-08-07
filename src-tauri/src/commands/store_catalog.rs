@@ -1,4 +1,4 @@
-use crate::commands::sqlite_cache::SqliteDb;
+use crate::commands::sqlite_cache::SqliteStoreDb;
 use rusqlite::{params, Connection, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
 
@@ -87,60 +87,10 @@ pub struct CatalogMetaResult {
     pub has_catalog: bool,
 }
 
-// ── Table creation (called from sqlite_cache init) ──
+// ── Table creation (DDL body lives in sqlite_cache; delegating here) ──
 
 pub fn create_catalog_tables(conn: &Connection) -> SqliteResult<()> {
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS store_catalog_games (
-            app_id          INTEGER PRIMARY KEY,
-            name            TEXT NOT NULL DEFAULT '',
-            normalized_name TEXT NOT NULL DEFAULT '',
-            type            TEXT NOT NULL DEFAULT 'game',
-            release_timestamp INTEGER NOT NULL DEFAULT 0,
-            coming_soon     INTEGER NOT NULL DEFAULT 0,
-            is_free         INTEGER NOT NULL DEFAULT 0,
-            review_percent  INTEGER NOT NULL DEFAULT 0,
-            review_count    INTEGER NOT NULL DEFAULT 0,
-            header_image    TEXT NOT NULL DEFAULT '',
-            capsule_image   TEXT NOT NULL DEFAULT '',
-            developers_json TEXT NOT NULL DEFAULT '[]',
-            publishers_json TEXT NOT NULL DEFAULT '[]',
-            last_enriched_at INTEGER NOT NULL DEFAULT 0,
-            catalog_version INTEGER NOT NULL DEFAULT 1
-        );
-
-        CREATE TABLE IF NOT EXISTS store_catalog_genres (
-            app_id          INTEGER NOT NULL,
-            genre           TEXT NOT NULL,
-            original_genre  TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (app_id, genre),
-            FOREIGN KEY (app_id) REFERENCES store_catalog_games(app_id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS store_catalog_categories (
-            app_id          INTEGER NOT NULL,
-            category        TEXT NOT NULL,
-            category_id     INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (app_id, category),
-            FOREIGN KEY (app_id) REFERENCES store_catalog_games(app_id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS store_catalog_meta (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_catalog_games_type ON store_catalog_games(type);
-        CREATE INDEX IF NOT EXISTS idx_catalog_games_release ON store_catalog_games(release_timestamp);
-        CREATE INDEX IF NOT EXISTS idx_catalog_games_review ON store_catalog_games(review_percent, review_count);
-        CREATE INDEX IF NOT EXISTS idx_catalog_games_name ON store_catalog_games(normalized_name);
-        CREATE INDEX IF NOT EXISTS idx_catalog_games_version ON store_catalog_games(catalog_version);
-        CREATE INDEX IF NOT EXISTS idx_catalog_genres_genre ON store_catalog_genres(genre);
-        CREATE INDEX IF NOT EXISTS idx_catalog_categories_category ON store_catalog_categories(category);
-        ",
-    )?;
-    Ok(())
+    super::sqlite_cache::catalog_tables(conn)
 }
 
 // ── Internal import logic ──
@@ -450,7 +400,7 @@ fn parse_catalog_row(
 
 #[tauri::command]
 pub fn get_catalog_meta(
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<CatalogMetaResult, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -470,7 +420,7 @@ pub fn get_catalog_meta(
 pub fn import_steam_catalog(
     artifact_json: String,
     checksum: String,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<u32, String> {
     let artifact: SteamCatalogArtifact = serde_json::from_str(&artifact_json)
         .map_err(|e| format!("Failed to parse catalog artifact: {}", e))?;
@@ -488,7 +438,7 @@ pub fn query_catalog_by_genre(
     genre: String,
     limit: u32,
     offset: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -502,7 +452,7 @@ pub fn query_catalog_by_genre(
 pub fn query_catalog_search(
     query: String,
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -515,7 +465,7 @@ pub fn query_catalog_search(
 #[tauri::command]
 pub fn query_catalog_game(
     app_id: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Option<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -528,7 +478,7 @@ pub fn query_catalog_game(
 #[tauri::command]
 pub fn query_catalog_featured(
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -541,7 +491,7 @@ pub fn query_catalog_featured(
 #[tauri::command]
 pub fn query_catalog_new_noteworthy(
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -554,7 +504,7 @@ pub fn query_catalog_new_noteworthy(
 #[tauri::command]
 pub fn query_catalog_hidden_gems(
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -567,7 +517,7 @@ pub fn query_catalog_hidden_gems(
 #[tauri::command]
 pub fn query_catalog_top_rated(
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -580,7 +530,7 @@ pub fn query_catalog_top_rated(
 #[tauri::command]
 pub fn query_catalog_cult_classics(
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<CatalogGameResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,

@@ -31,10 +31,6 @@ import {
 
 import {
   resetRuntimeStore,
-  registerExtensionRuntime,
-  enableExtension,
-  disableExtension,
-  snapshot,
   containsAddOnTerminology,
 } from "../extensions/runtime/store";
 

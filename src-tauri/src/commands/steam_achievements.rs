@@ -1775,7 +1775,7 @@ pub fn debug_achievement_progress(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn download_achievement_image(
+pub async fn download_achievement_image(
   app_handle: AppHandle,
   app_id: u32,
   url: String,
@@ -1802,12 +1802,15 @@ pub fn download_achievement_image(
   fs::create_dir_all(&img_dir)
     .map_err(|e| format!("Failed to create img dir: {}", e))?;
 
-  let client = match build_client() {
-    Ok(c) => c,
-    Err(e) => return Err(format!("Failed to create HTTP client: {}", e)),
-  };
+  let client = reqwest::Client::builder()
+    .user_agent("LumaForge/0.1.0")
+    .timeout(Duration::from_secs(15))
+    .connect_timeout(Duration::from_secs(8))
+    .redirect(reqwest::redirect::Policy::limited(5))
+    .build()
+    .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-  let response = match client.get(&url).send() {
+  let response = match client.get(&url).send().await {
     Ok(r) => r,
     Err(e) => {
       diag_log(format!("download_achievement_image failed appid={} file={} reason=network_error: {}", app_id, file_name, e));
@@ -1820,7 +1823,7 @@ pub fn download_achievement_image(
     return Ok(None);
   }
 
-  let bytes = match response.bytes() {
+  let bytes = match response.bytes().await {
     Ok(b) => b,
     Err(e) => {
       diag_log(format!("download_achievement_image failed appid={} file={} reason=read_error: {}", app_id, file_name, e));
@@ -1828,7 +1831,7 @@ pub fn download_achievement_image(
     }
   };
 
-  if let Err(e) = fs::write(&dest_path, &bytes) {
+  if let Err(e) = tokio::fs::write(&dest_path, &bytes).await {
     diag_log(format!("download_achievement_image failed appid={} file={} reason=write_error: {}", app_id, file_name, e));
     return Ok(None);
   }

@@ -2444,7 +2444,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
       </div>
 
       {/* Achievements modal */}
-      {showAchievementsModal && achievementsSummary && achievementsSummary.achievements.length > 0 && (
+      {showAchievementsModal && achievementsSummary && (achievementsSummary.total > 0 || achievementsSummary.progressAvailable === true) && (
         <AchievementsModal
           summary={achievementsSummary}
           appIdStr={appIdStr}
@@ -2505,6 +2505,13 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
               toast.error("Failed to refresh achievements", { duration: 3000 });
             };
 
+            // CRITICAL: delete existing store entry BEFORE resolving, mirroring the
+            // panel button (L2334). resolveSteamAchievements has a post-call
+            // store-freshness check (~L1248) that returns store data when it has
+            // higher source priority. Without this delete, a "librarycache" entry
+            // would cause the resolver to return the stale stored summary — the UI
+            // would show old progress until restart (fresh data is only on disk).
+            achievementStore.deleteSummary(appIdStr!);
             resolveSteamAchievements({
               appId: appIdStr!,
               steamWebApiKey: settings.steamWebApiKey || undefined,

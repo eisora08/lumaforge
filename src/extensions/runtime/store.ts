@@ -71,12 +71,12 @@ export function registerExtensionRuntime(
     status,
     sourceId: options.sourceId,
     builtIn: options.builtIn,
-    enabled: status === "enabled" || status === "available",
+    enabled: status === "available",
     compatibility: options.compatibility,
     validation: options.validation,
     grantedPermissions: options.grantedPermissions,
-    activeCapabilities: status === "enabled" ? options.activeCapabilities : [],
-    activeContributions: status === "enabled" ? options.activeContributions : [],
+    activeCapabilities: [],
+    activeContributions: [],
     registeredAt: now,
     updatedAt: now,
   };
@@ -118,7 +118,7 @@ export function enableExtension(extensionId: string): ExtensionRuntimeRecord | n
     activeCapabilities: record.grantedPermissions.length > 0
       ? record.manifest.capabilities?.map((c) => c.id) ?? []
       : [],
-    activeContributions: record._resolvedContributions ?? [],
+    activeContributions: (record as MutableRecord)._resolvedContributions ?? [],
     updatedAt: Date.now(),
   };
 

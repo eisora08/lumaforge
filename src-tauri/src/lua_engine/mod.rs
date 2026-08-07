@@ -1,8 +1,29 @@
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 use mlua::{Lua, LuaSerdeExt, Table, Value};
 use serde::{Deserialize, Serialize};
+
+static FETCH_URL_CLIENT: LazyLock<reqwest::blocking::Client> = LazyLock::new(|| {
+    reqwest::blocking::Client::builder()
+        .user_agent("LumaForge-ExtensionManager/1.0")
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .expect("Failed to build fetch_url HTTP client")
+});
+
+static DOWNLOAD_FILE_CLIENT: LazyLock<reqwest::blocking::Client> = LazyLock::new(|| {
+    reqwest::blocking::Client::builder()
+        .user_agent("LumaForge-ExtensionManager/1.0")
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .expect("Failed to build download_file HTTP client")
+});
 
 #[derive(Debug, Clone)]
 pub struct LuaEngineConfig {
@@ -345,14 +366,7 @@ impl LuaEngine {
 
         let fetch_url = lua
             .create_function(|_lua: &Lua, url: String| {
-                let client = reqwest::blocking::Client::builder()
-                    .user_agent("LumaForge-ExtensionManager/1.0")
-                    .timeout(std::time::Duration::from_secs(30))
-                    .connect_timeout(std::time::Duration::from_secs(10))
-                    .redirect(reqwest::redirect::Policy::limited(5))
-                    .build()
-                    .map_err(|e| mlua::Error::external(format!("HTTP client error: {}", e)))?;
-                let response = client
+                let response = FETCH_URL_CLIENT
                     .get(&url)
                     .send()
                     .map_err(|e| mlua::Error::external(format!("HTTP request failed: {}", e)))?;
@@ -375,14 +389,7 @@ impl LuaEngine {
 
         let download_file = lua
             .create_function(|_, (url, target_path): (String, String)| {
-                let client = reqwest::blocking::Client::builder()
-                    .user_agent("LumaForge-ExtensionManager/1.0")
-                    .timeout(std::time::Duration::from_secs(120))
-                    .connect_timeout(std::time::Duration::from_secs(15))
-                    .redirect(reqwest::redirect::Policy::limited(5))
-                    .build()
-                    .map_err(|e| mlua::Error::external(format!("HTTP client error: {}", e)))?;
-                let mut response = client
+                let mut response = DOWNLOAD_FILE_CLIENT
                     .get(&url)
                     .send()
                     .map_err(|e| mlua::Error::external(format!("Download failed: {}", e)))?;

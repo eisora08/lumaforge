@@ -662,6 +662,44 @@ html {
 }
 
 /* =========================
+   HERO SLOW ZOOM (progressive zoom per slide)
+   Scales from 1 → 1.06 over the auto-advance interval (7 s).
+   Resets on each slide change via React key on the wrapper.
+   Skipped in Ken Burns mode (which already provides its own zoom).
+========================= */
+
+@keyframes heroSlowZoom {
+  from { transform: scale(1); }
+  to   { transform: scale(1.06); }
+}
+.animate-hero-slow-zoom {
+  animation: heroSlowZoom 7s linear forwards;
+  transform-origin: center;
+}
+
+/* =========================
+   HERO PROGRESS BAR
+   Thin accent bar at the bottom showing time until next slide.
+   Uses scaleX for GPU-accelerated fill; pauses on hover.
+========================= */
+
+@keyframes heroProgressFill {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.animate-hero-progress {
+  animation: heroProgressFill 7s linear forwards;
+  transform-origin: left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-slow-zoom,
+  .animate-hero-progress {
+    animation: none !important;
+  }
+}
+
+/* =========================
    HERO BACKDROP ENTRANCE (replays on every game switch)
    LibraryGameDetails remounts per game via key=source:appId,
    so this container-level fade guarantees a visible background

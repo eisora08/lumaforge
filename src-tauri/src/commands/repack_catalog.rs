@@ -1,4 +1,4 @@
-use crate::commands::sqlite_cache::SqliteDb;
+use crate::commands::sqlite_cache::SqliteStoreDb;
 use rusqlite::{params, Connection, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
 
@@ -81,43 +81,10 @@ pub struct RepackGroupStat {
     pub count: i64,
 }
 
-// ── Table creation (called from sqlite_cache init) ──
+// ── Table creation (DDL body lives in sqlite_cache; delegating here) ──
 
 pub fn create_repack_tables(conn: &Connection) -> SqliteResult<()> {
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS repack_catalog (
-            id                  TEXT PRIMARY KEY,
-            title               TEXT NOT NULL DEFAULT '',
-            normalized_title    TEXT NOT NULL DEFAULT '',
-            app_id              INTEGER NOT NULL DEFAULT 0,
-            repacker            TEXT NOT NULL DEFAULT '',
-            repack_group        TEXT,
-            installer_type      TEXT NOT NULL DEFAULT 'unknown',
-            file_size           INTEGER NOT NULL DEFAULT 0,
-            install_size        INTEGER,
-            languages_json      TEXT NOT NULL DEFAULT '[]',
-            selective_json      TEXT NOT NULL DEFAULT '[]',
-            download_uris_json  TEXT NOT NULL DEFAULT '[]',
-            source_url          TEXT NOT NULL DEFAULT '',
-            source              TEXT NOT NULL DEFAULT '',
-            checksum            TEXT,
-            updated_at          TEXT NOT NULL DEFAULT '',
-            tags_json           TEXT NOT NULL DEFAULT '[]',
-            import_version      INTEGER NOT NULL DEFAULT 1
-        );
-
-        CREATE TABLE IF NOT EXISTS repack_catalog_meta (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_repack_normalized ON repack_catalog(normalized_title);
-        CREATE INDEX IF NOT EXISTS idx_repack_app_id ON repack_catalog(app_id);
-        CREATE INDEX IF NOT EXISTS idx_repack_repacker ON repack_catalog(repacker);
-        ",
-    )?;
-    Ok(())
+    super::sqlite_cache::repack_tables(conn)
 }
 
 // ── Internal import logic ──
@@ -389,7 +356,7 @@ fn parse_repack_row(row: &rusqlite::Row<'_>) -> Result<RepackQueryResult, rusqli
 
 #[tauri::command]
 pub fn get_repack_catalog_meta(
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<RepackCatalogMeta, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -405,7 +372,7 @@ pub fn get_repack_catalog_meta(
 pub fn import_repack_catalog(
     artifact_json: String,
     checksum: String,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<u32, String> {
     let artifact: RepackCatalogArtifact = serde_json::from_str(&artifact_json)
         .map_err(|e| format!("Failed to parse repack artifact: {}", e))?;
@@ -422,7 +389,7 @@ pub fn import_repack_catalog(
 pub fn query_repack_catalog_fuzzy(
     query: String,
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<RepackQueryResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -437,7 +404,7 @@ pub fn query_repack_catalog_by_repacker_fuzzy(
     repacker: String,
     query: String,
     limit: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<RepackQueryResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -450,7 +417,7 @@ pub fn query_repack_catalog_by_repacker_fuzzy(
 #[tauri::command]
 pub fn query_repack_catalog_by_app_id(
     app_id: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<RepackQueryResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -462,7 +429,7 @@ pub fn query_repack_catalog_by_app_id(
 
 #[tauri::command]
 pub fn query_repack_catalog_all(
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<RepackQueryResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -476,7 +443,7 @@ pub fn query_repack_catalog_by_repacker(
     repacker: String,
     limit: u32,
     offset: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<RepackQueryResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -490,7 +457,7 @@ pub fn query_repack_catalog_by_repacker(
 pub fn query_repack_catalog_page(
     limit: u32,
     offset: u32,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<RepackQueryResult>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
@@ -502,7 +469,7 @@ pub fn query_repack_catalog_page(
 
 #[tauri::command]
 pub fn query_repack_repackers(
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteStoreDb>,
 ) -> Result<Vec<RepackGroupStat>, String> {
     let guard = match &db.0 {
         Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,

@@ -26,3 +26,7 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/*
 !.vscode/extensions.json
+
+{
+  "ignore": ["**/large-file.log", "**/bundle.min.js", "**/data.json"]
+}

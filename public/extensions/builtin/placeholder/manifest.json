@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "placeholder",
+  "name": "placeholder",
+  "displayName": "Placeholder Extension",
+  "description": "A minimal placeholder extension that validates the runtime pipeline.",
+  "version": "1.0.0",
+  "author": "LumaForge",
+  "license": "MIT",
+  "summary": "Validates the extension runtime pipeline",
+  "managedFiles": [],
+  "permissions": [],
+  "capabilities": [],
+  "metadata": {
+    "surfaces": ["settings"]
+  }
+}

@@ -137,7 +137,6 @@ export function clearExtensionManager(): void {
 // =============================================================================
 
 import type { ExtensionRuntimeRecord as RuntimeRecord } from "../runtime/types";
-import type { ExtensionSurfaceContribution } from "../contributions/types";
 import {
   registerExtensionRuntime,
   setResolvedContributions,

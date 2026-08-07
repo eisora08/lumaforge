@@ -188,6 +188,52 @@ export interface CacheEntry {
 let _cachedDiscover: CacheEntry | null = null;
 let _cachedDiscoverVersion = 0;
 
+// Persistent hero source of truth. The module-level _cachedDiscover dies on app
+// restart, so a cold boot used to fall through to the curated baseline while the
+// enriched pool hydrated -> boot != return. This localStorage copy (featured only,
+// <= 8 tiny StoreGame items) survives the restart so boot restores the SAME hero.
+const FEATURED_PERSIST_KEY = "lumaforge-store-featured-v1";
+
+function persistDiscoverFeatured(featured: StoreGame[]): void {
+  if (!featured || featured.length < 4) return;
+  const compact = featured.map((g) => ({
+    appId: g.appId,
+    title: g.title,
+    imageUrl: g.imageUrl,
+    platforms: g.platforms ?? [],
+  }));
+  try {
+    localStorage.setItem(FEATURED_PERSIST_KEY, JSON.stringify(compact));
+  } catch {
+    // Quota/security exceptions must never break the store render path.
+  }
+}
+
+export function getPersistedDiscoverFeatured(): StoreGame[] | null {
+  try {
+    const raw = localStorage.getItem(FEATURED_PERSIST_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length < 4) return null;
+    const items = parsed.filter(
+      (it): it is { appId: string; title: string; imageUrl?: string; platforms: string[] } =>
+        typeof it === "object" && it !== null &&
+        typeof (it as { appId?: unknown }).appId === "string" &&
+        typeof (it as { title?: unknown }).title === "string",
+    );
+    if (items.length < 4) return null;
+    return items.map((g) => ({
+      appId: g.appId,
+      title: g.title,
+      imageUrl: g.imageUrl,
+      platforms: Array.isArray(g.platforms) ? g.platforms : [],
+      sources: [],
+    }));
+  } catch {
+    return null;
+  }
+}
+
 function computeFingerprint(catalog: { appid: number; name: string }[]): string {
   if (catalog.length === 0) return "empty";
   const len = catalog.length;
@@ -234,6 +280,7 @@ export function setCachedStoreDiscover(entry: CacheEntry): void {
   }
   entry.status = isComplete ? "complete" : "partial";
   _cachedDiscover = entry;
+  persistDiscoverFeatured(entry.featuredGames);
 }
 
 export function isDiscoverCacheComplete(entry: CacheEntry | null): boolean {

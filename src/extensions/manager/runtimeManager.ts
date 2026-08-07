@@ -12,14 +12,12 @@
 
 import type { ExtensionManifestV1 } from "../types";
 import type { ExtensionRuntimeRecord } from "../runtime/types";
-import type { ExtensionSurfaceContribution } from "../contributions/types";
 import { validateManifest } from "../runtime/validation";
 import { evaluateCompatibility } from "../runtime/compatibility";
 import { resolveContributions, filterActiveContributions } from "../contributions/resolver";
 import {
   registerExtensionRuntime,
   setResolvedContributions,
-  getExtensionRuntime,
   enableExtension,
   disableExtension,
   snapshot,
