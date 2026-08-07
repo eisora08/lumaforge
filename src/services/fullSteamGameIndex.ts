@@ -2,12 +2,10 @@ import type { GameEntry } from "./tauri";
 import {
   readAllGames,
   scanInstalledLuaScripts,
-  scanAndBuildFullDataset,
 } from "./tauri";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { LibraryGame } from "../types/libraryGame";
 import type { LocalExecutableGame } from "../types/localExecutableGame";
-import type { AppSettings } from "../types/settings";
 
 // ---------------------------------------------------------------------------
 // Lua overlay — a flat map of appId → boolean
@@ -87,34 +85,6 @@ export async function loadSteamGameIndex(): Promise<SteamGameIndexEntry[]> {
 export async function getSteamGameCount(): Promise<number> {
   const entries = await readAllGames();
   return entries.length;
-}
-
-// ---------------------------------------------------------------------------
-// Background full dataset scan (hefty — batch metadata resolve)
-// Runs after startup, never blocks UI.
-// ---------------------------------------------------------------------------
-
-let scanningInProgress = false;
-
-export async function triggerBackgroundScan(
-  settings: AppSettings,
-): Promise<number> {
-  if (scanningInProgress) return 0;
-  scanningInProgress = true;
-  try {
-    const count = await scanAndBuildFullDataset({
-      steamPath: settings.steamRoot || undefined,
-      luaPath: settings.luaPath || undefined,
-      depotcachePath: settings.depotcachePath || undefined,
-      gameScanFolders:
-        settings.gameScanFolders.length > 0
-          ? settings.gameScanFolders
-          : undefined,
-    });
-    return count;
-  } finally {
-    scanningInProgress = false;
-  }
 }
 
 // ---------------------------------------------------------------------------

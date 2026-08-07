@@ -5,7 +5,6 @@ import type { InstallResult } from "../types/install";
 import type { ProviderAvailabilityResult } from "../types/providerAvailability";
 import type { InstalledLuaScript } from "../types/installedLua";
 import type { LuaActionResult } from "../types/luaAction";
-import type { GameNameResult } from "../types/gameName";
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { SteamReviewSummary } from "../types/gameReview";
 import type { SteamStoreSearchItem } from "../types/steamStoreSearch";
@@ -129,16 +128,6 @@ export async function deleteLuaScript(params: {
     fileName: params.fileName,
   });
 }
-
-
-export async function resolveSteamAppNames(
-  appIds: number[]
-): Promise<GameNameResult[]> {
-  return await invoke<GameNameResult[]>("resolve_steam_app_names", {
-    appIds,
-  });
-}
-
 
 
 export async function resolveSteamAppMetadata(
@@ -1090,26 +1079,6 @@ export async function getStoreMediaCache(
   appId: number
 ): Promise<StoreMediaCacheEntry | null> {
   return await invoke<StoreMediaCacheEntry | null>("get_store_media_cache", { appId });
-}
-
-export async function cacheStoreRemoteMedia(
-  appId: number,
-  urls: {
-    capsuleUrl: string | null;
-    headerUrl: string | null;
-    heroUrl: string | null;
-    backgroundUrl: string | null;
-    logoUrl: string | null;
-  }
-): Promise<StoreMediaCacheEntry> {
-  return await invoke<StoreMediaCacheEntry>("cache_store_remote_media", {
-    appId,
-    capsuleUrl: urls.capsuleUrl,
-    headerUrl: urls.headerUrl,
-    heroUrl: urls.heroUrl,
-    backgroundUrl: urls.backgroundUrl,
-    logoUrl: urls.logoUrl,
-  });
 }
 
 export async function clearStoreCache(): Promise<void> {
@@ -2705,21 +2674,6 @@ export async function updateGameMetadataJson(appId: string, metadataJson: string
     await invoke("update_game_metadata_json", { appId, metadataJson });
   } catch {
     // silent — best-effort sync
-  }
-}
-
-export async function scanAndBuildFullDataset(
-  settings: { steamPath?: string; luaPath?: string; depotcachePath?: string; gameScanFolders?: string[] },
-): Promise<number> {
-  try {
-    return await invoke<number>("scan_and_build_full_dataset", {
-      steamPath: settings.steamPath || null,
-      luaPath: settings.luaPath || null,
-      depotcachePath: settings.depotcachePath || null,
-      gameScanFolders: settings.gameScanFolders?.length ? settings.gameScanFolders : null,
-    });
-  } catch {
-    return 0;
   }
 }
 

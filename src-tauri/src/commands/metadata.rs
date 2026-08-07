@@ -1,13 +1,15 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::models::steam_app_metadata::SteamAppMetadata;
+use tokio::sync::Semaphore;
 
 const DEBUG_STEAM_MEDIA: bool = false;
 
 const FETCH_CONCURRENCY: usize = 8;
 
 #[tauri::command]
-pub fn resolve_steam_app_metadata(
+pub async fn resolve_steam_app_metadata(
     app_ids: Vec<u32>,
     language: Option<String>,
     country: Option<String>,
@@ -16,7 +18,7 @@ pub fn resolve_steam_app_metadata(
         return Ok(Vec::new());
     }
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(15))
         .connect_timeout(Duration::from_secs(8))
@@ -24,56 +26,40 @@ pub fn resolve_steam_app_metadata(
         .build()
         .map_err(|error| format!("[HTTP][TIMEOUT] Error creando cliente HTTP: {}", error))?;
 
-    // Fetch each app with bounded concurrency so large batches complete in seconds
-    // instead of serially (up to 15s timeout per app). Result order is preserved via
-    // a position-indexed vector; the shared blocking Client is Send + Sync.
-    // The Mutexes live in this function so the scoped threads' borrowed references
-    // outlive the `thread::scope` block itself.
-    let next = std::sync::Mutex::new(0usize);
-    let results = std::sync::Mutex::new(
-        std::iter::repeat_with(|| None).take(app_ids.len()).collect::<Vec<_>>(),
-    );
-    let next_ref = &next;
-    let results_ref = &results;
-    let app_ids_ref = &app_ids;
-    let client_ref = &client;
-    let language_ref = &language;
-    let country_ref = &country;
+    let semaphore = Arc::new(Semaphore::new(FETCH_CONCURRENCY.min(app_ids.len())));
+    let mut handles = Vec::with_capacity(app_ids.len());
 
-    let output = std::thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for _ in 0..FETCH_CONCURRENCY.min(app_ids_ref.len()) {
-            handles.push(scope.spawn(move || {
-                loop {
-                    let idx = {
-                        let mut guard = next_ref.lock().unwrap();
-                        if *guard >= app_ids_ref.len() {
-                            break;
-                        }
-                        let i = *guard;
-                        *guard += 1;
-                        i
-                    };
-                    let meta = fetch_app_metadata(
-                        client_ref,
-                        app_ids_ref[idx],
-                        language_ref.as_deref(),
-                        country_ref.as_deref(),
-                    );
-                    results_ref.lock().unwrap()[idx] = Some(meta);
+    for &app_id in &app_ids {
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        let client = client.clone();
+        let lang = language.clone();
+        let ctry = country.clone();
+        handles.push(tokio::spawn(async move {
+            let result = fetch_app_metadata_async(&client, app_id, lang.as_deref(), ctry.as_deref()).await;
+            drop(permit);
+            (app_id, result)
+        }));
+    }
+
+    let mut results: Vec<Option<SteamAppMetadata>> = Vec::with_capacity(app_ids.len());
+    results.resize_with(app_ids.len(), || None);
+
+    for handle in handles {
+        match handle.await {
+            Ok((app_id, meta)) => {
+                if let Some(idx) = app_ids.iter().position(|&id| id == app_id) {
+                    results[idx] = Some(meta);
                 }
-            }));
+            }
+            Err(e) => {
+                eprintln!("[STORE][STEAM_MEDIA_FETCH] spawn task failed: {}", e);
+            }
         }
-        for handle in handles {
-            let _ = handle.join();
-        }
-        let mut guard = results_ref.lock().unwrap();
-        std::mem::take(&mut *guard)
-    });
+    }
 
     let mut output = app_ids
         .iter()
-        .zip(output.into_iter())
+        .zip(results.into_iter())
         .map(|(&app_id, opt)| opt.unwrap_or_else(|| fallback_metadata(app_id)))
         .collect::<Vec<SteamAppMetadata>>();
 
@@ -82,8 +68,8 @@ pub fn resolve_steam_app_metadata(
     Ok(output)
 }
 
-fn fetch_app_metadata(
-    client: &reqwest::blocking::Client,
+async fn fetch_app_metadata_async(
+    client: &reqwest::Client,
     app_id: u32,
     language: Option<&str>,
     country: Option<&str>,
@@ -103,7 +89,7 @@ fn fetch_app_metadata(
         println!("[STORE][STEAM_MEDIA_FETCH] appid={} language={:?} country={:?} url={}", app_id, language, country, url);
     }
 
-    let response = match client.get(&url).send() {
+    let response = match client.get(&url).send().await {
         Ok(value) => value,
         Err(_) => {
             return fallback_metadata(app_id);
@@ -114,7 +100,7 @@ fn fetch_app_metadata(
         return fallback_metadata(app_id);
     }
 
-    let json: serde_json::Value = match response.json() {
+    let json: serde_json::Value = match response.json().await {
         Ok(value) => value,
         Err(_) => {
             return fallback_metadata(app_id);
@@ -494,7 +480,7 @@ fn fallback_metadata(app_id: u32) -> SteamAppMetadata {
 }
 
 #[tauri::command]
-pub fn fetch_steam_store_drm_notice(
+pub async fn fetch_steam_store_drm_notice(
     app_id: u32,
 ) -> Result<Option<String>, String> {
     let url = format!(
@@ -502,7 +488,7 @@ pub fn fetch_steam_store_drm_notice(
         app_id
     );
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
@@ -510,7 +496,7 @@ pub fn fetch_steam_store_drm_notice(
         .build()
         .map_err(|e| format!("[HTTP][CLIENT] Failed to build client: {}", e))?;
 
-    let response = match client.get(&url).send() {
+    let response = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
             println!("[STORE][DRM_HTML_FETCH] appid={} ok=false error=fetch-failed msg=\"{}\"", app_id, e);
@@ -523,7 +509,7 @@ pub fn fetch_steam_store_drm_notice(
         return Ok(None);
     }
 
-    let html = match response.text() {
+    let html = match response.text().await {
         Ok(t) => t,
         Err(e) => {
             println!("[STORE][DRM_HTML_FETCH] appid={} ok=false error=read-failed msg=\"{}\"", app_id, e);

@@ -1116,61 +1116,6 @@ pub fn safe_download_image(
 }
 
 // ---------------------------------------------------------------------------
-// cache_trailer_file — download a trailer video or thumbnail to
-// <gameDir>/media/trailers/<filename>.
-// Lightweight — no image classification, no content-type check.
-// Skips existing files; returns the local path on success.
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn cache_trailer_file(
-    app_handle: AppHandle,
-    app_id: String,
-    filename: String,
-    url: String,
-) -> Result<Option<String>, String> {
-    let media_dir = get_media_dir(&app_handle, &app_id)?;
-    let trailers_dir = media_dir.join("trailers");
-    fs::create_dir_all(&trailers_dir)
-        .map_err(|e| format!("Failed to create trailers dir: {}", e))?;
-
-    let dest_path = trailers_dir.join(&filename);
-    if dest_path.exists() {
-        if let Ok(meta) = fs::metadata(&dest_path) {
-            if meta.len() > 0 {
-                return Ok(Some(dest_path.to_string_lossy().to_string()));
-            }
-        }
-    }
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .user_agent("LumaForge/0.2.0")
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let response = client.get(&url).send()
-        .map_err(|e| format!("Download failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Ok(None);
-    }
-
-    let bytes = response.bytes()
-        .map_err(|e| format!("Read failed: {}", e))?;
-
-    let tmp_path = trailers_dir.join(format!(".{}.tmp", filename));
-    fs::write(&tmp_path, &bytes)
-        .map_err(|e| format!("Write failed: {}", e))?;
-    fs::rename(&tmp_path, &dest_path)
-        .map_err(|e| format!("Rename failed: {}", e))?;
-
-    Ok(Some(dest_path.to_string_lossy().to_string()))
-}
-
-// ---------------------------------------------------------------------------
 // resolve_game_media_paths — check if media files exist on disk, return paths
 // Does NOT create directories or download anything.
 // ---------------------------------------------------------------------------

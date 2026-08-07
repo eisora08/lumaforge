@@ -121,7 +121,7 @@ fn scan_all_manifests(all_dirs: &[(PathBuf, PathBuf)]) -> Vec<SteamInstalledGame
 }
 
 #[tauri::command]
-pub fn scan_and_build_full_dataset(
+pub async fn scan_and_build_full_dataset(
     app_handle: tauri::AppHandle,
     steam_path: Option<String>,
     lua_path: Option<String>,
@@ -144,27 +144,27 @@ pub fn scan_and_build_full_dataset(
     let app_ids: Vec<u32> = all_games.iter().map(|g| g.app_id).collect();
 
     // Write basic entries first (no metadata)
-    let guard = match &db.0 {
-        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
-        None => return Err("Database not available".to_string()),
-    };
+    {
+        let guard = match &db.0 {
+            Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+            None => return Err("Database not available".to_string()),
+        };
 
-    for game in &all_games {
-        let _ = guard.execute(
-            "INSERT OR REPLACE INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                game.app_id.to_string(),
-                game.name,
-                game.is_installed as i32,
-                0i64,
-                0i64,
-                "{}",
-                0i64,
-            ],
-        );
+        for game in &all_games {
+            let _ = guard.execute(
+                "INSERT OR REPLACE INTO games (appId, title, installed, playtime, lastPlayed, metadata_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    game.app_id.to_string(),
+                    game.name,
+                    game.is_installed as i32,
+                    0i64,
+                    0i64,
+                    "{}",
+                    0i64,
+                ],
+            );
+        }
     }
-
-    drop(guard);
 
     // Resolve metadata in batches
     let total_batches = (app_ids.len() + BATCH_SIZE - 1) / BATCH_SIZE;
@@ -173,7 +173,7 @@ pub fn scan_and_build_full_dataset(
     for (batch_idx, chunk) in app_ids.chunks(BATCH_SIZE).enumerate() {
         debug_log(format!("Batch {}/{} ({} apps)", batch_idx + 1, total_batches, chunk.len()));
 
-        let metadata_results = match resolve_steam_app_metadata(chunk.to_vec(), None, None) {
+        let metadata_results = match resolve_steam_app_metadata(chunk.to_vec(), None, None).await {
             Ok(results) => results,
             Err(e) => {
                 debug_log(format!("Batch {} failed: {}", batch_idx + 1, e));
@@ -181,39 +181,41 @@ pub fn scan_and_build_full_dataset(
             }
         };
 
-        let guard2 = match &db.0 {
-            Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
-            None => continue,
-        };
+        {
+            let guard2 = match &db.0 {
+                Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+                None => continue,
+            };
 
-        for meta in &metadata_results {
-            let meta_json = serde_json::to_string(meta).unwrap_or_else(|_| "{}".to_string());
-            let _ = guard2.execute(
-                "UPDATE games SET title = ?1, metadata_json = ?2, updated_at = ?3 WHERE appId = ?4",
-                rusqlite::params![
-                    meta.name,
-                    meta_json,
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64,
-                    meta.app_id.to_string(),
-                ],
-            );
+            for meta in &metadata_results {
+                let meta_json = serde_json::to_string(meta).unwrap_or_else(|_| "{}".to_string());
+                let _ = guard2.execute(
+                    "UPDATE games SET title = ?1, metadata_json = ?2, updated_at = ?3 WHERE appId = ?4",
+                    rusqlite::params![
+                        meta.name,
+                        meta_json,
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64,
+                        meta.app_id.to_string(),
+                    ],
+                );
+            }
         }
-
-        drop(guard2);
     }
 
     // Get final count
-    let guard3 = match &db.0 {
-        Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
-        None => return Ok(0),
-    };
+    let count: i64 = {
+        let guard3 = match &db.0 {
+            Some(mutex) => mutex.lock().map_err(|e| format!("Lock error: {}", e))?,
+            None => return Ok(0),
+        };
 
-    let count: i64 = guard3
-        .query_row("SELECT COUNT(*) FROM games", [], |row| row.get(0))
-        .map_err(|e| format!("Count error: {}", e))?;
+        guard3
+            .query_row("SELECT COUNT(*) FROM games", [], |row| row.get(0))
+            .map_err(|e| format!("Count error: {}", e))?
+    };
 
     debug_log(format!("Full dataset scan complete: {} games", count));
 

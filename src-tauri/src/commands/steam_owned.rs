@@ -52,8 +52,8 @@ fn get_cache_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_dir.join("steam_owned_cache.json"))
 }
 
-fn build_client() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+async fn build_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(8))
@@ -63,7 +63,7 @@ fn build_client() -> Result<reqwest::blocking::Client, String> {
 }
 
 #[tauri::command]
-pub fn fetch_steam_owned_games(
+pub async fn fetch_steam_owned_games(
     app_handle: AppHandle,
     api_key: String,
     steam_id: String,
@@ -85,7 +85,7 @@ pub fn fetch_steam_owned_games(
         }
     }
 
-    let client = build_client()?;
+    let client = build_client().await?;
     let url = format!(
         "{}?key={}&steamid={}&include_appinfo=true&include_played_free_games=true&format=json",
         API_URL, api_key, steam_id
@@ -94,6 +94,7 @@ pub fn fetch_steam_owned_games(
     let resp = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
 
     let status = resp.status();
@@ -111,6 +112,7 @@ pub fn fetch_steam_owned_games(
 
     let api_resp: OwnedGamesApiResponse = resp
         .json()
+        .await
         .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
     let games = api_resp.response.games;

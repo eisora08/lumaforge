@@ -38,30 +38,6 @@ export async function saveGameMedia(
   }
 }
 
-export async function cacheRemoteGameMedia(
-  gameKey: string,
-  urls: {
-    coverUrl?: string;
-    gridUrl?: string;
-    heroUrl?: string;
-    logoUrl?: string;
-    iconUrl?: string;
-  }
-): Promise<GameMediaCacheEntry | null> {
-  try {
-    return await invoke<GameMediaCacheEntry>("cache_remote_game_media", {
-      gameKey,
-      coverUrl: urls.coverUrl ?? null,
-      gridUrl: urls.gridUrl ?? null,
-      heroUrl: urls.heroUrl ?? null,
-      logoUrl: urls.logoUrl ?? null,
-      iconUrl: urls.iconUrl ?? null,
-    });
-  } catch {
-    return null;
-  }
-}
-
 export async function clearGameMedia(gameKey: string): Promise<boolean> {
   try {
     await invoke("clear_game_media_cache", { gameKey });

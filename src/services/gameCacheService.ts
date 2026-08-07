@@ -1444,8 +1444,11 @@ export async function cacheMediaForGame(
       existing?.mediaSources ?? null,
       "cacheAppInfoMedia",
     );
-    // Update media_manifest.json to reflect current files on disk
-    generateMediaManifest(appId, mergedMedia).catch(() => {});
+    // During boot, skip manifest generation — background repair handles it later.
+    const { isBootReady } = await import("./appBootCoordinator");
+    if (isBootReady()) {
+      generateMediaManifest(appId, mergedMedia).catch(() => {});
+    }
   } catch {
     // non-critical
   }

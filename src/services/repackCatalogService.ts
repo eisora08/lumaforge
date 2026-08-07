@@ -195,9 +195,14 @@ export async function ensureRepackCatalogImported(): Promise<boolean> {
         return false;
       }
 
-      const artifactJson = await artifactRes.text();
+      const text = await artifactRes.text();
+      // Guard: if response is HTML (SPA fallback), skip import
+      if (text.trimStart().startsWith("<") || text.trimStart().startsWith("<!DOCTYPE")) {
+        console.warn("[REPACK][AUTO_IMPORT] Bundled artifact is HTML (file missing), skipping");
+        return false;
+      }
 
-      const count = await importRepackArtifact(artifactJson, manifestChecksum);
+      const count = await importRepackArtifact(text, manifestChecksum);
       console.log(`[REPACK][AUTO_IMPORT] Imported ${count} records`);
       return count > 0;
     } catch (err) {
