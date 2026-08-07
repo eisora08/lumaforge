@@ -21,30 +21,10 @@ use crate::utils::image_utils;
 pub fn read_canonical_appinfos(
     app_handle: AppHandle,
     app_ids: Vec<String>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<std::collections::HashMap<String, GameAppInfo>, String> {
-    let mut result = std::collections::HashMap::new();
-    for app_id in &app_ids {
-        let path = match get_appinfo_path(&app_handle, app_id) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        if !path.exists() {
-            continue;
-        }
-        match fs::read_to_string(&path) {
-            Ok(content) => {
-                match serde_json::from_str::<GameAppInfo>(&content) {
-                    Ok(entry) => {
-                        result.insert(app_id.clone(), entry);
-                    }
-                    Err(_) => {
-                        log(&format!("appinfo corrupt for {} — skipping in batch read", app_id));
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-    }
+    let result = crate::commands::sqlite_cache::game_appinfo::read_batch_appinfo(&db, &app_ids);
+    log(&format!("appinfo batch read from sqlite: {} games", result.len()));
     Ok(result)
 }
 
@@ -180,21 +160,15 @@ pub fn safe_filename(input: &str) -> String {
 pub fn get_game_app_info(
     app_handle: AppHandle,
     app_id: String,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<Option<GameAppInfo>, String> {
-    let path = get_appinfo_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        log(&format!("appinfo miss for {}", app_id));
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read game appinfo: {}", e))?;
-    match serde_json::from_str(&content) {
-        Ok(entry) => {
+    match crate::commands::sqlite_cache::game_appinfo::read_game_appinfo(&db, &app_id) {
+        Some(entry) => {
             log(&format!("appinfo hit for {}", app_id));
             Ok(Some(entry))
         }
-        Err(_) => {
-            log(&format!("appinfo corrupt for {} — ignoring", app_id));
+        None => {
+            log(&format!("appinfo miss for {}", app_id));
             Ok(None)
         }
     }
@@ -205,12 +179,9 @@ pub fn save_game_app_info(
     app_handle: AppHandle,
     app_id: String,
     entry: GameAppInfo,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_appinfo_path(&app_handle, &app_id)?;
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game appinfo: {}", e))?;
+    crate::commands::sqlite_cache::game_appinfo::write_game_appinfo(&db, &app_id, &entry)?;
     log(&format!("appinfo saved for {}", app_id));
     Ok(())
 }
@@ -555,6 +526,7 @@ pub fn update_game_appinfo_media(
     media: GameMediaPaths,
     remote: Option<GameRemoteRefsInput>,
     media_sources: Option<GameMediaSourcesInput>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
     let path = get_appinfo_path(&app_handle, &app_id)?;
 
@@ -677,22 +649,16 @@ pub fn update_game_appinfo_media(
             icon: merge_src(&sources.icon, existing.and_then(|m| m.icon.as_ref())),
         });
     }
-    // No-op guard: skip write if merged content matches existing file.
-    // updated_at is NOT set here — we compare WITHOUT it first so that
-    // unchanged content doesn't trigger a write just because of a new timestamp.
-    let existing_content = if path.exists() {
-        fs::read_to_string(&path).ok()
-    } else {
-        None
-    };
-
-    // Serialize WITHOUT updated_at for the comparison
-    let content_no_ts = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
-
-    if let Some(ref existing) = existing_content {
-        if *existing == content_no_ts {
-            println!("[MEDIA][APPINFO_SKIP] appid={} reason=rust-no-effective-change", app_id);
+    // No-op guard: skip write if merged content matches existing SQLite entry.
+    // Compare without updated_at to avoid false positives from timestamp changes.
+    if let Some(existing) = crate::commands::sqlite_cache::game_appinfo::read_game_appinfo(&db, &app_id) {
+        if existing.media == entry.media
+            && existing.media_sources == entry.media_sources
+            && existing.remote == entry.remote
+            && existing.name == entry.name
+            && existing.user_data == entry.user_data
+        {
+            println!("[MEDIA][APPINFO_SKIP] appid={} reason=no-effective-change", app_id);
             return Ok(());
         }
     }
@@ -705,13 +671,10 @@ pub fn update_game_appinfo_media(
             .as_secs(),
     );
 
-    let content = serde_json::to_string_pretty(&entry)
-        .map_err(|e| format!("Failed to serialize game appinfo: {}", e))?;
+    // Write to SQLite
+    crate::commands::sqlite_cache::game_appinfo::write_game_appinfo(&db, &app_id, &entry)?;
 
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write game appinfo: {}", e))?;
-
-    println!("[MEDIA][APPINFO_WRITE] appid={} path={:?}", app_id, path);
+    println!("[MEDIA][APPINFO_WRITE] appid={}", app_id);
     Ok(())
 }
 
@@ -743,16 +706,9 @@ fn get_media_manifest_path(app_handle: &AppHandle, app_id: &str) -> Result<PathB
 pub fn read_media_manifest(
     app_handle: AppHandle,
     app_id: String,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<Option<crate::models::game_cache::MediaManifestFile>, String> {
-    let path = get_media_manifest_path(&app_handle, &app_id)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read media_manifest: {}", e))?;
-    serde_json::from_str(&content)
-        .map(Some)
-        .map_err(|e| format!("Failed to parse media_manifest: {}", e))
+    Ok(crate::commands::sqlite_cache::media_manifests::read_media_manifest_sqlite(&db, &app_id))
 }
 
 #[tauri::command]
@@ -760,36 +716,18 @@ pub fn write_media_manifest(
     app_handle: AppHandle,
     app_id: String,
     manifest: crate::models::game_cache::MediaManifestFile,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<(), String> {
-    let path = get_media_manifest_path(&app_handle, &app_id)?;
-    let content = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("Failed to serialize media_manifest: {}", e))?;
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write media_manifest: {}", e))?;
-    Ok(())
+    crate::commands::sqlite_cache::media_manifests::write_media_manifest_sqlite(&db, &manifest)
 }
 
 #[tauri::command]
 pub fn get_media_manifests_batch(
     app_handle: AppHandle,
     app_ids: Vec<String>,
+    db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<std::collections::HashMap<String, crate::models::game_cache::MediaManifestFile>, String> {
-    let mut result = std::collections::HashMap::new();
-    for app_id in &app_ids {
-        let path = match get_media_manifest_path(&app_handle, app_id) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        if !path.exists() {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(manifest) = serde_json::from_str::<crate::models::game_cache::MediaManifestFile>(&content) {
-                result.insert(app_id.clone(), manifest);
-            }
-        }
-    }
-    Ok(result)
+    Ok(crate::commands::sqlite_cache::media_manifests::read_media_manifests_batch_sqlite(&db, &app_ids))
 }
 
 // ---------------------------------------------------------------------------

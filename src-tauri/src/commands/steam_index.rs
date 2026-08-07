@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::commands::sqlite_cache::SqliteDb;
-use crate::commands::steam::{normalize_steam_library_path, collect_library_roots_from_vdf, parse_appmanifest, is_valid_steamapps_path};
+use crate::commands::sqlite_cache::SqliteCoreDb;
+use crate::commands::steam::{normalize_steam_library_path, collect_library_roots_from_vdf, collect_safe_fallback_steam_paths, parse_appmanifest, is_valid_steamapps_path};
 use crate::commands::metadata::resolve_steam_app_metadata;
 use crate::models::steam_installed_game::SteamInstalledGame;
 
@@ -42,6 +42,15 @@ fn collect_all_steamapps_dirs(
         let already = candidates.iter().any(|c| c.to_string_lossy().to_lowercase() == p_lower);
         if !already {
             candidates.push(p);
+        }
+    }
+
+    // Include safe fallback paths (drive-root SteamLibrary discovery) — mirrors scan_steam_installed_games
+    for fb in collect_safe_fallback_steam_paths() {
+        let fb_lower = fb.to_string_lossy().to_lowercase();
+        let already = candidates.iter().any(|c| c.to_string_lossy().to_lowercase() == fb_lower);
+        if !already {
+            candidates.push(fb);
         }
     }
 
@@ -117,7 +126,7 @@ pub fn scan_and_build_full_dataset(
     lua_path: Option<String>,
     depotcache_path: Option<String>,
     game_scan_folders: Option<Vec<String>>,
-    db: tauri::State<'_, SqliteDb>,
+    db: tauri::State<'_, SqliteCoreDb>,
 ) -> Result<i64, String> {
     debug_log("Starting full dataset scan...");
 

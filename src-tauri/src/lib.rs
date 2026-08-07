@@ -24,9 +24,10 @@ pub fn run() {
             // Initialize achievement file watcher state
             app.manage(AchievementWatcherState(Mutex::new(AchievementWatcher::new())));
 
-            // Initialize SQLite cache database
-            let sqlite_db = commands::sqlite_cache::initialize_sqlite(app.handle());
-            app.manage(sqlite_db);
+            // Initialize SQLite cache databases (core / achievements / store)
+            app.manage(commands::sqlite_cache::initialize_core_sqlite(app.handle()));
+            app.manage(commands::sqlite_cache::initialize_achievements_sqlite(app.handle()));
+            app.manage(commands::sqlite_cache::initialize_store_sqlite(app.handle()));
 
             let handle = app.handle().clone();
             std::thread::spawn(move || {
