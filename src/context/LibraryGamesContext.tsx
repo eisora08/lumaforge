@@ -4,7 +4,6 @@ import type { AppSettings } from "../types/settings";
 import { resolveLibraryGames } from "../services/libraryGameResolver";
 import { loadCachedGames, isCacheExpired, saveCachedGames } from "../services/gameDetectionCache";
 import { loadLibraryAppInfo, updateLibraryAppInfo } from "../services/libraryLocalCacheService";
-import { triggerBackgroundScan } from "../services/fullSteamGameIndex";
 import type { LibraryAppInfoEntry, LibraryAppInfoMap } from "../services/tauri";
 import {
   loadSteamStats,
@@ -799,6 +798,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           setLoading(true);
           try {
             const result = await resolveLibraryGames(settings, {
+              force: true,
               onProgress(source, phase, extra) {
                 reportLibraryProgress({
                   source,
@@ -814,11 +814,6 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             applyGamesSafely(enriched, "background-scan");
             setWarnings(result.warnings);
             reportLibraryProgress({ phase: "done", source: "steam", itemsFound: enriched.length });
-            triggerBackgroundScan(settings).then((count) => {
-              if (count > 0) {
-                console.debug(`[LibraryGamesContext] Full dataset scan complete: ${count} games indexed`);
-              }
-            }).catch((err) => console.warn(err));
           } catch (error) {
             console.error("[LibraryGamesContext] scan error:", error);
             reportLibraryProgress({ phase: "error", source: "steam", errors: [String(error)] });
