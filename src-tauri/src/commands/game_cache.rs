@@ -667,6 +667,9 @@ pub fn update_game_appinfo_media(
     // Write to SQLite
     crate::commands::sqlite_cache::game_appinfo::write_game_appinfo(&db, &app_id, &entry)?;
 
+    // Notify TS subscribers that appinfo changed
+    crate::utils::progress_utils::emit_data_changed(&app_handle, "appinfo-changed", &app_id);
+
     println!("[MEDIA][APPINFO_WRITE] appid={}", app_id);
     Ok(())
 }
@@ -677,6 +680,7 @@ pub fn update_game_appinfo_media(
 
 #[tauri::command]
 pub fn batch_update_game_names(
+    app_handle: tauri::AppHandle,
     apps: Vec<(String, Option<String>)>,
     db: tauri::State<'_, crate::commands::sqlite_cache::SqliteCoreDb>,
 ) -> Result<u32, String> {
@@ -718,6 +722,11 @@ pub fn batch_update_game_names(
     }
 
     conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+
+    if updated > 0 {
+        crate::utils::progress_utils::emit_data_changed(&app_handle, "names-updated", &updated.to_string());
+    }
+
     println!("[MEDIA][BATCH_NAMES] updated={}/{}", updated, apps.len());
     Ok(updated)
 }

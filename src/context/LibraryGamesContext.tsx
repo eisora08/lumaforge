@@ -60,6 +60,7 @@ import {
   subscribeDebridGames,
   refreshDebridGames,
 } from "../services/debridGameStore";
+import { subscribeDataChanges } from "../services/dataChangeBus";
 
 // â”€â”€ Library runtime state machine â”€â”€
 
@@ -1147,12 +1148,12 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       }
 
       reportLibraryProgress({ phase: "updating-cache", source: "unknown" });
-      await saveCachedGames(enriched, result.warnings);
       if (enriched.length === 0 && gamesRef.current.length > 0) {
         console.log(`[LIBRARY_CONTEXT][REFRESH_EMPTY_IGNORED] total=${gamesRef.current.length}`);
         reportLibraryProgress({ phase: "done", source: "steam", itemsFound: 0 });
         return;
       }
+      await saveCachedGames(enriched, result.warnings);
       applyGamesSafely(enriched, "manual-refresh", { allowReplace: true });
       setWarnings(result.warnings);
       await updateAppInfoFromGames(enriched).catch((err) => console.warn(err));
@@ -1164,6 +1165,21 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       setLoading(false);
     }
   }, []);
+
+  // Subscribe to SQLite data changes — refresh library when games are upserted
+  useEffect(() => {
+    let lastRefresh = 0;
+    const unsub = subscribeDataChanges((type) => {
+      if (type === "games-upserted") {
+        const now = Date.now();
+        if (now - lastRefresh > 3000) {
+          lastRefresh = now;
+          refresh();
+        }
+      }
+    });
+    return unsub;
+  }, [refresh]);
 
   const updateGame = useCallback((appId: string, updates: Partial<LibraryGame>) => {
     setGames((prev) => {

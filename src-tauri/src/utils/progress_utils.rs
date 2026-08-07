@@ -35,3 +35,23 @@ pub fn emit_installer_network(app_handle: &AppHandle, job_id: &str, peers: u32, 
 
     let _ = app_handle.emit("installer-network", payload);
 }
+
+// ---------------------------------------------------------------------------
+// SQLite data-change notifications — bridges Rust writes to React re-renders
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, serde::Serialize)]
+pub struct DataChangeEvent {
+    pub change_type: String,
+    pub detail: String,
+}
+
+/// Emits a `sqlite-data-changed` event so TS subscribers (dataChangeBus.ts)
+/// can trigger React re-renders after SQLite writes.
+pub fn emit_data_changed(app_handle: &AppHandle, change_type: &str, detail: &str) {
+    let payload = DataChangeEvent {
+        change_type: change_type.to_string(),
+        detail: detail.to_string(),
+    };
+    let _ = app_handle.emit("sqlite-data-changed", payload);
+}

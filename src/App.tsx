@@ -47,6 +47,7 @@ import { useGameDetails } from "./context/GameDetailsContext";
 import { setPageContextSource } from "./services/ambientBackgroundStore";
 import { getBootSnapshot } from "./services/appBootCoordinator";
 import { localPathToUrl, isLocalPath } from "./services/gameCacheService";
+import { initDataChangeBus } from "./services/dataChangeBus";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -176,6 +177,12 @@ function App() {
     }).catch((err) => {
       console.error("[App] Extension bootstrap failed:", err);
     });
+  }, []);
+
+  // Init SQLite data change bus — listens for Rust-side data mutations
+  useEffect(() => {
+    const unlisten = initDataChangeBus();
+    return () => unlisten?.();
   }, []);
 
   // Init catalog orchestrator at app level — loads disk cache, provides canonical sections to Home and Store

@@ -122,6 +122,7 @@ fn scan_all_manifests(all_dirs: &[(PathBuf, PathBuf)]) -> Vec<SteamInstalledGame
 
 #[tauri::command]
 pub fn scan_and_build_full_dataset(
+    app_handle: tauri::AppHandle,
     steam_path: Option<String>,
     lua_path: Option<String>,
     depotcache_path: Option<String>,
@@ -215,5 +216,9 @@ pub fn scan_and_build_full_dataset(
         .map_err(|e| format!("Count error: {}", e))?;
 
     debug_log(format!("Full dataset scan complete: {} games", count));
+
+    // Notify TS subscribers that games table was updated
+    crate::utils::progress_utils::emit_data_changed(&app_handle, "games-upserted", &count.to_string());
+
     Ok(count)
 }
