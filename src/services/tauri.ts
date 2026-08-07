@@ -218,18 +218,27 @@ export async function readSteamOwnedCache(): Promise<OwnedSteamGame[]> {
   return await invoke<OwnedSteamGame[]>("read_steam_owned_cache");
 }
 
+// Global scan guard — prevents concurrent Steam scans (each takes ~3s, blocks thread pool)
+let _steamScanPromise: Promise<SteamInstalledGame[]> | null = null;
+
 export async function scanSteamInstalledGames(params?: {
   steamPath?: string;
   luaPath?: string;
   depotcachePath?: string;
   gameScanFolders?: string[];
 }): Promise<SteamInstalledGame[]> {
-  return await invoke<SteamInstalledGame[]>("scan_steam_installed_games", {
+  // If a scan is already in progress, wait for it instead of starting another
+  if (_steamScanPromise) {
+    console.log("[STEAM_SCAN][GUARD] reusing in-progress scan");
+    return _steamScanPromise;
+  }
+  _steamScanPromise = invoke<SteamInstalledGame[]>("scan_steam_installed_games", {
     steamPath: params?.steamPath ?? null,
     luaPath: params?.luaPath ?? null,
     depotcachePath: params?.depotcachePath ?? null,
     gameScanFolders: params?.gameScanFolders ?? null,
-  });
+  }).finally(() => { _steamScanPromise = null; });
+  return _steamScanPromise;
 }
 
 export async function scanSteamUserGameStats(params?: {
