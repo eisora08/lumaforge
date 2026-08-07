@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::models::provider_check::ProviderAvailabilityResult;
 
 #[tauri::command]
-pub fn check_provider_availability(
+pub async fn check_provider_availability(
     url: String,
     success_code: u16,
     unavailable_code: u16,
@@ -14,7 +14,7 @@ pub fn check_provider_availability(
         return Err("La URL del provider está vacía.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(8))
         .connect_timeout(Duration::from_secs(6))
@@ -22,7 +22,7 @@ pub fn check_provider_availability(
         .build()
         .map_err(|error| format!("Error creando cliente HTTP: {}", error))?;
 
-    let response = send_head_or_get(&client, &url, headers.as_ref())?;
+    let response = send_head_or_get(&client, &url, headers.as_ref()).await?;
 
     let status = response.status();
     let status_code = status.as_u16();
@@ -63,11 +63,11 @@ pub fn check_provider_availability(
     })
 }
 
-fn send_head_or_get(
-    client: &reqwest::blocking::Client,
+async fn send_head_or_get(
+    client: &reqwest::Client,
     url: &str,
     headers: Option<&HashMap<String, String>>,
-) -> Result<reqwest::blocking::Response, String> {
+) -> Result<reqwest::Response, String> {
     let mut head_request = client.head(url);
 
     if let Some(headers) = headers {
@@ -76,23 +76,23 @@ fn send_head_or_get(
         }
     }
 
-    match head_request.send() {
+    match head_request.send().await {
         Ok(response) => {
             if response.status().as_u16() == 405 {
-                send_range_get(client, url, headers)
+                send_range_get(client, url, headers).await
             } else {
                 Ok(response)
             }
         }
-        Err(_) => send_range_get(client, url, headers),
+        Err(_) => send_range_get(client, url, headers).await,
     }
 }
 
-fn send_range_get(
-    client: &reqwest::blocking::Client,
+async fn send_range_get(
+    client: &reqwest::Client,
     url: &str,
     headers: Option<&HashMap<String, String>>,
-) -> Result<reqwest::blocking::Response, String> {
+) -> Result<reqwest::Response, String> {
     let mut get_request = client.get(url).header("Range", "bytes=0-0");
 
     if let Some(headers) = headers {
@@ -103,5 +103,6 @@ fn send_range_get(
 
     get_request
         .send()
+        .await
         .map_err(|error| format!("Error consultando provider: {}", error))
 }

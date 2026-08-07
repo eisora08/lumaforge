@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::models::steam_store_search::SteamStoreSearchItem;
 
 #[tauri::command]
-pub fn resolve_steam_store_search(
+pub async fn resolve_steam_store_search(
     term: String,
     country_code: Option<String>,
     language: Option<String>,
@@ -17,7 +17,7 @@ pub fn resolve_steam_store_search(
 
     let max_results = limit.unwrap_or(8).clamp(1, 20);
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 LumaForge/0.1.0")
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(6))
@@ -31,7 +31,7 @@ pub fn resolve_steam_store_search(
         country_code.as_deref(),
         language.as_deref(),
         max_results,
-    );
+    ).await;
 
     if let Ok(items) = suggest_items {
         if !items.is_empty() {
@@ -45,11 +45,11 @@ pub fn resolve_steam_store_search(
         country_code.as_deref(),
         language.as_deref(),
         max_results,
-    )
+    ).await
 }
 
-fn fetch_search_suggest(
-    client: &reqwest::blocking::Client,
+async fn fetch_search_suggest(
+    client: &reqwest::Client,
     term: &str,
     country_code: Option<&str>,
     language: Option<&str>,
@@ -80,6 +80,7 @@ fn fetch_search_suggest(
     let response = client
         .get(url)
         .send()
+        .await
         .map_err(|error| format!("Error consultando Steam Search Suggest: {}", error))?;
 
     if !response.status().is_success() {
@@ -91,6 +92,7 @@ fn fetch_search_suggest(
 
     let text = response
         .text()
+        .await
         .map_err(|error| format!("Error leyendo Steam Search Suggest: {}", error))?;
 
     parse_suggest_response(&text, max_results)
@@ -139,8 +141,8 @@ fn parse_suggest_response(
 
     Ok(Vec::new())
 }
-fn fetch_search_results_html(
-    client: &reqwest::blocking::Client,
+async fn fetch_search_results_html(
+    client: &reqwest::Client,
     term: &str,
     country_code: Option<&str>,
     language: Option<&str>,
@@ -177,6 +179,7 @@ fn fetch_search_results_html(
     let response = client
         .get(url)
         .send()
+        .await
         .map_err(|error| format!("Error consultando Steam Search Results: {}", error))?;
 
     if !response.status().is_success() {
@@ -188,6 +191,7 @@ fn fetch_search_results_html(
 
     let text = response
         .text()
+        .await
         .map_err(|error| format!("Error leyendo Steam Search Results: {}", error))?;
 
     let json: serde_json::Value = match serde_json::from_str(&text) {

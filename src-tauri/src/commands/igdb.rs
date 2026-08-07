@@ -89,8 +89,8 @@ fn simple_url_encode(s: &str) -> String {
     encoded
 }
 
-fn build_client() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+fn build_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
@@ -182,7 +182,7 @@ fn day_of_year_to_month_day(day_of_year: u32, leap: bool) -> (u32, u32) {
 /// Get a Twitch/IGDB OAuth access token.
 /// This is a standard client_credentials grant — no user context.
 #[tauri::command]
-pub fn igdb_get_access_token(
+pub async fn igdb_get_access_token(
     client_id: String,
     client_secret: String,
 ) -> Result<IgdbAccessToken, String> {
@@ -198,11 +198,12 @@ pub fn igdb_get_access_token(
     let response = client
         .post(&url)
         .send()
+        .await
         .map_err(|e| format!("[IGDB][TOKEN] Request failed: {}", e))?;
 
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
         return Err(format!(
             "[IGDB][TOKEN] Authentication failed (HTTP {}): {}",
             status,
@@ -212,6 +213,7 @@ pub fn igdb_get_access_token(
 
     let token: IgdbAccessToken = response
         .json()
+        .await
         .map_err(|e| format!("[IGDB][TOKEN] Failed to parse response: {}", e))?;
 
     Ok(token)
@@ -220,7 +222,7 @@ pub fn igdb_get_access_token(
 /// Search for a game by Steam application ID and return its IGDB cover URL.
 /// Used by the artwork priority chain for Steam games.
 #[tauri::command]
-pub fn igdb_search_by_steam_app_id(
+pub async fn igdb_search_by_steam_app_id(
     client_id: String,
     access_token: String,
     app_id: String,
@@ -243,11 +245,12 @@ pub fn igdb_search_by_steam_app_id(
         .headers(headers.clone())
         .body(game_query)
         .send()
+        .await
         .map_err(|e| format!("[IGDB][ARTWORK] Game search failed: {}", e))?;
 
     if !game_res.status().is_success() {
         let status = game_res.status().as_u16();
-        let body = game_res.text().unwrap_or_default();
+        let body = game_res.text().await.unwrap_or_default();
         return Err(format!(
             "[IGDB][ARTWORK] Game search HTTP {}: {}",
             status,
@@ -257,6 +260,7 @@ pub fn igdb_search_by_steam_app_id(
 
     let games: Vec<IgdbGameBySteamId> = game_res
         .json()
+        .await
         .map_err(|e| format!("[IGDB][ARTWORK] Failed to parse game response: {}", e))?;
 
     let cover_id = match games.first().and_then(|g| g.cover) {
@@ -272,6 +276,7 @@ pub fn igdb_search_by_steam_app_id(
         .headers(headers)
         .body(cover_query)
         .send()
+        .await
         .map_err(|e| format!("[IGDB][ARTWORK] Cover fetch failed: {}", e))?;
 
     if !cover_res.status().is_success() {
@@ -280,6 +285,7 @@ pub fn igdb_search_by_steam_app_id(
 
     let covers: Vec<IgdbCover> = cover_res
         .json()
+        .await
         .map_err(|e| format!("[IGDB][ARTWORK] Failed to parse cover response: {}", e))?;
 
     let cover_url = covers
@@ -293,7 +299,7 @@ pub fn igdb_search_by_steam_app_id(
 /// Search IGDB by game name and return metadata + artwork URLs.
 /// Used for manual/non-Steam games that don't have a Steam App ID.
 #[tauri::command]
-pub fn igdb_search_games_by_name(
+pub async fn igdb_search_games_by_name(
     client_id: String,
     access_token: String,
     name: String,
@@ -324,11 +330,12 @@ pub fn igdb_search_games_by_name(
         .headers(headers)
         .body(body)
         .send()
+        .await
         .map_err(|e| format!("[IGDB][SEARCH] Request failed: {}", e))?;
 
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
         return Err(format!(
             "[IGDB][SEARCH] HTTP {} for \"{}\": {}",
             status,
@@ -339,6 +346,7 @@ pub fn igdb_search_games_by_name(
 
     let games: Vec<IgdbGameRaw> = response
         .json()
+        .await
         .map_err(|e| format!("[IGDB][SEARCH] Failed to parse response: {}", e))?;
 
     let results: Vec<IgdbGameSearchResult> = games
@@ -446,7 +454,7 @@ struct IgdbExternalGame {
 /// Query IGDB for catalog sections (popular games, new releases, genre-filtered).
 /// `query` is an IGDB query string (e.g., "sort popularity desc; limit 20;").
 #[tauri::command]
-pub fn igdb_query_catalog(
+pub async fn igdb_query_catalog(
     client_id: String,
     access_token: String,
     query: String,
@@ -463,11 +471,12 @@ pub fn igdb_query_catalog(
         .headers(headers)
         .body(query)
         .send()
+        .await
         .map_err(|e| format!("[IGDB][CATALOG] Request failed: {}", e))?;
 
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
         return Err(format!(
             "[IGDB][CATALOG] HTTP {}: {}",
             status,
@@ -477,6 +486,7 @@ pub fn igdb_query_catalog(
 
     let games: Vec<IgdbCatalogRaw> = response
         .json()
+        .await
         .map_err(|e| format!("[IGDB][CATALOG] Failed to parse response: {}", e))?;
 
     let results: Vec<IgdbCatalogGame> = games

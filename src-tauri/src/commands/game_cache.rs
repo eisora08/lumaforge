@@ -265,7 +265,7 @@ pub fn save_game_artwork(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_landscape_image(
+pub async fn cache_landscape_image(
     app_handle: AppHandle,
     app_id: String,
     urls: LandscapeUrls,
@@ -289,7 +289,7 @@ pub fn cache_landscape_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path, false) {
+            match safe_single_download(&app_handle, &app_id, url, "landscape", &dest_path, false).await {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -308,7 +308,7 @@ pub fn cache_landscape_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_cover_image(
+pub async fn cache_cover_image(
     app_handle: AppHandle,
     app_id: String,
     urls: CoverUrls,
@@ -331,7 +331,7 @@ pub fn cache_cover_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path, false) {
+            match safe_single_download(&app_handle, &app_id, url, "cover", &dest_path, false).await {
                 Ok(Some(path)) => return Ok(Some(path)),
                 Ok(None) => continue,
                 Err(_) => continue,
@@ -350,7 +350,7 @@ pub fn cache_cover_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_background_image(
+pub async fn cache_background_image(
     app_handle: AppHandle,
     app_id: String,
     urls: BackgroundUrls,
@@ -373,7 +373,7 @@ pub fn cache_background_image(
 
     for url_opt in &sources {
         if let Some(url) = url_opt {
-            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path, false) {
+            match safe_single_download(&app_handle, &app_id, url, "background", &dest_path, false).await {
                 Ok(Some(path)) => {
                     media_log(&format!("saved background for {}", app_id));
                     return Ok(Some(path));
@@ -402,7 +402,7 @@ pub fn cache_background_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_logo_image(
+pub async fn cache_logo_image(
     app_handle: AppHandle,
     app_id: String,
     urls: LogoUrls,
@@ -417,7 +417,7 @@ pub fn cache_logo_image(
     }
 
     if let Some(url) = urls.sgdb_logo_url {
-        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path, false) {
+        match safe_single_download(&app_handle, &app_id, &url, "logo", &dest_path, false).await {
             Ok(Some(path)) => {
                 media_log(&format!("saved logo for {}", app_id));
                 return Ok(Some(path));
@@ -437,7 +437,7 @@ pub fn cache_logo_image(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn cache_icon_image(
+pub async fn cache_icon_image(
     app_handle: AppHandle,
     app_id: String,
     urls: IconUrls,
@@ -452,7 +452,7 @@ pub fn cache_icon_image(
     }
 
     if let Some(url) = urls.sgdb_icon_url {
-        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path, false) {
+        match safe_single_download(&app_handle, &app_id, &url, "icon", &dest_path, false).await {
             Ok(Some(path)) => {
                 media_log(&format!("saved icon for {}", app_id));
                 return Ok(Some(path));
@@ -917,7 +917,7 @@ pub fn migrate_to_canonical_cache(app_handle: AppHandle) -> Result<MigrationSumm
 const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 const MAX_RESPONSE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 
-fn safe_single_download(
+async fn safe_single_download(
     _app_handle: &AppHandle,
     _app_id: &str,
     url: &str,
@@ -925,7 +925,7 @@ fn safe_single_download(
     dest_path: &Path,
     skip_classification: bool,
 ) -> Result<Option<String>, String> {
-    let client = match reqwest::blocking::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .connect_timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
@@ -936,7 +936,7 @@ fn safe_single_download(
         Err(e) => return Err(format!("Failed to create HTTP client: {}", e)),
     };
 
-    let response = match client.get(url).send() {
+    let response = match client.get(url).send().await {
         Ok(r) => r,
         Err(e) => {
             log(&format!("safe_download: HTTP error for {}: {}", media_type, e));
@@ -958,7 +958,7 @@ fn safe_single_download(
         }
     }
 
-    let bytes = match response.bytes() {
+    let bytes = match response.bytes().await {
         Ok(b) => {
             if b.len() as u64 > MAX_RESPONSE_BYTES {
                 log(&format!("safe_download: response too large ({} bytes)", b.len()));
@@ -1086,7 +1086,7 @@ fn safe_single_download(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn safe_download_image(
+pub async fn safe_download_image(
     app_handle: AppHandle,
     url: String,
     app_id: String,
@@ -1112,7 +1112,7 @@ pub fn safe_download_image(
         return Ok(Some(dest_path.to_string_lossy().to_string()));
     }
 
-    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh)
+    safe_single_download(&app_handle, &app_id, &url, &media_type, &dest_path, force_refresh).await
 }
 
 // ---------------------------------------------------------------------------

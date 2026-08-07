@@ -214,7 +214,7 @@ pub fn save_provider_media_from_path(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn download_provider_media_from_url(
+pub async fn download_provider_media_from_url(
     app_handle: AppHandle,
     provider: String,
     provider_game_id: String,
@@ -234,7 +234,7 @@ pub fn download_provider_media_from_url(
     let media_dir = get_provider_media_dir(&app_handle, &provider, &provider_game_id)?;
 
     // Download with timeout and size limits
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .connect_timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
@@ -245,6 +245,7 @@ pub fn download_provider_media_from_url(
     let response = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| format!("Download failed: {}", e))?;
 
     if !response.status().is_success() {
@@ -264,6 +265,7 @@ pub fn download_provider_media_from_url(
 
     let bytes = response
         .bytes()
+        .await
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     if bytes.len() as u64 > MAX_FILE_SIZE {

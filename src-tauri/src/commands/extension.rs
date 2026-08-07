@@ -303,11 +303,11 @@ pub fn extension_list_directory(path: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn extension_download_file(
+pub async fn extension_download_file(
     url: String,
     target_path: String,
 ) -> Result<(), String> {
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("LumaForge-ExtensionManager/1.0")
         .timeout(std::time::Duration::from_secs(120))
         .connect_timeout(std::time::Duration::from_secs(15))
@@ -315,9 +315,10 @@ pub fn extension_download_file(
         .build()
         .map_err(|e| format!("HTTP client creation failed: {}", e))?;
 
-    let mut response = client
+    let response = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| format!("Download failed: {}", e))?;
 
     if !response.status().is_success() {
@@ -333,10 +334,12 @@ pub fn extension_download_file(
             .map_err(|e| format!("Failed to create target directory: {}", e))?;
     }
 
-    let mut file = fs::File::create(target)
-        .map_err(|e| format!("Failed to create target file: {}", e))?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
 
-    std::io::copy(&mut response, &mut file)
+    fs::write(target, &bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
 
     extension_log(format!("downloaded: {} -> {}", url, target_path));

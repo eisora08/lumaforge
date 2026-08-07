@@ -5,8 +5,8 @@ use crate::models::hubcap::{
     HubcapAppStatusResponse, HubcapDepotKeysResponse, HubcapHealthResponse, HubcapUserStatsResponse,
 };
 
-fn build_client() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+fn build_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .user_agent("LumaForge/0.1.0")
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(8))
@@ -65,13 +65,13 @@ fn parse_i64_field(obj: &serde_json::Map<String, serde_json::Value>, names: &[&s
 }
 
 #[tauri::command]
-pub fn hubcap_health(base_url: String) -> Result<HubcapHealthResponse, String> {
+pub async fn hubcap_health(base_url: String) -> Result<HubcapHealthResponse, String> {
     let start = Instant::now();
     let base = base_url.trim_end_matches('/').to_string();
     let url = format!("{}/api/v1/health", base);
     let client = build_client()?;
 
-    match client.get(&url).send() {
+    match client.get(&url).send().await {
         Ok(response) => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
             if response.status().is_success() {
@@ -107,7 +107,7 @@ pub fn hubcap_health(base_url: String) -> Result<HubcapHealthResponse, String> {
 }
 
 #[tauri::command]
-pub fn hubcap_user_stats(
+pub async fn hubcap_user_stats(
     base_url: String,
     api_key: String,
 ) -> Result<HubcapUserStatsResponse, String> {
@@ -123,11 +123,12 @@ pub fn hubcap_user_stats(
         .get(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
+        .await
     {
         Ok(response) => {
             let status_code = response.status().as_u16();
             match status_code {
-                200 => match response.json::<serde_json::Value>() {
+                200 => match response.json::<serde_json::Value>().await {
                     Ok(json) => {
                         println!("[HUBCAP][USER_STATS] status=ok");
                         let obj = json.as_object().cloned().unwrap_or_default();
@@ -295,7 +296,7 @@ pub fn hubcap_user_stats(
 }
 
 #[tauri::command]
-pub fn hubcap_depot_keys(
+pub async fn hubcap_depot_keys(
     base_url: String,
     api_key: String,
 ) -> Result<HubcapDepotKeysResponse, String> {
@@ -314,6 +315,7 @@ pub fn hubcap_depot_keys(
         .get(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
+        .await
     {
         Ok(response) => {
             let status_code = response.status().as_u16();
@@ -321,6 +323,7 @@ pub fn hubcap_depot_keys(
                 200 => {
                     let count = response
                         .json::<serde_json::Value>()
+                        .await
                         .ok()
                         .and_then(|v| v.as_array().map(|a| a.len() as i64))
                         .unwrap_or(0);
@@ -388,7 +391,7 @@ fn empty_app_status(status: &str) -> HubcapAppStatusResponse {
 }
 
 #[tauri::command]
-pub fn hubcap_app_status(
+pub async fn hubcap_app_status(
     base_url: String,
     api_key: String,
     app_id: String,
@@ -405,11 +408,12 @@ pub fn hubcap_app_status(
         .get(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
+        .await
     {
         Ok(response) => {
             let status_code = response.status().as_u16();
             match status_code {
-                200 => match response.json::<serde_json::Value>() {
+                200 => match response.json::<serde_json::Value>().await {
                     Ok(json) => {
                         let obj = json.as_object().cloned().unwrap_or_default();
 
