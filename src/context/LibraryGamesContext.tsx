@@ -1174,7 +1174,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         const now = Date.now();
         if (now - lastRefresh > 3000) {
           lastRefresh = now;
-          refresh();
+          refresh({ force: true });
         }
       }
     });
