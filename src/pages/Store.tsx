@@ -137,14 +137,6 @@ type SourceProgress = {
 } | null;
 
 /** Deterministic integer hash for shuffling (same input → same output). */
-function simpleHash(n: number): number {
-  let h = n | 0;
-  h = ((h >> 16) ^ h) * 0x45d9f3b;
-  h = ((h >> 16) ^ h) * 0x45d9f3b;
-  h = (h >> 16) ^ h;
-  return h;
-}
-
 /** Convert a local catalog game to a StoreGame for section rendering. */
 function catalogGameToStoreGame(g: CatalogGameResult): StoreGame {
   return {
@@ -983,12 +975,21 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
     // Deterministic hash-shuffle so old games don't always appear first.
     // Same input → same output every time (no randomness).
+    // Pre-compute hashes to avoid O(n log n) hash calls during sort.
+    const hashCache = new Map<number, number>();
+    const getHash = (appid: number) => {
+      let h = hashCache.get(appid);
+      if (h === undefined) {
+        h = appid | 0;
+        h = ((h >> 16) ^ h) * 0x45d9f3b;
+        h = ((h >> 16) ^ h) * 0x45d9f3b;
+        h = (h >> 16) ^ h;
+        hashCache.set(appid, h);
+      }
+      return h;
+    };
     const sorted = [...steamCatalog];
-    sorted.sort((a, b) => {
-      const ha = simpleHash(a.appid);
-      const hb = simpleHash(b.appid);
-      return ha - hb;
-    });
+    sorted.sort((a, b) => getHash(a.appid) - getHash(b.appid));
 
     return sorted;
   }, [steamCatalog, catalogFingerprint, deferredBuildKey]);

@@ -518,31 +518,16 @@ pub fn update_game_appinfo_media(
     let mut entry: GameAppInfo = if let Some(existing) = crate::commands::sqlite_cache::game_appinfo::read_game_appinfo(&db, &app_id) {
         existing
     } else {
-        // Fallback: try legacy JSON file for upgraders
-        let path = get_appinfo_path(&app_handle, &app_id)?;
-        if path.exists() {
-            let content = fs::read_to_string(&path).unwrap_or_default();
-            serde_json::from_str(&content).unwrap_or_else(|_| GameAppInfo {
-                app_id: app_id.clone(),
-                provider: "steam".to_string(),
-                name: name.clone(),
-                updated_at: None,
-                media: None,
-                media_sources: None,
-                remote: None,
-                user_data: None,
-            })
-        } else {
-            GameAppInfo {
-                app_id: app_id.clone(),
-                provider: "steam".to_string(),
-                name: name.clone(),
-                updated_at: None,
-                media: None,
-                media_sources: None,
-                remote: None,
-                user_data: None,
-            }
+        // No SQLite entry — create fresh (migration already ran at boot)
+        GameAppInfo {
+            app_id: app_id.clone(),
+            provider: "steam".to_string(),
+            name: name.clone(),
+            updated_at: None,
+            media: None,
+            media_sources: None,
+            remote: None,
+            user_data: None,
         }
     };
 

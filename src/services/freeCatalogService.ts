@@ -54,7 +54,12 @@ const MIN_DELAY_MS = 250;
 let lastFetchTime = 0;
 const pendingFetches = new Map<string, Promise<SteamSpyEntry[]>>();
 
+// CORS detection — SteamSpy doesn't send CORS headers in Tauri WebView.
+// Once we detect a CORS failure, skip all subsequent calls to avoid console spam.
+let _corsBlocked = false;
+
 async function throttledFetch(url: string): Promise<SteamSpyEntry[]> {
+  if (_corsBlocked) return [];
   const now = Date.now();
   const elapsed = now - lastFetchTime;
   if (elapsed < MIN_DELAY_MS) {
@@ -62,15 +67,24 @@ async function throttledFetch(url: string): Promise<SteamSpyEntry[]> {
   }
   lastFetchTime = Date.now();
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`SteamSpy API error: ${response.status} ${response.statusText}`);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`SteamSpy API error: ${response.status} ${response.statusText}`);
+    }
+    const json = await response.json();
+    if (typeof json === "object" && !Array.isArray(json)) {
+      return Object.values(json) as SteamSpyEntry[];
+    }
+    return json as SteamSpyEntry[];
+  } catch (err) {
+    // Detect CORS failure (no status code available in CORS errors)
+    if (err instanceof TypeError && String(err.message).includes("Failed to fetch")) {
+      _corsBlocked = true;
+      console.warn("[FREE_CATALOG] SteamSpy CORS blocked — skipping all future calls");
+    }
+    throw err;
   }
-  const json = await response.json();
-  if (typeof json === "object" && !Array.isArray(json)) {
-    return Object.values(json) as SteamSpyEntry[];
-  }
-  return json as SteamSpyEntry[];
 }
 
 async function fetchWithCache(key: string, url: string): Promise<SteamSpyEntry[]> {

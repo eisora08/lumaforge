@@ -28,6 +28,8 @@ pub mod store_reviews;
 
 // Re-export every command and model so existing consumers keep resolving via
 // `crate::commands::sqlite_cache::<name>` (zero changes to lib.rs / callers).
+// Some re-exports are unused after SQLite migration but kept for Tauri handler resolution.
+#[allow(unused_imports)]
 pub use achievements::{
     AchievementEntryRow, AchievementPercentageRow, AchievementSummaryRow,
     batch_get_achievement_summaries, batch_upsert_achievement_entries, get_achievement_entries,

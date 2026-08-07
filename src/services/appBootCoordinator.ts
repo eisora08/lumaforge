@@ -314,6 +314,8 @@ export async function runBootTasks(): Promise<void> {
                 }
                 const batchNames: [string, string | null][] = [];
                 let enrichedCount = 0;
+                // First pass: resolve from metadata (instant, already batch-resolved)
+                const storeDetailGames: typeof placeholderGames = [];
                 for (const game of placeholderGames) {
                   if (!game.appId) continue;
                   const meta = metadataResolution[Number(game.appId)];
@@ -322,18 +324,32 @@ export async function runBootTasks(): Promise<void> {
                     enrichedCount++;
                     _enrichedTitleAppIds.set(game.appId, meta.name);
                     batchNames.push([game.appId, meta.name]);
-                    continue;
+                  } else {
+                    storeDetailGames.push(game);
                   }
-                  try {
-                    const sd = await getStoreDetails(game.appId).catch(() => null);
-                    const sdData = sd?.data as { name?: string } | null;
-                    if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
-                      game.title = sdData.name;
-                      enrichedCount++;
-                      _enrichedTitleAppIds.set(game.appId, sdData.name);
-                      batchNames.push([game.appId, sdData.name]);
+                }
+                // Second pass: batch getStoreDetails for remaining games (parallel, batches of 10)
+                if (storeDetailGames.length > 0) {
+                  const BATCH_SIZE_SD = 10;
+                  for (let i = 0; i < storeDetailGames.length; i += BATCH_SIZE_SD) {
+                    const batch = storeDetailGames.slice(i, i + BATCH_SIZE_SD);
+                    const results = await Promise.allSettled(
+                      batch.map((g) => getStoreDetails(g.appId!).catch(() => null)),
+                    );
+                    for (let j = 0; j < batch.length; j++) {
+                      const game = batch[j];
+                      if (!game.appId) continue;
+                      const r = results[j];
+                      const sd = r.status === "fulfilled" ? r.value : null;
+                      const sdData = (sd as any)?.data as { name?: string } | null;
+                      if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
+                        game.title = sdData.name;
+                        enrichedCount++;
+                        _enrichedTitleAppIds.set(game.appId, sdData.name);
+                        batchNames.push([game.appId, sdData.name]);
+                      }
                     }
-                  } catch { /* ignore */ }
+                  }
                 }
                 // Single batch write instead of N per-game writes
                 if (batchNames.length > 0) {
@@ -625,43 +641,49 @@ export async function runBootTasks(): Promise<void> {
                       try { metadataResolution = await resolveGameMetadata(numIds); } catch { /* non-critical */ }
                     }
                     const batchNames: [string, string | null][] = [];
+                    // First pass: resolve from appinfo/metadata (instant)
+                    const storeDetailGames: typeof emptyTitleGames = [];
                     for (const game of emptyTitleGames) {
                       if (!game.appId) continue;
-                      // Skip if Stage 3.5 already enriched this game
                       if (_enrichedTitleAppIds.has(game.appId)) {
                         const realName = _enrichedTitleAppIds.get(game.appId);
-                        if (realName) {
-                          game.title = realName;
-                        }
+                        if (realName) game.title = realName;
                         continue;
                       }
                       const appinfo = appinfos[game.appId];
                       const meta = metadataResolution[Number(game.appId)];
                       let resolvedName: string | null = null;
-                      let source = "";
                       if (appinfo?.name && !isPlaceholderSteamTitle(appinfo.name, game.appId)) {
                         resolvedName = appinfo.name;
-                        source = "appinfo";
                       } else if (meta?.name && !isPlaceholderSteamTitle(meta.name, game.appId)) {
                         resolvedName = meta.name;
-                        source = "metadata";
-                      }
-                      if (!resolvedName) {
-                        try {
-                          const sd = await getStoreDetails(game.appId).catch(() => null);
-                          const sdData = sd?.data as { name?: string } | null;
-                          if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
-                            resolvedName = sdData.name;
-                            source = "store-details";
-                          }
-                        } catch { /* ignore */ }
                       }
                       if (resolvedName) {
-                        console.log(`[NAME][CANONICAL_WRITE] appid=${game.appId} name=${resolvedName} source=${source}`);
                         game.title = resolvedName;
                         batchNames.push([game.appId, resolvedName]);
                       } else {
-                        console.log(`[NAME][LIBRARY] appid=${game.appId} title=pending (no local source)`);
+                        storeDetailGames.push(game);
+                      }
+                    }
+                    // Second pass: batch getStoreDetails for remaining games (parallel, batches of 10)
+                    if (storeDetailGames.length > 0) {
+                      const BATCH_SIZE_SD = 10;
+                      for (let i = 0; i < storeDetailGames.length; i += BATCH_SIZE_SD) {
+                        const batch = storeDetailGames.slice(i, i + BATCH_SIZE_SD);
+                        const results = await Promise.allSettled(
+                          batch.map((g) => getStoreDetails(g.appId!).catch(() => null)),
+                        );
+                        for (let j = 0; j < batch.length; j++) {
+                          const game = batch[j];
+                          if (!game.appId) continue;
+                          const r = results[j];
+                          const sd = r.status === "fulfilled" ? r.value : null;
+                          const sdData = (sd as any)?.data as { name?: string } | null;
+                          if (sdData?.name && !isPlaceholderSteamTitle(sdData.name, game.appId)) {
+                            game.title = sdData.name;
+                            batchNames.push([game.appId, sdData.name]);
+                          }
+                        }
                       }
                     }
                     // Single batch write instead of N per-game writes
@@ -938,8 +960,8 @@ export async function runBootTasks(): Promise<void> {
             setBootPhaseLabel("post-shell-done");
           });
 
-          // Stage 11: Pre-import catalogs (Steam + repack) for fast Store/Debrid startup
-          await track("import-catalogs", async () => {
+          // Stage 11: Pre-import catalogs (Steam + repack) — DEFERRED to post-boot
+          scheduleAfterMain(async () => {
             try {
               const { ensureCatalogImported } = await import("./steamCatalogService");
               const [steamOk] = await Promise.all([
@@ -965,7 +987,7 @@ export async function runBootTasks(): Promise<void> {
             } catch (err) {
               logBoot(`catalog import failed: ${String(err)}`);
             }
-          });
+          }, 5000);
 
           // Performance summary: aggregate metrics from boot stages
           setBootPhaseLabel("idle-ready");
