@@ -6314,3 +6314,207 @@ Migrate all remaining JSON file stores to SQLite so fresh installs use SQLite ex
 - `thirdparty.rs` / `extension_lifecycle.rs` — infrequent singletons (P3)
 - `installed_games_registry.rs` — infrequent singleton (P3)
 - `hydra_source.rs` — infrequent (P3)
+
+## Session — P0+P1+P2 JSON→SQLite migration: eliminate all remaining JSON file I/O
+
+### Goal
+Migrate all remaining JSON file stores to SQLite so fresh installs use SQLite exclusively. Covers playtime, source availability, store cache, provider status, debrid games, manual games, store details, library game details, and store blobs.
+
+### Schema additions (`sqlite_cache/mod.rs`)
+
+**11 new tables:**
+
+| Table | DB | Type | Purpose |
+|-------|-----|------|---------|
+| `playtime_entries` | core.db | Per-game rows | Playtime store (was `playtime.json`) |
+| `playtime_sessions` | core.db | Per-session rows | Session history per game |
+| `source_availability` | store.db | Per-game rows | Source index (was `source-index.json`) |
+| `store_appinfo` | store.db | Per-game rows | Store appdetails cache (was `store/appinfo.json`) |
+| `store_media_cache` | store.db | Per-game rows | Store media metadata (was `store/media/*/metadata.json`) |
+| `provider_status_snapshot` | store.db | Singleton row | Provider status index (was `snapshot.json`) |
+| `debrid_games` | core.db | Singleton row | Debrid game registry (was `debrid-games.json`) |
+| `manual_games` | core.db | Singleton row | Manual game registry (was `manual-games.json`) |
+| `store_details` | core.db | Per-game rows | Store details (was `store-details.json`) |
+| `library_game_details` | core.db | Per-game rows | Library game details (was `library/details/*.json`) |
+
+**5 blobs moved to `game_catalog_blobs`:** `discovery-index`, `catalog-sections-cache`, `sgdb-artwork-cache` (store.db); `scan-state`, `library-cache-index` (store.db)
+
+### SQLite layers created (`sqlite_cache/`)
+
+| File | Functions |
+|------|-----------|
+| `playtime.rs` | `read_all_playtime_entries`, `upsert_playtime_entry`, `read_playtime_sessions_for_game`, `upsert_playtime_session`, `delete_playtime_sessions_older_than` |
+| `source_availability.rs` | `read_source_availability`, `write_source_availability`, `read_all_source_availability`, `delete_source_availability` |
+| `store_appinfo_cache.rs` | `read_store_appinfo`, `write_store_appinfo`, `read_all_store_appinfo`, `delete_store_appinfo` |
+| `store_media_cache.rs` | `read_store_media_cache`, `write_store_media_cache`, `read_all_store_media_cache`, `delete_store_media_cache` |
+| `provider_snapshot.rs` | `read_provider_status_snapshot`, `write_provider_status_snapshot` |
+| `debrid_games_cache.rs` | `read_debrid_games`, `write_debrid_games` |
+| `manual_games_cache.rs` | `read_manual_games`, `write_manual_games` |
+| `store_details_cache.rs` | `read_store_details`, `write_store_details`, `read_library_game_details`, `write_library_game_details` |
+
+### Commands re-cableados
+
+| File | Commands migrated |
+|------|------------------|
+| `playtime.rs` | 5 commands: `read/write_playtime_store`, `record_start/end`, `import_external` — full rewrite from JSON store to SQLite queries |
+| `debrid_games.rs` | 3 commands: `read/write/backup_debrid_games` — singleton blob |
+| `manual_games.rs` | 3 commands: `read/write/backup_manual_games` — singleton blob |
+| `provider_status_cache.rs` | 2 commands: `read/write_provider_status_snapshot` — singleton blob; per-game status already in SQLite |
+| `source_cache.rs` | 2 commands: `read/write_source_availability_index` — per-game rows |
+| `store_cache.rs` | 8 commands: appinfo→`store_appinfo`, media→`store_media_cache`, discovery/catalog/sgdb→`game_catalog_blobs` |
+| `game_cache.rs` | 2 commands: `get/save_store_details` → SQLite; GameArtwork 3 commands deprecated (return Ok/None) |
+| `library_cache.rs` | 2 commands: `read/write_library_game_details` → SQLite; LibraryAppInfoMap/media/cache_index all deprecated |
+
+### Dead code eliminated
+- `library_cache.rs`: `read/write/update_library_appinfo` → no-op (superseded by `games` table)
+- `library_cache.rs`: `library_*_game_media_cache` → no-op (superseded by `media_manifests` table)
+- `library_cache.rs`: `read/write_library_cache_index` → no-op
+- `library_cache.rs`: `cache_library_game_media` → no-op (downloads removed)
+- `game_cache.rs`: `get/save/update_game_artwork` → deprecated (was duplicating GameAppInfo.media)
+
+### Migration (`migrate_remaining_json_to_sqlite`)
+- Runs once on first boot after update (same pattern as existing `migrate_json_to_sqlite`)
+- Reads each JSON file, parses, writes to SQLite tables
+- Per-game files: iterates `games/steam/*/store-details.json`, `library/details/*.json`
+- Singleton files: reads `debrid-games.json`, `manual-games.json`, `provider-status/snapshot.json`, `store/appinfo.json`, `sources/source-index.json`
+- Blobs: reads `discovery-index.json`, `catalog-sections-cache.json`, `sgdb-artwork-cache.json`
+- Idempotent: checks count before migrating
+
+### Key files changed
+- `src-tauri/src/commands/sqlite_cache/mod.rs` — 11 new tables, `migrate_remaining_json_to_sqlite`, module registrations
+- `src-tauri/src/commands/sqlite_cache/playtime.rs` — **new** — SQLite layer for playtime
+- `src-tauri/src/commands/sqlite_cache/source_availability.rs` — **new**
+- `src-tauri/src/commands/sqlite_cache/store_appinfo_cache.rs` — **new**
+- `src-tauri/src/commands/sqlite_cache/store_media_cache.rs` — **new**
+- `src-tauri/src/commands/sqlite_cache/provider_snapshot.rs` — **new**
+- `src-tauri/src/commands/sqlite_cache/debrid_games_cache.rs` — **new**
+- `src-tauri/src/commands/sqlite_cache/manual_games_cache.rs` — **new**
+- `src-tauri/src/commands/sqlite_cache/store_details_cache.rs` — **new**
+- `src-tauri/src/commands/playtime.rs` — full rewrite: JSON → SQLite queries
+- `src-tauri/src/commands/debrid_games.rs` — JSON → SQLite singleton
+- `src-tauri/src/commands/manual_games.rs` — JSON → SQLite singleton
+- `src-tauri/src/commands/provider_status_cache.rs` — snapshot → SQLite singleton
+- `src-tauri/src/commands/source_cache.rs` — JSON → SQLite per-game rows
+- `src-tauri/src/commands/store_cache.rs` — appinfo/media/blobs → SQLite
+- `src-tauri/src/commands/game_cache.rs` — StoreDetails → SQLite, GameArtwork deprecated
+- `src-tauri/src/commands/library_cache.rs` — LibraryGameDetails → SQLite, dead functions deprecated
+
+### Build
+- `cargo check` ✅ (47 pre-existing warnings, 0 errors)
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors)
+- `vite build` ✅
+
+### What was NOT migrated (intentional)
+- `backup.rs` — JSON IS the export format
+- `game_fix.rs` — plain-text fix logs inside game dirs
+- `debrid_installer.rs` — temporary `.part.meta` checkpoints
+- `epic.rs` / `steam_user_stats.rs` — external read-only files
+- `thirdparty.rs` / `extension_lifecycle.rs` — infrequent singletons (P3)
+- `installed_games_registry.rs` — infrequent singleton (P3)
+- `hydra_source.rs` — infrequent (P3)
+
+## Session — Boot performance: batch name writes + debrid table fix + SQLite-first reads
+
+### Problem
+1. **debrid_games table in wrong DB** — created in `init_store_tables` (store.db) but commands use `SqliteCoreDb` (core.db)
+2. **Boot I/O massif** — N sequential `updateGameAppinfoMediaIfChanged` calls for N games with placeholder titles, each = 1 Tauri IPC + 10-15 fs ops + 2 Mutex locks
+3. **update_game_appinfo_media reads JSON file** — stale path reads on fresh boot
+
+### Fixes
+
+#### Fix 1: debrid_games table → core.db
+- Moved `debrid_games_cache::create_tables` from `init_store_tables` to `init_core_tables` in `sqlite_cache/mod.rs`
+
+#### Fix 2: SQLite-first appinfo read
+- `update_game_appinfo_media` now reads from SQLite first via `read_game_appinfo(&db, &app_id)` 
+- Falls back to JSON file only when SQLite returns None (upgraders)
+- Store-details name resolution also uses SQLite
+
+#### Fix 3: batch_update_game_names command
+- New Rust command: single SQLite transaction for all name updates
+- Only updates when current name is empty/placeholder (no overwrite)
+- Reduces N sequential IPC calls to 1
+
+#### Fix 4: Boot stages 3.5/4.5 use batch
+- Stage 3.5 (enrich-snapshot-titles): collects names, calls `batchUpdateGameNames` once
+- Stage 4.5 (reconcile-lua-games): collects names, calls `batchUpdateGameNames` once
+- Eliminates ~60-90 Tauri IPC invocations on fresh boot
+
+### Key files changed
+- `src-tauri/src/commands/sqlite_cache/mod.rs` — debrid_games moved to init_core_tables
+- `src-tauri/src/commands/game_cache.rs` — SQLite-first read + batch_update_game_names
+- `src-tauri/src/lib.rs` — registered batch_update_game_names
+- `src/services/tauri.ts` — batchUpdateGameNames TS binding
+- `src/services/appBootCoordinator.ts` — stages 3.5/4.5 use batch writes
+
+### Build
+- `cargo check` ✅
+- `tsc --noEmit` ✅
+
+## Session — SQLite → React reactive notification bus (dataChangeBus)
+
+### Problem
+SQLite writes (games, media, appinfo) don't trigger React re-renders. UI shows stale/empty data until F5. Three symptoms:
+1. Images don't appear after download completes
+2. Library empty on first boot (background scan populates SQLite but context doesn't re-read)
+3. General staleness requiring F5
+
+### Solution: Unified change notification
+
+#### Rust side: `emit_data_changed()`
+- New function in `progress_utils.rs` emits `sqlite-data-changed` Tauri event
+- `steam_index.rs` emits `games-upserted` after `scan_and_build_full_dataset`
+- `game_cache.rs` emits `appinfo-changed` / `names-upserted` after writes
+
+#### TS side: `dataChangeBus.ts` (new)
+- `subscribeDataChanges(handler)` — returns unsubscribe fn
+- `initDataChangeBus()` — mounts in App.tsx, listens to `sqlite-data-changed`
+- Fans out to registered handlers
+
+#### React integration
+- `LibraryGamesContext.tsx` subscribes to `games-upserted` → reads directly from SQLite via `readAllGames()` + `loadSteamGameIndex()` + `indexEntryToLibraryGame()`
+- Preserves Lua state, metadata, favorites from existing games
+- `applyGamesSafely(games, "sqlite-refresh")` applies without re-scanning Steam
+
+### Key files changed
+- `src-tauri/src/utils/progress_utils.rs` — `emit_data_changed()`
+- `src-tauri/src/commands/steam_index.rs` — emit games-upserted
+- `src-tauri/src/commands/game_cache.rs` — emit appinfo-changed/names-upserted
+- `src/services/dataChangeBus.ts` — **new** — TS event bus
+- `src/App.tsx` — mount bus on startup
+- `src/context/LibraryGamesContext.tsx` — subscribe to games-upserted → SQLite read + apply
+
+### Build
+- `cargo check` ✅
+- `tsc --noEmit` ✅
+
+## Session — Boot scan cascade fix + force initial scan
+
+### Problem
+1. **10+ concurrent Steam scans** — `scanSteamInstalledGames` called from 4 different places simultaneously, each taking ~3s
+2. **Splash freeze** — concurrent scans block Tauri thread pool
+3. **TTL blocks first scan** — `_lastSteamScanAt` persists in memory across cache clears, so `resolveLibraryGames` returns empty on fresh boot
+
+### Fixes
+
+#### Global scan guard
+- `scanSteamInstalledGames` in `tauri.ts` now deduplicates concurrent calls via shared Promise
+- Second caller waits for first scan result instead of starting new scan
+- Reduces 10+ concurrent scans to 1
+
+#### Force initial scan
+- Initial `resolveLibraryGames` call in `LibraryGamesContext.load()` now uses `force: true`
+- Bypasses TTL check that was blocking first scan after cache clear
+
+#### Remove redundant triggerBackgroundScan
+- Removed `triggerBackgroundScan()` call from context load — it was causing a second redundant scan
+- The initial scan via `resolveLibraryGames` already returns all games
+- `triggerBackgroundScan` was also emitting `games-upserted` which triggered a third scan
+
+### Key files changed
+- `src/services/tauri.ts` — global scan guard in `scanSteamInstalledGames`
+- `src/context/LibraryGamesContext.tsx` — `force: true` on initial scan, removed triggerBackgroundScan
+
+### Build
+- `cargo check` ✅
+- `tsc --noEmit` ✅
