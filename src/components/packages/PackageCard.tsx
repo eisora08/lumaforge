@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { countRender, isInteractionBusy } from "../../services/perfCounters";
+import { countRender } from "../../services/perfCounters";
 
 import {
   Flame,
@@ -246,10 +246,6 @@ function PackageCardRaw({
             alt={displayTitle}
             objectClass="object-cover"
             onError={() => {
-              if (isInteractionBusy()) {
-                if (_mountedRef.current) setImageFailed(true);
-                return;
-              }
               if (!_mountedRef.current) return;
               if (hasMoreFallbacks) {
                 setImageFallbackIndex(imageFallbackIndex + 1);
@@ -348,10 +344,6 @@ function PackageCardRaw({
           alt={displayTitle}
           objectClass="object-cover"
           onError={() => {
-            if (isInteractionBusy()) {
-              if (_mountedRef.current) setImageFailed(true);
-              return;
-            }
             if (!_mountedRef.current) return;
             if (hasMoreFallbacks) {
               setImageFallbackIndex(imageFallbackIndex + 1);
