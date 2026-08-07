@@ -6136,3 +6136,83 @@ Improve the achievement watcher to detect autonomous/unexpected achievement unlo
 - `cargo check` ✅ (only 2 pre-existing dead-code warnings)
 - `cargo test --lib` ✅ 271 passed / 1 failed (pre-existing `crc32_matches_javascript`)
 - `tsc --noEmit` ✅ (only pre-existing extension/test errors, none in touched files)
+
+## Session — SQLite-only migration: eliminate all JSON file I/O for fresh installs
+
+### Goal
+Remove JSON file writes and fallbacks from `appinfo.json`, `media_manifest.json`, and `startup_snapshot.json` so fresh installs use SQLite exclusively. Migration code runs once for upgraders, then JSON is dead.
+
+### Problem
+Fresh installs were writing JSON files to disk (`appinfo.json`, `media_manifest.json`, `startup_snapshot.json`) because commands had dual-write paths (SQLite + JSON) and read fallbacks (SQLite → JSON). This was unnecessary — SQLite is the only source of truth.
+
+### Bug fixes (pre-migration)
+
+#### `steam_index.rs` — collect all Steam library paths
+- `collect_all_steamapps_dirs()` was only finding the primary Steam directory
+- Added `collect_safe_fallback_steam_paths()` to also scan secondary Steam library folders (`E:\SteamLibrary`, `D:\SteamLibrary`, etc.)
+- Fixed: 41 installed games now found (was 10)
+
+#### `gameDetectionCache.ts` — extract `cache_value` from LibraryCacheEntry object
+- `readFromSqlite()` was treating the Rust response as a string instead of extracting the `cache_value` field
+- Was always returning `null` → detection cache never loaded from SQLite
+
+### Schema additions (`sqlite_cache/mod.rs`)
+- 5 new columns on `games` table: `provider TEXT DEFAULT 'steam'`, `media_json TEXT`, `media_sources_json TEXT`, `remote_json TEXT`, `user_data_json TEXT`
+- New `media_manifests` table: `app_id TEXT PRIMARY KEY`, `version INTEGER`, `manifest_json TEXT NOT NULL`, `updated_at INTEGER`
+- New `startup_snapshots` table: `id INTEGER PRIMARY KEY DEFAULT 1`, `version INTEGER`, `snapshot_json TEXT NOT NULL`, `updated_at INTEGER`
+- `migrate_json_to_sqlite()` scans existing JSON files on first boot after update, copies to SQLite tables, runs once
+
+### SQLite layers created
+- `sqlite_cache/game_appinfo.rs` — `read_game_appinfo`, `read_batch_appinfo`, `write_game_appinfo`, `merge_and_write_appinfo`, `upsert_game_base`
+- `sqlite_cache/media_manifests.rs` — `read_media_manifest_sqlite`, `read_media_manifests_batch_sqlite`, `write_media_manifest_sqlite`
+- `sqlite_cache/startup_snapshots.rs` — `read_startup_snapshot_sqlite`, `write_startup_snapshot_sqlite`, `clear_startup_snapshot_sqlite`
+
+### Commands re-cableados (`game_cache.rs`)
+| Command | Before | After |
+|---|---|---|
+| `get_game_app_info` | SQLite → JSON fallback | SQLite only |
+| `save_game_app_info` | SQLite + JSON dual-write | SQLite only |
+| `read_canonical_appinfos` | SQLite → JSON fallback | SQLite batch only |
+| `update_game_appinfo_media` | JSON read + write | SQLite no-op guard (field comparison) |
+| `read_media_manifest` | SQLite → JSON fallback | SQLite only |
+| `write_media_manifest` | SQLite + JSON dual-write | SQLite only |
+| `get_media_manifests_batch` | SQLite → JSON fallback | SQLite batch only |
+
+### Commands re-cableados (`startup_snapshot.rs`)
+| Command | Before | After |
+|---|---|---|
+| `read_startup_snapshot` | SQLite → JSON fallback | SQLite only |
+| `write_startup_snapshot` | SQLite + JSON dual-write | SQLite only |
+| `clear_startup_snapshot` | SQLite + JSON dual-delete | SQLite only |
+
+### No-op guard for `update_game_appinfo_media`
+- Compares existing SQLite fields (`media`, `media_sources`, `remote`, `name`, `user_data`) against new values
+- Skips write when all fields match → no unnecessary `[APPINFO_WRITE]` logs
+- Added `PartialEq` derive to `GameAppInfo`, `GameMediaPaths`, `GameMediaSources`, `GameRemoteRefs`
+
+### Key files changed
+- `src-tauri/src/commands/sqlite_cache/mod.rs` — Schema + migration + module registration
+- `src-tauri/src/commands/sqlite_cache/game_appinfo.rs` — New SQLite layer for GameAppInfo
+- `src-tauri/src/commands/sqlite_cache/media_manifests.rs` — New SQLite layer for MediaManifest
+- `src-tauri/src/commands/sqlite_cache/startup_snapshots.rs` — New SQLite layer for StartupSnapshot
+- `src-tauri/src/commands/game_cache.rs` — 5 commands SQLite-only, no-op guard, removed JSON fallback/write
+- `src-tauri/src/commands/startup_snapshot.rs` — 3 commands SQLite-only, removed JSON fallback/write
+- `src-tauri/src/commands/steam_index.rs` — Fixed `collect_all_steamapps_dirs` fallback paths
+- `src-tauri/src/models/game_cache.rs` — Added `PartialEq` to 4 structs
+- `src/services/gameDetectionCache.ts` — Fixed `readFromSqlite()` to extract `cache_value` from LibraryCacheEntry object
+- `src-tauri/src/lib.rs` — Registered `migrate_json_to_sqlite` module
+
+### Fresh install flow
+1. Boot → SQLite creates empty tables → `migrate_json_to_sqlite()` finds no JSON files → no-op
+2. Steam scan → `scan_and_build_full_dataset()` writes to `games` table
+3. Reads → SQLite direct (1 query vs 82 file reads)
+4. Writes → SQLite direct (zero `fs::write`)
+
+### Upgrader flow (migrating from JSON)
+1. Boot → `migrate_json_to_sqlite()` detects existing appinfo.json files → copies to SQLite tables
+2. Next boot → SQLite has data → reads go to SQLite
+
+### Build
+- `cargo check` ✅ (28 pre-existing warnings, 0 errors)
+- `tsc --noEmit` ✅ (only pre-existing extension/test errors)
+- `vite build` ✅
