@@ -214,7 +214,8 @@ import { SkeletonBox, SkeletonHero, GridSkeleton } from "../components/common/Sk
 type StoreTab = "discover" | "browse" | "repacks";
 type StoreProps = { onNavigate?: (page: AppPage) => void };
 
-const VIRTUAL_CARD_STYLE: React.CSSProperties = { contentVisibility: "auto", containIntrinsicSize: "220px 330px" };
+const VIRTUAL_CARD_STYLE: React.CSSProperties = {};
+
 const STORE_TABS: { id: StoreTab; label: string }[] = [
   { id: "discover", label: "Discover" },
   { id: "browse", label: "Browse" },
@@ -2025,11 +2026,11 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       gameMap.set(game.appId, providerOverlayByAppId[game.appId] ?? game);
     });
 
-    // Sort by appid descending — most recent games first (reverse order)
+    // Sort by appid ascending — oldest games first (natural SteamDB order)
     const games = Array.from(gameMap.values()).sort((a, b) => {
       const aId = Number(a.appId) || 0;
       const bId = Number(b.appId) || 0;
-      return bId - aId;
+      return aId - bId;
     });
 
     if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] browseGames count=${games.length} elapsed=${(performance.now() - t0).toFixed(1)}ms`);
@@ -2244,7 +2245,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
           if (aDate && bDate) return bDate.localeCompare(aDate);
           if (aDate) return -1;
           if (bDate) return 1;
-          return (Number(b.appId) || 0) - (Number(a.appId) || 0);
+          return (Number(a.appId) || 0) - (Number(b.appId) || 0);
         }
         return a.title.localeCompare(b.title);
       });
@@ -2260,6 +2261,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     installedStatusByAppId,
     storeMetadataByAppId,
     reviewSummaryByAppId,
+    activeStoreTab,
   ]);
 
   const activeSection = activeSectionId
