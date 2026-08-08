@@ -14,6 +14,7 @@ import { DEBRID_LIBRARY_ENABLED } from "../../features/debrid/debridFeatureFlag"
 import {
   getAllDebridGames,
   getDebridGameStatus,
+  clearDebridGameStatus,
   getPendingSetup,
   markDebridGameStatus,
   clearPendingSetup,
@@ -300,13 +301,36 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
     setImgFailed(false);
   }, [game.id]);
 
-  // Refresh status when store updates
+  // Compute effective status: debrid store status, but overridden when the
+  // download queue has an active job (immediate) or no active job (clears stale "downloading").
+  const effectiveStatus = useMemo(() => {
+    if (!game.id) return "not-downloaded";
+    const storeStatus = getDebridGameStatus(game.id);
+    const hasActiveJob = downloadQueue.jobs.some(
+      (j) => (j.appId === String(game.appId) || j.id.includes(game.id!)) &&
+        ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(j.status),
+    );
+    if (hasActiveJob) return "downloading";
+    if (storeStatus === "downloading" && !hasActiveJob) {
+      // Stale store status — clear it immediately
+      clearDebridGameStatus(game.id);
+      return "not-downloaded";
+    }
+    return storeStatus;
+  }, [game.id, game.appId, downloadQueue.jobs]);
+
+  // Sync effectiveStatus to localState
+  useEffect(() => {
+    setLocalStatus(effectiveStatus);
+  }, [effectiveStatus]);
+
+  // Background poll for debrid store changes (setup, ready, etc.) not driven by download queue
   useEffect(() => {
     if (!game.id) return;
     const interval = setInterval(() => {
       const s = getDebridGameStatus(game.id!);
       setLocalStatus(s);
-    }, 1500);
+    }, 2000);
     return () => clearInterval(interval);
   }, [game.id]);
 
@@ -343,7 +367,7 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
       options,
     );
 
-    showSuccess("Download queued. Check the Downloads page for progress.");
+    showSuccess("Download queued. Check the downloads icon in the top bar for progress.");
   }, [game, downloadQueue]);
 
   const handleRunSetup = useCallback(async (e: React.MouseEvent) => {

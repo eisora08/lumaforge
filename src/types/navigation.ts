@@ -3,7 +3,6 @@ export type AppPage =
   | "library"
   | "games"
   | "store"
-  | "downloads"
   | "achievements"
   | "activity"
   | "verification"

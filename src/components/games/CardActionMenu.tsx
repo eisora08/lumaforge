@@ -189,7 +189,7 @@ export default function CardActionMenu({
     <div
       ref={menuRef}
       role="menu"
-      className={`fixed z-[55] w-[184px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl ${closing ? "lf-popover-exit" : "lf-popover-enter"}`}
+      className={`fixed z-[100000] w-[184px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl ${closing ? "lf-popover-exit" : "lf-popover-enter"}`}
       style={{ top: pos.top, left: pos.left }}
     >
       {children}
@@ -234,7 +234,7 @@ function SubmenuPanel({
   return createPortal(
     <div
       data-submenu
-      className="fixed z-[60] w-[172px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl lf-popover-enter"
+      className="fixed z-[100001] w-[172px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl lf-popover-enter"
       style={{ top: pos.top, left: pos.left }}
     >
       {items.map((item, i) => (

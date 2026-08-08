@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, Menu, Minus, Monitor, Square, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Bell, Download, Menu, Minus, Monitor, Square, X } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useSearch } from "../../context/SearchContext";
 import { useGameDetails } from "../../context/GameDetailsContext";
+import { useDownloadQueue } from "../../hooks/useDownloadQueue";
 
 import PackagesToolbarSearch from "../packages/PackagesToolbarSearch";
 import type { StoreSearchDropdownItem } from "../packages/PackagesToolbar";
 import PackageUpdatePanel from "../notifications/PackageUpdatePanel";
 import BackButton from "../common/BackButton";
+import DownloadsModal from "../downloads/DownloadsModal";
 
 const DEBUG_WINDOW_CONTROLS = false;
 
@@ -42,6 +44,20 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   const showSearch = true;
   const [luaUpdateCount, setLuaUpdateCount] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const { jobs } = useDownloadQueue();
+
+  const activeDownloadCount = useMemo(() => jobs.filter((j) =>
+    ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(j.status),
+  ).length, [jobs]);
+
+  const downloadProgress = useMemo(() => {
+    const first = jobs.find((j) =>
+      ["downloading", "extracting", "installing"].includes(j.status) && j.totalBytes && j.totalBytes > 0,
+    );
+    if (!first) return null;
+    return Math.min(1, (first.bytesRead ?? 0) / first.totalBytes!);
+  }, [jobs]);
 
   const [isMaximized, setIsMaximized] = useState(false);
   const mountedRef = useRef(true);
@@ -180,6 +196,13 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
     return () => { cancelled = true; };
   }, []);
 
+  // Listen for custom event from QuickActionsCompact to open downloads modal
+  useEffect(() => {
+    const handler = () => setDownloadsOpen(true);
+    window.addEventListener("lumaforge-open-downloads", handler);
+    return () => window.removeEventListener("lumaforge-open-downloads", handler);
+  }, []);
+
   function handleSelectItem(item: StoreSearchDropdownItem) {
     setQuery(item.title);
     selectGame({
@@ -218,6 +241,7 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   const iconHover = "group-hover:text-(--color-text)";
 
   return (
+    <>
     <header className={`sticky top-0 z-20 flex h-14 select-none items-stretch transition-colors duration-300 ${isGameDetailsActive ? "bg-transparent" : "bg-(--shell-bg)"}`} style={{ backdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)', WebkitBackdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)' } as React.CSSProperties}>
       <div className="flex items-center gap-3 pl-4 lg:pl-6">
         {sidebarDrawerMode && (
@@ -314,6 +338,46 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
             <PackageUpdatePanel onClose={handlePanelClose} onNavigate={onNavigate ?? (() => {})} />
           )}
         </div>
+
+        {/* Downloads icon with progress ring */}
+        <button
+          onClick={() => setDownloadsOpen(true)}
+          className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 transition hover:bg-white/8"
+          title="Descargas"
+        >
+          <Download className="h-4 w-4 text-(--color-muted)" />
+          {downloadProgress !== null && (
+            <svg
+              className="absolute inset-0 h-9 w-9 -rotate-90"
+              viewBox="0 0 36 36"
+            >
+              <circle
+                cx="18"
+                cy="18"
+                r="15"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="text-white/10"
+              />
+              <circle
+                cx="18"
+                cy="18"
+                r="15"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeDasharray={`${downloadProgress * 94.25} 94.25`}
+                className="text-(--color-accent) transition-[stroke-dasharray] duration-300"
+              />
+            </svg>
+          )}
+          {activeDownloadCount > 1 && (
+            <span className="absolute -right-0.5 -top-0.5 flex min-w-[16px] items-center justify-center rounded-full bg-(--color-accent) px-1 text-[10px] font-medium leading-tight text-(--color-accent-text)">
+              {activeDownloadCount}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* window controls — sibling, NOT inside drag region */}
@@ -351,5 +415,12 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
         </button>
       </div>
     </header>
+
+    <DownloadsModal
+      open={downloadsOpen}
+      onClose={() => setDownloadsOpen(false)}
+      onNavigate={onNavigate}
+    />
+    </>
   );
 }

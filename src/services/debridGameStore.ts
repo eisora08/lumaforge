@@ -640,6 +640,17 @@ export function getDebridGameStatus(providerGameId: string): DebridGameStatus {
 }
 
 /**
+ * Clear the status of a Debrid game (resets to "not-downloaded").
+ * Called when a download is cancelled externally.
+ */
+export function clearDebridGameStatus(providerGameId: string): void {
+  if (!_debridGameStatuses.has(providerGameId)) return;
+  _debridGameStatuses.delete(providerGameId);
+  persistToDisk();
+  notifyListeners();
+}
+
+/**
  * Get all Debrid game statuses (copy of the map).
  */
 export function getDebridGameStatuses(): Map<string, DebridGameStatus> {

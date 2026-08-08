@@ -8,7 +8,6 @@ import Library from "./pages/Library";
 import Store from "./pages/Store";
 import Games from "./pages/Games";
 import GlobalSearchResults from "./pages/GlobalSearchResults";
-import Downloads from "./pages/Downloads";
 import Achievements from "./pages/Achievements";
 import ActivityStats from "./pages/ActivityStats";
 import LauncherAchievements from "./pages/LauncherAchievements";
@@ -51,7 +50,7 @@ import { initDataChangeBus } from "./services/dataChangeBus";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
-  "home", "library", "games", "store", "downloads",
+  "home", "library", "games", "store",
   "achievements", "activity", "verification",
   "settings", "game-details", "library-game-detail", "global-search", "console",
   "launcher-achievements",
@@ -294,9 +293,6 @@ function App() {
         break;
       case "global-search":
         pageComponent = <GlobalSearchResults onBack={() => handleNavigate("home")} onNavigate={(page) => handleNavigate(page as AppPage)} />;
-        break;
-      case "downloads":
-        pageComponent = <Downloads onNavigate={handleNavigate} />;
         break;
       case "achievements":
         pageComponent = <Achievements />;

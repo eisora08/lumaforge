@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState, type ElementType } from "reac
 import {
   Award,
   Store,
-  Download,
   Library,
   Home,
   Settings,
@@ -40,12 +39,11 @@ type SidebarItem = {
 };
 
 const mainItems: SidebarItem[] = [
-  { label: "Inicio", page: "home", icon: Home },
-  { label: "Biblioteca", page: "library", icon: Library },
-  { label: "Tienda", page: "store", icon: Store },
-  { label: "Descargas", page: "downloads", icon: Download },
-  { label: "Stats", page: "activity", icon: BarChart3 },
-  { label: "Logros", page: "launcher-achievements", icon: Award },
+  { label: "Inicio",              page: "home",                   icon: Home },
+  { label: "Biblioteca",          page: "library",                icon: Library },
+  { label: "Tienda",              page: "store",                  icon: Store },
+  { label: "Stats",               page: "activity",               icon: BarChart3 },
+  { label: "Logros",              page: "launcher-achievements",  icon: Award },
 ];
 
 const toolItems: SidebarItem[] = [

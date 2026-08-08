@@ -280,6 +280,8 @@ pub fn run() {
             commands::debrid_games::backup_debrid_games,
             commands::debrid_installer::cancel_debrid_download,
             commands::debrid_installer::pause_debrid_download,
+            commands::debrid_installer::clean_debrid_temp_files,
+            commands::debrid_installer::has_debrid_temp_files,
             commands::debrid_installer::download_debrid_package,
             commands::debrid_installer::setup_debrid_game,
             commands::debrid_installer::verify_debrid_installation,

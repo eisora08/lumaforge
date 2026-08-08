@@ -284,15 +284,19 @@ export function DownloadQueueProvider({
 
   function updateJob(jobId: string, update: UpdateDownloadJobInput) {
     setJobs((currentJobs) => {
-      const nextJobs = currentJobs.map((job) =>
-        job.id === jobId
-          ? {
-              ...job,
-              ...update,
-              updatedAt: new Date().toISOString(),
-            }
-          : job
-      );
+      const nextJobs = currentJobs.map((job) => {
+        if (job.id !== jobId) return job;
+
+        // Once a job reaches a terminal state, only allow metadata updates
+        // (message, progress, bytesRead, etc.) — never allow status rollback
+        // from a stale Rust progress event after user cancellation.
+        if (["done", "failed", "cancelled"].includes(job.status) && update.status) {
+          const { status: _status, ...rest } = update;
+          return { ...job, ...rest, updatedAt: new Date().toISOString() };
+        }
+
+        return { ...job, ...update, updatedAt: new Date().toISOString() };
+      });
 
       persistJobs(nextJobs);
 

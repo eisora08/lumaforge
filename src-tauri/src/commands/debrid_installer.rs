@@ -378,6 +378,72 @@ pub(crate) fn clear_job_flags(job_id: &str) {
     paused_jobs().lock().unwrap().remove(job_id);
 }
 
+/// Check if a debrid download directory has leftover temp files.
+#[tauri::command]
+pub fn has_debrid_temp_files(dest_dir: String) -> bool {
+    let tmp_dir = Path::new(&dest_dir).join("tmp");
+    if !tmp_dir.exists() {
+        return false;
+    }
+    fn has_parts(dir: &Path) -> bool {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && has_parts(&path) {
+                    return true;
+                }
+                if path.is_file() {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    if name.ends_with(".part") || name.ends_with(".part.meta") || name.ends_with(".meta.tmp") {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+    has_parts(&tmp_dir)
+}
+
+/// Remove leftover .part/.part.meta temp files for a cancelled download.
+#[tauri::command]
+pub fn clean_debrid_temp_files(dest_dir: String) -> Result<u64, String> {
+    let tmp_dir = Path::new(&dest_dir).join("tmp");
+    if !tmp_dir.exists() {
+        return Ok(0);
+    }
+    let mut removed: u64 = 0;
+    // Walk recursively — .part files may be in subdirectories (e.g. tmp/GameName/file.part)
+    fn clean_recursive(dir: &Path, tmp_root: &Path, removed: &mut u64) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    clean_recursive(&path, tmp_root, removed);
+                } else if path.is_file() {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    if name.ends_with(".part") || name.ends_with(".part.meta") || name.ends_with(".meta.tmp") {
+                        if fs::remove_file(&path).is_ok() {
+                            *removed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // Remove dir if empty after cleaning children (but keep the root tmp dir)
+        if dir != tmp_root && dir.read_dir().map_or(false, |mut d| d.next().is_none()) {
+            let _ = fs::remove_dir(dir);
+        }
+    }
+    clean_recursive(&tmp_dir, &tmp_dir, &mut removed);
+    // Remove the tmp dir itself if empty
+    if tmp_dir.read_dir().map_or(false, |mut d| d.next().is_none()) {
+        let _ = fs::remove_dir(&tmp_dir);
+    }
+    println!("[DEBRID][CLEAN_TEMP] Removed {} temp files from {}", removed, dest_dir);
+    Ok(removed)
+}
+
 // -- Download command: download + extract (ZIP/RAR) or just save (EXE/SFX) --
 
 /// Download a Debrid repack: download file, extract if archive, return result.

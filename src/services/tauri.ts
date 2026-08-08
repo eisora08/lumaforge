@@ -1427,6 +1427,20 @@ export async function pauseDebridDownload(jobId: string): Promise<void> {
   await invoke("pause_debrid_download", { jobId });
 }
 
+/**
+ * Remove leftover .part/.part.meta temp files for a cancelled debrid download.
+ */
+export async function cleanDebridTempFiles(destDir: string): Promise<number> {
+  return await invoke("clean_debrid_temp_files", { destDir });
+}
+
+/**
+ * Check if a debrid download directory has leftover temp files.
+ */
+export async function hasDebridTempFiles(destDir: string): Promise<boolean> {
+  return await invoke("has_debrid_temp_files", { destDir });
+}
+
 /** Check whether a Debrid install directory has a game executable. */
 export async function verifyDebridInstallation(params: {
   installDir: string;

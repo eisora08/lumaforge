@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Ban,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   FileCode2,
   FileText,
   FolderOpen,
+  Loader2,
   Package,
   Pause,
   Play,
@@ -21,6 +22,7 @@ import DownloadProgressBar from "./DownloadProgressBar";
 import DownloadStatusBadge from "./DownloadStatusBadge";
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import { localPathToUrl } from "../../services/gameCacheService";
+import { hasDebridTempFiles } from "../../services/tauri";
 
 type DownloadJobCardProps = {
   job: DownloadJob;
@@ -29,6 +31,7 @@ type DownloadJobCardProps = {
   onResume: (jobId: string) => void;
   onRemove: (jobId: string) => void;
   onOpenDetails: (appId: string) => void;
+  onCleanTemp?: (jobId: string) => void;
 };
 
 function formatBytes(bytes: number) {
@@ -111,12 +114,35 @@ export default function DownloadJobCard({
   onResume,
   onRemove,
   onOpenDetails,
+  onCleanTemp,
 }: DownloadJobCardProps) {
   const TypeIcon = getTypeIcon(job);
   const providerBadge = getProviderBadge(job);
   const progressMode = job.progressMode ?? "determinate";
   const isSteamInstall = job.type === "steam-install";
   const isDebridInstall = job.type === "debrid-install";
+
+  // Check if cancelled debrid job has leftover temp files
+  const [hasTemp, setHasTemp] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+
+  useEffect(() => {
+    if (job.status === "cancelled" && isDebridInstall) {
+      // Resolve default dest dir if not set
+      let destDir = job.destDir;
+      if (!destDir) {
+        const providerGameId = job.id.replace("debrid-install-", "");
+        import("../../services/tauri").then(({ resolveAppDataDir }) =>
+          resolveAppDataDir().then((appDataDir) => {
+            const fullDest = `${appDataDir}/games/debrid/${providerGameId}`;
+            hasDebridTempFiles(fullDest).then(setHasTemp);
+          })
+        );
+      } else {
+        hasDebridTempFiles(destDir).then(setHasTemp);
+      }
+    }
+  }, [job.status, job.id, job.destDir, isDebridInstall]);
 
   // Pause/Resume only applies to debrid-install jobs (the Rust side checkpoints
   // HTTP downloads and keeps fastresume for torrents).
@@ -203,7 +229,7 @@ export default function DownloadJobCard({
           </button>
         </div>
 
-        <div className="mt-3 flex items-center gap-2">
+        {/* <div className="mt-3 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
           <span className="text-xs font-medium text-emerald-300">Completada</span>
           {job.installedSize != null && job.installedSize > 0 && (
@@ -211,7 +237,7 @@ export default function DownloadJobCard({
               · {formatBytes(job.installedSize)}
             </span>
           )}
-        </div>
+        </div> */}
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
@@ -416,6 +442,27 @@ export default function DownloadJobCard({
             >
               <Trash2 className="h-3.5 w-3.5" />
               Quitar
+            </button>
+          )}
+
+          {job.status === "cancelled" && job.type === "debrid-install" && onCleanTemp && hasTemp && (
+            <button
+              type="button"
+              disabled={cleaning}
+              onClick={async () => {
+                setCleaning(true);
+                await onCleanTemp(job.id);
+                setHasTemp(false);
+                setCleaning(false);
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-400 transition hover:bg-amber-500/20 disabled:opacity-50"
+            >
+              {cleaning ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              {cleaning ? "Limpiando..." : "Limpiar temp"}
             </button>
           )}
         </div>
