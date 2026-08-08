@@ -69,6 +69,7 @@ export type StoreGame = {
   imageUrl?: string;
   platforms: string[];
   sources: any[];
+  developer?: string;
 };
 
 /**
@@ -188,6 +189,17 @@ export interface CacheEntry {
 let _cachedDiscover: CacheEntry | null = null;
 let _cachedDiscoverVersion = 0;
 
+// Invalidate stale cache with old capsule_184x69.jpg URLs
+const URL_VERSION_KEY = "lumaforge-store-url-version";
+const CURRENT_URL_VERSION = 2;
+try {
+  const stored = parseInt(localStorage.getItem(URL_VERSION_KEY) ?? "0", 10);
+  if (stored < CURRENT_URL_VERSION) {
+    _cachedDiscover = null;
+    localStorage.setItem(URL_VERSION_KEY, String(CURRENT_URL_VERSION));
+  }
+} catch { /* ignore */ }
+
 // Persistent hero source of truth. The module-level _cachedDiscover dies on app
 // restart, so a cold boot used to fall through to the curated baseline while the
 // enriched pool hydrated -> boot != return. This localStorage copy (featured only,
@@ -232,6 +244,29 @@ export function getPersistedDiscoverFeatured(): StoreGame[] | null {
   } catch {
     return null;
   }
+}
+
+// ── Browse cache (separate from Discover to avoid cross-contamination) ──
+export interface BrowseCacheEntry {
+  catalogFingerprint: string;
+  browseGames: StoreGame[];
+  luaReadyGames?: StoreGame[];
+  builtAt: number;
+}
+
+let _cachedBrowse: BrowseCacheEntry | null = null;
+
+export function setCachedBrowseGames(games: StoreGame[], catalogFingerprint: string): void {
+  _cachedBrowse = {
+    catalogFingerprint,
+    browseGames: games,
+    builtAt: Date.now(),
+  };
+}
+
+export function getCachedBrowseGames(catalogFingerprint: string): BrowseCacheEntry | null {
+  if (!_cachedBrowse || _cachedBrowse.catalogFingerprint !== catalogFingerprint) return null;
+  return _cachedBrowse;
 }
 
 function computeFingerprint(catalog: { appid: number; name: string }[]): string {

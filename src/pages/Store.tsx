@@ -62,6 +62,8 @@ import {
   buildCatalogFingerprint,
   getCachedStoreUI,
   setCachedStoreUI,
+  getCachedBrowseGames,
+  setCachedBrowseGames,
   getCachedStoreMetadata,
   setCachedStoreMetadata,
   getCachedReviewSummaries,
@@ -1173,7 +1175,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       return {
         appId,
         title: entry.name,
-        imageUrl: cachedImage || meta?.capsule_image_v5 || meta?.capsule_image || meta?.header_image || undefined,
+        imageUrl: cachedImage || `https://shared.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900.jpg`,
         platforms: meta?.platforms || [],
         sources: [] as PackageSource[],
       };
@@ -1381,7 +1383,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             pool.push({
               appId: game.steamAppId ?? String(game.igdbId ?? game.rawgId ?? ""),
               title: game.title,
-              imageUrl: game.imageUrl ?? game.backgroundImageUrl,
+              imageUrl: game.imageUrl ?? game.backgroundImageUrl ?? `https://shared.steamstatic.com/store_item_assets/steam/apps/${game.steamAppId ?? game.igdbId ?? game.rawgId ?? ""}/library_600x900.jpg`,
               platforms: [] as string[],
               sources: [] as PackageSource[],
             });
@@ -1397,7 +1399,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             pool.push({
               appId: g.steamAppId ?? g.id,
               title: g.title,
-              imageUrl: undefined,
+              imageUrl: `https://shared.steamstatic.com/store_item_assets/steam/apps/${g.steamAppId ?? g.id}/library_600x900.jpg`,
               platforms: [] as string[],
               sources: [] as PackageSource[],
             });
@@ -1411,7 +1413,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         pool.push({
           appId: s.appId,
           title: s.title,
-          imageUrl: getBestStoreImage(s.appId, ["hero", "header", "capsule"]) || undefined,
+          imageUrl: `https://shared.steamstatic.com/store_item_assets/steam/apps/${s.appId}/library_600x900.jpg`,
           platforms: [] as string[],
           sources: [] as PackageSource[],
         });
@@ -1671,10 +1673,11 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         const list: StoreGame[] = [];
         for (const g of catalogGames) {
           if (list.length >= 20) break;
+          const id = g.appId;
           list.push({
-            appId: String(g.appId),
+            appId: String(id),
             title: g.name,
-            imageUrl: g.headerImage || g.capsuleImage || undefined,
+            imageUrl: `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`,
             platforms: [],
             sources: [],
           });
@@ -1954,7 +1957,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       return {
         appId,
         title: entry.name,
-        imageUrl: getBestStoreImage(appId, ["capsule", "header", "hero"], meta) || undefined,
+        imageUrl: meta?.header_image || `https://shared.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900.jpg`,
         platforms: meta?.platforms || [],
         sources: [],
       };
@@ -1990,11 +1993,11 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   }, [lumaForgeSections, sectionModels, catalogFingerprint]);
 
   const browseGames = useMemo(() => {
-    // Check cache first — skip iteration on re-mount when fingerprint unchanged
-    const cached = getCachedStoreDiscover();
-    if (cached && cached.catalogFingerprint === catalogFingerprint && cached.browseGames?.length > 0) {
-      if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] browseGames cache-hit count=${cached.browseGames.length}`);
-      return cached.browseGames as unknown as PackageGame[];
+    // Check dedicated Browse cache first
+    const browseCached = getCachedBrowseGames(catalogFingerprint);
+    if (browseCached && browseCached.browseGames.length > 0) {
+      if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[PERF][STORE_COMPUTE] browseGames cache-hit count=${browseCached.browseGames.length}`);
+      return browseCached.browseGames;
     }
 
     const t0 = performance.now();
@@ -2127,26 +2130,28 @@ export default function Store({ onNavigate }: StoreProps = {}) {
               builtAt: Date.now(),
               isPartialCache: true,
             });
+            setCachedBrowseGames(browseGames as unknown as StoreDiscoverCacheEntry["browseGames"], catalogFingerprint);
           }
         } else {
           const elapsedMs = Date.now() - storeStartRef.current;
           const upgradeMsg = !existing || existing.isPartialCache ? "partial-to-complete" : currentGenreCount > existingGenreCount ? "more-genres" : "more-sections";
           console.log(`[STORE][DISCOVER_CACHE_UPGRADE] reason=${upgradeMsg}`);
           console.log(`[STORE][DISCOVER_CACHE_BUILD] complete=true featured=${featuredGames.length} sections=${discoverSections.length} more=${moreToExploreGames.length} elapsedMs=${elapsedMs}`);
-           setCachedStoreDiscover({
-             catalogFingerprint,
-             scoringVersion: DISCOVER_SCORING_VERSION,
-             rankedSteamCatalog,
-             highQualityPool,
-             dynamicDiscoverSections: sectionModels,
-             discoverSections,
-             lumaForgeSections,
-             allStoreSections,
-             featuredGames,
-              browseGames: browseGames as unknown as StoreDiscoverCacheEntry["browseGames"],
-              discoveryIndex: compiledDiscoveryIndex || undefined,
-              builtAt: Date.now(),
+            setCachedStoreDiscover({
+              catalogFingerprint,
+              scoringVersion: DISCOVER_SCORING_VERSION,
+              rankedSteamCatalog,
+              highQualityPool,
+              dynamicDiscoverSections: sectionModels,
+              discoverSections,
+              lumaForgeSections,
+              allStoreSections,
+              featuredGames,
+               browseGames: browseGames as unknown as StoreDiscoverCacheEntry["browseGames"],
+               discoveryIndex: compiledDiscoveryIndex || undefined,
+               builtAt: Date.now(),
             });
+            setCachedBrowseGames(browseGames as unknown as StoreDiscoverCacheEntry["browseGames"], catalogFingerprint);
         }
       }
 

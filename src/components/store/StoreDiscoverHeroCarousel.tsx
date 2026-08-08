@@ -31,25 +31,17 @@ const AUTO_ADVANCE_MS = 7000;
 
 function getGameImage(
   game: PackageGame,
-  metadataByAppId: Record<number, SteamAppMetadata>,
+  _metadataByAppId: Record<number, SteamAppMetadata>,
   sgdbArtworkByAppId?: Record<string, SgdbArtworkData>,
 ): string | undefined {
+  // SGDB hero first if available
   const sgdb = sgdbArtworkByAppId?.[game.appId];
   if (sgdb?.sgdbHeroUrl) return sgdb.sgdbHeroUrl;
 
-  const meta = metadataByAppId[Number(game.appId)];
+  // Canonical Steam CDN hero
   const id = parseInt(game.appId, 10);
-  const cdnFallback = id > 0 ? `https://cdn.akamai.steamstatic.com/steam/apps/${id}/header.jpg` : undefined;
-
-  return (
-    meta?.library_hero_image ||
-    meta?.hero_image ||
-    meta?.header_image ||
-    meta?.capsule_image ||
-    meta?.capsule_image_v5 ||
-    (game.imageUrl && !/storepagebackground|store_page_background/i.test(game.imageUrl) ? game.imageUrl : undefined) ||
-    cdnFallback
-  );
+  if (id > 0) return `https://steamcdn-a.akamaihd.net/steam/apps/${id}/library_hero.jpg`;
+  return undefined;
 }
 
 export default function StoreDiscoverHeroCarousel({

@@ -30,8 +30,12 @@ function GenreCollectionCardInner({ genre, games, onClick }: GenreCollectionCard
       <div className="grid h-[160px] grid-cols-2 grid-rows-2 gap-0">
         {cells.map((i) => {
           const game = games[i];
-          const imgUrl = game?.imageUrl;
           const hasError = game ? imgErrors.has(game.appId) : true;
+          // Build URL from appId — canonical Steam cover
+          const imgUrl = game ? (() => {
+            const id = parseInt(game.appId, 10);
+            return id > 0 ? `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg` : undefined;
+          })() : undefined;
           const showImg = imgUrl && !hasError;
 
           return (

@@ -46,25 +46,6 @@ type PackageCardProps = {
   onDownloadSource?: (game: PackageGame, source: PackageSource) => void;
 };
 
-/** Steam CDN fallback URLs for known image roles. */
-function getSteamCdnUrls(appId: string, variant?: "landscape" | "poster"): string[] {
-  const id = parseInt(appId, 10);
-  if (!id || isNaN(id) || id <= 0) return [];
-  const base = `https://cdn.akamai.steamstatic.com/steam/apps/${id}`;
-  if (variant === "poster") {
-    return [
-      `${base}/library_600x900.jpg`,
-      `${base}/capsule_616x353.jpg`,
-      `${base}/header.jpg`,
-    ];
-  }
-  return [
-    `${base}/capsule_616x353.jpg`,
-    `${base}/header.jpg`,
-    `${base}/library_600x900.jpg`,
-  ];
-}
-
 /** Return all candidate image URLs in priority order for fallback. */
 function getBestCardImageChain(
   game: PackageGame,
@@ -72,34 +53,25 @@ function getBestCardImageChain(
   variant?: "landscape" | "poster",
   sgdbArtwork?: SgdbArtworkData,
 ): string[] {
-  const cdnUrls = getSteamCdnUrls(game.appId, variant);
-  const metadataUrls = (() => {
-    const c = variant === "poster"
-      ? [metadata?.capsule_image_v5, metadata?.capsule_image, game.imageUrl, metadata?.header_image]
-      : [metadata?.header_image, game.imageUrl, metadata?.capsule_image, metadata?.capsule_image_v5];
-    return c.filter((u): u is string => typeof u === "string");
-  })();
+  const id = parseInt(game.appId, 10);
+  if (!id || isNaN(id) || id <= 0) return [];
 
-  const allUrls: string[] = [];
+  const base = `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}`;
+  const cdnBase = `https://steamcdn-a.akamaihd.net/steam/apps/${id}`;
 
-  // Poster variant: SGDB cover is king (portrait/cover art)
-  if (variant === "poster" && sgdbArtwork?.sgdbCoverUrl) {
-    allUrls.push(sgdbArtwork.sgdbCoverUrl);
+  if (variant === "poster") {
+    if (sgdbArtwork?.sgdbCoverUrl) return [sgdbArtwork.sgdbCoverUrl];
+    return [
+      `${base}/library_600x900.jpg`,
+      ...(metadata?.header_image ? [metadata.header_image] : []),
+    ];
   }
 
-  // Landscape variant: SGDB hero first
-  if (variant === "landscape" && sgdbArtwork?.sgdbHeroUrl) {
-    allUrls.push(sgdbArtwork.sgdbHeroUrl);
-  }
-
-  // Steam metadata + CDN fallbacks
-  for (const url of metadataUrls) {
-    if (!allUrls.includes(url)) allUrls.push(url);
-  }
-  for (const url of cdnUrls) {
-    if (!allUrls.includes(url)) allUrls.push(url);
-  }
-  return allUrls;
+  if (sgdbArtwork?.sgdbHeroUrl) return [sgdbArtwork.sgdbHeroUrl];
+  const apiUrl = metadata?.library_hero_image || metadata?.header_image;
+  return apiUrl
+    ? [apiUrl, `${cdnBase}/library_hero.jpg`, `${cdnBase}/header.jpg`]
+    : [`${cdnBase}/library_hero.jpg`, `${cdnBase}/header.jpg`, `${base}/library_600x900.jpg`];
 }
 
 /** Custom comparator for React.memo — compares only visible props. */
