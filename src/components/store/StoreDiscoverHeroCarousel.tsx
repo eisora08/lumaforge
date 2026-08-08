@@ -153,7 +153,7 @@ export default function StoreDiscoverHeroCarousel({
         onMouseLeave={() => setIsPaused(false)}
         aria-roledescription="carousel"
         aria-label="Featured games"
-        className="group relative overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5"
+        className="group relative min-h-[300px] sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px] overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5"
       >
         <div
           role="button"
@@ -164,7 +164,7 @@ export default function StoreDiscoverHeroCarousel({
               onOpenGame(current);
             }
           }}
-          className="relative min-h-[300px] cursor-pointer overflow-hidden bg-white/5 sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px]"
+          className="absolute inset-0 cursor-pointer overflow-hidden bg-white/5"
         >
           {heroTransition === "crossfade" ? (
             <>

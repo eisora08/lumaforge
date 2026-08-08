@@ -166,7 +166,7 @@ function getReviewLabel(summary?: SteamReviewSummary) {
   }
 
   if (typeof summary.positive_percent === "number") {
-    return `${summary.review_score_desc} Â· ${summary.positive_percent}%`;
+    return `${summary.review_score_desc} · ${summary.positive_percent}%`;
   }
 
   return summary.review_score_desc || "N/A";
@@ -234,7 +234,8 @@ export default function StoreGameDetailsPage({
 
   // Scroll to top when entering game details
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "instant" });
+    const main = document.querySelector("main");
+    main?.scrollTo({ top: 0, behavior: "instant" });
   }, [game.appId]);
 
   // Success modal state â€” shown after package download completes
