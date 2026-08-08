@@ -17,18 +17,12 @@ import {
   FolderSearch,
   Gamepad2,
   Cog,
-  BookOpen,
-  MonitorSmartphone,
-  Download,
   Database,
   Image,
   Library,
   Power,
-  Info,
   ExternalLink,
   Code,
-  FolderOpen,
-  HardDrive,
   Zap,
   Cloud,
   Puzzle,
@@ -48,7 +42,6 @@ import DebridProvidersCard from "../components/settings/DebridProvidersCard";
 import SettingsSection from "../components/settings/SettingsSection";
 import CardLayoutEditor from "../components/settings/CardLayoutEditor";
 import HomeLayoutEditor from "../components/settings/HomeLayoutEditor";
-import CollectionsSection from "../components/settings/CollectionsSection";
 import ThemeOption from "../components/settings/ThemeOption";
 import SurfaceModeOption from "../components/settings/SurfaceModeOption";
 import AccentColorPicker from "../components/settings/AccentColorPicker";
@@ -56,7 +49,6 @@ import SettingsInput from "../components/settings/SettingsInput";
 import ToggleOption from "../components/settings/ToggleOption";
 import BackupSectionUI from "../components/settings/BackupSection";
 import SteamAccountDetector from "../components/settings/SteamAccountDetector";
-import PageContainer from "../components/layout/PageContainer";
 import IntegrationsSection from "../components/settings/IntegrationsSection";
 import ExtensionsSettings from "../extensions/ui/ExtensionsSettings";
 
@@ -72,20 +64,16 @@ import { openExternalUrl } from "../services/externalLinks";
 type SettingsSectionId =
   | "general"
   | "appearance"
+  | "ambient"
   | "library"
-  | "collections"
+  | "detection"
+  | "notifications"
   | "metadata"
   | "artwork"
   | "extensions"
-  | "integrations"
-  | "thirdparty"
-  | "cloudBackup"
-  | "manual"
-  | "console"
-  | "packages"
-  | "advanced"
-  | "startup"
-  | "about";
+  | "providers"
+  | "backup"
+  | "startup";
 
 const navSections: {
   key: SettingsSectionId;
@@ -93,25 +81,25 @@ const navSections: {
   icon: React.ReactNode;
   description: string;
 }[] = [
-  { key: "general", label: "General", icon: <Cog className="h-4 w-4" />, description: "Steam paths and auto-detection" },
-  { key: "appearance", label: "Appearance", icon: <Palette className="h-4 w-4" />, description: "Theme, surface and display mode" },
-  { key: "library", label: "Library & Sources", icon: <Library className="h-4 w-4" />, description: "Grid, dashboard, detection and notifications" },
-  { key: "collections", label: "Collections", icon: <FolderOpen className="h-4 w-4" />, description: "Game grouping and organization" },
-  { key: "metadata", label: "Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG, Google and Bing" },
+  { key: "general", label: "General", icon: <Cog className="h-4 w-4" />, description: "Steam paths, account and auto-detection" },
+  { key: "appearance", label: "Appearance", icon: <Palette className="h-4 w-4" />, description: "Theme, surface mode and accent color" },
+  { key: "ambient", label: "Ambient", icon: <Globe className="h-4 w-4" />, description: "Background ambient mode and intensity" },
+  { key: "library", label: "Library", icon: <Library className="h-4 w-4" />, description: "Dashboard, card layout and display mode" },
+  { key: "detection", label: "Game Detection", icon: <FolderSearch className="h-4 w-4" />, description: "Local game scanning and folder management" },
+  { key: "notifications", label: "Notifications", icon: <Gamepad2 className="h-4 w-4" />, description: "Achievement alerts and session overlay" },
+  { key: "metadata", label: "Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG, Google and Bing API keys" },
   { key: "artwork", label: "Artwork Providers", icon: <Image className="h-4 w-4" />, description: "SteamGridDB artwork configuration" },
   { key: "extensions", label: "Extensions", icon: <Puzzle className="h-4 w-4" />, description: "External tool integrations" },
-  { key: "integrations", label: "Integrations", icon: <Zap className="h-4 w-4" />, description: "Provider integrations and visibility" },
-  { key: "thirdparty", label: "Third-party Tools", icon: <HardDrive className="h-4 w-4" />, description: "Fix utilities and tools management" },
-  { key: "cloudBackup", label: "Cloud & Backup", icon: <Cloud className="h-4 w-4" />, description: "Backups, restore and cloud sync" },
-  { key: "manual", label: "Manual Games", icon: <BookOpen className="h-4 w-4" />, description: "Manually added games info" },
-  { key: "console", label: "Console Mode", icon: <MonitorSmartphone className="h-4 w-4" />, description: "Controller-friendly interface" },
-  { key: "packages", label: "Downloads / Packages", icon: <Download className="h-4 w-4" />, description: "Multi-provider package sources" },
-  { key: "startup", label: "Startup & Behavior", icon: <Power className="h-4 w-4" />, description: "Launch mode and window behavior" },
-  { key: "advanced", label: "Advanced", icon: <SlidersHorizontal className="h-4 w-4" />, description: "Maintenance, logs and import/export" },
-  { key: "about", label: "About", icon: <Info className="h-4 w-4" />, description: "Version, license and attributions" },
+  { key: "providers", label: "Providers & Tools", icon: <Zap className="h-4 w-4" />, description: "Package sources, integrations and tools" },
+  { key: "backup", label: "Cloud & Backup", icon: <Cloud className="h-4 w-4" />, description: "Backups, restore and cloud sync" },
+  { key: "startup", label: "Startup & More", icon: <Power className="h-4 w-4" />, description: "Launch mode, behavior, maintenance and about" },
 ];
 
-export default function Settings() {
+type SettingsProps = {
+  onSectionChange?: (label: string) => void;
+};
+
+export default function Settings({ onSectionChange }: SettingsProps) {
   const {
     theme: selectedTheme,
     surfaceMode,
@@ -149,6 +137,13 @@ export default function Settings() {
   const [newScanFolder, setNewScanFolder] = useState("");
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
+
+  // Notify overlay header when section changes
+  function handleSectionChange(key: SettingsSectionId) {
+    setActiveSection(key);
+    const section = navSections.find((s) => s.key === key);
+    onSectionChange?.(section?.label ?? key);
+  }
 
   async function handleDetectSteamPaths() {
     try {
@@ -190,54 +185,48 @@ export default function Settings() {
   }
 
   return (
-    <PageContainer>
-      <div className="space-y-6 py-6">
-        <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-(--color-text)">
-              Configuración
-            </h1>
-            <p className="mt-2 text-(--color-muted)">
-              Personaliza LumaForge, rutas, API, apariencia y comportamiento.
-            </p>
-          </div>
+    <>
+      {/* Sidebar nav — vertical, 260px wide, scrollable */}
+      <nav className="w-[260px] shrink-0 border-r border-(--surface-active-border) p-3">
+        <div className="flex flex-col gap-0.5">
+          {navSections.map((section) => (
+            <button
+              key={section.key}
+              type="button"
+              onClick={() => handleSectionChange(section.key)}
+              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ${
+                activeSection === section.key
+                  ? "bg-(--color-accent)/10 text-(--color-accent)"
+                  : "text-(--color-muted) hover:bg-white/[0.04] hover:text-(--color-text)"
+              }`}
+            >
+              <span className="shrink-0">{section.icon}</span>
+              <span className="truncate">{section.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Reset button at bottom of sidebar */}
+        <div className="mt-4 border-t border-(--surface-active-border) pt-3">
           <button
             type="button"
             onClick={resetSettings}
-            className="inline-flex w-fit items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-(--color-muted) transition hover:bg-white/[0.04] hover:text-(--color-text)"
           >
-            <RotateCcw className="h-4 w-4" />
-            Restablecer
+            <RotateCcw className="h-4 w-4 shrink-0" />
+            <span className="truncate">Restablecer</span>
           </button>
-        </header>
+        </div>
+      </nav>
 
-        <div className="flex flex-col gap-6 lg:flex-row">
-          <nav className="w-full shrink-0 lg:w-64">
-            <div className="flex flex-row gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
-              {navSections.map((section) => (
-                <button
-                  key={section.key}
-                  type="button"
-                  onClick={() => setActiveSection(section.key)}
-                  className={`flex min-w-fit items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition lg:w-full ${
-                    activeSection === section.key
-                      ? "bg-(--color-accent)/15 text-(--color-accent)"
-                      : "text-(--color-muted) hover:bg-white/5 hover:text-(--color-text)"
-                  }`}
-                >
-                  <span className="shrink-0">{section.icon}</span>
-                  <span className="hidden truncate lg:inline">{section.label}</span>
-                </button>
-              ))}
-            </div>
-          </nav>
-
-          <div className="min-w-0 flex-1 space-y-6">
+      {/* Content area — scrollable */}
+      <div className="min-w-0 flex-1 overflow-y-auto p-6">
             {activeSection === "general" && (
-              <SettingsSection
-                title="Rutas"
-                description="Administra rutas detectadas o configuradas manualmente."
-              >
+              <>
+                <SettingsSection
+                  title="Rutas"
+                  description="Administra rutas detectadas o configuradas manualmente."
+                >
                 <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                   <FolderCog className="h-4 w-4" />
                   Steam y carpetas internas
@@ -286,6 +275,97 @@ export default function Settings() {
                   />
                 </div>
               </SettingsSection>
+
+              <SettingsSection
+                title="Steam Account"
+                description="Credenciales de cuenta para achievement tracking y integraciones."
+              >
+                <div className="space-y-4">
+                  <ToggleOption
+                    label="Enable Steam Achievements Tracking"
+                    description="Use Steam Web API to load achievement progress, badges and rarity. Requires API Key and SteamID64 below."
+                    enabled={settings.steamAchievementsEnabled}
+                    onChange={(enabled) => updateSetting("steamAchievementsEnabled", enabled)}
+                  />
+
+                  {settings.steamAchievementsEnabled && (!settings.steamWebApiKey || !settings.steamId64) && (
+                    <p className="text-xs text-amber-400">
+                      Fill in Steam Web API Key and SteamID64 below to enable achievement tracking.
+                    </p>
+                  )}
+
+                  <label className="block">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-(--color-text)">
+                        Steam Web API Key
+                      </p>
+                      <p className="mt-1 text-xs text-(--color-muted)">
+                        Required for Steam Achievement tracking. Used to fetch achievement progress, badges and rarity.
+                      </p>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showSteamApiKey ? "text" : "password"}
+                        value={settings.steamWebApiKey}
+                        onChange={(e) => updateSetting("steamWebApiKey", e.target.value)}
+                        className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                        placeholder="Enter your Steam Web API key"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowSteamApiKey(!showSteamApiKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
+                        tabIndex={-1}
+                      >
+                        {showSteamApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </label>
+
+                  <label className="block">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-(--color-text)">
+                        SteamID64
+                      </p>
+                      <p className="mt-1 text-xs text-(--color-muted)">
+                        Required with Steam Web API Key for per-user achievement progress.
+                      </p>
+                    </div>
+                    <input
+                      type="text"
+                      value={settings.steamId64}
+                      onChange={(e) => updateSetting("steamId64", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="76561197960265728"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-(--color-text)">
+                        SteamID32 / Account ID (optional)
+                      </p>
+                      <p className="mt-1 text-xs text-(--color-muted)">
+                        Optional. Used for local Steam userdata paths and future integrations.
+                      </p>
+                    </div>
+                    <input
+                      type="text"
+                      value={settings.steamAccountId}
+                      onChange={(e) => updateSetting("steamAccountId", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="12345678"
+                    />
+                  </label>
+
+                  <SteamAccountDetector
+                    steamRoot={settings.steamRoot}
+                    currentSteamId64={settings.steamId64}
+                    onSelect={(steamId64) => updateSetting("steamId64", steamId64)}
+                  />
+                </div>
+              </SettingsSection>
+              </>
             )}
 
             {activeSection === "appearance" && (
@@ -340,80 +420,6 @@ export default function Settings() {
                       onChange={setAccentOverride}
                     />
                   </div>
-
-                  <div className="mt-6">
-                    <ToggleOption
-                      label="Fondo ambiental"
-                      description="Muestra el arte del juego activo (difuminado) detrás de la interfaz en todas las pantallas."
-                      enabled={ambientState.enabled}
-                      onChange={setAmbientEnabled}
-                    />
-                  </div>
-
-                  {ambientState.enabled && (
-                    <div className="lf-surface mt-4 rounded-2xl border p-4">
-                      <p className="text-sm font-medium text-(--color-text)">
-                        Modo del fondo ambiental
-                      </p>
-                      <p className="mt-1 text-xs text-(--color-muted)">
-                        Muestra el arte difuminado o el color dominante extraído de la foto.
-                      </p>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        {(
-                          [
-                            { id: "image", label: "Imagen (difuminado)" },
-                            { id: "color", label: "Color dominante" },
-                          ] as const
-                        ).map((opt) => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => setAmbientMode(opt.id)}
-                            className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                              ambientState.mode === opt.id
-                                ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
-                                : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {ambientState.enabled && (
-                    <div className="lf-surface mt-4 rounded-2xl border p-4">
-                      <p className="text-sm font-medium text-(--color-text)">
-                        Intensidad del fondo ambiental
-                      </p>
-                      <p className="mt-1 text-xs text-(--color-muted)">
-                        Controla cuánto se ve y se difumina el fondo ambiental.
-                      </p>
-                      <div className="mt-3 grid grid-cols-3 gap-2">
-                        {(
-                          [
-                            { id: "sutil", label: "Sutil" },
-                            { id: "equilibrado", label: "Equilibrado" },
-                            { id: "vivido", label: "Vívido" },
-                          ] as const
-                        ).map((opt) => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => setAmbientIntensity(opt.id)}
-                            className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                              ambientState.intensity === opt.id
-                                ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
-                                : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </SettingsSection>
 
                 <SettingsSection
@@ -454,58 +460,101 @@ export default function Settings() {
                   </div>
 
                   <p className="mt-4 text-xs text-(--color-muted)">
-                    El fondo ambiental siempre usa la transición de fundido
-                    premium, independientemente de esta selección.
+                    El fondo ambiental siempre usa la transicion de fundido
+                    premium, independientemente de esta seleccion.
                   </p>
-                </SettingsSection>
 
-                <SettingsSection
-                  title="Display"
-                  description="Modo de visualización de tarjetas y espaciado."
-                >
-                  <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                    <div className="space-y-0.5">
-                      <label className="text-sm font-medium text-(--color-text)">
-                        Card artwork mode
-                      </label>
-                      <p className="text-xs text-(--color-muted)">
-                        Choose between landscape hero or poster grid images for library game cards.
-                      </p>
-                    </div>
-                    <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
-                      <button
-                        type="button"
-                        onClick={() => updateSetting("libraryCardArtworkMode", "landscape")}
-                        className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
-                          settings.libraryCardArtworkMode === "landscape"
-                            ? "bg-(--color-accent) text-(--color-accent-text)"
-                            : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
-                        }`}
-                      >
-                        Landscape
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateSetting("libraryCardArtworkMode", "poster")}
-                        className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
-                          settings.libraryCardArtworkMode === "poster"
-                            ? "bg-(--color-accent) text-(--color-accent-text)"
-                            : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
-                        }`}
-                      >
-                        Poster
-                      </button>
-                    </div>
+                  <div className="mt-4 border-t border-(--surface-active-border) pt-4">
+                    <ToggleOption
+                      label="Modo compacto"
+                      description="Reduce animaciones y espaciado visual."
+                      enabled={settings.compactMode}
+                      onChange={(enabled) => updateSetting("compactMode", enabled)}
+                    />
                   </div>
-
-                  <ToggleOption
-                    label="Modo compacto"
-                    description="Reduce animaciones y espaciado visual."
-                    enabled={settings.compactMode}
-                    onChange={(enabled) => updateSetting("compactMode", enabled)}
-                  />
                 </SettingsSection>
               </>
+            )}
+
+            {activeSection === "ambient" && (
+              <SettingsSection
+                title="Fondo ambiental"
+                description="Muestra el arte del juego activo (difuminado) detras de la interfaz."
+              >
+                <div className="space-y-4">
+                  <ToggleOption
+                    label="Fondo ambiental"
+                    description="Activa el fondo dinamico en todas las pantallas."
+                    enabled={ambientState.enabled}
+                    onChange={setAmbientEnabled}
+                  />
+
+                  {ambientState.enabled && (
+                    <>
+                      <div className="lf-surface rounded-2xl border p-4">
+                        <p className="text-sm font-medium text-(--color-text)">
+                          Modo del fondo ambiental
+                        </p>
+                        <p className="mt-1 text-xs text-(--color-muted)">
+                          Muestra el arte difuminado o el color dominante extraido de la foto.
+                        </p>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          {(
+                            [
+                              { id: "image", label: "Imagen (difuminado)" },
+                              { id: "color", label: "Color dominante" },
+                            ] as const
+                          ).map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => setAmbientMode(opt.id)}
+                              className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                                ambientState.mode === opt.id
+                                  ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
+                                  : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="lf-surface rounded-2xl border p-4">
+                        <p className="text-sm font-medium text-(--color-text)">
+                          Intensidad del fondo ambiental
+                        </p>
+                        <p className="mt-1 text-xs text-(--color-muted)">
+                          Controla cuanto se ve y se difumina el fondo ambiental.
+                        </p>
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                          {(
+                            [
+                              { id: "sutil", label: "Sutil" },
+                              { id: "equilibrado", label: "Equilibrado" },
+                              { id: "vivido", label: "Vivido" },
+                            ] as const
+                          ).map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => setAmbientIntensity(opt.id)}
+                              className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                                ambientState.intensity === opt.id
+                                  ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
+                                  : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </SettingsSection>
             )}
 
             {activeSection === "library" && (
@@ -513,11 +562,14 @@ export default function Settings() {
                 <HomeLayoutEditor />
 
                 <CardLayoutEditor />
+              </>
+            )}
 
-                <SettingsSection
-                  title="Game Detection"
-                  description="Configura cómo LumaForge detecta juegos instalados y ejecutables locales."
-                >
+            {activeSection === "detection" && (
+              <SettingsSection
+                title="Game Detection"
+                description="Configura como LumaForge detecta juegos instalados y ejecutables locales."
+              >
                   <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                     <FolderSearch className="h-4 w-4" />
                     Local EXE detection
@@ -608,7 +660,10 @@ export default function Settings() {
                     </>
                   )}
                 </SettingsSection>
+            )}
 
+            {activeSection === "notifications" && (
+              <>
                 <SettingsSection
                   title="Achievement Notifications"
                   description="Control how achievement unlock notifications are delivered."
@@ -641,6 +696,27 @@ export default function Settings() {
                       enabled={settings.achievementAutoSyncEnabled}
                       onChange={(enabled) => updateSetting("achievementAutoSyncEnabled", enabled)}
                     />
+
+                    {settings.achievementAutoSyncEnabled && (
+                      <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium text-(--color-text)">
+                            Sync interval (seconds)
+                          </label>
+                          <p className="text-xs text-(--color-muted)">
+                            How often to check for new achievement progress. Default: 300 (5 min).
+                          </p>
+                        </div>
+                        <input
+                          type="number"
+                          min={30}
+                          max={3600}
+                          value={settings.achievementAutoSyncIntervalSeconds ?? 300}
+                          onChange={(e) => updateSetting("achievementAutoSyncIntervalSeconds", Math.max(30, Math.min(3600, Number(e.target.value) || 300)))}
+                          className="h-9 w-24 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 text-sm text-(--color-text) outline-none text-right focus:border-(--color-accent)"
+                        />
+                      </div>
+                    )}
                   </div>
                 </SettingsSection>
 
@@ -691,144 +767,27 @@ export default function Settings() {
                 </SettingsSection>
 
                 <SettingsSection
-                  title="Steam Achievements"
-                  description="Configura el seguimiento de logros de Steam."
+                  title="Achievement Schema"
+                  description="Schema folder for achievement data fallback."
                 >
-                  <div className="space-y-4">
-                    <ToggleOption
-                      label="Enable Steam Achievements Tracking"
-                      description="Use Steam Web API to load achievement progress, badges and rarity for Steam games. Requires Steam Web API Key and SteamID64."
-                      enabled={settings.steamAchievementsEnabled}
-                      onChange={(enabled) => updateSetting("steamAchievementsEnabled", enabled)}
-                    />
-
-                    {settings.steamAchievementsEnabled && (!settings.steamWebApiKey || !settings.steamId64) && (
-                      <p className="text-xs text-amber-400">
-                        Fill in Steam Web API Key and SteamID64 below to enable achievement tracking.
+                  <label className="block">
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-(--color-text)">
+                        Achievements App Schema Folder (optional)
                       </p>
-                    )}
-
-                    <label className="block">
-                      <div className="mb-2">
-                        <p className="text-sm font-medium text-(--color-text)">
-                          Steam Web API Key
-                        </p>
-                        <p className="mt-1 text-xs text-(--color-muted)">
-                          Required for Steam Achievement tracking. Used to fetch your achievement progress, badges and rarity.
-                        </p>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type={showSteamApiKey ? "text" : "password"}
-                          value={settings.steamWebApiKey}
-                          onChange={(e) => updateSetting("steamWebApiKey", e.target.value)}
-                          className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                          placeholder="Enter your Steam Web API key"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowSteamApiKey(!showSteamApiKey)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
-                          tabIndex={-1}
-                        >
-                          {showSteamApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                    </label>
-
-                    <label className="block">
-                      <div className="mb-2">
-                        <p className="text-sm font-medium text-(--color-text)">
-                          SteamID64
-                        </p>
-                        <p className="mt-1 text-xs text-(--color-muted)">
-                          Required with Steam Web API Key for per-user achievement progress.
-                        </p>
-                      </div>
-                      <input
-                        type="text"
-                        value={settings.steamId64}
-                        onChange={(e) => updateSetting("steamId64", e.target.value)}
-                        className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                        placeholder="Enter your SteamID64 (e.g. 76561197960265728)"
-                      />
-                    </label>
-
-                    <label className="block">
-                      <div className="mb-2">
-                        <p className="text-sm font-medium text-(--color-text)">
-                          SteamID32 / Account ID (optional)
-                        </p>
-                        <p className="mt-1 text-xs text-(--color-muted)">
-                          Optional. Used for local Steam userdata paths and future integrations.
-                        </p>
-                      </div>
-                      <input
-                        type="text"
-                        value={settings.steamAccountId}
-                        onChange={(e) => updateSetting("steamAccountId", e.target.value)}
-                        className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                        placeholder="Enter your SteamID32 (e.g. 12345678)"
-                      />
-                    </label>
-
-                    <SteamAccountDetector
-                      steamRoot={settings.steamRoot}
-                      currentSteamId64={settings.steamId64}
-                      onSelect={(steamId64) => updateSetting("steamId64", steamId64)}
+                      <p className="mt-1 text-xs text-(--color-muted)">
+                        Path to a folder containing <code>achievements.json</code> and <code>achievementpercentages.json</code> from the Steam Achievement Schema app.
+                      </p>
+                    </div>
+                    <input
+                      type="text"
+                      value={settings.achievementSchemaPath}
+                      onChange={(e) => updateSetting("achievementSchemaPath", e.target.value)}
+                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
+                      placeholder="C:\path\to\achievements-schema"
                     />
-
-                    <div className="mt-4">
-                      <label className="block">
-                        <div className="mb-2">
-                          <p className="text-sm font-medium text-(--color-text)">
-                            Achievements App Schema Folder (optional)
-                          </p>
-                          <p className="mt-1 text-xs text-(--color-muted)">
-                            Optional. Path to a folder containing <code>achievements.json</code> and <code>achievementpercentages.json</code> from the Steam Achievement Schema app. Used as a fallback when no other achievement data is available.
-                          </p>
-                        </div>
-                        <input
-                          type="text"
-                          value={settings.achievementSchemaPath}
-                          onChange={(e) => updateSetting("achievementSchemaPath", e.target.value)}
-                          className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                          placeholder="C:\\path\\to\\achievements-schema"
-                        />
-                      </label>
-                    </div>
-                  </div>
+                  </label>
                 </SettingsSection>
-              </>
-            )}
-
-            {activeSection === "integrations" && (
-              <>
-                <SettingsSection
-                  title="Integrations"
-                  description="Control which game providers are active and where they appear."
-                >
-                  <div className="space-y-4">
-                    <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
-                      <Zap className="h-4 w-4" />
-                      Provider integrations
-                    </div>
-                    <p className="text-xs text-(--color-muted)">
-                      Disable an integration to stop its scans and hide its games from selected UI surfaces.
-                      All stored data is preserved when an integration is disabled.
-                    </p>
-                  </div>
-                </SettingsSection>
-                <IntegrationsSection />
-
-                <div className="mt-6">
-                  <DebridProvidersCard
-                    config={settings.debridProviders}
-                    onChange={(patch) => {
-                      if (patch.debridProviders) updateSetting("debridProviders", patch.debridProviders);
-                    }}
-                  />
-                </div>
               </>
             )}
 
@@ -836,11 +795,7 @@ export default function Settings() {
               <ExtensionsSettings />
             )}
 
-            {activeSection === "thirdparty" && (
-              <ThirdPartyToolsSection />
-            )}
-
-            {activeSection === "cloudBackup" && (
+            {activeSection === "backup" && (
               <>
                 <SettingsSection
                   title="Cloud & Backup"
@@ -864,10 +819,6 @@ export default function Settings() {
                   <BackupSectionUI />
                 </SettingsSection>
               </>
-            )}
-
-            {activeSection === "collections" && (
-              <CollectionsSection />
             )}
 
             {activeSection === "metadata" && (
@@ -1132,72 +1083,11 @@ export default function Settings() {
               </SettingsSection>
             )}
 
-            {activeSection === "manual" && (
-              <SettingsSection
-                title="Manual Games"
-                description="Información sobre juegos agregados manualmente a tu biblioteca."
-              >
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-(--color-accent)/15 text-(--color-accent)">
-                        <BookOpen className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-(--color-text)">
-                          Juegos manuales
-                        </p>
-                        <p className="text-xs text-(--color-muted)">
-                          Los juegos manuales se almacenan en un archivo JSON local.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-(--color-muted)">
-                    Los juegos manuales se pueden crear, editar y eliminar desde la biblioteca.
-                    Cada juego manual tiene su propia carpeta de medios y metadatos.
-                    El seguimiento de logros y tiempo de juego funciona igual que con juegos de Steam.
-                  </p>
-                </div>
-              </SettingsSection>
-            )}
-
-            {activeSection === "console" && (
-              <SettingsSection
-                title="Console Mode"
-                description="Modo de interfaz amigable con controlador."
-              >
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-(--color-accent)/15 text-(--color-accent)">
-                        <MonitorSmartphone className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-(--color-text)">
-                          Console Mode
-                        </p>
-                        <p className="text-xs text-(--color-muted)">
-                          Configura Console Mode desde la propia interfaz de Console Mode.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-(--color-muted)">
-                    Console Mode se activa desde el botón de navegación y ofrece una interfaz amigable con controlador.
-                    Todas las configuraciones de Console Mode se guardan por separado.
-                  </p>
-                </div>
-              </SettingsSection>
-            )}
-
-            {activeSection === "packages" && (
+            {activeSection === "providers" && (
               <>
                 <SettingsSection
                   title="Downloads / Packages"
-                  description="Configura las fuentes que LumaForge usará para buscar y descargar paquetes."
+                  description="Configura las fuentes que LumaForge usara para buscar y descargar paquetes."
                 >
                   <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
                     <Globe className="h-4 w-4" />
@@ -1234,10 +1124,40 @@ export default function Settings() {
                     })}
                   </div>
                 </SettingsSection>
+
+                <div className="mt-6">
+                  <DebridProvidersCard
+                    config={settings.debridProviders}
+                    onChange={(patch) => {
+                      if (patch.debridProviders) updateSetting("debridProviders", patch.debridProviders);
+                    }}
+                  />
+                </div>
+
+                <div className="mt-6">
+                  <ThirdPartyToolsSection />
+                </div>
+
+                <SettingsSection
+                  title="Integrations"
+                  description="Control which game providers are active and where they appear."
+                >
+                  <div className="space-y-4">
+                    <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
+                      <Zap className="h-4 w-4" />
+                      Provider integrations
+                    </div>
+                    <p className="text-xs text-(--color-muted)">
+                      Disable an integration to stop its scans and hide its games from selected UI surfaces.
+                      All stored data is preserved when an integration is disabled.
+                    </p>
+                  </div>
+                </SettingsSection>
+                <IntegrationsSection />
               </>
             )}
 
-            {activeSection === "advanced" && (
+            {activeSection === "startup" && (
               <>
                 <SettingsSection
                   title="Avanzado"
@@ -1265,10 +1185,39 @@ export default function Settings() {
 
                     <ToggleOption
                       label="Limpiar temporales al cerrar"
-                      description="Elimina ZIPs y carpetas extraídas al salir."
+                      description="Elimina ZIPs y carpetas extraidas al salir."
                       enabled={settings.cleanTempOnExit}
                       onChange={(enabled) => updateSetting("cleanTempOnExit", enabled)}
                     />
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                      <div className="space-y-0.5">
+                        <label className="text-sm font-medium text-(--color-text)">
+                          Media cache profile
+                        </label>
+                        <p className="text-xs text-(--color-muted)">
+                          Controls how aggressively artwork and metadata are cached locally.
+                        </p>
+                      </div>
+                      <div className="flex overflow-hidden rounded-lg border border-(--surface-active-border)">
+                        {(["minimal", "playnite-balanced", "full"] as const).map((profile) => (
+                          <button
+                            key={profile}
+                            type="button"
+                            onClick={() => updateSetting("mediaCacheProfile", profile)}
+                            className={`cursor-pointer px-3 py-1.5 text-xs font-medium transition ${
+                              settings.mediaCacheProfile === profile
+                                ? "bg-(--color-accent) text-(--color-accent-text)"
+                                : "bg-white/5 text-(--color-muted) hover:text-(--color-text)"
+                            }`}
+                          >
+                            {profile === "minimal" ? "Minimal" : profile === "playnite-balanced" ? "Balanced" : "Full"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="mt-6 border-t border-(--surface-active-border) pt-4">
@@ -1454,7 +1403,7 @@ export default function Settings() {
               </>
             )}
 
-            {activeSection === "about" && (
+            {activeSection === "startup" && (
               <>
                 <SettingsSection
                   title="About LumaForge"
@@ -1599,8 +1548,6 @@ export default function Settings() {
               </>
             )}
           </div>
-        </div>
-      </div>
-    </PageContainer>
+    </>
   );
 }

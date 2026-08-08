@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { countRender, logRenderSummary, startRenderSession, markNavigation } from "./services/perfCounters";
 
 import AppLayout from "./components/layout/AppLayout";
+import SettingsOverlay from "./components/settings/SettingsOverlay";
+import Settings from "./pages/Settings";
 
 import Home from "./pages/Home";
 import Library from "./pages/Library";
@@ -12,7 +14,6 @@ import Achievements from "./pages/Achievements";
 import ActivityStats from "./pages/ActivityStats";
 import LauncherAchievements from "./pages/LauncherAchievements";
 import Verification from "./pages/Verification";
-import Settings from "./pages/Settings";
 import GameDetailsPage from "./pages/GameDetails";
 import LibraryGameDetailPage from "./pages/LibraryGameDetailPage";
 import ConsoleModePage from "./features/console/ConsoleModePage";
@@ -52,7 +53,7 @@ const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
   "home", "library", "games", "store",
   "achievements", "activity", "verification",
-  "settings", "game-details", "library-game-detail", "global-search", "console",
+  "game-details", "library-game-detail", "global-search", "console",
   "launcher-achievements",
 ]);
 
@@ -157,6 +158,8 @@ function App() {
   const [bootStarted, setBootStarted] = useState(false);
   const [showModeSwitch, setShowModeSwitch] = useState(false);
   const [modeSwitchMode, setModeSwitchMode] = useState<ModeSwitchMode>("enter-console");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSectionLabel, setSettingsSectionLabel] = useState<string>("General");
   const modeSwitchKeyRef = useRef(0);
   const initialRender = useRef(true);
   const prevPageRef = useRef(activePage);
@@ -228,6 +231,11 @@ function App() {
   }, [activePage]);
 
   function handleNavigate(page: AppPage) {
+    // Settings opens as overlay — don't navigate
+    if (page === "settings") {
+      setSettingsOpen(true);
+      return;
+    }
     if (page === activePage) return;
     const startTime = NAV_PERF_ENABLED ? performance.now() : 0;
 
@@ -306,9 +314,6 @@ function App() {
       case "verification":
         pageComponent = <Verification />;
         break;
-      case "settings":
-        pageComponent = <Settings />;
-        break;
       case "game-details":
         pageComponent = <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} onNavigate={handleNavigate} />;
         break;
@@ -366,6 +371,15 @@ function App() {
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
       <LibraryLoadProgressCard />
+
+      {/* Settings overlay — renders on top of everything */}
+      <SettingsOverlay
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        activeSectionLabel={settingsSectionLabel}
+      >
+        <Settings onSectionChange={setSettingsSectionLabel} />
+      </SettingsOverlay>
     </ConfirmProvider>
   );
 
