@@ -409,6 +409,11 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
         eprintln!("[SqliteCache] debrid_games table init failed (non-fatal): {}", e);
     }
 
+    // Store details + library game details — per-game detail page cache (uses SqliteCoreDb)
+    if let Err(e) = store_details_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] store_details table init in core.db failed (non-fatal): {}", e);
+    }
+
     Ok(())
 }
 
