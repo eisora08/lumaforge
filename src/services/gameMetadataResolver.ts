@@ -33,22 +33,8 @@ async function loadFromAppCache(appId: number): Promise<SteamAppMetadata | null>
       // Phase 10: Trust `resolved === true` cache — the Rust parser always captures movies.
       // The old `moviesCount === 0` refetch forced unnecessary re-fetches for games with no movies,
       // causing hundreds of redundant Rust IPC calls on every boot.
-      // Schema version checks for newly-added fields still trigger a refetch.
-      if (meta.resolved === true && !("legal_notice" in meta)) {
-        if (DEBUG_CACHE_MOVIES_LOG) console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-legal-notice-schema`);
-        return null;
-      }
-      if (meta.resolved === true && !("store_drm_notice" in meta)) {
-        if (DEBUG_CACHE_MOVIES_LOG) console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-store-drm-notice-schema`);
-        return null;
-      }
-      if (meta.resolved === true && !("background_image" in meta)) {
-        if (DEBUG_CACHE_MOVIES_LOG) console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-background-image-schema`);
-        return null;
-      }
-      if (meta.resolved === true && !("header_image" in meta)) {
-        if (DEBUG_CACHE_MOVIES_LOG) console.log(`[STORE][METADATA_CACHE_STALE] appid=${appId} reason=missing-header-image-schema`);
-        return null;
+      if (meta.resolved === true) {
+        return meta;
       }
       return meta;
     }

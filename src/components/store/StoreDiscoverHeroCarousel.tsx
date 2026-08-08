@@ -15,7 +15,6 @@ import type { PackageGame } from "../../types/package";
 import type { SteamAppMetadata } from "../../types/gameMetadata";
 import type { SteamReviewSummary } from "../../types/gameReview";
 import type { SgdbArtworkData } from "../../services/storeArtworkResolver";
-import { resolveStoreImageUrl } from "../../services/storeImageDownloader";
 type StoreDiscoverHeroCarouselProps = {
   games: PackageGame[];
   storeMetadataByAppId: Record<number, SteamAppMetadata>;
@@ -39,16 +38,17 @@ function getGameImage(
   if (sgdb?.sgdbHeroUrl) return sgdb.sgdbHeroUrl;
 
   const meta = metadataByAppId[Number(game.appId)];
+  const id = parseInt(game.appId, 10);
+  const cdnFallback = id > 0 ? `https://cdn.akamai.steamstatic.com/steam/apps/${id}/header.jpg` : undefined;
 
   return (
     meta?.library_hero_image ||
-    meta?.background_image ||
     meta?.hero_image ||
     meta?.header_image ||
     meta?.capsule_image ||
     meta?.capsule_image_v5 ||
-    game.imageUrl ||
-    undefined
+    (game.imageUrl && !/storepagebackground|store_page_background/i.test(game.imageUrl) ? game.imageUrl : undefined) ||
+    cdnFallback
   );
 }
 
@@ -70,25 +70,9 @@ export default function StoreDiscoverHeroCarousel({
 
   const activeGame =
     games.length > 0 ? games[Math.min(activeIndex, games.length - 1)] : undefined;
-  const ambientImage = activeGame
+  const resolvedImage = activeGame
     ? getGameImage(activeGame, storeMetadataByAppId, sgdbArtworkByAppId)
     : undefined;
-
-  // Resolve hero image via Rust (bypasses CORS, serves via asset://)
-  const [resolvedHeroUrl, setResolvedHeroUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!ambientImage || ambientImage.startsWith("asset://") || ambientImage.startsWith("file://")) {
-      setResolvedHeroUrl(null);
-      return;
-    }
-    let cancelled = false;
-    const appId = activeGame?.appId ?? "0";
-    resolveStoreImageUrl(appId, "hero", ambientImage).then((url) => {
-      if (!cancelled) setResolvedHeroUrl(url);
-    });
-    return () => { cancelled = true; };
-  }, [ambientImage, activeGame?.appId]);
-  const resolvedImage = resolvedHeroUrl ?? ambientImage;
 
   // Selectable hero/background transition (Settings → Animaciones). Crossfade
   // (default) uses the two-layer fade — the previous image stays mounted with
