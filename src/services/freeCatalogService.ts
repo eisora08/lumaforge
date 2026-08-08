@@ -15,6 +15,7 @@ import {
   queryTopRatedGames,
   queryCultClassics,
 } from "./steamCatalogService";
+import { fetchJsonFromUrl } from "./tauri";
 
 // ── SteamSpy response types (subset) ──
 interface SteamSpyEntry {
@@ -68,20 +69,18 @@ async function throttledFetch(url: string): Promise<SteamSpyEntry[]> {
   lastFetchTime = Date.now();
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`SteamSpy API error: ${response.status} ${response.statusText}`);
-    }
-    const json = await response.json();
+    const text = await fetchJsonFromUrl(url);
+    const json = JSON.parse(text);
     if (typeof json === "object" && !Array.isArray(json)) {
       return Object.values(json) as SteamSpyEntry[];
     }
     return json as SteamSpyEntry[];
   } catch (err) {
-    // Detect CORS failure (no status code available in CORS errors)
-    if (err instanceof TypeError && String(err.message).includes("Failed to fetch")) {
+    // Detect CORS/network failure
+    const msg = String(err);
+    if (msg.includes("CORS") || msg.includes("Failed to fetch") || msg.includes("HTTP 0")) {
       _corsBlocked = true;
-      console.warn("[FREE_CATALOG] SteamSpy CORS blocked — skipping all future calls");
+      console.warn("[FREE_CATALOG] SteamSpy blocked — skipping all future calls:", msg);
     }
     throw err;
   }

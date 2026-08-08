@@ -150,6 +150,10 @@ export async function fetchSteamStoreDrmNotice(
   });
 }
 
+export async function fetchJsonFromUrl(url: string): Promise<string> {
+  return await invoke<string>("fetch_json_from_url", { url });
+}
+
 export async function resolveSteamReviewSummaries(
   appIds: number[]
 ): Promise<SteamReviewSummary[]> {

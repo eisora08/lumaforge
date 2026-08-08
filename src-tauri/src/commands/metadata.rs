@@ -647,3 +647,30 @@ fn strip_html(input: &str) -> String {
 
     output
 }
+
+/// Generic URL fetch via reqwest (bypasses CORS in Tauri WebView).
+/// Used by services that need to call APIs without CORS headers (e.g. SteamSpy).
+#[tauri::command]
+pub async fn fetch_json_from_url(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("LumaForge/0.1.0")
+        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    response
+        .text()
+        .await
+        .map_err(|e| format!("HTTP read error: {}", e))
+}
