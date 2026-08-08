@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, FileArchive, Languages, Package, Puzzle, Star, ShieldAlert } from "lucide-react";
+import { FileArchive, Languages, Package, Puzzle, Star, ShieldAlert } from "lucide-react";
 
 import type { PackageGame, PackageSource, RepackEntry } from "../../types/package";
 import type { PackageInstallStatus } from "../../types/packageInstall";
@@ -88,7 +88,7 @@ type StoreGameDetailsPageProps = {
   sourceStatus?: SourceCheckStatus;
   isBackgroundChecking?: boolean;
   sourceProgress?: SourceProgress;
-  onBack: () => void;
+  onBack?: () => void;
   onDownloadSource?: (source: PackageSource) => Promise<{ success: boolean; jobId?: string }>;
   onViewInLibrary?: (appId: string, title: string) => void;
   onOpenGame?: (game: PackageGame) => void;
@@ -209,7 +209,6 @@ export default function StoreGameDetailsPage({
   isBackgroundChecking = false,
   sourceProgress = null,
   steamOwned = false,
-  onBack,
   onDownloadSource,
   onViewInLibrary,
   onOpenGame,
@@ -224,9 +223,7 @@ export default function StoreGameDetailsPage({
   const _drmResolveReqRef = useRef(0);
   const _mediaEnrichReqRef = useRef(0);
 
-  // Feed the ambient background with the hero gallery's current media. Follows
-  // the carousel via onMediaSelect and clears on unmount so the store-hero feed
-  // / context fallback can take over. Covers both Store and Global Search routes.
+  // Feed the ambient background with the hero gallery's current media.
   const handleAmbientMedia = useCallback((imageUrl: string | null) => {
     setAmbientSource("store-details", imageUrl);
   }, []);
@@ -1224,38 +1221,15 @@ export default function StoreGameDetailsPage({
     if (metadataTimedOut) {
       return (
         <div className="space-y-6 lf-page-in">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Volver al Store
-          </button>
           <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-(--surface-active-border) bg-white/5 p-12 text-center">
             <div className="text-sm font-medium text-(--color-text)">Could not load game details</div>
             <div className="text-xs text-(--color-muted)">The Steam Store API did not respond in time.</div>
-            <button
-              type="button"
-              onClick={onBack}
-              className="mt-2 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-xs text-(--color-muted) transition duration-150 hover:bg-white/10 hover:text-(--color-text) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
-            >
-              Back to Store
-            </button>
           </div>
         </div>
       );
     }
     return (
       <div className="space-y-6 lf-page-in">
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Volver al Store
-        </button>
         <SkeletonHero />
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
           <div className="space-y-5">
@@ -1313,15 +1287,6 @@ export default function StoreGameDetailsPage({
 
   return (
     <div className="space-y-6 lf-page-in">
-      <button
-        type="button"
-        onClick={onBack}
-        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Volver al Store
-      </button>
-
       <section className="overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5">
         <StoreGameMediaGallery
           title={title}

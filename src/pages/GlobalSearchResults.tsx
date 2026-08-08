@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
-import { ArrowLeft, Gamepad2, Search } from "lucide-react";
+import { Gamepad2, Search } from "lucide-react";
+import { useBackButtonContext } from "../context/BackButtonContext";
 import PageContainer from "../components/layout/PageContainer";
 import { useSearch } from "../context/SearchContext";
 import { useGameDetails } from "../context/GameDetailsContext";
@@ -16,6 +17,13 @@ type Props = {
 export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
   const { query: searchContextQuery } = useSearch();
   const { selectGame } = useGameDetails();
+  const { setBackButton } = useBackButtonContext();
+
+  // Set back button in TopBar
+  useEffect(() => {
+    setBackButton({ onBack: onBack ?? (() => {}), label: "Back" });
+    return () => setBackButton(null);
+  }, [onBack]);
 
   const {
     setQuery,
@@ -52,20 +60,12 @@ export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
       title: result.title,
       imageUrl: result.imageUrl,
     });
-    onNavigate?.("game-details");
+    onNavigate?.("store");
   }
 
   return (
     <div className="flex h-full flex-col lf-page-in">
-      <div className="shrink-0 border-b border-(--surface-active-border) bg-white/[0.02] px-5 py-3 lg:px-7">
-        <button
-          onClick={onBack}
-          className="inline-flex items-center gap-2 text-sm text-(--color-muted) transition hover:text-(--color-text)"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </button>
-      </div>
+      {/* Back button handled by TopBar via BackButtonContext */}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <PageContainer className="py-6 lg:py-8">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, Gamepad2, Menu, Minus, Monitor, Square, X } from "lucide-react";
+import { Bell, Menu, Minus, Monitor, Square, X } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useSearch } from "../../context/SearchContext";
 import { useGameDetails } from "../../context/GameDetailsContext";
@@ -7,6 +7,7 @@ import { useGameDetails } from "../../context/GameDetailsContext";
 import PackagesToolbarSearch from "../packages/PackagesToolbarSearch";
 import type { StoreSearchDropdownItem } from "../packages/PackagesToolbar";
 import PackageUpdatePanel from "../notifications/PackageUpdatePanel";
+import BackButton from "../common/BackButton";
 
 const DEBUG_WINDOW_CONTROLS = false;
 
@@ -18,18 +19,27 @@ type TauriWindow = {
   onResized: (handler: (event: { payload: unknown }) => void) => Promise<() => void>;
 };
 
+export type StoreTabId = "discover" | "browse" | "repacks";
+
 type TopBarProps = {
   onOpenSidebar: () => void;
   activePage: AppPage;
   onNavigate?: (page: AppPage) => void;
   sidebarDrawerMode?: boolean;
+  // Store tabs — only rendered when activePage === "store"
+  storeTabs?: { id: StoreTabId; label: string }[];
+  activeStoreTab?: StoreTabId;
+  onStoreTabChange?: (tab: StoreTabId) => void;
+  // Back button — rendered when on a detail page
+  onBack?: () => void;
+  backLabel?: string;
 };
 
-export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarDrawerMode }: TopBarProps) {
+export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarDrawerMode, storeTabs, activeStoreTab, onStoreTabChange, onBack, backLabel }: TopBarProps) {
   const { setQuery } = useSearch();
   const { selectGame, selectedGame } = useGameDetails();
   const isGameDetailsActive = activePage === "library-game-detail" || !!selectedGame;
-  const showSearch = activePage !== "store";
+  const showSearch = true;
   const [luaUpdateCount, setLuaUpdateCount] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
 
@@ -177,7 +187,7 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
       title: item.title,
       imageUrl: item.imageUrl,
     });
-    onNavigate?.("game-details");
+    onNavigate?.("store");
   }
 
   function handleSubmit(query: string) {
@@ -227,6 +237,35 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
         onDoubleClick={handleDoubleClick}
       />
 
+      {/* Store tabs OR Back button — mutually exclusive, between left drag and search */}
+      {activePage === "store" && storeTabs && onStoreTabChange && (
+        <div className="flex items-center gap-1">
+          {storeTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onStoreTabChange(tab.id)}
+              className={`relative cursor-pointer px-3 py-1.5 text-sm transition duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97] ${
+                activeStoreTab === tab.id
+                  ? "font-bold text-(--color-text)"
+                  : "font-medium text-(--color-muted) hover:text-(--color-text)"
+              }`}
+            >
+              {tab.label}
+              {activeStoreTab === tab.id && (
+                <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {onBack && (
+        <div className="flex items-center">
+          <BackButton label={backLabel ?? "Back"} onClick={onBack} />
+        </div>
+      )}
+
       {showSearch && (
         <div className="flex min-w-0 flex-1 items-center justify-center px-2">
           <div className="w-full max-w-[540px]">
@@ -252,14 +291,10 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
       <div className="flex items-center gap-2 pr-2">
         <button
           onClick={() => onNavigate?.(activePage === "console" ? "home" : "console")}
-          className="hidden h-9 items-center gap-2 rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/10 px-3 text-sm text-(--color-accent) transition hover:bg-(--color-accent)/15 sm:inline-flex"
+          className="hidden h-9 w-9 items-center justify-center rounded-xl border border-(--color-accent)/20 bg-(--color-accent)/10 text-(--color-accent) transition hover:bg-(--color-accent)/15 sm:inline-flex"
+          title={activePage === "console" ? "Desktop Mode" : "Console Mode"}
         >
-          {activePage === "console" ? (
-            <Monitor className="h-3.5 w-3.5" />
-          ) : (
-            <Gamepad2 className="h-3.5 w-3.5" />
-          )}
-          {activePage === "console" ? "Desktop Mode" : "Console Mode"}
+          <Monitor className="h-4 w-4" />
         </button>
 
         <div className="relative">

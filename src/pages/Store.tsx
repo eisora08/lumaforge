@@ -2,14 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { countRender, isInteractionBusy } from "../services/perfCounters";
 import { isBootReady } from "../services/appBootCoordinator";
 import {
-  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   PackageSearch,
 } from "lucide-react";
 
 import PackageCard from "../components/packages/PackageCard";
-import PackagesToolbar from "../components/packages/PackagesToolbar";
 import type { StoreSearchDropdownItem } from "../components/packages/PackagesToolbar";
 
 import StoreDiscoverHeroCarousel from "../components/store/StoreDiscoverHeroCarousel";
@@ -26,6 +24,9 @@ import type { BrowseFilters } from "../components/store/StoreBrowseFiltersPanel"
 import type { StoreMoreLikeThisGame } from "../components/store/StoreMoreLikeThisSection";
 
 import { useSettings } from "../context/SettingsContext";
+import { useStoreTab } from "../context/StoreTabContext";
+import { useBackButtonContext } from "../context/BackButtonContext";
+import { useGameDetails } from "../context/GameDetailsContext";
 import { useProviderSearch } from "../hooks/useProviderSearch";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
 
@@ -218,12 +219,6 @@ type StoreProps = { onNavigate?: (page: AppPage) => void };
 
 const VIRTUAL_CARD_STYLE: React.CSSProperties = {};
 
-const STORE_TABS: { id: StoreTab; label: string }[] = [
-  { id: "discover", label: "Discover" },
-  { id: "browse", label: "Browse" },
-  { id: "repacks", label: "Repacks" },
-];
-
 type StoreSectionModel = import("../services/storeDiscoverCache").StoreSectionModel;
 
 type StoreBadge = {
@@ -300,19 +295,6 @@ function loadPersistedInteractions(): { scores: Record<string, number>; events: 
   } catch { return { scores: {}, events: {} }; }
 }
 
-function mapSteamDropdownItemToPackageGame(
-  item: StoreSearchDropdownItem
-): PackageGame {
-  return {
-    appId: item.appId,
-    title: item.title,
-    developer: undefined,
-    imageUrl: item.imageUrl,
-    platforms: [],
-    sources: [],
-  };
-}
-
 function dedupeGames(games: PackageGame[]): PackageGame[] {
   const seen = new Set<string>();
   return games.filter((game) => {
@@ -374,11 +356,9 @@ function batchedLoad<T>(
 export default function Store({ onNavigate }: StoreProps = {}) {
   countRender("Store");
   const {
-    selectedProvider,
     results,
     loading,
     setQuery,
-    setSelectedProvider,
   } = useProviderSearch();
 
   const { settings } = useSettings();
@@ -390,7 +370,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     query: storeSearchQuery,
     setQuery: setStoreSearchQuery,
     results: storeGameSearchResults,
-    loading: steamSearchLoading,
   } = useGameSearch({ debounceMs: 350 });
 
   const [steamSubmittedSearchGames, setSteamSubmittedSearchGames] = useState<
@@ -425,7 +404,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     Record<string, PackageGame>
   >({});
 
-  const [activeStoreTab, setActiveStoreTab] = useState<StoreTab>("discover");
+  const { activeStoreTab, setStoreTab: setActiveStoreTab } = useStoreTab();
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [selectedDetailGame, setSelectedDetailGame] =
     useState<PackageGame | null>(null);
@@ -2894,52 +2873,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     compiledDiscoveryIndex,
   ]);
 
-  function handleToolbarQueryChange(value: string) {
-    setStoreSearchQuery(value);
-    setActiveSectionId(null);
-
-    if (value.trim().length === 0) {
-      setSubmittedSearchQuery("");
-      setQuery("");
-      setSteamSubmittedSearchGames([]);
-    }
-  }
-
-  function submitSteamSearch() {
-    const query = storeSearchQuery.trim();
-
-    if (query.length === 0) {
-      return;
-    }
-
-    const games = steamSearchItems.map(mapSteamDropdownItemToPackageGame);
-    setSteamSubmittedSearchGames(games);
-    setSubmittedSearchQuery(query);
-    setQuery(query);
-    setActiveSectionId(null);
-    setSelectedDetailGame(null);
-
-    if (games.length > 0) {
-      const hydrated: Record<string, PackageGame> = {};
-      for (const game of games) {
-        const cached = getSourceAvailability(game.appId);
-        if (cached && cached.status === "ready" && cached.availableSources.length > 0) {
-          hydrated[game.appId] = {
-            ...game,
-            sources: cached.availableSources.map((s) => ({
-              providerId: s.id as any,
-              providerName: s.name,
-              fileType: s.type as any,
-              available: s.status === "ready",
-              downloadUrl: s.packageUrl,
-            })),
-          };
-        }
-      }
-      setProviderOverlayByAppId((current) => ({ ...current, ...hydrated }));
-    }
-  }
-
   function getSelectedSourceForGame(game: PackageGame): PackageSource | undefined {
     const key = selectedSourceKeyByAppId[game.appId];
     if (key) {
@@ -3255,15 +3188,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     _pendingTimeouts.current.add(timeoutId);
   }
 
-  function handleSelectSearchItem(item: StoreSearchDropdownItem) {
-    const game = mapSteamDropdownItemToPackageGame(item);
-
-    setActiveSectionId(null);
-
-    // Open details immediately — source resolution (+ cache hydration) happens inside openDetailsForGame
-    openDetailsForGame(game);
-  }
-
   function handleBackFromDetails() {
     setSelectedDetailGame(null);
   }
@@ -3280,10 +3204,44 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     setQuery("");
   }
 
-  function handleProviderChange(value: typeof selectedProvider) {
-    setSelectedProvider(value);
-    setActiveSectionId(null);
-  }
+  // Listen for tab changes from TopBar via custom event
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.tab) handleStoreTabChange(detail.tab);
+    };
+    window.addEventListener("store-tab-change", handler);
+    return () => window.removeEventListener("store-tab-change", handler);
+  }, []);
+
+  // Set back button in TopBar for section views AND game details
+  const { setBackButton } = useBackButtonContext();
+  useEffect(() => {
+    if (activeSectionId) {
+      setBackButton({ onBack: () => setActiveSectionId(null), label: "Volver al Store" });
+    } else if (selectedDetailGame) {
+      setBackButton({ onBack: handleBackFromDetails, label: "Volver al Store" });
+    } else {
+      setBackButton(null);
+    }
+  }, [activeSectionId, selectedDetailGame]);
+
+  // When search selects a game, open it inline in the Store (keeps tabs visible)
+  const { selectedGame: searchSelectedGame, clearSelection: clearGameSelection } = useGameDetails();
+  useEffect(() => {
+    if (searchSelectedGame && !selectedDetailGame) {
+      const browseGame = browseGames.find((g) => g.appId === searchSelectedGame.appId);
+      const pkg: PackageGame = browseGame ?? {
+        appId: searchSelectedGame.appId,
+        title: searchSelectedGame.title,
+        imageUrl: searchSelectedGame.imageUrl,
+        platforms: [],
+        sources: [],
+      };
+      openDetailsForGame(pkg);
+      clearGameSelection();
+    }
+  }, [searchSelectedGame]);
 
   async function downloadFromSource(game: PackageGame, source: PackageSource): Promise<{ success: boolean; jobId?: string }> {
     return await sharedDownloadFromSource(game, source, {
@@ -3451,45 +3409,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   return (
     <div className="mx-auto w-full max-w-[1920px] space-y-5 px-4 pb-5 sm:px-6 lg:px-8 xl:px-10 xl:pb-7 lf-page-in">
-      <div className="sticky top-0 z-30 -mx-4 border-b border-(--surface-active-border) bg-(--color-surface)/80 px-4 py-2.5 backdrop-blur-md sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 xl:-mx-10 xl:px-10">
-        <div className="flex items-center gap-4">
-          <div className="flex gap-1">
-            {STORE_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => handleStoreTabChange(tab.id)}
-                    className={`relative cursor-pointer px-3 py-1.5 text-sm font-medium transition duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97] ${
-                  activeStoreTab === tab.id
-                    ? "text-(--color-accent)"
-                    : "text-(--color-muted) hover:text-(--color-text)"
-                }`}
-              >
-                {tab.label}
-                {activeStoreTab === tab.id && (
-                  <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-(--color-accent)" />
-                )}
-              </button>
-            ))}
-          </div>
-
-          <div className="ml-auto w-full max-w-[360px]">
-            <PackagesToolbar
-              compact
-              query={storeSearchQuery}
-              selectedProvider={selectedProvider}
-              onQueryChange={handleToolbarQueryChange}
-              onProviderChange={handleProviderChange}
-              searchItems={steamSearchItems}
-              searchLoading={steamSearchLoading}
-              onSubmitSearch={submitSteamSearch}
-              onViewAllSearchResults={submitSteamSearch}
-              onSelectSearchItem={handleSelectSearchItem}
-            />
-          </div>
-        </div>
-      </div>
-
       {selectedDetailGameWithOverlay ? (
         <StoreGameDetailsPage
           game={selectedDetailGameWithOverlay}
@@ -3724,14 +3643,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
           return (
             <section className="space-y-5 lf-page-in">
-              <button
-                type="button"
-                onClick={() => setActiveSectionId(null)}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                Volver al Store
-              </button>
 
               <div>
                 <h2 className="text-2xl font-bold text-(--color-text)">
@@ -3779,14 +3690,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
           return (
             <section className="space-y-5 lf-page-in">
-              <button
-                type="button"
-                onClick={() => setActiveSectionId(null)}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition duration-150 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent) active:scale-[0.97]"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                Volver al Store
-              </button>
 
               <div>
                 <h2 className="text-2xl font-bold text-(--color-text)">

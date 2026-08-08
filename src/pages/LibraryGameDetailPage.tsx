@@ -28,6 +28,7 @@ import LibraryGameDetails from "../components/library/LibraryGameDetails";
 import StopGameModal from "../components/library/StopGameModal";
 import ToolsModal from "../components/tools/ToolsModal";
 import { useSettings } from "../context/SettingsContext";
+import { useBackButtonContext } from "../context/BackButtonContext";
 import { useGameSession, computeGameKey } from "../context/GameSessionContext";
 import { useDownloadQueueContext } from "../context/DownloadQueueContext";
 import { useGameLaunchState } from "../hooks/useGameLaunchState";
@@ -1206,6 +1207,13 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setSelectedGame(null);
     onBack?.();
   }
+
+  // Set back button in TopBar
+  const { setBackButton } = useBackButtonContext();
+  useEffect(() => {
+    setBackButton({ onBack: handleBack, label: "Back to Library" });
+    return () => setBackButton(null);
+  }, [handleBack]);
 
   if (!selectedGame) {
     return (

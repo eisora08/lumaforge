@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useGameDetails } from "../context/GameDetailsContext";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
+import { useBackButtonContext } from "../context/BackButtonContext";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
@@ -27,14 +28,13 @@ import type { AppPage } from "../types/navigation";
 const DEBUG_GAME_DETAILS = false;
 
 function DetailsShell({ onBack }: { onBack: () => void }) {
+  const { setBackButton } = useBackButtonContext();
+  useEffect(() => {
+    setBackButton({ onBack, label: "Back" });
+    return () => setBackButton(null);
+  }, [onBack]);
   return (
     <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7 lf-page-in">
-      <button
-        onClick={onBack}
-        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs text-(--color-text) transition hover:bg-white/10"
-      >
-        ← Back
-      </button>
       <SkeletonHero />
       <div className="space-y-3">
         <SkeletonBox className="h-5 w-64" />

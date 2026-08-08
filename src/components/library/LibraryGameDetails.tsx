@@ -24,7 +24,6 @@ function sameHeroFile(a: string, b: string): boolean {
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
 import {
-  ArrowLeft,
   BookMarked,
   BookOpen,
   Calendar,
@@ -1242,16 +1241,6 @@ export default function LibraryGameDetails({
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Hero banner — Steam-style header */}
       <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
-        {/* Back to Library — subtle at idle, lights up with theme accent */}
-        <button
-          type="button"
-          onClick={onBack}
-          className="absolute left-4 top-4 z-40 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-black/15 px-3 py-1.5 text-sm text-white/60 backdrop-blur-sm transition-all hover:bg-(--color-accent)/85 hover:text-white hover:shadow-lg hover:shadow-(--color-accent)/25 focus-visible:ring-2 focus-visible:ring-(--color-accent)/60"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Library
-        </button>
-
         {/* Layer 1 — Steam-style colorful blurred backdrop */}
         {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
             object-position: center ensures the same crop region as the sharp image.

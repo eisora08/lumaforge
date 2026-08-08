@@ -45,7 +45,6 @@ function computeCounts(games: LibraryGame[]): Counts {
     uninstalled: 0,
     "lua-ready": 0,
     disabled: 0,
-    updates: 0,
   };
   for (const g of games) {
     if (g.source === "steam") counts.steam++;
@@ -58,7 +57,6 @@ function computeCounts(games: LibraryGame[]): Counts {
     if (g.isInstallable || (!g.isPlayable && g.source === "steam")) counts.uninstalled++;
     if (g.hasLuaSource) counts["lua-ready"]++;
     if (g.isLuaDisabled) counts.disabled++;
-    if (g.hasUpdate) counts.updates++;
   }
   return counts;
 }
@@ -84,7 +82,6 @@ export default function LibraryRail({
       if (filter === "uninstalled" && g.isPlayable) return false;
       if (filter === "lua-ready" && !g.hasLuaSource) return false;
       if (filter === "disabled" && !g.isLuaDisabled) return false;
-      if (filter === "updates" && !g.hasUpdate) return false;
     }
     if (query) {
       const q = query.toLowerCase();
@@ -106,7 +103,6 @@ export default function LibraryRail({
     { key: "uninstalled", label: "Not Installed" },
     { key: "lua-ready", label: "Lua Ready" },
     { key: "disabled", label: "Disabled" },
-    { key: "updates", label: "Updates" },
   ];
 
   return (

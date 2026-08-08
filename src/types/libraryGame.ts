@@ -105,5 +105,5 @@ export type LibraryGame = {
   debridStatus?: string;
 };
 
-export type LibraryFilter = "all" | "steam" | "local" | "lua" | "epic" | "gog" | "debrid" | "installed" | "uninstalled" | "lua-ready" | "disabled" | "updates";
+export type LibraryFilter = "all" | "steam" | "local" | "lua" | "epic" | "gog" | "debrid" | "installed" | "uninstalled" | "lua-ready" | "disabled";
 export type LibrarySort = "name" | "appid" | "modified" | "size" | "recent";

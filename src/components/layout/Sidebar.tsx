@@ -6,14 +6,12 @@ import {
   Download,
   Library,
   Home,
-  RotateCcw,
   Settings,
-  X,
   Flame,
   PanelLeftOpen,
   PanelLeftClose,
-  Ellipsis,
   BarChart3,
+  X,
 } from "lucide-react";
 
 import type { AppPage } from "../../types/navigation";
@@ -32,6 +30,7 @@ type SidebarProps = {
   onClose: () => void;
   onToggleCollapse: () => void;
   onNavigate: (page: AppPage) => void;
+  width?: number;
 };
 
 type SidebarItem = {
@@ -63,6 +62,7 @@ export default function Sidebar({
   onClose,
   onToggleCollapse,
   onNavigate,
+  width,
 }: SidebarProps) {
   const isDrawer = mode === "drawer";
   const showLabels = isNavExpanded(mode);
@@ -71,39 +71,14 @@ export default function Sidebar({
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
   const [profile, patchProfile] = useUserProfile();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const profileMenuRef = useRef<HTMLDivElement | null>(null);
-  const profileBtnRef = useRef<HTMLButtonElement | null>(null);
+
+
   const avatarPreset = getAvatarPreset(profile.avatarPreset);
   const avatarDisplayUrl = resolveProfileMediaUrl(profile.avatarUrl);
   const [playerProfile, setPlayerProfile] = useState(() => getPlayerProfile());
 
   useEffect(() => {
     return subscribeAchievementStore(() => setPlayerProfile(getPlayerProfile()));
-  }, []);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (
-        profileMenuRef.current &&
-        !profileMenuRef.current.contains(e.target as Node) &&
-        profileBtnRef.current &&
-        !profileBtnRef.current.contains(e.target as Node)
-      ) {
-        setProfileMenuOpen(false);
-      }
-    }
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setProfileMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
   }, []);
 
   function handleNavigate(page: AppPage) {
@@ -132,10 +107,8 @@ export default function Sidebar({
 
   const sidebarContent = (
     <div
-      className={`flex h-full flex-col lf-sidebar-panel bg-(--shell-bg) ${
-        isCollapsed ? "w-18" : mode === "compact" ? "w-85" : "w-90"
-      }`}
-      style={{ backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}
+      className={`flex h-full flex-col lf-sidebar-panel bg-(--shell-bg)`}
+      style={{ width: isCollapsed ? undefined : "100%", backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}
     >
       {/* Header — shrink-0 */}
       <div
@@ -207,6 +180,7 @@ export default function Sidebar({
           showLabels={showLabels}
           isCollapsed={isCollapsed}
           onNavigate={handleNavigate}
+          width={width}
         />
 
         <div className={showLabels ? "mt-3" : "mt-2"}>
@@ -217,6 +191,7 @@ export default function Sidebar({
             showLabels={showLabels}
             isCollapsed={isCollapsed}
             onNavigate={handleNavigate}
+            width={width}
           />
         </div>
       </div>
@@ -275,119 +250,74 @@ export default function Sidebar({
 
       {/* Bottom block — shrink-0, pinned at bottom */}
       <div className={`shrink-0 ${
-        showLabels ? "px-4 pt-1 pb-4" : "px-3 pt-1 pb-3"
+        showLabels ? "px-4 pt-1 pb-2" : "px-3 pt-1 pb-2"
       }`}>
-        {/* Profile card — distinct from game rows */}
+        {/* Profile card — compact Discord-style */}
         <div className="relative">
           <div
             role="button"
             tabIndex={0}
             onClick={() => setProfileModalOpen(true)}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setProfileModalOpen(true); } }}
-            className={`group flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-(--color-border)/30 bg-(--color-surface) p-3 text-left transition hover:border-(--color-border)/60 hover:brightness-110 hover:ring-1 hover:ring-(--color-accent)/15 ${
+            className={`group relative flex w-full cursor-pointer items-center gap-2.5 rounded-xl p-3 text-left transition hover:brightness-110 ${
               isCollapsed ? "justify-center" : ""
             }`}
+            style={{ background: "var(--surface-active)", borderColor: "var(--surface-active-border)" }}
             title={isCollapsed ? `${profile.displayName} — ${profile.status}` : undefined}
           >
+            {/* Avatar */}
             <div className="relative shrink-0">
               <div
-                className={`flex items-center justify-center overflow-hidden rounded-full ring-1 ring-white/10 ${
-                  isCollapsed ? "h-10 w-10" : "h-10 w-10"
-                }`}
+                className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full ring-1 ring-white/10"
                 style={{ background: avatarPreset?.gradient ?? "var(--color-accent)" }}
               >
                 {avatarDisplayUrl ? (
-                  <img
-                    src={avatarDisplayUrl}
-                    alt=""
-                    className="h-full w-full rounded-full object-cover"
-                  />
+                  <img src={avatarDisplayUrl} alt="" className="h-full w-full rounded-full object-cover" />
                 ) : (
-                  <span className="text-lg">{avatarPreset?.icon ?? "🎮"}</span>
+                  <span className="text-sm">{avatarPreset?.icon ?? "🎮"}</span>
                 )}
               </div>
-              <span
-                className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-(--color-bg)"
-                style={{ background: "var(--color-accent)" }}
-              />
             </div>
 
             {!isCollapsed && (
-              <div className="flex min-w-0 flex-1 flex-col items-start text-left">
-                <span className="text-sm font-semibold text-(--color-text) truncate w-full">
-                  {profile.displayName}
-                </span>
-                <span className="text-[11px] text-(--color-muted)/70 truncate max-w-32">
-                  {profile.status}
-                </span>
-                {playerProfile.level > 0 && (
-                  <div className="mt-1.5 w-full">
-                    <div className="flex items-center gap-1.5">
-                      <div className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400/15 px-1.5">
-                        <span className="text-[9px] font-bold text-amber-400">Lv.{playerProfile.level}</span>
-                      </div>
-                      <span className="text-[9px] text-amber-400/50">{playerProfile.totalXp} XP</span>
-                    </div>
-                    <div className="mt-1 h-1 w-full rounded-full bg-white/[0.06] overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-amber-400/50 transition-all duration-500"
-                        style={{ width: `${Math.max(2, playerProfile.progressPercent)}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+              <>
+                {/* Name + level in one line */}
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-sm font-medium text-(--color-text) truncate">
+                    {profile.displayName}
+                  </span>
+                  {playerProfile.level > 0 && (
+                    <span className="text-[10px] text-(--color-muted)/60">
+                      Lv.{playerProfile.level} · {playerProfile.totalXp} XP
+                    </span>
+                  )}
+                </div>
 
-            {!isCollapsed && (
-              <button
-                ref={profileBtnRef}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setProfileMenuOpen((p) => !p);
-                }}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted)/30 opacity-0 transition hover:bg-white/8 hover:text-(--color-muted) group-hover:opacity-100"
-                aria-label="Profile menu"
-              >
-                <Ellipsis className="h-4 w-4" />
-              </button>
+                {/* Settings icon — visible on hover */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNavigate("settings");
+                  }}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted)/50 transition-all duration-200 hover:bg-white/10 hover:text-(--color-muted) hover:rotate-90"
+                  aria-label="Settings"
+                >
+                  <Settings className="h-4 w-4" />
+                </button>
+              </>
             )}
           </div>
 
-          {/* Dropdown menu — anchored to ellipsis button corner */}
-          {profileMenuOpen && (
-            <div
-              ref={profileMenuRef}
-              className="absolute right-0 bottom-full mb-2 w-48 rounded-xl border border-(--color-border) bg-(--color-surface) p-1.5 shadow-2xl z-[100]"
-            >
-              <button
-                onClick={() => {
-                  setProfileMenuOpen(false);
-                  onNavigate("settings");
-                }}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-(--color-text) transition hover:bg-white/8"
-              >
-                <Settings className="h-4 w-4 text-(--color-muted)" />
-                Configuración
-              </button>
-              <button
-                onClick={() => {
-                  setProfileMenuOpen(false);
-                }}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-(--color-muted)/70 transition hover:bg-white/8 hover:text-(--color-text)"
-              >
-                <RotateCcw className="h-4 w-4" />
-                Reiniciar Steam
-              </button>
+          {/* XP bar as bottom border — absolute, full width */}
+          {playerProfile.level > 0 && (
+            <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full overflow-hidden bg-white/[0.04]">
+              <div
+                className="h-full rounded-full bg-amber-400/50 transition-all duration-500"
+                style={{ width: `${Math.max(2, playerProfile.progressPercent)}%` }}
+              />
             </div>
           )}
         </div>
-
-        {showLabels && (
-          <p className="mt-3 px-1 text-[10px] text-(--color-muted)/50">
-            v0.1.0 Preview
-          </p>
-        )}
       </div>
 
       {/* Profile Modal */}
@@ -431,9 +361,8 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`relative z-10 lf-sidebar-panel ${
-        isCollapsed ? "w-18" : mode === "compact" ? "w-85" : "w-90"
-      }`}
+      className="relative z-10 lf-sidebar-panel"
+      style={isCollapsed ? undefined : { width: width ? `${width}px` : "var(--sidebar-width)" }}
     >
       {sidebarContent}
     </aside>
@@ -447,6 +376,7 @@ type SidebarSectionProps = {
   showLabels: boolean;
   isCollapsed: boolean;
   onNavigate: (page: AppPage) => void;
+  width?: number;
 };
 
 function SidebarSection({
@@ -456,6 +386,7 @@ function SidebarSection({
   showLabels,
   isCollapsed,
   onNavigate,
+  width,
 }: SidebarSectionProps) {
   return (
     <div>
@@ -490,7 +421,10 @@ function SidebarSection({
               />
 
               {showLabels && (
-                <span className="lf-sidebar-label lf-sidebar-label-visible">
+                <span
+                  className="lf-sidebar-label lf-sidebar-label-visible"
+                  style={width && width < 320 ? { fontSize: "12px" } : undefined}
+                >
                   {item.label}
                 </span>
               )}
