@@ -91,19 +91,26 @@ function getCardImage(
   mode: "landscape" | "poster",
   canonicalAppInfo: GameAppInfo | null,
 ): string | undefined {
+  const media = canonicalAppInfo?.media;
+  if (!media) return undefined;
+
   if (mode === "poster") {
     return (
-      canonicalAppInfo?.media?.coverPath ||
-      canonicalAppInfo?.media?.landscapePath ||
-      canonicalAppInfo?.media?.backgroundPath ||
+      [media.coverPath, media.landscapePath, media.backgroundPath]
+        .find((p): p is string => !!p && isLocalPath(p)) ||
+      media.coverPath ||
+      media.landscapePath ||
+      media.backgroundPath ||
       undefined
     );
   }
 
   return (
-    canonicalAppInfo?.media?.landscapePath ||
-    canonicalAppInfo?.media?.backgroundPath ||
-    canonicalAppInfo?.media?.coverPath ||
+    [media.landscapePath, media.backgroundPath, media.coverPath]
+      .find((p): p is string => !!p && isLocalPath(p)) ||
+    media.landscapePath ||
+    media.backgroundPath ||
+    media.coverPath ||
     undefined
   );
 }
@@ -149,7 +156,6 @@ function GameLauncherTileInner({
   const [mediaLoading, setMediaLoading] = useState(true);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
   const hasRequestedData = useRef(false);
-  const hasMountedData = useRef(false);
   // Request game data via priority system when card enters viewport
   useEffect(() => {
     if (!game.appId || !isVisible || hasRequestedData.current) return;
@@ -157,21 +163,17 @@ function GameLauncherTileInner({
     requestGameData(game.appId, LoadPriority.VIEWPORT);
   }, [game.appId, isVisible]);
 
-  // Load canonical appinfo for this game â€” deferred until visible
+  // Load canonical appinfo for this game — re-runs when media paths change
   useEffect(() => {
     if (!game.appId || !isVisible) {
       if (!game.appId) setMediaLoading(false);
       return;
     }
-    if (hasMountedData.current) return;
-    hasMountedData.current = true;
     let cancelled = false;
     setMediaLoading(true);
     loadGameAppInfoWithMediaFallback(game.appId)
       .then(async (appInfo) => {
         if (cancelled) return;
-        // Ensure canonical name is resolved â€” if appinfo.name is null/placeholder,
-        // try metadata resolver and store details, and write back to disk.
         if (appInfo && (!appInfo.name || appInfo.name.startsWith("Steam App "))) {
           const resolvedName = await resolveCanonicalName(game.appId!);
           if (resolvedName) {
@@ -187,7 +189,7 @@ function GameLauncherTileInner({
         if (!cancelled) setMediaLoading(false);
       });
     return () => { cancelled = true; };
-  }, [game.appId, isVisible]);
+  }, [game.appId, isVisible, game.coverPath, game.landscapePath, game.backgroundPath]);
 
   const artworkMode = settings.libraryCardArtworkMode ?? "landscape";
 

@@ -274,6 +274,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   const [libraryFingerprint, setLibraryFingerprintState] = useState<string | null>(null);
   const appInfoLoaded = useRef(false);
   const gamesRef = useRef<LibraryGame[]>([]);
+  const _snapshotMediaUnsubRef = useRef<(() => void) | null>(null);
   const appInfoMapRef = useRef(appInfoMap);
   useEffect(() => { appInfoMapRef.current = appInfoMap; }, [appInfoMap]);
   const lastSettingsKey = useRef<string>("");
@@ -1164,7 +1165,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   // Subscribe to SQLite data changes — read directly from SQLite (no re-scan)
   useEffect(() => {
     let lastRefresh = 0;
-    const unsub = subscribeDataChanges(async (type) => {
+    const unsub = subscribeDataChanges(async (type, detail) => {
       if (type === "games-upserted") {
         const now = Date.now();
         if (now - lastRefresh > 3000) {
@@ -1206,9 +1207,99 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           }
         }
       }
+
+      // Patch media paths when appinfo is updated (after download completes)
+      if (type === "appinfo-changed") {
+        const appId = detail;
+        if (!appId) return;
+        try {
+          const { getCachedGameAppInfo } = await import("../services/gameCacheService");
+          const appInfo = await getCachedGameAppInfo(appId);
+          if (!appInfo?.media) return;
+
+          const current = gamesRef.current;
+          const idx = current.findIndex((g) => g.appId === appId);
+          if (idx === -1) return;
+
+          const game = current[idx];
+          const m = appInfo.media;
+          if (game.coverPath === (m.coverPath ?? undefined) &&
+              game.landscapePath === (m.landscapePath ?? undefined) &&
+              game.backgroundPath === (m.backgroundPath ?? undefined) &&
+              game.logoPath === (m.logoPath ?? undefined) &&
+              game.iconPath === (m.iconPath ?? undefined)) return;
+
+          const updated = [...current];
+          updated[idx] = {
+            ...game,
+            coverPath: m.coverPath ?? undefined,
+            landscapePath: m.landscapePath ?? undefined,
+            backgroundPath: m.backgroundPath ?? undefined,
+            logoPath: m.logoPath ?? undefined,
+            iconPath: m.iconPath ?? undefined,
+          };
+          setGames(updated);
+          console.log(`[LIBRARY_CONTEXT][MEDIA_PATCH] appid=${appId} patched cover=${!!m.coverPath} landscape=${!!m.landscapePath}`);
+        } catch { /* non-critical */ }
+      }
     });
     return unsub;
   }, [applyGamesSafely]);
+
+  // Subscribe to snapshot writes — patch media paths on existing games when downloads complete
+  useEffect(() => {
+    let cancelled = false;
+    import("../services/startupSnapshotService").then(({ subscribeSnapshotUpdated, getCachedSnapshot }) => {
+      if (cancelled) return;
+      const unsub = subscribeSnapshotUpdated(async () => {
+        try {
+          const snapshot = getCachedSnapshot();
+          if (!snapshot || !snapshot.library.games.length) return;
+
+          const mediaByAppId = new Map<string, SnapshotGame["media"]>();
+          for (const sg of snapshot.library.games) {
+            if (sg.appId) mediaByAppId.set(sg.appId, sg.media);
+          }
+
+          const current = gamesRef.current;
+          let changed = false;
+          const updated = current.map((game) => {
+            if (!game.appId) return game;
+            const sm = mediaByAppId.get(game.appId);
+            if (!sm) return game;
+
+            const bg = sm.backgroundPath ?? undefined;
+            const ls = sm.landscapePath ?? undefined;
+            const cv = sm.coverPath ?? undefined;
+            const lg = sm.logoPath ?? undefined;
+            const ic = sm.iconPath ?? undefined;
+
+            if (
+              game.backgroundPath === bg &&
+              game.landscapePath === ls &&
+              game.coverPath === cv &&
+              game.logoPath === lg &&
+              game.iconPath === ic
+            ) return game;
+
+            changed = true;
+            return { ...game, backgroundPath: bg, landscapePath: ls, coverPath: cv, logoPath: lg, iconPath: ic };
+          });
+
+          if (changed) {
+            const patched = updated.filter((g, i) => current[i] !== g).length;
+            setGames(updated);
+            console.log(`[LIBRARY_CONTEXT][SNAPSHOT_MEDIA_SYNC] patched=${patched} games=${updated.length}`);
+          }
+        } catch { /* snapshot not available */ }
+      });
+      _snapshotMediaUnsubRef.current = unsub;
+    });
+    return () => {
+      cancelled = true;
+      _snapshotMediaUnsubRef.current?.();
+    };
+  }, []);
 
   const updateGame = useCallback((appId: string, updates: Partial<LibraryGame>) => {
     setGames((prev) => {

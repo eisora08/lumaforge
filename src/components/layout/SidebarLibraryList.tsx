@@ -50,7 +50,7 @@ import type { AppPage } from "../../types/navigation";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts } from "../../services/tauri";
-import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey } from "../../services/gameCacheService";
+import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey, detectAndQueueMissingMedia } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
 import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
 import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
@@ -314,6 +314,21 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
     };
     loadBatch();
   }, [filtered, canonicalInfoMap, sidebarRetryKey]);
+
+  // Auto-download missing media for sidebar games not yet covered by Library grid
+  useEffect(() => {
+    const gamesWithoutMedia = filtered
+      .filter((g) => {
+        if (!g.appId) return false;
+        const resolved = sidebarMediaMap[g.appId];
+        if (resolved && (resolved.cover.exists || resolved.landscape.exists)) return false;
+        return true;
+      })
+      .slice(0, 10);
+    for (const game of gamesWithoutMedia) {
+      detectAndQueueMissingMedia(game.appId!, "library-visible").catch(() => {});
+    }
+  }, [filtered, sidebarMediaMap]);
 
   // Trigger retry when canonicalInfoMap gains entries for IDs with incomplete media
   useEffect(() => {

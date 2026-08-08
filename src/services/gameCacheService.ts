@@ -1282,6 +1282,10 @@ export function invalidateResolvedMediaCache(appId: string): void {
   // resolvedSrcCache keys are raw filesystem paths (not appIds), so we must
   // clear the entire cache. convertFileSrc() is cheap so this is safe.
   resolvedSrcCache.clear();
+  // Also clear AsyncImage's global load cache for this app's images
+  import("../components/common/AsyncImage").then(({ invalidateImageLoadCacheForApp }) => {
+    invalidateImageLoadCacheForApp(appId);
+  }).catch(() => {});
   if (ENABLE_VERBOSE_GAME_CACHE_LOGS) console.log(`[MEDIA][SRC_CACHE_CLEAR] reason=media-invalidated appid=${appId}`);
 }
 
@@ -1681,7 +1685,9 @@ export type MediaRepairSource =
   | "visible-details"
   | "refresh-artwork"
   | "global"
-  | "boot";
+  | "boot"
+  // Library grid auto-download
+  | "library-visible";
 
 // ── Source alias helpers ──
 const DISPLAY_ONLY_SOURCES = new Set([
@@ -1690,7 +1696,7 @@ const DISPLAY_ONLY_SOURCES = new Set([
 
 const MANUAL_ARTWORK_SOURCES = new Set(["manual-refresh-artwork", "refresh-artwork"]);
 
-const VISIBLE_REPAIR_SOURCES = new Set(["game-details-visible-repair", "visible-details"]);
+const VISIBLE_REPAIR_SOURCES = new Set(["game-details-visible-repair", "visible-details", "library-visible"]);
 
 const GLOBAL_REPAIR_SOURCES = new Set(["global", "boot", "boot-hydration", "local-media-repair"]);
 

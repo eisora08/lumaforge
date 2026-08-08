@@ -478,14 +478,6 @@ export async function notifyMediaUpdated(appId: string, options?: { source?: str
     return;
   }
 
-  // Skip snapshot write when source is local-media-repair — the MediaIndex was
-  // already updated with the new paths from appinfo.json, so re-reading appinfo
-  // would find the same data and produce a no-effective-change skip.
-  if (options?.source === "local-media-repair") {
-    if (DEBUG_BOOTSNAPSHOT) console.log(`[BootSnapshot][WRITE_SKIP] reason=media-index-already-synced appid=${appId} source=local-media-repair`);
-    return;
-  }
-
   _dirtyAppIds.add(appId);
   if (appId === "268910") {
     console.log(`[ACH][TRACE_SNAPSHOT_DIRTY] appid=268910 source=${options?.source ?? "unspecified"}`);

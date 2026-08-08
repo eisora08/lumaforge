@@ -143,11 +143,17 @@ function readFileAsBase64(file: File): Promise<{ base64: string; ext: string }> 
   });
 }
 
-/** Steam library_600x900.jpg URL — the proper vertical poster for cover art. */
-function buildSteamCoverUrl(appId: string): string | null {
+/** Steam Official Assets — CDN fallback URLs matching the auto-download pipeline. */
+function buildSteamOfficialUrl(appId: string, role: string): string | null {
   const id = parseInt(appId, 10);
   if (!id || isNaN(id) || id <= 0) return null;
-  return `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`;
+  switch (role) {
+    case "cover": return `https://shared.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`;
+    case "landscape": return `https://steamcdn-a.akamaihd.net/steam/apps/${id}/header.jpg`;
+    case "background": return `https://steamcdn-a.akamaihd.net/steam/apps/${id}/library_hero.jpg`;
+    case "logo": return `https://steamcdn-a.akamaihd.net/steam/apps/${id}/logo.png`;
+    default: return null;
+  }
 }
 
 // ── Debug tracing for manual cover persistence ──
@@ -1467,13 +1473,13 @@ export default function GameEditDialog({
             const metaMap = await resolveGameMetadata([Number(steamAppId)]);
             const meta = metaMap[Number(steamAppId)];
             if (meta) {
-              const steamUrlMap: Record<MediaRole, string | null | undefined> = {
-                icon: null,
-                cover: buildSteamCoverUrl(steamAppId),
-                background: meta.library_hero_image ?? meta.hero_image ?? meta.background_image,
-                landscape: meta.library_header_image ?? meta.header_image,
-                logo: meta.library_logo_image ?? meta.logo_image,
-              };
+            const steamUrlMap: Record<MediaRole, string | null> = {
+              icon: null,
+              cover: buildSteamOfficialUrl(steamAppId, "cover"),
+              landscape: buildSteamOfficialUrl(steamAppId, "landscape"),
+              background: buildSteamOfficialUrl(steamAppId, "background"),
+              logo: buildSteamOfficialUrl(steamAppId, "logo"),
+            };
               const downloadUrl = steamUrlMap[role] ?? null;
               if (downloadUrl) {
                 await handleUrlDownload(role, downloadUrl);
@@ -1582,12 +1588,12 @@ export default function GameEditDialog({
         let downloadUrl: string | null = null;
 
         if (sourceId === "steam" && metadata) {
-          const steamUrlMap: Record<MediaRole, string | null | undefined> = {
+          const steamUrlMap: Record<MediaRole, string | null> = {
             icon: null,
-            cover: buildSteamCoverUrl(appId),
-            background: metadata.library_hero_image ?? metadata.hero_image ?? metadata.background_image,
-            landscape: metadata.library_header_image ?? metadata.header_image,
-            logo: metadata.library_logo_image ?? metadata.logo_image,
+            cover: buildSteamOfficialUrl(appId, "cover"),
+            landscape: buildSteamOfficialUrl(appId, "landscape"),
+            background: buildSteamOfficialUrl(appId, "background"),
+            logo: buildSteamOfficialUrl(appId, "logo"),
           };
           downloadUrl = steamUrlMap[role] ?? null;
         } else if (sourceId === "sgdb" && settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled) {
