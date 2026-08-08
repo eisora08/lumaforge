@@ -232,6 +232,11 @@ export default function StoreGameDetailsPage({
   }, []);
   useEffect(() => () => clearAmbientSource("store-details"), []);
 
+  // Scroll to top when entering game details
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [game.appId]);
+
   // Success modal state â€” shown after package download completes
   const [successModalOpen, setSuccessModalOpen] = useState(false);
   const [completedGameTitle, setCompletedGameTitle] = useState("");
