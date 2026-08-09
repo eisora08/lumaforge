@@ -143,6 +143,7 @@ export default function PackagesToolbarSearch({
     saveRecentSearch(item.title);
     setRecentSearches(getRecentSearches());
     setDropdownOpen(false);
+    setQuery("");
     onSelectItem?.(item);
   }
 
