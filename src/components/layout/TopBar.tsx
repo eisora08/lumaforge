@@ -212,15 +212,13 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
   }, []);
 
   function handleSelectItem(item: StoreSearchDropdownItem) {
-    setQuery(item.title);
     selectGame({
       appId: item.appId,
       title: item.title,
       imageUrl: item.imageUrl,
     });
     onNavigate?.("store");
-    // Re-focus search input after navigation so user can search again
-    setTimeout(() => searchInputRef.current?.focus(), 150);
+    setQuery("");
   }
 
   function handleSubmit(query: string) {
