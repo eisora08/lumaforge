@@ -12,7 +12,17 @@ type AchievementToastProps = {
   gameTitle?: string;
 };
 
+// Session-level dedup: prevent same achievement from showing twice
+let _shownThisSession = new Set<string>();
+
 export function showAchievementToast(event: UnlockEvent, appId?: string, gameTitle?: string) {
+  // Dedup by appId:apiName key
+  const key = `${appId ?? "unknown"}:${event.apiName}`;
+  if (_shownThisSession.has(key)) return;
+  _shownThisSession.add(key);
+  // Auto-cleanup after 5 minutes to prevent memory leak in long sessions
+  setTimeout(() => _shownThisSession.delete(key), 5 * 60 * 1000);
+
   toast.custom(
     (t) => <AchievementToastComponent t={t} event={event} appId={appId} gameTitle={gameTitle} />,
     { duration: ACHIEVEMENT_TOAST_DURATION, position: "bottom-right" },

@@ -5,7 +5,7 @@ import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtime
 
 const POPUP_WIDTH = 360;
 const POPUP_IMAGE_HEIGHT = 202;
-const CYCLE_MS = 5000;
+const CYCLE_MS = 2000;
 const CROSSFADE_MS = 400;
 
 function formatRelativeTime(unixSeconds: number | null): string {

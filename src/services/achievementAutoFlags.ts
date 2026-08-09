@@ -37,8 +37,8 @@ export const ACHIEVEMENT_IMAGE_MIGRATION_AUTO = false;
 /** Write achievement cache automatically */
 export const ACHIEVEMENT_WRITE_CACHE_AUTO = false;
 
-/** Watch librarycache changes and auto-sync */
-export const ACHIEVEMENT_AUTO_SYNC_ENABLED = false;
+/** Watch librarycache changes and auto-sync — always enabled, interval hardcoded to 30s */
+export const ACHIEVEMENT_AUTO_SYNC_ENABLED = true;
 
 // ── Debug logging flags (all default false) ──
 

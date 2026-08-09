@@ -9,7 +9,6 @@ import {
   TrendingUp,
   Store,
   Zap,
-  Timer,
   Clock,
   Trophy,
   FolderOpen,
@@ -23,7 +22,7 @@ import { useSettings } from "../../context/SettingsContext";
 import ToggleOption from "./ToggleOption";
 import SettingsSection from "./SettingsSection";
 
-type LayoutTab = "hero" | "sections" | "performance";
+type LayoutTab = "hero" | "sections";
 
 /* ================================================================== */
 /*  HERO SOURCE METADATA                                               */
@@ -163,11 +162,6 @@ export default function HomeLayoutEditor() {
     updateSetting("dashboardSectionLimits", {});
   }
 
-  function resetPerformance() {
-    updateSetting("dashboardDeferredRendering", false);
-    updateSetting("dashboardInitialVisibleSections", 0);
-  }
-
   const visibleCount = DASHBOARD_SECTIONS.filter((s) => isSectionVisible(s.id)).length;
 
   const selectedHeroSourceNames = heroSources
@@ -185,7 +179,6 @@ export default function HomeLayoutEditor() {
         {([
           { id: "hero" as LayoutTab, label: "Hero", icon: <Sparkles className="h-3.5 w-3.5" /> },
           { id: "sections" as LayoutTab, label: "Sections", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
-          { id: "performance" as LayoutTab, label: "Performance", icon: <Timer className="h-3.5 w-3.5" /> },
         ]).map((tab) => (
           <button
             key={tab.id}
@@ -464,59 +457,6 @@ export default function HomeLayoutEditor() {
               );
             })}
           </div>
-        </div>
-      )}
-
-      {/* ── Performance Tab ───────────────────────────────────── */}
-      {activeTab === "performance" && (
-        <div className="space-y-4">
-          <ToggleOption
-            label="Deferred Rendering"
-            description="Lazy-load sections below the fold. Faster initial render, slight scroll delay."
-            enabled={settings.dashboardDeferredRendering}
-            onChange={(v) => updateSetting("dashboardDeferredRendering", v)}
-          />
-
-          {settings.dashboardDeferredRendering && (
-            <div className="lf-surface rounded-2xl border p-4">
-              <p className="mb-3 text-sm font-medium text-(--color-text)">
-                Initial Visible Sections
-              </p>
-              <p className="mb-3 text-xs text-(--color-muted)">
-                How many sections render immediately. Others load on scroll.
-              </p>
-              <div className="flex gap-2">
-                {[
-                  { label: "2", value: 2 },
-                  { label: "3", value: 3 },
-                  { label: "4", value: 4 },
-                  { label: "All", value: 0 },
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateSetting("dashboardInitialVisibleSections", opt.value)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${
-                      settings.dashboardInitialVisibleSections === opt.value
-                        ? "bg-(--color-accent)/15 text-(--color-accent) ring-1 ring-(--color-accent)/30"
-                        : "bg-white/5 text-(--color-muted) hover:bg-white/10"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={resetPerformance}
-            className="inline-flex items-center gap-1.5 text-xs text-(--color-muted) transition hover:text-(--color-text)"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Reset performance defaults
-          </button>
         </div>
       )}
     </SettingsSection>

@@ -689,34 +689,6 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       enabled={settings.achievementOverlayNotificationsEnabled}
                       onChange={(enabled) => updateSetting("achievementOverlayNotificationsEnabled", enabled)}
                     />
-
-                    <ToggleOption
-                      label="Auto-sync progress"
-                      description="Automatically refresh achievements when Steam writes new progress to disk (librarycache change, game exit, or window focus)."
-                      enabled={settings.achievementAutoSyncEnabled}
-                      onChange={(enabled) => updateSetting("achievementAutoSyncEnabled", enabled)}
-                    />
-
-                    {settings.achievementAutoSyncEnabled && (
-                      <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
-                        <div className="space-y-0.5">
-                          <label className="text-sm font-medium text-(--color-text)">
-                            Sync interval (seconds)
-                          </label>
-                          <p className="text-xs text-(--color-muted)">
-                            How often to check for new achievement progress. Default: 300 (5 min).
-                          </p>
-                        </div>
-                        <input
-                          type="number"
-                          min={30}
-                          max={3600}
-                          value={settings.achievementAutoSyncIntervalSeconds ?? 300}
-                          onChange={(e) => updateSetting("achievementAutoSyncIntervalSeconds", Math.max(30, Math.min(3600, Number(e.target.value) || 300)))}
-                          className="h-9 w-24 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 text-sm text-(--color-text) outline-none text-right focus:border-(--color-accent)"
-                        />
-                      </div>
-                    )}
                   </div>
                 </SettingsSection>
 
@@ -763,6 +735,13 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         ))}
                       </div>
                     </div>
+
+                    <ToggleOption
+                      label="Game session HUD"
+                      description="Show a floating pill during gameplay with game info, elapsed time, and stop/resume buttons."
+                      enabled={settings.gameSessionHudEnabled}
+                      onChange={(enabled) => updateSetting("gameSessionHudEnabled", enabled)}
+                    />
                   </div>
                 </SettingsSection>
 

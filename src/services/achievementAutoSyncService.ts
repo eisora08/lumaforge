@@ -70,7 +70,7 @@ class AchievementAutoSyncService {
   private subscribers = new Set<AutoSyncCallback>();
   private focusHandler: (() => void) | null = null;
   private enabled = true;
-  private intervalSeconds = 10;
+  private intervalSeconds = 30;
 
   subscribe(cb: AutoSyncCallback): () => void {
     this.subscribers.add(cb);

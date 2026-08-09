@@ -56,6 +56,7 @@ export const defaultSettings: AppSettings = {
   achievementNativeNotificationsEnabled: false,
   achievementOverlayNotificationsEnabled: false,
   gameSessionOverlayEnabled: false,
+  gameSessionHudEnabled: true,
   overlayNotificationPosition: "top-right",
   achievementAutoSyncEnabled: true,
   achievementAutoSyncIntervalSeconds: 10,

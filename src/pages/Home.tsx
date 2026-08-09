@@ -33,55 +33,6 @@ type Props = {
 };
 
 
-
-/* ================================================================== */
-/*  DEFERRED SECTION WRAPPER                                           */
-/* ================================================================== */
-
-function DeferredSection({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const [isVisible, setIsVisible] = useState(false);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  if (isVisible) return <>{children}</>;
-
-  return (
-    <div ref={sentinelRef} className="min-h-[80px]">
-      <div className="flex snap-x gap-4 overflow-x-auto scroll-smooth pb-2 scrollbar-none">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <div
-            key={i}
-            className="w-[min(75vw,260px)] shrink-0 snap-start sm:w-56 animate-pulse"
-          >
-            <div className="aspect-video rounded-xl bg-white/5" />
-            <div className="mt-3 h-4 w-3/4 rounded bg-white/5" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ================================================================== */
 /*  HELPERS                                                            */
 /* ================================================================== */
@@ -102,22 +53,8 @@ function getSectionLimit(sectionId: string, limits: Record<string, number>, fall
 /*  SECTION WRAPPER                                                    */
 /* ================================================================== */
 
-/**
- * Wraps a section with optional deferred rendering.
- * When `deferred` is false or `eager` is true, renders immediately.
- * Otherwise, uses IntersectionObserver to render on scroll.
- */
-function SectionWrap({
-  deferred,
-  eager,
-  children,
-}: {
-  deferred: boolean;
-  eager: boolean;
-  children: React.ReactNode;
-}) {
-  if (!deferred || eager) return <>{children}</>;
-  return <DeferredSection>{children}</DeferredSection>;
+function SectionWrap({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
 }
 
 /* ================================================================== */
@@ -145,8 +82,6 @@ export default function Home({ onNavigate }: Props) {
   }, []);
 
   const heroEnabled = settings.dashboardHeroEnabled ?? true;
-  const deferredRendering = settings.dashboardDeferredRendering ?? false;
-  const initialVisibleSections = settings.dashboardInitialVisibleSections ?? 0;
   const sectionVisibility = settings.dashboardSectionVisibility ?? {};
   const sectionLimits = settings.dashboardSectionLimits ?? {};
 
@@ -241,23 +176,6 @@ export default function Home({ onNavigate }: Props) {
 
   const maxWidth = settings.useExpandedDashboard ? undefined : settings.dashboardContentWidth;
 
-  // Counter for tracking which sections should be eager (first N)
-  // We compute the eager set outside render to avoid side effects during render
-  const eagerSections = useMemo(() => {
-    if (!deferredRendering || initialVisibleSections <= 0) return new Set<string>();
-    const order = [
-      "continue-playing",
-      "favorites",
-      "recommended",
-      "trending-right-now",
-      "featured-picks",
-      "top-picks",
-      "top-played",
-      "store-highlights",
-    ];
-    return new Set(order.slice(0, initialVisibleSections));
-  }, [deferredRendering, initialVisibleSections]);
-
   return (
     <div className="mx-auto w-full px-6 py-6 lg:px-8 xl:px-10 lf-page-in" style={{ maxWidth: maxWidth ? `${maxWidth}px` : undefined }}>
       <div className="space-y-8">
@@ -266,7 +184,7 @@ export default function Home({ onNavigate }: Props) {
 
         {/* ── Library sections ──────────────────────────────────── */}
         {isSectionVisible("continue-playing", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("continue-playing")}>
+          <SectionWrap>
             <ContinuePlayingSection
               snapshot={snapshot}
               onNavigate={onNavigate}
@@ -277,7 +195,7 @@ export default function Home({ onNavigate }: Props) {
         )}
 
         {isSectionVisible("favorites", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("favorites")}>
+          <SectionWrap>
             <FavoritesSection
               snapshot={snapshot}
               onNavigate={onNavigate}
@@ -288,7 +206,7 @@ export default function Home({ onNavigate }: Props) {
         )}
 
         {isSectionVisible("recommended", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("recommended")}>
+          <SectionWrap>
             <RecommendedSection
               onNavigate={onNavigate}
               continuePlayingAppIds={continuePlayingAppIds}
@@ -325,13 +243,13 @@ export default function Home({ onNavigate }: Props) {
         )}
 
         {dashboardDiscoveryReady && isSectionVisible("trending-right-now", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("trending-right-now")}>
+          <SectionWrap>
             <TrendingRightNowSection onNavigate={onNavigate} maxItems={getSectionLimit("trending-right-now", sectionLimits, 8)} />
           </SectionWrap>
         )}
 
         {dashboardDiscoveryReady && isSectionVisible("featured-picks", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("featured-picks")}>
+          <SectionWrap>
             <FeaturedPicksSection
               onNavigate={onNavigate}
               maxItems={getSectionLimit("featured-picks", sectionLimits, 12)}
@@ -340,7 +258,7 @@ export default function Home({ onNavigate }: Props) {
         )}
 
         {dashboardDiscoveryReady && isSectionVisible("top-picks", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("top-picks")}>
+          <SectionWrap>
             <TopPicksDashboardSection
               onNavigate={onNavigate}
               maxItems={getSectionLimit("top-picks", sectionLimits, 12)}
@@ -350,7 +268,7 @@ export default function Home({ onNavigate }: Props) {
 
         {/* ── Bottom sections ──────────────────────────────────── */}
         {isSectionVisible("top-played", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("top-played")}>
+          <SectionWrap>
             <TopPlayedSection
               snapshot={snapshot}
               onNavigate={onNavigate}
@@ -361,7 +279,7 @@ export default function Home({ onNavigate }: Props) {
         )}
 
         {isSectionVisible("store-highlights", sectionVisibility) && (
-          <SectionWrap deferred={deferredRendering} eager={eagerSections.has("store-highlights")}>
+          <SectionWrap>
             <StoreHighlightsSection onNavigate={onNavigate} />
           </SectionWrap>
         )}

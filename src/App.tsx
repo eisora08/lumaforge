@@ -357,7 +357,7 @@ function App() {
       <DebridCompletionModal onNavigateToLibrary={() => handleNavigate("library")} />
       <AchievementWatcherInit />
       <GameDetailsProvider>
-        <GameSessionHUD onNavigate={handleNavigate} />
+        {settings.gameSessionHudEnabled !== false && <GameSessionHUD onNavigate={handleNavigate} />}
         <AmbientNavFallback activePage={activePage} />
         <AppLayout activePage={activePage} onNavigate={handleNavigate} isConsoleMode={activePage === "console"}>
           <AppRouteTransition routeKey={activePage}>
