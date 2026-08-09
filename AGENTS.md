@@ -6748,3 +6748,47 @@ Remove overly-technical settings from user-facing UI, hardcode auto-sync achieve
 ### Build
 - `tsc --noEmit` ✅
 - `vite build` ✅
+
+## Session — Idle-phase bulk artwork download for Library
+
+### Goal
+Fix artwork auto-download for Library games — most images weren't downloading because global repair was disabled, interaction guards blocked during scroll, and one-shot queuedMediaRef prevented retries.
+
+### Problem
+7 barriers prevented bulk artwork download:
+1. `AUTO_MEDIA_REPAIR_GLOBAL = false` — global/boot repair disabled
+2. `isInteractionBusy()` — blocked during scroll (2s after every scroll event)
+3. `queuedMediaRef` one-shot — blocked first attempt = never retried
+4. 30-min no-source cooldown — games without metadata blocked 30 min
+5. No post-boot bulk download — `hydrateMediaOnStartup` only syncs existing files
+6. MAX_CONCURRENT = 2 in media queue
+7. P4-P6 idle scheduler only runs when truly idle
+
+### Solution
+Added a new `"idle-bulk"` source that bypasses interaction/cooldown guards, with a post-boot idle-phase bulk download that processes ALL games.
+
+### Part 1: New `idle-bulk` source (`gameCacheService.ts`)
+- Added `"idle-bulk"` to `MediaRepairSource` type
+- Added to `VISIBLE_REPAIR_SOURCES` set (passes the visibility guard)
+- `idle-bulk` bypasses `isNoSourceCooldown()` check — always retries
+- `idle-bulk` bypasses `isInteractionBusy()` check — only runs when app is truly idle
+
+### Part 2: Idle-phase bulk download effect (`Library.tsx`)
+- Runs after `isBootReady()` + 10s idle delay
+- Processes ALL library games (not just visible ones) in batches of 8
+- Filters out system tool apps (Steamworks, Proton, etc.)
+- 2s delay between batches to avoid disk thrashing
+- Cancellable on unmount
+
+### Part 3: One-shot retry fix (`Library.tsx`)
+- `queuedMediaRef` changed from `Set<string>` to `Map<string, number>` (timestamps)
+- Games can retry after 5 minutes (was permanent one-shot)
+- Fixed the issue where blocked first attempts meant never retrying
+
+### Key Files Changed
+- `src/services/gameCacheService.ts` — `idle-bulk` source, bypass guards
+- `src/pages/Library.tsx` — bulk download effect, timestamp-based retry, `isSystemToolApp` import
+
+### Build
+- `tsc --noEmit` ✅
+- `vite build` ✅
