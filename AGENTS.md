@@ -6599,3 +6599,57 @@ Add browser-like back/forward navigation to the TopBar, restructure layout so To
 - `cargo check` ✅
 - `tsc --noEmit` ✅
 - `vite build` ✅
+
+## Session — Store sub-view back/forward navigation + search fixes
+
+### Goal
+Fix TopBar ← → navigation for Store sub-views (Repacks tab, View All sections, game detail, search) and fix global search showing empty query. Add sub-view stack so detail-to-detail back navigation works correctly.
+
+### Part 1: Tagged history entries (`src/services/navigationHistory.ts`)
+- Entries changed from `AppPage` strings to `{ page: AppPage; tag?: string }` objects
+- `pushToHistory(page, tag?)` — dedup only when both page AND tag match
+- `goBack()` / `goForward()` return `HistoryEntry` objects
+
+### Part 2: TopBar back/forward with tags (`src/components/layout/TopBar.tsx`)
+- `handleGoBack` reads `HistoryEntry`; if same page + tag, dispatches `lumaforge-store-detail-back`
+- `handleGoForward` dispatches `lumaforge-store-forward` with `{ detail: { tag } }`
+- Removed auto-focus after search selection (was re-opening dropdown)
+
+### Part 3: Store sub-view stack (`src/pages/Store.tsx`)
+- `StoreSubView` type: `"tab"` | `"section"` | `"search"` | `"detail"` (detail includes full `PackageGame`)
+- `_subViewStackRef` tracks all sub-view openings in order
+- `pushStoreHistory(tag)` dispatches `lumaforge-store-push-history` for App.tsx
+- `pushSubView()` / `popSubView()` / `clearSubViewStack()` helpers
+
+### Part 4: Back handler — detail-to-detail restoration
+- Pops top of stack, peeks at remaining entries
+- If another `"detail"` is below, restores that game (`setSelectedDetailGame(newTop.game)`)
+- If no detail below, clears detail panel (`setSelectedDetailGame(null)`)
+- Tab change clears entire stack
+
+### Part 5: Forward handler
+- Listens to `lumaforge-store-forward` event
+- Parses tag string: `detail:A` → find game in `browseGames`/`providerOverlay` → push + restore
+- `section:X` → push + `setActiveSectionId`; `tab:X` → push + `setActiveStoreTab`
+
+### Part 6: Search fixes
+- **Global search empty query**: `AppLayout.tsx` had TWO separate `SearchProvider` instances (TopBar and page content). Unified to single `SearchProvider` wrapping both.
+- **Search input not clearing**: `PackagesToolbarSearch.handleSelectItem` now calls `setQuery("")` to clear local `useGameSearch` state.
+
+### Part 7: App.tsx generalization
+- `lumaforge-store-detail-open` replaced by `lumaforge-store-push-history` event
+- Removed dead `store-detail` virtual page type from `AppPage` union
+
+### Key Files Changed
+- `src/services/navigationHistory.ts` — tagged entries `{ page, tag? }`
+- `src/components/layout/TopBar.tsx` — tagged back/forward, removed auto-focus
+- `src/pages/Store.tsx` — sub-view stack, back/forward handlers, `openDetailsForGame` pushes game
+- `src/App.tsx` — `lumaforge-store-push-history` listener, removed `store-detail` page type
+- `src/types/navigation.ts` — removed `"store-detail"`
+- `src/components/layout/AppLayout.tsx` — unified single `SearchProvider`
+- `src/components/packages/PackagesToolbarSearch.tsx` — `setQuery("")` in `handleSelectItem`
+
+### Build
+- `cargo check` ✅
+- `tsc --noEmit` ✅
+- `vite build` ✅
