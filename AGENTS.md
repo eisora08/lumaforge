@@ -6705,3 +6705,46 @@ Add a Steam-style hover preview popup to Library grid cards showing screenshot c
 ### Build
 - `tsc --noEmit` ✅
 - `vite build` ✅
+
+## Session — Settings simplification + auto-sync hardcode + HUD toggle + toast dedup
+
+### Goal
+Remove overly-technical settings from user-facing UI, hardcode auto-sync achievement ON, add GameSessionHUD toggle, and fix duplicate achievement toasts.
+
+### Part 1: Remove HomeLayout Performance tab
+- `HomeLayoutEditor.tsx` — removed Performance tab from tabs array, removed `resetPerformance()`, removed `Timer` import
+- `Home.tsx` — removed `DeferredSection` component, removed `deferredRendering`/`initialVisibleSections` variables, `SectionWrap` now always renders children immediately
+- Removed `dashboardDeferredRendering` and `dashboardInitialVisibleSections` settings from user-facing UI (kept in types/defaults for backward compatibility)
+
+### Part 2: Hardcode auto-sync achievement ON
+- `achievementAutoFlags.ts` — `ACHIEVEMENT_AUTO_SYNC_ENABLED = true` (was `false`, making the Settings toggle a no-op)
+- `achievementAutoSyncService.ts` — default `intervalSeconds = 30` (was `10`, UI said `300`, service capped at `60`)
+- `Settings.tsx` — removed "Auto-sync progress" toggle and "Sync interval" input from Notifications section
+
+### Part 3: GameSessionHUD toggle
+- `settings.ts` — added `gameSessionHudEnabled: boolean` to `AppSettings`
+- `SettingsContext.tsx` — default `gameSessionHudEnabled: true`
+- `Settings.tsx` — added toggle in Session Overlay section: "Game session HUD — Show a floating pill during gameplay with game info, elapsed time, and stop/resume buttons"
+- `App.tsx` — gated `GameSessionHUD` with `settings.gameSessionHudEnabled !== false`
+
+### Part 4: Achievement toast dedup
+- `library/AchievementToast.tsx` — added session-level dedup (`_shownThisSession` Set keyed by `appId:apiName`) with 5-minute auto-cleanup to prevent memory leak
+- Prevents duplicate toasts when watcher + session-end resolver fire for the same achievement
+
+### Part 5: Settings.tsx JSX fix
+- Fixed pre-existing missing `</label>` close tag in Bing Search API key section
+
+### Key Files Changed
+- `src/components/settings/HomeLayoutEditor.tsx` — removed Performance tab
+- `src/pages/Home.tsx` — removed DeferredSection, deferredRendering, SectionWrap passthrough
+- `src/services/achievementAutoFlags.ts` — ACHIEVEMENT_AUTO_SYNC_ENABLED = true
+- `src/services/achievementAutoSyncService.ts` — intervalSeconds = 30
+- `src/pages/Settings.tsx` — removed auto-sync config, added HUD toggle, fixed JSX
+- `src/types/settings.ts` — added gameSessionHudEnabled
+- `src/context/SettingsContext.tsx` — default gameSessionHudEnabled: true
+- `src/App.tsx` — gated GameSessionHUD
+- `src/components/library/AchievementToast.tsx` — session dedup
+
+### Build
+- `tsc --noEmit` ✅
+- `vite build` ✅
