@@ -6518,3 +6518,84 @@ SQLite writes (games, media, appinfo) don't trigger React re-renders. UI shows s
 ### Build
 - `cargo check` ✅
 - `tsc --noEmit` ✅
+
+## Session — TopBar navigation history + sidebar refactor + Store metadata merge fix
+
+### Goal
+Add browser-like back/forward navigation to the TopBar, restructure layout so TopBar spans full width above sidebar, fix the Store metadata flash-to-skeleton bug when navigating from global search, and unify the SearchProvider.
+
+### Part 1: Navigation history (`src/services/navigationHistory.ts` — **new**)
+- Module-level `history: AppPage[]` stack with `currentIndex`
+- `pushToHistory(page)` — truncates forward history, deduplicates consecutive
+- `goBack()` / `goForward()` — return the target page
+- `subscribeHistory` / `getHistorySnapshot` — `useSyncExternalStore` contract
+- No localStorage persistence (resets on restart)
+
+### Part 2: TopBar ← → buttons (`src/components/layout/TopBar.tsx`)
+- Logo moved to leftmost position (was in Sidebar header)
+- `<ChevronLeft>` / `<ChevronRight>` buttons using `historyGoBack` / `historyGoForward`
+- Disabled state when `!historySnapshot.canGoBack` / `canGoForward`
+- Removed: `BackButton` component, `BackButtonContext` imports, `onBack`/`backLabel` props, `onOpenSidebar`/`sidebarDrawerMode` props
+
+### Part 3: Sidebar simplified (`src/components/layout/Sidebar.tsx`)
+- Removed: header block (logo, title, collapse/expand toggle, `PanelLeftOpen`/`PanelLeftClose`, `Flame` icon)
+- Drawer mode: close button moved to `absolute right-3 top-3` (was in header)
+- Removed `onToggleCollapse` prop (collapse now via TopBar hamburger only)
+
+### Part 4: AppLayout restructure (`src/components/layout/AppLayout.tsx`)
+- TopBar rendered **above** sidebar as `relative z-20` full-width row
+- Sidebar + content below as `relative z-10 flex-1`
+- Removed: `BackButtonProvider`, `handleToggleCollapse`, `handleOpenSidebar`
+- **Unified `SearchProvider`** — single instance wraps both TopBar and page content (was two separate instances → search query never reached GlobalSearchResults)
+
+### Part 5: Store metadata merge fix (`src/pages/Store.tsx`)
+- **Root cause**: batch metadata effect `setStoreMetadataByAppId(metadata)` did full replacement; detail game excluded from `visibleAppIds` → metadata wiped → skeleton
+- **Fix**: `setStoreMetadataByAppId((prev) => ({ ...prev, ...metadata }))` — merge instead of replace
+- Empty-visibleAppIds path preserves detail game metadata
+- Error path no longer wipes entire map
+- Detail metadata fetch extracted to `fetchDetailMetadata()` with 2s retry
+- Change detection guard simplified (no more key-count comparison)
+- Detail game back handler via `lumaforge-store-detail-back` custom event
+- Search dedup ref prevents re-opening same game details
+
+### Part 6: StoreGameDetailsPage cleanup (`src/components/store/StoreGameDetailsPage.tsx`)
+- Removed per-render `console.log` statements (PROPS_RECEIVED, SOURCE_CHECK_STATE, REVIEWS_STATE, SUMMARY_PROPS_FORWARD)
+- Gated remaining logs behind `ENABLE_VERBOSE_SOURCE_LOGS`
+- Metadata timeout reduced from 30s error state to 5s slow warning
+- Added subtle loading indicator during metadata fetch
+
+### Part 7: Search clear fix (`src/components/packages/PackagesToolbarSearch.tsx`)
+- `handleSelectItem` now calls `setQuery("")` to clear the input after selection
+- `TopBar.handleSelectItem` no longer calls `setQuery(item.title)` or auto-focuses after navigation
+
+### Part 8: Global search navigation (`src/App.tsx`, `src/types/navigation.ts`)
+- Added `"store-detail"` virtual page type
+- `handleNavigate` supports `fromHistory` param for ← → buttons
+- `lumaforge-store-detail-open` / `lumaforge-store-detail-back` custom events for Store inline detail navigation
+- `pushToHistory` called on all forward navigation (not ← →)
+
+### Part 9: Other files
+- `src/pages/GameDetails.tsx` — removed `BackButtonContext` usage, `onBack` now optional
+- `src/pages/GlobalSearchResults.tsx` — removed `BackButtonContext` usage
+- `src/pages/LibraryGameDetailPage.tsx` — removed `BackButtonContext` usage
+- `src/services/tauri.ts` — added 25s timeout wrapper for `resolveSteamAppMetadata`
+
+### Key Files Changed
+- `src/services/navigationHistory.ts` — **new** — browser-like back/forward stack
+- `src/components/layout/TopBar.tsx` — logo + nav buttons + removed BackButton/sidebar deps
+- `src/components/layout/Sidebar.tsx` — removed header/logo/collapse
+- `src/components/layout/AppLayout.tsx` — layout restructure + unified SearchProvider
+- `src/pages/Store.tsx` — metadata merge fix + detail fetch retry + back event
+- `src/components/store/StoreGameDetailsPage.tsx` — log cleanup + loading indicator
+- `src/components/packages/PackagesToolbarSearch.tsx` — query clear on select
+- `src/App.tsx` — store-detail page type + history push + back event listener
+- `src/types/navigation.ts` — added `"store-detail"`
+- `src/pages/GameDetails.tsx` — removed BackButtonContext
+- `src/pages/GlobalSearchResults.tsx` — removed BackButtonContext
+- `src/pages/LibraryGameDetailPage.tsx` — removed BackButtonContext
+- `src/services/tauri.ts` — metadata timeout wrapper
+
+### Build
+- `cargo check` ✅
+- `tsc --noEmit` ✅
+- `vite build` ✅
