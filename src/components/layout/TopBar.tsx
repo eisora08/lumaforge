@@ -40,6 +40,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
   const [luaUpdateCount, setLuaUpdateCount] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const bellButtonRef = useRef<HTMLButtonElement>(null);
   const { jobs } = useDownloadQueue();
 
   // Navigation history
@@ -359,6 +360,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
 
         <div className="relative">
           <button
+            ref={bellButtonRef}
             onClick={handleBellClick}
             className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 transition hover:bg-white/8"
           >
@@ -371,7 +373,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
           </button>
 
           {showPanel && (
-            <PackageUpdatePanel onClose={handlePanelClose} onNavigate={onNavigate ?? (() => {})} />
+            <PackageUpdatePanel onClose={handlePanelClose} onNavigate={onNavigate ?? (() => {})} anchorRef={bellButtonRef} />
           )}
         </div>
 

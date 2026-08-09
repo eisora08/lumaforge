@@ -147,9 +147,9 @@ export default function DownloadsModal({ open, onClose, onNavigate }: Props) {
       onClick={(e) => {
         if (e.target === backdropRef.current) onClose();
       }}
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-md lf-modal-overlay"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
     >
-      <div className="relative mx-4 flex h-[min(750px,80vh)] w-full max-w-[1040px] flex-col overflow-hidden rounded-2xl border shadow-2xl lf-modal-panel" style={{ background: "var(--surface-active)", borderColor: "var(--surface-active-border)" }}>
+      <div className="relative mx-4 flex h-[min(750px,80vh)] w-full max-w-[1040px] flex-col rounded-2xl border shadow-2xl lf-surface lf-modal-panel">
         {/* ── Header ── */}
         <div className="flex shrink-0 items-center justify-between border-b border-(--surface-active-border) px-6 py-5">
           <div className="flex items-center gap-3">

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { ExternalLink, Package } from "lucide-react";
 import type { UpdateEntry } from "../../services/installedLuaScanner";
 import { getUpdateEntries, subscribeUpdateStatus, markUpdatesNotified } from "../../services/installedLuaScanner";
@@ -8,11 +9,22 @@ import type { AppPage } from "../../types/navigation";
 type Props = {
   onClose: () => void;
   onNavigate: (page: AppPage) => void;
+  anchorRef: RefObject<HTMLElement | null>;
 };
 
-export default function PackageUpdatePanel({ onClose, onNavigate }: Props) {
+export default function PackageUpdatePanel({ onClose, onNavigate, anchorRef }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [entries, setEntries] = useState<UpdateEntry[]>(() => getUpdateEntries());
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number } | null>(null);
+
+  // Calculate position from anchor element on mount
+  useEffect(() => {
+    const el = anchorRef.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      setPanelPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+    }
+  }, [anchorRef]);
 
   // Subscribe to live updates so the panel refreshes without close/reopen
   useEffect(() => {
@@ -64,10 +76,11 @@ export default function PackageUpdatePanel({ onClose, onNavigate }: Props) {
     }
   };
 
-  return (
+  return createPortal(
     <div
       ref={panelRef}
-      className="absolute right-0 top-full z-50 mt-2 w-80 rounded-2xl border border-(--surface-active-border)/40 bg-(--color-bg) shadow-xl"
+      className="fixed z-[99998] w-80 rounded-2xl border border-(--surface-active-border)/40 lf-surface shadow-xl"
+      style={panelPos ? { top: panelPos.top, right: panelPos.right } : { top: 0, right: 0, visibility: "hidden" }}
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-(--surface-active-border)/20 px-4 py-3">
@@ -118,6 +131,7 @@ export default function PackageUpdatePanel({ onClose, onNavigate }: Props) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

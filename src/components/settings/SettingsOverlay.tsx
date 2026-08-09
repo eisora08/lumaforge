@@ -86,7 +86,7 @@ export default function SettingsOverlay({
   return createPortal(
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-sm lf-modal-overlay"
+      className="fixed inset-0 z-[99999] bg-black/40"
       aria-hidden="true"
     >
       <div
@@ -94,8 +94,7 @@ export default function SettingsOverlay({
         role="dialog"
         aria-modal="true"
         aria-label="Configuracion"
-        className="absolute inset-2 flex flex-col overflow-hidden rounded-2xl border border-(--surface-active-border) shadow-2xl lf-modal-panel sm:inset-4 md:inset-6 lg:inset-8"
-        style={{ background: "var(--surface-active)", borderColor: "var(--surface-active-border)" }}
+        className="absolute inset-2 flex flex-col overflow-hidden rounded-2xl shadow-2xl lf-surface lf-modal-panel sm:inset-4 md:inset-6 lg:inset-8"
         onClick={(e) => e.stopPropagation()}
       >
         {/* ── Header fijo ── */}
