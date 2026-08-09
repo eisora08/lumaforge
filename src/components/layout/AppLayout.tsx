@@ -134,14 +134,13 @@ export default function AppLayout({
       <LibraryGamesProvider>
         <GameActivityProvider>
         <StoreTabProvider>
+        <SearchProvider>
         {/* TopBar — full width, above sidebar */}
         <div className="relative z-20">
-          <SearchProvider>
             <TopBarShell
               activePage={activePage}
               onNavigate={onNavigate}
             />
-          </SearchProvider>
         </div>
 
         {/* Sidebar + Content — below TopBar */}
@@ -156,15 +155,14 @@ export default function AppLayout({
           />
 
           <div className="flex min-w-0 flex-1 flex-col lf-page">
-            <SearchProvider>
               <main className="min-h-0 flex-1 overflow-y-auto">
                 <RouteErrorBoundary>
                   {children}
                 </RouteErrorBoundary>
               </main>
-            </SearchProvider>
           </div>
         </div>
+        </SearchProvider>
         </StoreTabProvider>
         </GameActivityProvider>
       </LibraryGamesProvider>
