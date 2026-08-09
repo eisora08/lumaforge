@@ -6653,3 +6653,55 @@ Fix TopBar ← → navigation for Store sub-views (Repacks tab, View All section
 - `cargo check` ✅
 - `tsc --noEmit` ✅
 - `vite build` ✅
+
+## Session — Library hover preview card (Steam-style)
+
+### Goal
+Add a Steam-style hover preview popup to Library grid cards showing screenshot carousel, playtime, and last played time.
+
+### Part 1: `src/components/games/GameHoverPreview.tsx` (new)
+- Portal-based popup rendered to `document.body` via `createPortal`
+- Positioned to the right of the hovered card (Steam-style), with viewport boundary clamping
+- **Screenshot carousel**: 2 `<img>` stacked (prev + current) with `opacity` crossfade (400ms), 5s per screenshot, dots indicator (max 8 dots), pauses on hover
+- **Fallback**: no screenshots → cover/landscape/background art as static image
+- **Playtime**: reads `getPlaytimeEntryByAppId()` → `formatPlaytime()` + relative `lastPlayedAt`
+- **Info**: game title, developer, publisher
+- Inline SVG icons for Clock/Calendar (no lucide dependency)
+
+### Part 2: `src/components/games/GameLauncherTile.tsx`
+- Added `onHoverStart?: (game, rect)` and `onHoverEnd?: () => void` props
+- Added `useCallback` import, `rootRef` for DOMRect measurement
+- Combined ref merge: `(node) => { ref.current = node; rootRef.current = node; }`
+- `handleHoverEnter` calls both prefetch + `onHoverStart` with `getBoundingClientRect()`
+- `handleHoverLeave` calls both prefetch cleanup + `onHoverEnd`
+- Memo comparison updated to include new callback props
+
+### Part 3: `src/pages/Library.tsx`
+- Added hover state: `hoveredGame`, `gamePosition`, `hoverTimerRef`
+- 500ms enter delay before showing popup (debounced via `setTimeout`)
+- `handleHoverStart` / `handleHoverEnd` callbacks passed to all `GameLauncherTile` instances
+- `GameHoverPreview` rendered when `hoveredGame && gamePosition` are set
+- Preview pauses on mouse-enter, hides on mouse-leave
+
+### Part 4: `src/App.css`
+- `@keyframes hoverPreviewFadeIn` / `hoverPreviewFadeOut` for crossfade
+- `prefers-reduced-motion` guard disables animation
+
+### Data sources (no additional fetching)
+| Data | Source |
+|------|--------|
+| Screenshots | `game.metadata?.screenshots[]` (Steam CDN URLs) |
+| Playtime | `getPlaytimeEntryByAppId(appId).totalPlaytimeSeconds` |
+| Last played | `getPlaytimeEntryByAppId(appId).lastPlayedAt` (Unix seconds) |
+| Title | `game.title` |
+| Developer/Publisher | `game.metadata?.developer`, `game.metadata?.publishers` |
+
+### Key Files Changed
+- `src/components/games/GameHoverPreview.tsx` — **new** — portal popup with carousel
+- `src/components/games/GameLauncherTile.tsx` — `onHoverStart`/`onHoverEnd` props + combined ref
+- `src/pages/Library.tsx` — hover state management + preview rendering
+- `src/App.css` — crossfade keyframes
+
+### Build
+- `tsc --noEmit` ✅
+- `vite build` ✅
