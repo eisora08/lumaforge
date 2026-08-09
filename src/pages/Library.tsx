@@ -75,6 +75,7 @@ export default function LibraryPage({ onNavigate }: Props) {
 
   const [sourceSelectorGame, setSourceSelectorGame] = useState<LibraryGame | null>(null);
   const [addGameOpen, setAddGameOpen] = useState(false);
+  const [tileOverlayOpen, setTileOverlayOpen] = useState(false);
   const [debridRepacks, setDebridRepacks] = useState<RepackQueryResult[]>([]);
   const [debridInstallGame, setDebridInstallGame] = useState<LibraryGame | null>(null);
   const [filter, setFilter] = useState<LibraryFilter>("all");
@@ -674,6 +675,7 @@ export default function LibraryPage({ onNavigate }: Props) {
                             onDeleteScript={handleDeleteScript}
                             onHoverStart={handleHoverStart}
                             onHoverEnd={handleHoverEnd}
+                            onOverlayToggle={setTileOverlayOpen}
                           />
                         ))}
                       </div>
@@ -808,7 +810,7 @@ export default function LibraryPage({ onNavigate }: Props) {
           steamGridDbArtworkEnabled: settings?.steamGridDbArtworkEnabled ?? false,
         }}
       />
-      {hoveredGame && gamePosition && (
+      {hoveredGame && gamePosition && !tileOverlayOpen && !sourceSelectorGame && !addGameOpen && (
         <GameHoverPreview
           game={hoveredGame}
           position={gamePosition}

@@ -186,14 +186,17 @@ export default function CardActionMenu({
   if ((!open && !closing) || !pos) return null;
 
   return createPortal(
-    <div
-      ref={menuRef}
-      role="menu"
-      className={`fixed z-[100000] w-[184px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl ${closing ? "lf-popover-exit" : "lf-popover-enter"}`}
-      style={{ top: pos.top, left: pos.left }}
-    >
-      {children}
-    </div>,
+    <>
+      <div className="fixed inset-0 z-[99999]" onMouseDown={onClose} />
+      <div
+        ref={menuRef}
+        role="menu"
+        className={`fixed z-[100000] w-[184px] overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl ${closing ? "lf-popover-exit" : "lf-popover-enter"}`}
+        style={{ top: pos.top, left: pos.left }}
+      >
+        {children}
+      </div>
+    </>,
     document.body
   );
 }

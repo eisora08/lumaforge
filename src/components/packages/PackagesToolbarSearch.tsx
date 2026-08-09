@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowRight, Clock, Search, X } from "lucide-react";
 
 import type { StoreSearchDropdownItem } from "./PackagesToolbar";
@@ -178,6 +179,19 @@ export default function PackagesToolbarSearch({
   }
 
   const isTopbar = variant === "topbar";
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Calculate dropdown position relative to viewport when it opens
+  useEffect(() => {
+    if (dropdownOpen && wrapperRef.current) {
+      const rect = wrapperRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: isTopbar ? rect.left : rect.left + rect.width / 2 - 240,
+        width: isTopbar ? rect.width : 480,
+      });
+    }
+  }, [dropdownOpen, isTopbar]);
 
   return (
     <div ref={wrapperRef} className={`relative ${className ?? ""}`}>
@@ -211,13 +225,12 @@ export default function PackagesToolbarSearch({
         />
       </div>
 
-      {shouldShowDropdown && (
-        <div
-          className={`lf-popover-enter absolute z-50 overflow-hidden rounded-2xl border border-(--surface-active-border) bg-(--color-surface)/95 shadow-2xl backdrop-blur-xl ${
-            isTopbar
-              ? "left-0 top-10 w-[400px]"
-              : "left-1/2 top-12 w-[480px] -translate-x-1/2"
-          }`}
+      {shouldShowDropdown && dropdownPos && createPortal(
+        <>
+          <div className="fixed inset-0 z-[99997] bg-black/40" onClick={() => setDropdownOpen(false)} />
+          <div
+            className="lf-popover-enter fixed z-[99998] overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface shadow-2xl"
+          style={{ top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width }}
         >
           {searchLoading ? (
             <div className="p-2">
@@ -389,6 +402,8 @@ export default function PackagesToolbarSearch({
             </>
           )}
         </div>
+        </>,
+        document.body
       )}
     </div>
   );

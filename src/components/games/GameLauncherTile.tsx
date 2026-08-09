@@ -87,6 +87,7 @@ type GameLauncherTileProps = {
   onDeleteScript?: (game: LibraryGame) => void;
   onHoverStart?: (game: LibraryGame, rect: DOMRect) => void;
   onHoverEnd?: () => void;
+  onOverlayToggle?: (open: boolean) => void;
 };
 
 function getCardImage(
@@ -128,7 +129,8 @@ function areGameLauncherTilePropsEqual(prev: GameLauncherTileProps, next: GameLa
     prev.onInstall === next.onInstall &&
     prev.onDeleteScript === next.onDeleteScript &&
     prev.onHoverStart === next.onHoverStart &&
-    prev.onHoverEnd === next.onHoverEnd
+    prev.onHoverEnd === next.onHoverEnd &&
+    prev.onOverlayToggle === next.onOverlayToggle
   );
 }
 
@@ -145,6 +147,7 @@ function GameLauncherTileInner({
   onDeleteScript,
   onHoverStart,
   onHoverEnd,
+  onOverlayToggle,
 }: GameLauncherTileProps) {
   countRender("GameLauncherTile");
   const { settings } = useSettings();
@@ -494,7 +497,7 @@ function GameLauncherTileInner({
   }
 
   return (
-    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="lf-game-card group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
+    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); onOverlayToggle?.(true); onHoverEnd?.(); }} className="lf-game-card group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
       {/* Image */}
       <div
         role="button"
@@ -745,7 +748,7 @@ function GameLauncherTileInner({
           <CardActionMenu
             open={menuOpen}
             anchorRef={menuAnchorRef}
-            onClose={() => { setMenuOpen(false); setContextMenuPos(null); }}
+            onClose={() => { setMenuOpen(false); setContextMenuPos(null); onOverlayToggle?.(false); }}
             cursorPos={contextMenuPos}
             gameId={game.appId}
           >
@@ -936,17 +939,17 @@ function GameLauncherTileInner({
                 {
                   label: "Edit Game Details",
                   icon: <Edit className="h-3.5 w-3.5" />,
-                  onClick: () => { setMenuOpen(false); setEditInitialTab("general"); setEditDialogOpen(true); },
+                  onClick: () => { setMenuOpen(false); setEditInitialTab("general"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
                 {
                   label: "Manage Artwork",
                   icon: <Image className="h-3.5 w-3.5" />,
-                  onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); },
+                  onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
                 {
                   label: "Game Fixes",
                   icon: <Wrench className="h-3.5 w-3.5" />,
-                  onClick: () => { setMenuOpen(false); setToolsModalOpen(true); },
+                  onClick: () => { setMenuOpen(false); setToolsModalOpen(true); onOverlayToggle?.(true); },
                 },
                     ...(game.source === "manual"
                     ? [{
@@ -1049,7 +1052,7 @@ function GameLauncherTileInner({
               epicProviderGameId={game.source === "epic" ? game.providerGameId : undefined}
               debridProviderGameId={game.source === "debrid" ? game.providerGameId : undefined}
               open={editDialogOpen}
-              onClose={() => setEditDialogOpen(false)}
+              onClose={() => { setEditDialogOpen(false); onOverlayToggle?.(false); }}
               initialTab={editInitialTab}
               game={game}
               settings={{
@@ -1064,7 +1067,7 @@ function GameLauncherTileInner({
             <ToolsModal
               open={toolsModalOpen}
               game={game}
-              onClose={() => setToolsModalOpen(false)}
+              onClose={() => { setToolsModalOpen(false); onOverlayToggle?.(false); }}
             />
           </>
         )}
