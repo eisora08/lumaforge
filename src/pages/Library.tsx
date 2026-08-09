@@ -37,7 +37,8 @@ import {
 import { getEffectiveProviderAuthHeaders } from "../services/providerSearch";
 import { saveProviderStatusAfterInstall, type ProviderStatusOptions } from "../services/providerStatusService";
 import { isAppIdInFlight } from "../services/mediaDownloadQueue";
-import { detectAndQueueMissingMedia } from "../services/gameCacheService";
+import { detectAndQueueMissingMedia, isSystemToolApp } from "../services/gameCacheService";
+import { isBootReady } from "../services/appBootCoordinator";
 import { isSidebarInstalledGame } from "../services/gameCacheService";
 import { consumePendingLibraryFocus } from "../services/libraryNavigationService";
 import { setAmbientSource, clearAmbientSource, getLastLibraryDetailsUrl } from "../services/ambientBackgroundStore";
@@ -80,7 +81,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [sort, setSort] = useState<LibrarySort>("name");
   const [searchQuery, setSearchQuery] = useState("");
   const [layout, setLayout] = useState<"grid" | "list">("grid");
-  const queuedMediaRef = useRef<Set<string>>(new Set());
+  const queuedMediaRef = useRef<Map<string, number>>(new Map());
   const { confirm } = useConfirm();
 
   // Game hover preview state
@@ -201,21 +202,67 @@ export default function LibraryPage({ onNavigate }: Props) {
   }, [filteredGames, renderedCount]);
 
   // Resolve artwork/cache for visible games — queued, throttled, cache-first
+  const RETRY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes before retry
   useEffect(() => {
+    const now = Date.now();
     const toQueue = visibleGames.filter((g) => {
       if (!g.appId) return false;
-      if (queuedMediaRef.current.has(g.appId)) return false;
       if (isAppIdInFlight(g.appId)) return false;
+      const lastAttempt = queuedMediaRef.current.get(g.appId);
+      if (lastAttempt && now - lastAttempt < RETRY_INTERVAL_MS) return false;
       return true;
     });
 
     if (toQueue.length === 0) return;
 
     for (const game of toQueue) {
-      queuedMediaRef.current.add(game.appId!);
+      queuedMediaRef.current.set(game.appId!, Date.now());
       detectAndQueueMissingMedia(game.appId!, "library-visible").catch(() => {});
     }
   }, [visibleGames, settings.steamGridDbApiKey, settings.steamGridDbArtworkEnabled]);
+
+  // Idle-phase bulk artwork download — runs once after boot is ready + 10s idle
+  // Downloads missing artworks for ALL library games in batches of 8
+  const IDLE_BULK_BATCH = 8;
+  const IDLE_BULK_DELAY_MS = 10_000; // 10s after boot
+  useEffect(() => {
+    if (games.length === 0) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const runIdleBulk = async () => {
+      // Wait for boot to be ready
+      while (!isBootReady() && !cancelled) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (cancelled) return;
+      // Wait additional idle time
+      await new Promise((r) => { timer = setTimeout(r, IDLE_BULK_DELAY_MS); });
+      if (cancelled) return;
+
+      // Process all games with appId in batches
+      const allGames = games.filter((g) => g.appId && !isSystemToolApp(g.appId));
+      for (let i = 0; i < allGames.length; i += IDLE_BULK_BATCH) {
+        if (cancelled) break;
+        const batch = allGames.slice(i, i + IDLE_BULK_BATCH);
+        await Promise.allSettled(
+          batch.map((g) =>
+            detectAndQueueMissingMedia(g.appId!, "idle-bulk").catch(() => {})
+          )
+        );
+        // Small delay between batches to avoid disk thrashing
+        if (!cancelled && i + IDLE_BULK_BATCH < allGames.length) {
+          await new Promise((r) => { timer = setTimeout(r, 2000); });
+        }
+      }
+    };
+
+    runIdleBulk();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [games]);
 
   // Actions
   async function handlePlay(game: LibraryGame) {

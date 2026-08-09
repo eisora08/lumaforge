@@ -1687,7 +1687,9 @@ export type MediaRepairSource =
   | "global"
   | "boot"
   // Library grid auto-download
-  | "library-visible";
+  | "library-visible"
+  // Post-boot idle bulk download
+  | "idle-bulk";
 
 // ── Source alias helpers ──
 const DISPLAY_ONLY_SOURCES = new Set([
@@ -1696,7 +1698,7 @@ const DISPLAY_ONLY_SOURCES = new Set([
 
 const MANUAL_ARTWORK_SOURCES = new Set(["manual-refresh-artwork", "refresh-artwork"]);
 
-const VISIBLE_REPAIR_SOURCES = new Set(["game-details-visible-repair", "visible-details", "library-visible"]);
+const VISIBLE_REPAIR_SOURCES = new Set(["game-details-visible-repair", "visible-details", "library-visible", "idle-bulk"]);
 
 const GLOBAL_REPAIR_SOURCES = new Set(["global", "boot", "boot-hydration", "local-media-repair"]);
 
@@ -1813,14 +1815,15 @@ export function getUninstallPendingScanTtl(): number {
 
 export async function detectAndQueueMissingMedia(appId: string, source: MediaRepairSource = "visible-details"): Promise<string[]> {
   // No-source-url cooldown — skip repair if recently found no source URLs.
-  // Must be at the very top to prevent repeated disk scans and AUTO_REPAIR_SCAN logs.
-  if (isNoSourceCooldown(appId)) {
+  // idle-bulk bypasses cooldown — it runs during idle and should always retry.
+  if (source !== "idle-bulk" && isNoSourceCooldown(appId)) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_COOLDOWN] appid=${appId} reason=no-source-url`);
     return [];
   }
 
   // Phase 10: Defer media repair during active interaction (scroll/click/nav)
-  if (isInteractionBusy()) {
+  // idle-bulk bypasses interaction guard — it only runs when app is truly idle
+  if (source !== "idle-bulk" && isInteractionBusy()) {
     if (ENABLE_VERBOSE_MEDIA_CACHE_LOGS) console.log(`[MEDIA][AUTO_REPAIR_DEFER] appid=${appId} reason=interaction-busy`);
     return [];
   }
