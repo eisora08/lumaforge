@@ -1,11 +1,14 @@
 import type { AppPage } from "../types/navigation";
 
+export type HistoryEntry = { page: AppPage; tag?: string };
+
 /**
  * Navigation history stack — browser-like back/forward for LumaForge.
+ * Supports tagged entries for Store sub-views (tabs, sections, search, detail).
  * Resets on app restart (no localStorage persistence).
  */
 
-let history: AppPage[] = ["home"];
+let history: HistoryEntry[] = [{ page: "home" }];
 let currentIndex = 0;
 let listeners: Array<() => void> = [];
 
@@ -13,7 +16,6 @@ let listeners: Array<() => void> = [];
 let _cachedSnapshot = { canGoBack: false, canGoForward: false };
 
 function notify() {
-  // Rebuild snapshot only when values change
   const next = { canGoBack: currentIndex > 0, canGoForward: currentIndex < history.length - 1 };
   if (next.canGoBack !== _cachedSnapshot.canGoBack || next.canGoForward !== _cachedSnapshot.canGoForward) {
     _cachedSnapshot = next;
@@ -21,28 +23,27 @@ function notify() {
   for (const fn of listeners) fn();
 }
 
-export function pushToHistory(page: AppPage) {
-  // Truncate forward history when navigating to a new page
+export function pushToHistory(page: AppPage, tag?: string) {
   if (currentIndex < history.length - 1) {
     history = history.slice(0, currentIndex + 1);
   }
-  // Avoid duplicate consecutive entries
-  if (history[history.length - 1] === page) {
+  const last = history[history.length - 1];
+  if (last.page === page && last.tag === tag) {
     return;
   }
-  history = [...history, page];
+  history = [...history, { page, tag }];
   currentIndex = history.length - 1;
   notify();
 }
 
-export function goBack(): AppPage | null {
+export function goBack(): HistoryEntry | null {
   if (currentIndex <= 0) return null;
   currentIndex--;
   notify();
   return history[currentIndex];
 }
 
-export function goForward(): AppPage | null {
+export function goForward(): HistoryEntry | null {
   if (currentIndex >= history.length - 1) return null;
   currentIndex++;
   notify();
@@ -55,14 +56,6 @@ export function canGoBack(): boolean {
 
 export function canGoForward(): boolean {
   return currentIndex < history.length - 1;
-}
-
-export function getCurrentIndex(): number {
-  return currentIndex;
-}
-
-export function getHistoryLength(): number {
-  return history.length;
 }
 
 export function subscribeHistory(fn: () => void): () => void {

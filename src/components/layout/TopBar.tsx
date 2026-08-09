@@ -46,14 +46,25 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
   const historySnapshot = useSyncExternalStore(subscribeHistory, getHistorySnapshot, getHistorySnapshot);
 
   const handleGoBack = useCallback(() => {
-    const page = historyGoBack();
-    if (page && onNavigate) onNavigate(page, true);
-  }, [onNavigate]);
+    const entry = historyGoBack();
+    if (!entry || !onNavigate) return;
+    if (entry.tag && entry.page === activePage) {
+      // Same page, sub-view: dispatch back event for the page to handle
+      window.dispatchEvent(new CustomEvent("lumaforge-store-detail-back"));
+    } else {
+      onNavigate(entry.page, true);
+    }
+  }, [onNavigate, activePage]);
 
   const handleGoForward = useCallback(() => {
-    const page = historyGoForward();
-    if (page && onNavigate) onNavigate(page, true);
-  }, [onNavigate]);
+    const entry = historyGoForward();
+    if (!entry || !onNavigate) return;
+    if (entry.tag && entry.page === activePage) {
+      window.dispatchEvent(new CustomEvent("lumaforge-store-forward", { detail: { tag: entry.tag } }));
+    } else {
+      onNavigate(entry.page, true);
+    }
+  }, [onNavigate, activePage]);
 
   const activeDownloadCount = useMemo(() => jobs.filter((j) =>
     ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(j.status),

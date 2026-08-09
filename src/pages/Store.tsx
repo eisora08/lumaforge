@@ -2940,8 +2940,9 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   function openDetailsForGame(game: PackageGame) {
     if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${game.appId} reason=click`);
-    // Push to navigation history so ← can come back to Store
-    window.dispatchEvent(new CustomEvent("lumaforge-store-detail-open"));
+    // Push to navigation history + sub-view stack so ← can come back to Store
+    pushStoreHistory("detail:" + game.appId);
+    pushSubView({ type: "detail", appId: game.appId, game });
     if (DEBUG_STORE_DETAILS_BOUNDARY) {
       const appIdNum = Number(game.appId);
       console.log(`[STORE_DETAILS_BOUNDARY][OPEN] callerSurface=store-card rawAppId=${game.appId} normalizedAppId=${appIdNum} title=${game.title} source=local-catalog-or-browse existingCallback=openDetailsForGame`);
@@ -3203,23 +3204,85 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   function handleBackFromDetails() {
     setSelectedDetailGame(null);
+    // Pop detail from sub-view stack (if ← didn't already handle it)
+    const top = _subViewStackRef.current[_subViewStackRef.current.length - 1];
+    if (top?.type === "detail") popSubView();
   }
 
   // Listen for back navigation from TopBar ← button when on Store page
   useEffect(() => {
     const handler = () => {
-      if (selectedDetailGame) {
-        setSelectedDetailGame(null);
-      } else if (activeSectionId) {
-        setActiveSectionId(null);
+      const popped = popSubView();
+      if (!popped) return;
+      // Peek at what remains on the stack
+      const stack = _subViewStackRef.current;
+      const newTop = stack.length > 0 ? stack[stack.length - 1] : null;
+      switch (popped.type) {
+        case "detail":
+          if (newTop?.type === "detail") {
+            // Another detail below — restore it (detail-to-detail back)
+            setSelectedDetailGame(newTop.game);
+          } else {
+            setSelectedDetailGame(null);
+          }
+          break;
+        case "section":
+          setActiveSectionId(null);
+          break;
+        case "tab":
+          setActiveStoreTab(popped.tab);
+          break;
+        case "search":
+          setSubmittedSearchQuery("");
+          setSteamSubmittedSearchGames([]);
+          setStoreSearchQuery("");
+          setQuery("");
+          break;
       }
     };
     window.addEventListener("lumaforge-store-detail-back", handler);
     return () => window.removeEventListener("lumaforge-store-detail-back", handler);
-  }, [selectedDetailGame, activeSectionId]);
+  }, []);
+
+  // Listen for forward navigation from TopBar → button
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const tag = (e as CustomEvent).detail?.tag as string | undefined;
+      if (!tag) return;
+      // Parse tag and restore sub-view
+      if (tag.startsWith("detail:")) {
+        const appId = tag.slice(7);
+        // Find game in browseGames, catalog, or provider overlay
+        const game = browseGames.find((g) => g.appId === appId)
+          ?? providerOverlayByAppId[appId]
+          ?? { appId, title: "", sources: [], platforms: [] } as PackageGame;
+        pushSubView({ type: "detail", appId, game });
+        setSelectedDetailGame(game);
+      } else if (tag.startsWith("section:")) {
+        const id = tag.slice(8);
+        pushSubView({ type: "section", id });
+        setActiveSectionId(id);
+      } else if (tag.startsWith("tab:")) {
+        const tab = tag.slice(4) as StoreTab;
+        pushSubView({ type: "tab", tab });
+        setActiveStoreTab(tab);
+      } else if (tag.startsWith("search:")) {
+        const query = tag.slice(7);
+        pushSubView({ type: "search", query });
+        setSubmittedSearchQuery(query);
+      }
+    };
+    window.addEventListener("lumaforge-store-forward", handler);
+    return () => window.removeEventListener("lumaforge-store-forward", handler);
+  }, [browseGames, providerOverlayByAppId]);
 
   function handleStoreTabChange(tab: StoreTab) {
     markRenderCause("tab");
+    // If switching to a different tab, clear sub-view stack and push history
+    if (tab !== activeStoreTab) {
+      clearSubViewStack();
+      pushStoreHistory("tab:" + tab);
+    }
     setActiveStoreTab(tab);
     setActiveSectionId(null);
     setActiveGenreSectionId(null);
@@ -3239,6 +3302,34 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     window.addEventListener("store-tab-change", handler);
     return () => window.removeEventListener("store-tab-change", handler);
   }, []);
+
+  // Sub-view navigation stack for Store (tabs, sections, search, detail)
+  type StoreSubView =
+    | { type: "tab"; tab: StoreTab }
+    | { type: "section"; id: string }
+    | { type: "search"; query: string }
+    | { type: "detail"; appId: string; game: PackageGame };
+  const _subViewStackRef = useRef<StoreSubView[]>([]);
+
+  function pushStoreHistory(tag: string) {
+    window.dispatchEvent(new CustomEvent("lumaforge-store-push-history", { detail: { tag } }));
+  }
+
+  function pushSubView(sub: StoreSubView) {
+    _subViewStackRef.current = [..._subViewStackRef.current, sub];
+  }
+
+  function popSubView(): StoreSubView | undefined {
+    const stack = _subViewStackRef.current;
+    if (stack.length === 0) return undefined;
+    const top = stack[stack.length - 1];
+    _subViewStackRef.current = stack.slice(0, -1);
+    return top;
+  }
+
+  function clearSubViewStack() {
+    _subViewStackRef.current = [];
+  }
 
   // When search selects a game, open it inline in the Store (keeps tabs visible)
   const { selectedGame: searchSelectedGame, clearSelection: clearGameSelection } = useGameDetails();
@@ -4019,7 +4110,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                           key={group.genre}
                           genre={group.genre}
                           games={group.items}
-                          onClick={() => setActiveSectionId(`genre-${group.genre.toLowerCase()}`)}
+                          onClick={() => { const id = `genre-${group.genre.toLowerCase()}`; setActiveSectionId(id); pushSubView({ type: "section", id }); pushStoreHistory("section:" + id); }}
                         />
                       ))}
                     </div>
@@ -4075,7 +4166,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                 sectionKey={section.id}
                 title={section.title}
                 description={desc}
-                onViewAll={section.items.length > 0 ? () => setActiveSectionId(section.id) : undefined}
+                onViewAll={section.items.length > 0 ? () => { setActiveSectionId(section.id); pushSubView({ type: "section", id: section.id }); pushStoreHistory("section:" + section.id); } : undefined}
                 loading={sectionLoading}
                 skeletonCount={isFreeCatalog ? 12 : 8}
                 accent={isFreeCatalog}

@@ -52,7 +52,7 @@ import { pushToHistory } from "./services/navigationHistory";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
-  "home", "library", "games", "store", "store-detail",
+  "home", "library", "games", "store",
   "achievements", "activity", "verification",
   "game-details", "library-game-detail", "global-search", "console",
   "launcher-achievements",
@@ -172,11 +172,14 @@ function App() {
     runBootTasks();
   }, [bootStarted]);
 
-  // Push to navigation history when Store game details are opened inline
+  // Push to navigation history when Store sub-views are opened inline
   useEffect(() => {
-    const handler = () => pushToHistory("store-detail");
-    window.addEventListener("lumaforge-store-detail-open", handler);
-    return () => window.removeEventListener("lumaforge-store-detail-open", handler);
+    const handler = (e: Event) => {
+      const tag = (e as CustomEvent).detail?.tag as string | undefined;
+      pushToHistory("store", tag);
+    };
+    window.addEventListener("lumaforge-store-push-history", handler);
+    return () => window.removeEventListener("lumaforge-store-push-history", handler);
   }, []);
 
   // Bootstrap extensions at app startup (built-in + repository)
@@ -243,13 +246,7 @@ function App() {
       setSettingsOpen(true);
       return;
     }
-    // Virtual page: "store-detail" means Store with game details open
-    // When ← pressed and we're back to "store-detail", close the detail view
-    if (page === "store-detail" && fromHistory) {
-      window.dispatchEvent(new CustomEvent("lumaforge-store-detail-back"));
-      return;
-    }
-    // When ← pressed and already on the target page, dispatch back event
+    // When ← pressed and already on the target page (tagged sub-view), dispatch back event
     if (page === activePage && fromHistory) {
       window.dispatchEvent(new CustomEvent("lumaforge-store-detail-back"));
       return;
