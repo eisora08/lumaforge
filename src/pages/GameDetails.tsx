@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useGameDetails } from "../context/GameDetailsContext";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import { useSettings } from "../context/SettingsContext";
-import { useBackButtonContext } from "../context/BackButtonContext";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
 import { resolveGameMetadata } from "../services/gameMetadataResolver";
 import { resolveGameReviewSummaries } from "../services/gameReviewResolver";
@@ -27,12 +26,7 @@ import type { AppPage } from "../types/navigation";
 
 const DEBUG_GAME_DETAILS = false;
 
-function DetailsShell({ onBack }: { onBack: () => void }) {
-  const { setBackButton } = useBackButtonContext();
-  useEffect(() => {
-    setBackButton({ onBack, label: "Back" });
-    return () => setBackButton(null);
-  }, [onBack]);
+function DetailsShell({ onBack: _onBack }: { onBack?: () => void }) {
   return (
     <div className="mx-auto w-full max-w-[1440px] space-y-6 p-5 lg:p-7 lf-page-in">
       <SkeletonHero />
@@ -50,7 +44,7 @@ function DetailsShell({ onBack }: { onBack: () => void }) {
   );
 }
 
-export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => void; onNavigate?: (page: AppPage) => void }) {
+export default function GameDetailsPage({ onBack: _onBack, onNavigate }: { onBack?: () => void; onNavigate?: (page: AppPage) => void }) {
   const { selectedGame, selectGame, clearSelection } = useGameDetails();
   const { refresh: libraryRefresh } = useLibraryGames();
   const { settings } = useSettings();
@@ -325,7 +319,6 @@ export default function GameDetailsPage({ onBack, onNavigate }: { onBack: () => 
 
   const handleBack = () => {
     clearSelection();
-    onBack();
   };
 
   // Retry handler — re-runs source resolution, mirrors Store.tsx's onRefreshSources

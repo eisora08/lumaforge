@@ -143,7 +143,6 @@ export default function PackagesToolbarSearch({
     saveRecentSearch(item.title);
     setRecentSearches(getRecentSearches());
     setDropdownOpen(false);
-    setQuery("");
     onSelectItem?.(item);
   }
 
@@ -251,10 +250,12 @@ export default function PackagesToolbarSearch({
                     </button>
                   </div>
                   {recentSearches.map((query) => (
-                    <button
+                    <div
                       key={query}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => handleSelectRecent(query)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSelectRecent(query); } }}
                       className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-(--color-accent)/8 active:bg-(--color-accent)/15"
                     >
                       <Clock className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
@@ -268,7 +269,7 @@ export default function PackagesToolbarSearch({
                       >
                         <X className="h-3 w-3" />
                       </button>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>

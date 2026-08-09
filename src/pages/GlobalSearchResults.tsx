@@ -1,6 +1,5 @@
 import { useEffect, useMemo } from "react";
 import { Gamepad2, Search } from "lucide-react";
-import { useBackButtonContext } from "../context/BackButtonContext";
 import PageContainer from "../components/layout/PageContainer";
 import { useSearch } from "../context/SearchContext";
 import { useGameDetails } from "../context/GameDetailsContext";
@@ -14,16 +13,9 @@ type Props = {
   onNavigate?: (page: string) => void;
 };
 
-export default function GlobalSearchResults({ onBack, onNavigate }: Props) {
+export default function GlobalSearchResults({ onBack: _onBack, onNavigate }: Props) {
   const { query: searchContextQuery } = useSearch();
   const { selectGame } = useGameDetails();
-  const { setBackButton } = useBackButtonContext();
-
-  // Set back button in TopBar
-  useEffect(() => {
-    setBackButton({ onBack: onBack ?? (() => {}), label: "Back" });
-    return () => setBackButton(null);
-  }, [onBack]);
 
   const {
     setQuery,

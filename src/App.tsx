@@ -48,10 +48,11 @@ import { setPageContextSource } from "./services/ambientBackgroundStore";
 import { getBootSnapshot } from "./services/appBootCoordinator";
 import { localPathToUrl, isLocalPath } from "./services/gameCacheService";
 import { initDataChangeBus } from "./services/dataChangeBus";
+import { pushToHistory } from "./services/navigationHistory";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
-  "home", "library", "games", "store",
+  "home", "library", "games", "store", "store-detail",
   "achievements", "activity", "verification",
   "game-details", "library-game-detail", "global-search", "console",
   "launcher-achievements",
@@ -154,7 +155,6 @@ function AmbientNavFallback({ activePage }: { activePage: AppPage }) {
 function App() {
   countRender("App");
   const [activePage, setActivePage] = useState<AppPage>(restoreActivePage);
-  const [gameDetailsPrevPage, setGameDetailsPrevPage] = useState<AppPage>("store");
   const [bootStarted, setBootStarted] = useState(false);
   const [showModeSwitch, setShowModeSwitch] = useState(false);
   const [modeSwitchMode, setModeSwitchMode] = useState<ModeSwitchMode>("enter-console");
@@ -171,6 +171,13 @@ function App() {
     setBootStarted(true);
     runBootTasks();
   }, [bootStarted]);
+
+  // Push to navigation history when Store game details are opened inline
+  useEffect(() => {
+    const handler = () => pushToHistory("store-detail");
+    window.addEventListener("lumaforge-store-detail-open", handler);
+    return () => window.removeEventListener("lumaforge-store-detail-open", handler);
+  }, []);
 
   // Bootstrap extensions at app startup (built-in + repository)
   useEffect(() => {
@@ -230,10 +237,21 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activePage]);
 
-  function handleNavigate(page: AppPage) {
+  function handleNavigate(page: AppPage, fromHistory = false) {
     // Settings opens as overlay — don't navigate
     if (page === "settings") {
       setSettingsOpen(true);
+      return;
+    }
+    // Virtual page: "store-detail" means Store with game details open
+    // When ← pressed and we're back to "store-detail", close the detail view
+    if (page === "store-detail" && fromHistory) {
+      window.dispatchEvent(new CustomEvent("lumaforge-store-detail-back"));
+      return;
+    }
+    // When ← pressed and already on the target page, dispatch back event
+    if (page === activePage && fromHistory) {
+      window.dispatchEvent(new CustomEvent("lumaforge-store-detail-back"));
       return;
     }
     if (page === activePage) return;
@@ -241,6 +259,11 @@ function App() {
 
     // Phase 9: Mark navigation timestamp so services can defer background work
     markNavigation();
+
+    // Push to navigation history only for normal navigation (not ← →)
+    if (!fromHistory) {
+      pushToHistory(page);
+    }
 
     const isEnteringConsole = page === "console";
     const isLeavingConsole = activePage === "console" && !isEnteringConsole;
@@ -256,10 +279,6 @@ function App() {
       setAppFullscreen(true);
     } else if (isLeavingConsole) {
       setAppFullscreen(false);
-    }
-
-    if (page === "game-details") {
-      setGameDetailsPrevPage(activePage);
     }
 
     pauseBackgroundFill();
@@ -315,10 +334,10 @@ function App() {
         pageComponent = <Verification />;
         break;
       case "game-details":
-        pageComponent = <GameDetailsPage onBack={() => handleNavigate(gameDetailsPrevPage)} onNavigate={handleNavigate} />;
+        pageComponent = <GameDetailsPage onNavigate={handleNavigate} />;
         break;
       case "library-game-detail":
-        pageComponent = <LibraryGameDetailPage onBack={() => handleNavigate("library")} onNavigate={handleNavigate} />;
+        pageComponent = <LibraryGameDetailPage onNavigate={handleNavigate} />;
         break;
       case "console":
         pageComponent = <ConsoleModePage onNavigate={handleNavigate} />;

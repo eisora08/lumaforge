@@ -63,8 +63,9 @@ import { InfoBlock } from "./details/StoreGameDetailPrimitives";
 
 import StoreMoreLikeThisSection from "./StoreMoreLikeThisSection";
 import type { StoreMoreLikeThisGame } from "./StoreMoreLikeThisSection";
-
 import { SkeletonBox, SkeletonHero } from "../common/Skeleton";
+
+
 
 export type SourceProgress = {
   completed: number;
@@ -240,17 +241,13 @@ export default function StoreGameDetailsPage({
   const [completedGameTitle, setCompletedGameTitle] = useState("");
   const [completedJobId, setCompletedJobId] = useState<string | undefined>();
 
-  console.log(
-    `[STORE][DETAILS_PROPS_RECEIVED] appid=${game.appId} installStatus=${installStatus} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} steamOwned=${steamOwned}`,
-  );
-
   // Log ownership state once on mount
   useEffect(() => {
     const isInstalled = isSteamInstalled || (installStatus === "active" && !luaInstalled);
     const inLibrary = (!steamOwned && luaInstalled) || (steamOwned && !isInstalled);
     const source = steamOwned ? "steam-owned-cache" : luaInstalled ? "lua" : isSteamInstalled ? "steam-library" : "none";
     console.log(`[STORE][OWNERSHIP_STATE] appid=${game.appId} title=${getTitle(game, metadata)} owned=${steamOwned} installed=${isSteamInstalled} luaInstalled=${luaInstalled} inLibrary=${inLibrary} source=${source}`);
-  }, [game.appId, steamOwned, isSteamInstalled, luaInstalled, installStatus]);
+  }, [game.appId]);
 
   // Fetch English-language media metadata for trailers
   useEffect(() => {
@@ -258,8 +255,6 @@ export default function StoreGameDetailsPage({
     if (!appId || appId <= 0) return;
 
     const reqId = ++_mediaEnrichReqRef.current;
-
-    setEnglishMovies(null);
 
     resolveGameMetadataForMedia([appId]).then((enriched) => {
       if (reqId !== _mediaEnrichReqRef.current) return;
@@ -728,19 +723,16 @@ export default function StoreGameDetailsPage({
 
   const metadataLoading = !metadata?.resolved;
 
-  // Safety timeout: if metadata never resolves, show error after 30s instead of infinite skeleton
-  const [metadataTimedOut, setMetadataTimedOut] = useState(false);
+  // Safety timeout — log if metadata never resolves (for debugging)
   const _timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!metadataLoading) {
-      setMetadataTimedOut(false);
       if (_timeoutRef.current) { clearTimeout(_timeoutRef.current); _timeoutRef.current = null; }
       return;
     }
     _timeoutRef.current = setTimeout(() => {
-      setMetadataTimedOut(true);
-      console.warn(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${game.appId} timeout=true loadingCleared=false finalRenderedState=error`);
-    }, 30_000);
+      console.warn(`[STORE][METADATA_SLOW] appId=${game.appId} metadata still loading after 5s`);
+    }, 5_000);
     return () => {
       if (_timeoutRef.current) { clearTimeout(_timeoutRef.current); _timeoutRef.current = null; }
     };
@@ -753,7 +745,7 @@ export default function StoreGameDetailsPage({
   const isChecking = (effectiveSourceStatus === "checking" || effectiveSourceStatus === "idle") && !isBackgroundChecking;
   const providerResults = game.sources?.length ?? 0;
   const availableSourceCount = (effectiveSources ?? []).filter(s => s.available).length;
-  console.log(`[STORE][SOURCE_CHECK_STATE] appid=${game.appId} checking=${isChecking} sourceStatus=${effectiveSourceStatus} providerResults=${providerResults} available=${availableSourceCount}`);
+  if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][SOURCE_CHECK_STATE] appid=${game.appId} checking=${isChecking} sourceStatus=${effectiveSourceStatus} providerResults=${providerResults} available=${availableSourceCount}`);
 
   // Resolve preview image independent of checking state
   const previewResult = resolveStoreDetailsPreviewImage({
@@ -960,7 +952,7 @@ export default function StoreGameDetailsPage({
   const reviewSubLabel = getReviewSubLabel(reviewSummary);
 
   const reviewsState = !reviewSummary ? "unavailable" : !reviewSummary.resolved ? "unavailable" : reviewSummary.total_reviews === 0 ? "no-reviews" : "available";
-  console.log(`[STORE][REVIEWS_STATE] appid=${game.appId} state=${reviewsState} total=${reviewSummary?.total_reviews ?? 0} resolved=${reviewSummary?.resolved ?? false} source=steam-appreviews`);
+  if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][REVIEWS_STATE] appid=${game.appId} state=${reviewsState} total=${reviewSummary?.total_reviews ?? 0} resolved=${reviewSummary?.resolved ?? false} source=steam-appreviews`);
 
   const drmLogRef = useRef("");
   useEffect(() => {
@@ -1218,16 +1210,6 @@ export default function StoreGameDetailsPage({
   }
 
   if (metadataLoading) {
-    if (metadataTimedOut) {
-      return (
-        <div className="space-y-6 lf-page-in">
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-(--surface-active-border) bg-white/5 p-12 text-center">
-            <div className="text-sm font-medium text-(--color-text)">Could not load game details</div>
-            <div className="text-xs text-(--color-muted)">The Steam Store API did not respond in time.</div>
-          </div>
-        </div>
-      );
-    }
     return (
       <div className="space-y-6 lf-page-in">
         <SkeletonHero />
@@ -1248,9 +1230,7 @@ export default function StoreGameDetailsPage({
     );
   }
 
-  console.log(
-    `[STORE][SUMMARY_PROPS_FORWARD] appid=${game.appId} installStatus=${installStatus} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} steamOwned=${steamOwned}`,
-  );
+  if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][SUMMARY_PROPS_FORWARD] appid=${game.appId} installStatus=${installStatus} luaInstalled=${luaInstalled} isSteamInstalled=${isSteamInstalled} steamOwned=${steamOwned}`);
 
   const summaryPanelProps = {
     game: { ...game, sources: selectableSources },
@@ -1299,6 +1279,14 @@ export default function StoreGameDetailsPage({
 
         <div className="grid grid-cols-1 gap-6 p-5 lg:grid-cols-[1fr_360px] lg:p-6">
           <section className="space-y-5">
+            {/* Subtle loading indicator while metadata loads */}
+            {metadataLoading && (
+              <div className="flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-2.5 text-xs text-(--color-muted)">
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-(--color-accent) border-t-transparent" />
+                Loading details from Steam...
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <InfoBlock
                 icon={Star}

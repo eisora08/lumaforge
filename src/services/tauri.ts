@@ -135,11 +135,20 @@ export async function resolveSteamAppMetadata(
   language?: string,
   country?: string,
 ): Promise<SteamAppMetadata[]> {
-  return await invoke<SteamAppMetadata[]>("resolve_steam_app_metadata", {
-    appIds,
-    language: language ?? null,
-    country: country ?? null,
-  });
+  // Timeout wrapper — Rust side has 15s per-request timeout but no overall timeout.
+  // If the invoke hangs (semaphore contention, Cloudflare), we timeout after 25s.
+  const METADATA_TIMEOUT_MS = 25_000;
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Steam Store API timeout — metadata fetch exceeded 25s")), METADATA_TIMEOUT_MS)
+  );
+  return await Promise.race([
+    invoke<SteamAppMetadata[]>("resolve_steam_app_metadata", {
+      appIds,
+      language: language ?? null,
+      country: country ?? null,
+    }),
+    timeoutPromise,
+  ]);
 }
 
 export async function fetchSteamStoreDrmNotice(

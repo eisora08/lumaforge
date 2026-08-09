@@ -6,7 +6,6 @@ import { SearchProvider } from "../../context/SearchContext";
 import { LibraryGamesProvider } from "../../context/LibraryGamesContext";
 import { GameActivityProvider } from "../../context/GameActivityContext";
 import { StoreTabProvider, useStoreTab, type StoreTabId } from "../../context/StoreTabContext";
-import { BackButtonProvider, useBackButtonContext } from "../../context/BackButtonContext";
 import type { AppPage } from "../../types/navigation";
 import type { SidebarMode } from "./Sidebar";
 import { countRender } from "../../services/perfCounters";
@@ -14,7 +13,7 @@ import RouteErrorBoundary from "../common/RouteErrorBoundary";
 
 type AppLayoutProps = {
   activePage: AppPage;
-  onNavigate: (page: AppPage) => void;
+  onNavigate: (page: AppPage, fromHistory?: boolean) => void;
   children: React.ReactNode;
   isConsoleMode?: boolean;
 };
@@ -95,7 +94,6 @@ export default function AppLayout({
   const effectiveMode: SidebarMode =
     manualMode !== "auto" ? manualMode : autoMode;
 
-  const isDrawerMode = effectiveMode === "drawer";
   const sidebarWidth = getScaledSidebarWidth(effectiveMode, sidebarDensity);
 
   useEffect(() => {
@@ -120,26 +118,6 @@ export default function AppLayout({
     return () => window.removeEventListener("resize", handleResize);
   }, [manualMode]);
 
-  const handleToggleCollapse = useCallback(() => {
-    if (manualMode === "auto") {
-      if (autoMode === "expanded" || autoMode === "compact") {
-        setManualMode("collapsed");
-      } else {
-        setManualMode("expanded");
-      }
-    } else if (manualMode === "collapsed") {
-      setManualMode("expanded");
-    } else {
-      setManualMode("collapsed");
-    }
-  }, [manualMode, autoMode]);
-
-  const handleOpenSidebar = useCallback(() => {
-    if (isDrawerMode) {
-      setDrawerOpen(true);
-    }
-  }, [isDrawerMode]);
-
   const handleCloseDrawer = useCallback(() => {
     setDrawerOpen(false);
   }, []);
@@ -156,27 +134,29 @@ export default function AppLayout({
       <LibraryGamesProvider>
         <GameActivityProvider>
         <StoreTabProvider>
-        <BackButtonProvider>
-        <div className="relative z-10 flex flex-1 w-full overflow-hidden">
+        {/* TopBar — full width, above sidebar */}
+        <div className="relative z-20">
+          <SearchProvider>
+            <TopBarShell
+              activePage={activePage}
+              onNavigate={onNavigate}
+            />
+          </SearchProvider>
+        </div>
+
+        {/* Sidebar + Content — below TopBar */}
+        <div className="relative z-10 flex flex-1 min-h-0 overflow-hidden">
           <Sidebar
             mode={effectiveMode}
             isDrawerOpen={drawerOpen}
             activePage={activePage}
             onClose={handleCloseDrawer}
-            onToggleCollapse={handleToggleCollapse}
             onNavigate={onNavigate}
             width={sidebarWidth}
           />
 
           <div className="flex min-w-0 flex-1 flex-col lf-page">
             <SearchProvider>
-              <TopBarShell
-                activePage={activePage}
-                onNavigate={onNavigate}
-                sidebarDrawerMode={isDrawerMode}
-                onOpenSidebar={handleOpenSidebar}
-              />
-
               <main className="min-h-0 flex-1 overflow-y-auto">
                 <RouteErrorBoundary>
                   {children}
@@ -185,7 +165,6 @@ export default function AppLayout({
             </SearchProvider>
           </div>
         </div>
-        </BackButtonProvider>
         </StoreTabProvider>
         </GameActivityProvider>
       </LibraryGamesProvider>
@@ -199,29 +178,22 @@ const STORE_TAB_LIST = [
   { id: "repacks" as const, label: "Repacks" },
 ];
 
-function TopBarShell({ activePage, onNavigate, sidebarDrawerMode, onOpenSidebar }: {
+function TopBarShell({ activePage, onNavigate }: {
   activePage: AppPage;
-  onNavigate: (page: AppPage) => void;
-  sidebarDrawerMode: boolean;
-  onOpenSidebar: () => void;
+  onNavigate: (page: AppPage, fromHistory?: boolean) => void;
 }) {
   const { activeStoreTab, setStoreTab } = useStoreTab();
-  const { onBack, label: backLabel } = useBackButtonContext();
   const handleStoreTabChange = useCallback((tab: StoreTabId) => {
     setStoreTab(tab);
     window.dispatchEvent(new CustomEvent("store-tab-change", { detail: { tab } }));
   }, [setStoreTab]);
   return (
     <TopBar
-      onOpenSidebar={onOpenSidebar}
       activePage={activePage}
       onNavigate={onNavigate}
-      sidebarDrawerMode={sidebarDrawerMode}
       storeTabs={STORE_TAB_LIST}
       activeStoreTab={activeStoreTab}
       onStoreTabChange={handleStoreTabChange}
-      onBack={onBack}
-      backLabel={backLabel}
     />
   );
 }

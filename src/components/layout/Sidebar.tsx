@@ -2,14 +2,11 @@ import { useCallback, useEffect, useRef, useState, type ElementType } from "reac
 
 import {
   Award,
+  BarChart3,
   Store,
   Library,
   Home,
   Settings,
-  Flame,
-  PanelLeftOpen,
-  PanelLeftClose,
-  BarChart3,
   X,
 } from "lucide-react";
 
@@ -27,7 +24,6 @@ type SidebarProps = {
   isDrawerOpen: boolean;
   activePage: AppPage;
   onClose: () => void;
-  onToggleCollapse: () => void;
   onNavigate: (page: AppPage) => void;
   width?: number;
 };
@@ -58,7 +54,6 @@ export default function Sidebar({
   isDrawerOpen,
   activePage,
   onClose,
-  onToggleCollapse,
   onNavigate,
   width,
 }: SidebarProps) {
@@ -105,67 +100,18 @@ export default function Sidebar({
 
   const sidebarContent = (
     <div
-      className={`flex h-full flex-col lf-sidebar-panel bg-(--shell-bg)`}
+      className={`relative flex h-full flex-col lf-sidebar-panel bg-(--shell-bg)`}
       style={{ width: isCollapsed ? undefined : "100%", backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}
     >
-      {/* Header — shrink-0 */}
-      <div
-        className={`flex shrink-0 h-16 items-center ${
-          isCollapsed ? "justify-center px-2" : isDrawer ? "justify-between px-5" : "justify-between px-5"
-        }`}
-      >
-        {isCollapsed ? (
-          /* Collapsed: centered logo button with hover swap to PanelLeftOpen */
-          <button
-            onClick={onToggleCollapse}
-            title="Expand sidebar"
-            aria-label="Expand sidebar"
-            className="group relative flex h-9 w-9 items-center justify-center rounded-xl border border-(--color-accent)/10 bg-(--color-accent)/8 transition hover:bg-white/10 active:scale-[0.97] lf-press-effect"
-          >
-            <Flame className="absolute h-4.5 w-4.5 text-(--color-accent) transition-all duration-200 opacity-100 scale-100 group-hover:opacity-0 group-hover:scale-90 group-focus-visible:opacity-0" />
-            <PanelLeftOpen className="absolute h-4 w-4 text-(--color-accent) transition-all duration-200 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100" />
-          </button>
-        ) : (
-          <>
-            {/* Left: logo + title */}
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-(--color-accent)/10 bg-(--color-accent)/8">
-                <Flame className="h-4.5 w-4.5 text-(--color-accent)" />
-              </div>
-
-              <div className="min-w-0 lf-sidebar-label lf-sidebar-label-visible">
-                <h1 className="font-bold leading-none text-(--color-text)">
-                  LumaForge
-                </h1>
-                {mode === "expanded" && (
-                  <p className="mt-1.5 text-[10px] text-(--color-muted)/50">
-                    Premium Game Toolkit
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Right: close button (drawer) or collapse toggle (desktop) */}
-            {isDrawer ? (
-              <button
-                onClick={onClose}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-(--color-muted) hover:bg-white/10"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            ) : (
-              <button
-                onClick={onToggleCollapse}
-                title="Collapse sidebar"
-                aria-label="Collapse sidebar"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) active:scale-[0.97] lf-press-effect"
-              >
-                <PanelLeftClose className="h-4 w-4" />
-              </button>
-            )}
-          </>
-        )}
-      </div>
+      {/* Drawer: close button at top right */}
+      {isDrawer && (
+        <button
+          onClick={onClose}
+          className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-(--surface-active-border) text-(--color-muted) transition hover:bg-red-500/10 hover:text-red-400 hover:scale-105 active:scale-95"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
 
       {/* Nav sections — shrink-0, always visible */}
       <div className={`shrink-0 ${

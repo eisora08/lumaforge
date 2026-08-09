@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Download, Menu, Minus, Monitor, Square, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Bell, ChevronLeft, ChevronRight, Download, Flame, Minus, Monitor, Square, X } from "lucide-react";
 import type { AppPage } from "../../types/navigation";
 import { useSearch } from "../../context/SearchContext";
 import { useGameDetails } from "../../context/GameDetailsContext";
 import { useDownloadQueue } from "../../hooks/useDownloadQueue";
+import { subscribeHistory, getHistorySnapshot, goBack as historyGoBack, goForward as historyGoForward } from "../../services/navigationHistory";
 
 import PackagesToolbarSearch from "../packages/PackagesToolbarSearch";
 import type { StoreSearchDropdownItem } from "../packages/PackagesToolbar";
 import PackageUpdatePanel from "../notifications/PackageUpdatePanel";
-import BackButton from "../common/BackButton";
 import DownloadsModal from "../downloads/DownloadsModal";
 
 const DEBUG_WINDOW_CONTROLS = false;
@@ -24,20 +24,15 @@ type TauriWindow = {
 export type StoreTabId = "discover" | "browse" | "repacks";
 
 type TopBarProps = {
-  onOpenSidebar: () => void;
   activePage: AppPage;
-  onNavigate?: (page: AppPage) => void;
-  sidebarDrawerMode?: boolean;
+  onNavigate?: (page: AppPage, fromHistory?: boolean) => void;
   // Store tabs — only rendered when activePage === "store"
   storeTabs?: { id: StoreTabId; label: string }[];
   activeStoreTab?: StoreTabId;
   onStoreTabChange?: (tab: StoreTabId) => void;
-  // Back button — rendered when on a detail page
-  onBack?: () => void;
-  backLabel?: string;
 };
 
-export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarDrawerMode, storeTabs, activeStoreTab, onStoreTabChange, onBack, backLabel }: TopBarProps) {
+export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreTab, onStoreTabChange }: TopBarProps) {
   const { setQuery } = useSearch();
   const { selectGame, selectedGame } = useGameDetails();
   const isGameDetailsActive = activePage === "library-game-detail" || !!selectedGame;
@@ -46,6 +41,19 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   const [showPanel, setShowPanel] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const { jobs } = useDownloadQueue();
+
+  // Navigation history
+  const historySnapshot = useSyncExternalStore(subscribeHistory, getHistorySnapshot, getHistorySnapshot);
+
+  const handleGoBack = useCallback(() => {
+    const page = historyGoBack();
+    if (page && onNavigate) onNavigate(page, true);
+  }, [onNavigate]);
+
+  const handleGoForward = useCallback(() => {
+    const page = historyGoForward();
+    if (page && onNavigate) onNavigate(page, true);
+  }, [onNavigate]);
 
   const activeDownloadCount = useMemo(() => jobs.filter((j) =>
     ["queued", "waiting", "checking", "downloading", "extracting", "installing", "paused"].includes(j.status),
@@ -211,6 +219,8 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
       imageUrl: item.imageUrl,
     });
     onNavigate?.("store");
+    // Re-focus search input after navigation so user can search again
+    setTimeout(() => searchInputRef.current?.focus(), 150);
   }
 
   function handleSubmit(query: string) {
@@ -243,25 +253,48 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
   return (
     <>
     <header className={`sticky top-0 z-20 flex h-14 select-none items-stretch transition-colors duration-300 ${isGameDetailsActive ? "bg-transparent" : "bg-(--shell-bg)"}`} style={{ backdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)', WebkitBackdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)' } as React.CSSProperties}>
-      <div className="flex items-center gap-3 pl-4 lg:pl-6">
-        {sidebarDrawerMode && (
-          <button
-            onClick={onOpenSidebar}
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-(--color-text) hover:bg-white/8"
-          >
-            <Menu className="h-4 w-4" />
-          </button>
-        )}
+      {/* Logo — leftmost */}
+      <button
+        onClick={() => onNavigate?.("home")}
+        className="flex shrink-0 items-center gap-2.5 pl-4 pr-2 transition hover:opacity-80 lg:pl-6"
+        title="LumaForge — Inicio"
+      >
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-(--color-accent)/10">
+          <Flame className="h-4 w-4 text-(--color-accent)" />
+        </div>
+        <span className="hidden text-sm font-bold text-(--color-text) sm:inline">LumaForge</span>
+      </button>
+
+      {/* ← → Navigation */}
+      <div className="flex items-center gap-0.5 pl-1">
+        <button
+          type="button"
+          onClick={handleGoBack}
+          disabled={!historySnapshot.canGoBack}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--color-muted)"
+          title="Atras"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleGoForward}
+          disabled={!historySnapshot.canGoForward}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-white/8 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--color-muted)"
+          title="Adelante"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
 
-      {/* left draggable stretch — only these areas have data-tauri-drag-region */}
+      {/* left draggable stretch */}
       <div
         data-tauri-drag-region
         className="self-stretch flex-1"
         onDoubleClick={handleDoubleClick}
       />
 
-      {/* Store tabs OR Back button — mutually exclusive, between left drag and search */}
+      {/* Store tabs — after drag, before search */}
       {activePage === "store" && storeTabs && onStoreTabChange && (
         <div className="flex items-center gap-1">
           {storeTabs.map((tab) => (
@@ -281,12 +314,6 @@ export default function TopBar({ onOpenSidebar, activePage, onNavigate, sidebarD
               )}
             </button>
           ))}
-        </div>
-      )}
-
-      {onBack && (
-        <div className="flex items-center">
-          <BackButton label={backLabel ?? "Back"} onClick={onBack} />
         </div>
       )}
 

@@ -25,7 +25,6 @@ import type { StoreMoreLikeThisGame } from "../components/store/StoreMoreLikeThi
 
 import { useSettings } from "../context/SettingsContext";
 import { useStoreTab } from "../context/StoreTabContext";
-import { useBackButtonContext } from "../context/BackButtonContext";
 import { useGameDetails } from "../context/GameDetailsContext";
 import { useProviderSearch } from "../hooks/useProviderSearch";
 import { useDownloadQueue } from "../hooks/useDownloadQueue";
@@ -2321,7 +2320,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   }, [activeSectionId, viewAllLoading, viewAllHasMore, viewAllPage]);
 
   const selectedDetailGameWithOverlay = selectedDetailGame
-    ? providerOverlayByAppId[selectedDetailGame.appId] ?? selectedDetailGame
+    ? { ...selectedDetailGame, ...(providerOverlayByAppId[selectedDetailGame.appId] ?? {}) }
     : null;
 
   // Stable key for visibleAppIds to prevent render loops
@@ -2429,7 +2428,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     appIdScopeKeyRef.current = visibleAppIdsKey;
 
     if (visibleAppIds.length === 0) {
-      setStoreMetadataByAppId({});
+      // Preserve metadata for the detail game (which is excluded from visibleAppIds)
+      setStoreMetadataByAppId((prev) => {
+        const detailId = selectedDetailGameWithOverlay ? Number(selectedDetailGameWithOverlay.appId) : 0;
+        if (detailId > 0 && prev[detailId]) return { [detailId]: prev[detailId] };
+        return {};
+      });
       return;
     }
 
@@ -2449,31 +2453,31 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
         if (!cancelled) {
           // Only update if metadata actually changed — avoids re-rendering all cards
+          // Merge into existing map to preserve metadata for games not in this batch
+          // (e.g. the detail game from global search, which has its own dedicated effect)
           const current = storeMetadataByAppId;
           const keys = Object.keys(metadata);
-          let changed = keys.length !== Object.keys(current).length;
-          if (!changed) {
-            for (const key of keys) {
-              const k = Number(key);
-              const m = metadata[k];
-              const c = current[k];
-              if (!m || !c) { changed = true; break; }
-              if (m.name !== c.name || m.developer !== c.developer ||
-                  m.header_image !== c.header_image ||
-                  m.capsule_image !== c.capsule_image ||
-                  m.capsule_image_v5 !== c.capsule_image_v5 ||
-                  JSON.stringify(m.genres?.slice().sort()) !== JSON.stringify(c.genres?.slice().sort()) ||
-                  JSON.stringify(m.platforms?.slice().sort()) !== JSON.stringify(c.platforms?.slice().sort()) ||
-                  JSON.stringify(m.movies) !== JSON.stringify(c.movies) ||
-                  JSON.stringify(m.screenshots?.slice().sort()) !== JSON.stringify(c.screenshots?.slice().sort()) ||
-                  m.short_description !== c.short_description ||
-                  m.about_the_game !== c.about_the_game ||
-                  m.detailed_description !== c.detailed_description ||
-                  m.release_date !== c.release_date ||
-                  m.resolved !== c.resolved) {
-                changed = true;
-                break;
-              }
+          let changed = false;
+          for (const key of keys) {
+            const k = Number(key);
+            const m = metadata[k];
+            const c = current[k];
+            if (!m) continue;
+            if (!c || m.name !== c.name || m.developer !== c.developer ||
+                m.header_image !== c.header_image ||
+                m.capsule_image !== c.capsule_image ||
+                m.capsule_image_v5 !== c.capsule_image_v5 ||
+                JSON.stringify(m.genres?.slice().sort()) !== JSON.stringify(c.genres?.slice().sort()) ||
+                JSON.stringify(m.platforms?.slice().sort()) !== JSON.stringify(c.platforms?.slice().sort()) ||
+                JSON.stringify(m.movies) !== JSON.stringify(c.movies) ||
+                JSON.stringify(m.screenshots?.slice().sort()) !== JSON.stringify(c.screenshots?.slice().sort()) ||
+                m.short_description !== c.short_description ||
+                m.about_the_game !== c.about_the_game ||
+                m.detailed_description !== c.detailed_description ||
+                m.release_date !== c.release_date ||
+                m.resolved !== c.resolved) {
+              changed = true;
+              break;
             }
           }
           if (!changed) {
@@ -2481,14 +2485,15 @@ export default function Store({ onNavigate }: StoreProps = {}) {
             return;
           }
           markRenderCause("metadata");
-          setStoreMetadataByAppId(metadata);
+          setStoreMetadataByAppId((prev) => ({ ...prev, ...metadata }));
           if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[Store] metadata loaded: ${Object.keys(metadata).length} games resolved`);
         }
       } catch (error) {
         console.error(error);
 
         if (!cancelled) {
-          setStoreMetadataByAppId({});
+          // On batch error, keep existing metadata (don't wipe detail game's resolved data)
+          if (DEBUG_STORE_RENDER_VERBOSE) console.log(`[STORE][METADATA_BATCH_ERROR] keeping existing cache`);
         }
       }
     }
@@ -2520,6 +2525,47 @@ export default function Store({ onNavigate }: StoreProps = {}) {
   // Detail games from local-catalog sections often fall outside that window.
   // This effect guarantees metadata is loaded for whichever game the user opens.
   const _detailMetadataReqRef = useRef(0);
+  const _metadataRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function fetchDetailMetadata(appId: number, reqId: number, retryCount = 0) {
+    resolveGameMetadata([appId], { skipInFlight: true })
+      .then((metadata) => {
+        if (!_mountedRef.current) return;
+        if (reqId !== _detailMetadataReqRef.current) return;
+        const meta = metadata[appId];
+        if (meta && meta.resolved) {
+          setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: meta }));
+        } else if (retryCount === 0) {
+          // First attempt failed — retry once after 2s
+          console.log(`[STORE][METADATA_RETRY] appId=${appId} retrying-in-2s`);
+          _metadataRetryTimer.current = setTimeout(() => {
+            if (_mountedRef.current && reqId === _detailMetadataReqRef.current) {
+              fetchDetailMetadata(appId, reqId, 1);
+            }
+          }, 2000);
+        } else {
+          // Retry also failed — write resolved fallback so page renders
+          const fallback = createResolvedFallbackMetadata(appId, meta?.name);
+          setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
+        }
+      })
+      .catch((err) => {
+        if (!_mountedRef.current) return;
+        if (reqId !== _detailMetadataReqRef.current) return;
+        if (retryCount === 0) {
+          console.log(`[STORE][METADATA_RETRY] appId=${appId} retrying-in-2s err=${String(err).slice(0, 60)}`);
+          _metadataRetryTimer.current = setTimeout(() => {
+            if (_mountedRef.current && reqId === _detailMetadataReqRef.current) {
+              fetchDetailMetadata(appId, reqId, 1);
+            }
+          }, 2000);
+        } else {
+          const fallback = createResolvedFallbackMetadata(appId);
+          setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
+        }
+      });
+  }
+
   useEffect(() => {
     const appId = Number(selectedDetailGameWithOverlay?.appId);
     if (!appId || appId <= 0) return;
@@ -2528,48 +2574,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (existing && existing.resolved) return;
 
     const reqId = ++_detailMetadataReqRef.current;
+    if (_metadataRetryTimer.current) { clearTimeout(_metadataRetryTimer.current); _metadataRetryTimer.current = null; }
 
-    if (DEBUG_STORE_DETAILS_BOUNDARY) {
-      const catalogRecord = discoverSections.flatMap((s) => s.items).find((g) => Number(g.appId) === appId);
-      console.log(`[STORE_DETAILS_BOUNDARY][LOAD] appId=${appId} fullCacheHit=${!!existing} lightweightRecordPresent=${!!catalogRecord} requestStarted=true`);
-    }
+    fetchDetailMetadata(appId, reqId, 0);
 
-    resolveGameMetadata([appId], { skipInFlight: true })
-      .then((metadata) => {
-        if (!_mountedRef.current) return;
-        if (reqId !== _detailMetadataReqRef.current) {
-          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} staleResultIgnored=true`);
-          return;
-        }
-        const meta = metadata[appId];
-        if (meta) {
-          if (meta.resolved) {
-            setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: meta }));
-            if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} success=true loadingCleared=true finalRenderedState=details`);
-          } else {
-            // resolveGameMetadata filled the gap with createFallbackMetadata (resolved:false),
-            // which would leave the page in skeleton for the full 30s timeout and hide the
-            // repack card. Write a resolved fallback so the page renders immediately.
-            const fallback = createResolvedFallbackMetadata(appId, meta.name);
-            setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
-            if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} success=true fallbackResolved=true loadingCleared=true finalRenderedState=details`);
-          }
-        } else {
-          // No entry at all — write a resolved fallback too so the page never hangs.
-          const fallback = createResolvedFallbackMetadata(appId);
-          setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
-          if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} unavailable=true fallbackResolved=true loadingCleared=true finalRenderedState=details`);
-        }
-      })
-      .catch((err) => {
-        if (!_mountedRef.current) return;
-        if (reqId !== _detailMetadataReqRef.current) return;
-        // Write a resolved fallback so the page renders instead of hanging in
-        // skeleton until the 30s timeout.
-        const fallback = createResolvedFallbackMetadata(appId);
-        setStoreMetadataByAppId((prev) => ({ ...prev, [appId]: fallback }));
-        if (DEBUG_STORE_DETAILS_BOUNDARY) console.log(`[STORE_DETAILS_BOUNDARY][RESULT] appId=${appId} error=${String(err).slice(0, 80)} fallbackResolved=true loadingCleared=true finalRenderedState=details`);
-      });
+    return () => {
+      if (_metadataRetryTimer.current) { clearTimeout(_metadataRetryTimer.current); _metadataRetryTimer.current = null; }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDetailGameWithOverlay?.appId]);
 
@@ -2929,6 +2940,8 @@ export default function Store({ onNavigate }: StoreProps = {}) {
 
   function openDetailsForGame(game: PackageGame) {
     if (ENABLE_VERBOSE_SOURCE_LOGS) console.log(`[STORE][DETAILS_OPEN_EXPLICIT] appid=${game.appId} reason=click`);
+    // Push to navigation history so ← can come back to Store
+    window.dispatchEvent(new CustomEvent("lumaforge-store-detail-open"));
     if (DEBUG_STORE_DETAILS_BOUNDARY) {
       const appIdNum = Number(game.appId);
       console.log(`[STORE_DETAILS_BOUNDARY][OPEN] callerSurface=store-card rawAppId=${game.appId} normalizedAppId=${appIdNum} title=${game.title} source=local-catalog-or-browse existingCallback=openDetailsForGame`);
@@ -3192,6 +3205,19 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     setSelectedDetailGame(null);
   }
 
+  // Listen for back navigation from TopBar ← button when on Store page
+  useEffect(() => {
+    const handler = () => {
+      if (selectedDetailGame) {
+        setSelectedDetailGame(null);
+      } else if (activeSectionId) {
+        setActiveSectionId(null);
+      }
+    };
+    window.addEventListener("lumaforge-store-detail-back", handler);
+    return () => window.removeEventListener("lumaforge-store-detail-back", handler);
+  }, [selectedDetailGame, activeSectionId]);
+
   function handleStoreTabChange(tab: StoreTab) {
     markRenderCause("tab");
     setActiveStoreTab(tab);
@@ -3214,22 +3240,17 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     return () => window.removeEventListener("store-tab-change", handler);
   }, []);
 
-  // Set back button in TopBar for section views AND game details
-  const { setBackButton } = useBackButtonContext();
-  useEffect(() => {
-    if (activeSectionId) {
-      setBackButton({ onBack: () => setActiveSectionId(null), label: "Volver al Store" });
-    } else if (selectedDetailGame) {
-      setBackButton({ onBack: handleBackFromDetails, label: "Volver al Store" });
-    } else {
-      setBackButton(null);
-    }
-  }, [activeSectionId, selectedDetailGame]);
-
   // When search selects a game, open it inline in the Store (keeps tabs visible)
   const { selectedGame: searchSelectedGame, clearSelection: clearGameSelection } = useGameDetails();
+  const _searchOpenedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (searchSelectedGame && !selectedDetailGame) {
+    if (searchSelectedGame) {
+      // Don't re-open if we already opened details for this exact game
+      if (_searchOpenedRef.current === searchSelectedGame.appId) return;
+      // If already viewing a different game, close it first
+      if (selectedDetailGame && selectedDetailGame.appId !== searchSelectedGame.appId) {
+        setSelectedDetailGame(null);
+      }
       const browseGame = browseGames.find((g) => g.appId === searchSelectedGame.appId);
       const pkg: PackageGame = browseGame ?? {
         appId: searchSelectedGame.appId,
@@ -3238,10 +3259,13 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         platforms: [],
         sources: [],
       };
+      _searchOpenedRef.current = searchSelectedGame.appId;
       openDetailsForGame(pkg);
       clearGameSelection();
+    } else {
+      _searchOpenedRef.current = null;
     }
-  }, [searchSelectedGame]);
+  }, [searchSelectedGame, browseGames]);
 
   async function downloadFromSource(game: PackageGame, source: PackageSource): Promise<{ success: boolean; jobId?: string }> {
     return await sharedDownloadFromSource(game, source, {
@@ -3726,6 +3750,28 @@ export default function Store({ onNavigate }: StoreProps = {}) {
                   </button>
                 </div>
               )}
+            </section>
+          );
+        })()
+      ) : activeSectionId && !activeSection && viewAllGames.length > 0 ? (
+        // Fallback: section ID set but section not found in allStoreSections — show viewAllGames
+        (() => {
+          const displayGames = viewAllGames.map(catalogGameToStoreGame);
+          return (
+            <section className="space-y-5 lf-page-in">
+              <div>
+                <h2 className="text-2xl font-bold text-(--color-text)">
+                  {activeSectionId.replace(/^genre-/, "").replace(/-/g, " ")}
+                </h2>
+                <p className="mt-1 text-sm text-(--color-muted)">
+                  {viewAllGames.length} games from catalog
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2:grid-cols-6 lf-card-stagger">
+                {displayGames.map((game) => (
+                  <div key={"store:fallback:" + game.appId}>{renderStoreCard(game)}</div>
+                ))}
+              </div>
             </section>
           );
         })()
