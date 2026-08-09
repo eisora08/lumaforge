@@ -14,6 +14,7 @@ import {
 
 import PageContainer from "../components/layout/PageContainer";
 import GameLauncherTile from "../components/games/GameLauncherTile";
+import GameHoverPreview from "../components/games/GameHoverPreview";
 import GameEditDialog from "../components/games/GameEditDialog";
 import LibraryFilterPanel from "../components/library/LibraryFilterPanel";
 import type { LibraryFilter, LibrarySort } from "../components/library/LibraryFilterPanel";
@@ -81,6 +82,26 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const queuedMediaRef = useRef<Set<string>>(new Set());
   const { confirm } = useConfirm();
+
+  // Game hover preview state
+  const [hoveredGame, setHoveredGame] = useState<LibraryGame | null>(null);
+  const [gamePosition, setGamePosition] = useState<DOMRect | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleHoverStart = useCallback((game: LibraryGame, rect: DOMRect) => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => {
+      setHoveredGame(game);
+      setGamePosition(rect);
+    }, 500);
+  }, []);
+
+  const handleHoverEnd = useCallback(() => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = null;
+    setHoveredGame(null);
+    setGamePosition(null);
+  }, []);
 
   // Library focus mode — when navigating from Store after package download
   const [focusAppId, setFocusAppId] = useState<string | null>(null);
@@ -604,6 +625,8 @@ export default function LibraryPage({ onNavigate }: Props) {
                             onPlay={handlePlay}
                             onInstall={handleInstall}
                             onDeleteScript={handleDeleteScript}
+                            onHoverStart={handleHoverStart}
+                            onHoverEnd={handleHoverEnd}
                           />
                         ))}
                       </div>
@@ -738,6 +761,16 @@ export default function LibraryPage({ onNavigate }: Props) {
           steamGridDbArtworkEnabled: settings?.steamGridDbArtworkEnabled ?? false,
         }}
       />
+      {hoveredGame && gamePosition && (
+        <GameHoverPreview
+          game={hoveredGame}
+          position={gamePosition}
+          onMouseEnter={() => {
+            if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+          }}
+          onMouseLeave={handleHoverEnd}
+        />
+      )}
     </div>
   );
 }

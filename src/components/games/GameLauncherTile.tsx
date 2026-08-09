@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { countRender } from "../../services/perfCounters";
 import {
   Download,
@@ -85,6 +85,8 @@ type GameLauncherTileProps = {
   onPlay: (game: LibraryGame) => void;
   onInstall: (game: LibraryGame) => void;
   onDeleteScript?: (game: LibraryGame) => void;
+  onHoverStart?: (game: LibraryGame, rect: DOMRect) => void;
+  onHoverEnd?: () => void;
 };
 
 function getCardImage(
@@ -124,7 +126,9 @@ function areGameLauncherTilePropsEqual(prev: GameLauncherTileProps, next: GameLa
     prev.onSelect === next.onSelect &&
     prev.onPlay === next.onPlay &&
     prev.onInstall === next.onInstall &&
-    prev.onDeleteScript === next.onDeleteScript
+    prev.onDeleteScript === next.onDeleteScript &&
+    prev.onHoverStart === next.onHoverStart &&
+    prev.onHoverEnd === next.onHoverEnd
   );
 }
 
@@ -139,11 +143,26 @@ function GameLauncherTileInner({
   onPlay,
   onInstall,
   onDeleteScript,
+  onHoverStart,
+  onHoverEnd,
 }: GameLauncherTileProps) {
   countRender("GameLauncherTile");
   const { settings } = useSettings();
   const { ref, isVisible } = useInViewport();
-  const { onMouseEnter, onMouseLeave } = useHoverPrefetch(game.appId);
+  const { onMouseEnter: prefetchEnter, onMouseLeave: prefetchLeave } = useHoverPrefetch(game.appId);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const handleHoverEnter = useCallback(() => {
+    prefetchEnter();
+    if (onHoverStart && rootRef.current) {
+      onHoverStart(game, rootRef.current.getBoundingClientRect());
+    }
+  }, [prefetchEnter, onHoverStart, game]);
+
+  const handleHoverLeave = useCallback(() => {
+    prefetchLeave();
+    onHoverEnd?.();
+  }, [prefetchLeave, onHoverEnd]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -475,7 +494,7 @@ function GameLauncherTileInner({
   }
 
   return (
-    <div ref={ref} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="lf-game-card group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
+    <div ref={(node) => { ref.current = node; rootRef.current = node; }} onMouseEnter={handleHoverEnter} onMouseLeave={handleHoverLeave} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true); }} className="lf-game-card group flex flex-col rounded-2xl bg-transparent transition hover:bg-white/[0.04] focus-within:ring-2 focus-within:ring-(--color-accent)/20 lf-press-effect">
       {/* Image */}
       <div
         role="button"
