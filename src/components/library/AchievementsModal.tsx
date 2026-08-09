@@ -464,7 +464,7 @@ export default function AchievementsModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[9999] grid place-items-center bg-black/80 backdrop-blur-xl lf-modal-overlay"
+      className="fixed inset-0 z-[9999] grid place-items-center bg-black/40"
       aria-modal="true"
       role="dialog"
       aria-label={`Achievements — ${summary.total} total`}

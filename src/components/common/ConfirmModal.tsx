@@ -202,7 +202,7 @@ export default function ConfirmModal({
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-md lf-modal-overlay"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
     >
       <div
         ref={panelRef}
