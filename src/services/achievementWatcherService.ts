@@ -1041,6 +1041,7 @@ class AchievementWatcherService {
           if (schemaEntries.length > 0 && (libcacheTotal > 0 || timestampMap.size > 0)) {
             const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
             let unlocked = 0;
+            let libcacheUnlockedCount = 0;
 
             for (const entry of schemaEntries) {
               // Binary stats timestamp is primary (detects real-time unlocks off-focus)
@@ -1052,6 +1053,7 @@ class AchievementWatcherService {
 
               // Librarycache is fallback (covers cases where binary stats is stale)
               const libcacheAchieved = libcacheMap.get(entry.api_name) ?? false;
+              if (libcacheAchieved) libcacheUnlockedCount++;
 
               const isUnlocked = hasTimestamp || libcacheAchieved;
               if (isUnlocked) unlocked++;
@@ -1059,6 +1061,24 @@ class AchievementWatcherService {
                 unlocked: isUnlocked,
                 unlockTime: timestamp,
               });
+            }
+
+            // nAchieved is authoritative: when it's higher than our count,
+            // mark remaining achievements as unlocked (hidden achievements
+            // that Steam doesn't list in per-achievement arrays).
+            if (libcacheUnlockedCount > unlocked) {
+              const remaining = libcacheUnlockedCount - unlocked;
+              let marked = 0;
+              for (const entry of schemaEntries) {
+                if (!progressMap.get(entry.api_name)?.unlocked && marked < remaining) {
+                  progressMap.set(entry.api_name, { unlocked: true });
+                  marked++;
+                  unlocked++;
+                }
+              }
+              if (marked > 0) {
+                console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} marked ${marked} hidden achievements as unlocked from nAchieved`);
+              }
             }
 
             effectivePatch = {
