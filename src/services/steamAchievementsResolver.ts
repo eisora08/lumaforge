@@ -718,7 +718,25 @@ export async function resolveSteamAchievements(params: {
           };
         });
 
-        const computedUnlocked = achievements.filter(a => a.unlocked).length;
+        let computedUnlocked = achievements.filter(a => a.unlocked).length;
+
+        // nAchieved is authoritative: when it's higher than our count,
+        // mark remaining achievements as unlocked (hidden achievements
+        // that Steam doesn't list in per-achievement arrays).
+        if (libcacheUnlocked > computedUnlocked) {
+          const remaining = libcacheUnlocked - computedUnlocked;
+          let marked = 0;
+          for (const a of achievements) {
+            if (!a.unlocked && marked < remaining) {
+              a.unlocked = true;
+              marked++;
+              computedUnlocked++;
+            }
+          }
+          if (marked > 0) {
+            console.log(`[ACH][PROGRESS] App ${appIdStr}: marked ${marked} hidden achievements as unlocked from nAchieved`);
+          }
+        }
 
         localProgressSummary = {
           appId: appIdStr,
