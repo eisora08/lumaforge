@@ -191,6 +191,7 @@ function readOverlayPosition(): OverlayPosition {
 /** Show an achievement notification in the Tauri overlay window. */
 export async function showAchievementOverlay(params: {
   name: string;
+  description?: string | null;
   iconUrl?: string | null;
   appId?: string | null;
   rarity?: number | null;
@@ -205,6 +206,7 @@ export async function showAchievementOverlay(params: {
     const overlayPosition = readOverlayPosition();
     const invokePayload = {
       name: params.name,
+      description: params.description ?? null,
       iconUrl: resolvedIcon,
       appId: params.appId ?? null,
       rarity: params.rarity ?? null,

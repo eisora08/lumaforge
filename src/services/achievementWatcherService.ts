@@ -465,6 +465,7 @@ class AchievementWatcherService {
           const indexSnapshot = i; // capture for closure
           showAchievementOverlay({
             name: unlocks[i].name,
+            description: unlocks[i].description,
             iconUrl: unlocks[i].iconUrl,
             iconGrayUrl: unlocks[i].iconGrayUrl,
             appId: appId,

@@ -4,6 +4,7 @@ use tauri::{LogicalPosition, Manager};
 pub fn show_achievement_overlay(
     app_handle: tauri::AppHandle,
     name: String,
+    description: Option<String>,
     icon_url: Option<String>,
     app_id: Option<String>,
     rarity: Option<f64>,
@@ -17,6 +18,7 @@ pub fn show_achievement_overlay(
     let dur = duration.unwrap_or(4500);
     let mut data = serde_json::json!({
         "name": name,
+        "description": description,
         "iconUrl": icon_url,
         "appId": app_id,
         "rarity": rarity,
@@ -57,7 +59,7 @@ pub fn show_achievement_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0, 110.0)
+                .inner_size(420.0, 140.0)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
