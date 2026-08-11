@@ -238,6 +238,7 @@ class AchievementStoreImpl {
         newUnlocks.push({
           apiName: ach.apiName,
           name: ach.name,
+          description: ach.description,
           iconUrl: ach.iconUrl,
           iconGrayUrl: ach.iconGrayUrl,
           unlockTime: ach.unlockTime,
@@ -532,6 +533,7 @@ class AchievementStoreImpl {
           newUnlocks.push({
             apiName: ach.apiName,
             name: ach.name,
+            description: ach.description,
             iconUrl: ach.iconUrl,
             iconGrayUrl: ach.iconGrayUrl,
             unlockTime: ach.unlockTime,

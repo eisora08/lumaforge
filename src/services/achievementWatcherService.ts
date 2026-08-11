@@ -381,9 +381,8 @@ class AchievementWatcherService {
           // Update poll metadata
           this._lastFileMeta.set(path, { size, modified: modified_at });
 
-          // Process only usergamestats events (appcache/stats binary files)
-          // librarycache events are no longer watched — progress comes from appcache/stats
-          const isAcceptedSource = source === "usergamestats" || source === "achievement-progress";
+          // Process usergamestats (binary stats) and librarycache (Steam achievement data)
+          const isAcceptedSource = source === "usergamestats" || source === "librarycache" || source === "achievement-progress";
           console.log(`[ACH][PIPELINE] source_check appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
 
           // Special handling for global achievement_progress.json changes
@@ -409,8 +408,8 @@ class AchievementWatcherService {
               console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=already-queued`);
               return;
             }
-            // Usergamestats cooldown: skip if processed within last 10s
-            if (source === "usergamestats") {
+            // Cooldown: skip if processed within last 2s (for both binary stats and librarycache)
+            if (source === "usergamestats" || source === "librarycache") {
               const last = this._usergamestatsCooldown.get(appIdStr);
               if (last && Date.now() - last < 2000) {
                 console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=cooldown msSince=${Date.now() - last}`);
@@ -985,7 +984,7 @@ class AchievementWatcherService {
       // Binary stats timestamps: real-time unlock detection (Steam writes immediately on unlock)
       // Librarycache: fallback when binary stats timestamps are missing
       let effectivePatch: ProgressPatch | null = null;
-      if (source === "usergamestats") {
+      if (source === "usergamestats" || source === "librarycache") {
         console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} reading-schema+stats+librarycache`);
         try {
           // Step 1: Read schema binary for achievement metadata (stat_id + bit)

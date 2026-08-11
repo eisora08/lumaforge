@@ -22,6 +22,7 @@ export type GameAchievement = {
 export type UnlockEvent = {
   apiName: string;
   name: string;
+  description?: string;
   iconUrl?: string;
   iconGrayUrl?: string;
   unlockTime?: number;

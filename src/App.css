@@ -1274,6 +1274,25 @@ html {
 }
 
 /* =========================
+   ACHIEVEMENT TOAST RARE GLOW
+   Pulsating glow for rare/ultra-rare achievements
+   Applied via .lf-ach-toast-rare-glow class
+========================= */
+
+.lf-ach-toast-rare-glow {
+  animation: lfAchToastRareGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes lfAchToastRareGlow {
+  from {
+    filter: brightness(1);
+  }
+  to {
+    filter: brightness(1.08);
+  }
+}
+
+/* =========================
    LAUNCHING SHIMMER
 ========================= */
 
