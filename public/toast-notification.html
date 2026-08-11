@@ -653,6 +653,7 @@
       // Rarity tier classification
       function getRarityTier(pct) {
         if (pct === null || pct <= 0) return null;
+        if (pct === 100 || data.isPlatinum) return 'platinum';
         if (pct <= 1) return 'gold';
         if (pct <= 5) return 'silver';
         if (pct <= 10) return 'bronze';
@@ -662,6 +663,7 @@
 
       // Rarity colors
       var tierConfig = {
+        platinum: { border: '#a78bfa', glow: 'rgba(167,139,250,0.6)', badgeBg: 'rgba(167,139,250,0.2)', badgeBorder: 'rgba(167,139,250,0.7)', badgeText: '#c4b5fd', label: 'Platinum Trophy', iconRing: 'rgba(167,139,250,0.5)', accentGrad: 'linear-gradient(90deg, #a78bfa, #8b5cf6, #7c3aed)' },
         gold:   { border: '#f9c74f', glow: 'rgba(249,199,79,0.55)', badgeBg: 'rgba(249,199,79,0.15)', badgeBorder: 'rgba(249,199,79,0.6)', badgeText: '#ffe08a', label: 'Ultra Rare', iconRing: 'rgba(249,199,79,0.4)', accentGrad: 'linear-gradient(90deg, #f9c74f, #f8961e)' },
         silver: { border: '#c7d0d9', glow: 'rgba(199,208,217,0.5)', badgeBg: 'rgba(199,208,217,0.15)', badgeBorder: 'rgba(199,208,217,0.6)', badgeText: '#edf3f8', label: 'Rare', iconRing: 'rgba(199,208,217,0.4)', accentGrad: 'linear-gradient(90deg, #c7d0d9, #94a3b8)' },
         bronze: { border: '#cd7f32', glow: 'rgba(205,127,50,0.5)', badgeBg: 'rgba(205,127,50,0.15)', badgeBorder: 'rgba(205,127,50,0.6)', badgeText: '#efb475', label: 'Uncommon', iconRing: 'rgba(205,127,50,0.4)', accentGrad: 'linear-gradient(90deg, #cd7f32, #b8860b)' },

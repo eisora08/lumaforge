@@ -22,16 +22,18 @@ function resolveIconSrc(value: string | undefined, appId?: string): string | und
   return undefined;
 }
 
-function getRarityTier(pct: number | undefined | null): "gold" | "silver" | "bronze" | null {
+function getRarityTier(pct: number | undefined | null): "platinum" | "gold" | "silver" | "bronze" | null {
   if (pct == null || !Number.isFinite(pct) || pct <= 0) return null;
+  if (pct === 100) return "platinum";
   if (pct <= 1) return "gold";
   if (pct <= 5) return "silver";
   if (pct <= 10) return "bronze";
   return null;
 }
 
-function getRarityLabel(tier: "gold" | "silver" | "bronze" | null): string {
+function getRarityLabel(tier: "platinum" | "gold" | "silver" | "bronze" | null): string {
   switch (tier) {
+    case "platinum": return "Platinum Trophy";
     case "gold": return "Ultra Rare";
     case "silver": return "Rare";
     case "bronze": return "Uncommon";
@@ -39,8 +41,16 @@ function getRarityLabel(tier: "gold" | "silver" | "bronze" | null): string {
   }
 }
 
-function getRarityColors(tier: "gold" | "silver" | "bronze" | null) {
+function getRarityColors(tier: "platinum" | "gold" | "silver" | "bronze" | null) {
   switch (tier) {
+    case "platinum":
+      return {
+        border: "border-[#a78bfa]/80",
+        glow: "shadow-[0_0_18px_rgba(167,139,250,0.6)]",
+        badge: "bg-[#a78bfa]/20 border-[#a78bfa]/70 text-[#c4b5fd]",
+        label: "text-[#a78bfa]",
+        iconRing: "ring-[#a78bfa]/50",
+      };
     case "gold":
       return {
         border: "border-[#f9c74f]/80",

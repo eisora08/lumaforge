@@ -188,6 +188,62 @@ function readOverlayPosition(): OverlayPosition {
   return valid.includes(pos) ? pos : "top-right";
 }
 
+// ── Sequential toast queue ──
+// Shows achievements one at a time instead of all at once
+interface QueuedToast {
+  name: string;
+  description?: string | null;
+  iconUrl?: string | null;
+  iconGrayUrl?: string | null;
+  appId?: string | null;
+  rarity?: number | null;
+  gameTitle?: string | null;
+  duration?: number;
+  isPlatinum?: boolean;
+}
+
+let _toastQueue: QueuedToast[] = [];
+let _toastProcessing = false;
+
+function getToastDuration(rarity?: number | null, isPlatinum?: boolean): number {
+  if (isPlatinum) return 10000;
+  if (rarity == null || !Number.isFinite(rarity) || rarity <= 0) return 4500;
+  if (rarity <= 1) return 8000;
+  if (rarity <= 5) return 6500;
+  if (rarity <= 10) return 5500;
+  return 4500;
+}
+
+async function processToastQueue(): Promise<void> {
+  if (_toastProcessing || _toastQueue.length === 0) return;
+  _toastProcessing = true;
+
+  while (_toastQueue.length > 0) {
+    const toast = _toastQueue.shift()!;
+    const duration = toast.duration ?? getToastDuration(toast.rarity, toast.isPlatinum);
+    await showAchievementOverlay({
+      name: toast.name,
+      description: toast.description,
+      iconUrl: toast.iconUrl,
+      iconGrayUrl: toast.iconGrayUrl,
+      appId: toast.appId,
+      rarity: toast.isPlatinum ? 100 : toast.rarity,
+      gameTitle: toast.gameTitle,
+      duration,
+    });
+    // Wait for the toast to display + extra gap before next
+    await new Promise<void>((resolve) => setTimeout(resolve, duration + 500));
+  }
+
+  _toastProcessing = false;
+}
+
+/** Queue an achievement toast — shows one at a time sequentially */
+export function queueAchievementOverlay(toast: QueuedToast): void {
+  _toastQueue.push(toast);
+  processToastQueue();
+}
+
 /** Show an achievement notification in the Tauri overlay window. */
 export async function showAchievementOverlay(params: {
   name: string;

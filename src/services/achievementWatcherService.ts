@@ -6,7 +6,7 @@ import type { ProgressPatch } from "./achievementStore";
 import { checkAchievementLibraryCacheMetadata, readAchievementCacheWithFallback, listLibraryCacheAppIds, readAchievementProgressIndex, scanSteamAppcacheAchievements } from "./tauri";
 import type { AppAchievementCache, AchievementProgressEntry } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
-import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "./achievementNotificationService";
+import { sendAchievementNativeNotification, showGroupedAchievementOverlay, queueAchievementOverlay } from "./achievementNotificationService";
 import { showAchievementToast, showGroupedAchievementToast } from "../components/library/AchievementToast";
 import {
   ACHIEVEMENTS_AUTO_ENABLED,
@@ -455,46 +455,28 @@ class AchievementWatcherService {
       const traceSettings = `overlay=${overlayEnabled} native=${nativeEnabled} inApp=${toastEnabled} appFocused=${appFocused}`;
       console.log(`[ACH][NOTIFY_SETTINGS] ${traceSettings}`);
 
-      // ── Overlay enabled: show immediately regardless of focus ──
+      // ── Overlay enabled: queue achievements one at a time ──
       if (overlayEnabled) {
         const maxShow = 3;
-        console.log(`[ACH][TOAST_BATCH] appid=${appId} newUnlocks=${unlocks.length} maxShow=${maxShow} route=overlay`);
-        let shownCount = 0;
-        for (let i = 0; i < unlocks.length && shownCount < maxShow; i++) {
-          console.log(`[ACH][NOTIFY_OVERLAY_ATTEMPT] appid=${appId} apiName=${unlocks[i].apiName}`);
-          const indexSnapshot = i; // capture for closure
-          showAchievementOverlay({
+        console.log(`[ACH][TOAST_BATCH] appid=${appId} newUnlocks=${unlocks.length} maxShow=${maxShow} route=overlay-queue`);
+        const queued: string[] = [];
+        for (let i = 0; i < Math.min(unlocks.length, maxShow); i++) {
+          queued.push(unlocks[i].apiName);
+          queueAchievementOverlay({
             name: unlocks[i].name,
             description: unlocks[i].description,
             iconUrl: unlocks[i].iconUrl,
             iconGrayUrl: unlocks[i].iconGrayUrl,
-            appId: appId,
+            appId,
             rarity: unlocks[i].rarityPercent,
             gameTitle: this._getGameTitle(appId),
-          }).then((ok) => {
-            if (!ok) {
-              const reason = appFocused ? "overlay-failed-focused" : "overlay-failed-unfocused";
-              console.warn(`[ACH][OVERLAY_FALLBACK] reason=${reason} inAppEnabled=${toastEnabled} apiName=${unlocks[indexSnapshot].apiName}`);
-              if (toastEnabled) {
-                console.log(`[ACH][NOTIFY_INAPP_ATTEMPT] appid=${appId} apiName=${unlocks[indexSnapshot].apiName}`);
-                if (appFocused) {
-                  showAchievementToast(unlocks[indexSnapshot], appId, this._getGameTitle(appId));
-                } else {
-                  this._pendingUnfocusUnlocks.push({ unlock: unlocks[indexSnapshot], appId, source: "in-app-fallback" });
-                }
-              }
-            }
           });
           this.markToastShown(appId, unlocks[i].apiName);
-          shownCount++;
         }
-        const remaining = unlocks.length - shownCount;
-        console.log(`[ACH][TOAST_CAP] appid=${appId} notificationOnly=true storeUnaffected=true individualShown=${shownCount} groupedRemaining=${remaining}`);
+        const remaining = unlocks.length - queued.length;
+        console.log(`[ACH][TOAST_CAP] appid=${appId} queued=${queued.length} remaining=${remaining}`);
         if (remaining > 0) {
           showGroupedAchievementOverlay(remaining);
-          console.log(`[ACH][NOTIFY_ROUTE] visual=overlay-grouped remaining=${remaining} native=${nativeEnabled}`);
-        } else {
-          console.log(`[ACH][NOTIFY_ROUTE] visual=overlay native=${nativeEnabled} count=${shownCount}`);
         }
       }
 
