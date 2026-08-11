@@ -27,10 +27,10 @@ function logMigrationSkipOnce(): void {
 // ---------------------------------------------------------------------------
 
 export const SOURCE_PRIORITY: Record<string, number> = {
-  "librarycache": 0,
+  "binary-stats": 0,
   "local-cache": 1,
   "local-cache-stale": 1,
-  "binary-stats": 2,
+  "librarycache": 2,
   "steam-web-api": 3,
   "steam-web-api-stale": 4,
   "steam-appcache": 5,
@@ -81,6 +81,8 @@ export type ProgressPatch = {
   rarityMap?: Map<string, number>;
   /** Per-apiName raw icon path from librarycache (str_image), e.g. "img/hash.jpg" */
   iconMap?: Map<string, { icon?: string; iconGray?: string }>;
+  /** When true, patch comes from binary-stats (authoritative). Replace per-achievement states directly — no OR merge. */
+  authoritative?: boolean;
 };
 
 export type ProgressChangeEvent = {
@@ -183,11 +185,14 @@ class AchievementStoreImpl {
     let finalSummary: GameAchievementsSummary;
 
     if (existing) {
-      // Reject librarycache downgrade over binary-stats (librarycache can be stale)
+      // ── DOWNGRADE GUARD ──
+      // Reject any downgrade when existing data has progress (lock count never decreases via resolver).
+      // Binary-stats blocking goes through applyProgressPatch (not setSummary), so setSummary
+      // should never write fewer unlocks than what's already stored.
       if (safeSummary.unlocked != null && existing.unlocked != null
           && safeSummary.unlocked < existing.unlocked
-          && safeSummary.source === "librarycache" && existing.source === "binary-stats") {
-        console.debug(`[ACH][SUMMARY_MERGE] appid=${appId} rejected reason=librarycache-stale-overwrites-binary-stats existing=${existing.unlocked}/${existing.total} incoming=${safeSummary.unlocked}/${safeSummary.total}`);
+          && existing.progressAvailable) {
+        console.log(`[ACH][COUNT_GUARD] appid=${appId} REJECTED reason=count-decreased existing=${existing.unlocked}/${existing.total} source=${existing.source} incoming=${safeSummary.unlocked}/${safeSummary.total} source=${safeSummary.source}`);
         return;
       }
       const accepted = isSourceNewerOrEqual(
@@ -425,9 +430,13 @@ class AchievementStoreImpl {
         }
       }
 
+      // Authoritative (binary-stats): REPLACE unlock state — bin is source of truth
+      // Non-authoritative (librarycache): OR merge — librarycache is partial, can't un-unlock
+      const unlocked = patch.authoritative ? progress.unlocked : (progress.unlocked || ach.unlocked);
+
       return {
         ...ach,
-        unlocked: progress.unlocked || ach.unlocked,
+        unlocked,
         unlockTime: progress.unlockTime ?? ach.unlockTime,
         rarityPercent: patch.rarityMap?.get(ach.apiName) ?? ach.rarityPercent,
         progress: progress.progress ?? ach.progress,
@@ -464,7 +473,8 @@ class AchievementStoreImpl {
 
     // Full completion: librarycache says all achievements unlocked
     // Mark ALL canonical achievements unlocked regardless of progressMap coverage
-    if (patch.unlocked === patch.total && patch.total > 0 && currentCanonicalTotal === patch.total) {
+    // Skip when authoritative — binary-stats already has exact per-achievement states
+    if (!patch.authoritative && patch.unlocked === patch.total && patch.total > 0 && currentCanonicalTotal === patch.total) {
       console.log(`[ACH][FULL_COMPLETION] appid=${appId} nTotal=${patch.total} nAchieved=${patch.unlocked} canonicalTotal=${currentCanonicalTotal} action=mark-all-unlocked`);
       for (const ach of mergedAchievements) {
         ach.unlocked = true;
@@ -479,7 +489,7 @@ class AchievementStoreImpl {
       if (DEBUG_ACH_VERBOSE) console.log(`[ACH][PATCH_MAP_MISSING] appid=${appId} missingCount=${missingCount} reason=partial-map-mismatch`);
     }
 
-    const newUnlockedCount = mappedUnlocked;
+    const newUnlockedCount = patch.authoritative ? patch.unlocked : mappedUnlocked;
     // Prefer existing total from schema (loaded by resolver from appcache/stats binary).
     // Librarycache patch total is unreliable — nTotal includes DLC/test achievements,
     // and progressMap.size may be partial (librarycache arrays only have recently-changed entries).
@@ -493,20 +503,21 @@ class AchievementStoreImpl {
       unlocked: newUnlockedCount,
       percent,
       progressAvailable: true,
-      source: "librarycache",
+      source: patch.authoritative ? "binary-stats" : "librarycache",
       achievements: mergedAchievements,
       updatedAt: Date.now(),
     };
 
+    const patchSource = patch.authoritative ? "binary-stats" : "librarycache";
     const oldUnlocked = `${prevUnlocked}/${current.total}`;
     const newUnlocked = `${newUnlockedCount}/${total}`;
-    const accepted = isSourceNewerOrEqual("librarycache", Date.now(), current.source, current.updatedAt);
-    console.debug(`[ACH][STORE_PATCH][${tid}] before=${oldUnlocked} after=${newUnlocked}`);
+    const accepted = isSourceNewerOrEqual(patchSource, Date.now(), current.source, current.updatedAt);
+    console.debug(`[ACH][STORE_PATCH][${tid}] before=${oldUnlocked} after=${newUnlocked} authoritative=${!!patch.authoritative}`);
     console.debug(`[ACH][STORE_PATCH][${tid}] summaryLoaded=${this.summariesByAppId.has(appId)} createdMinimalSummary=${createdMinimalSummary}`);
     if (accepted) {
-      console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${current.source}:${oldUnlocked} new=librarycache:${newUnlocked} accepted=true reason=librarycache-patch`);
+      console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${current.source}:${oldUnlocked} new=${patchSource}:${newUnlocked} accepted=true reason=patch`);
     } else {
-      console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${current.source}:${oldUnlocked} new=librarycache:${newUnlocked} accepted=false reason=existing-newer`);
+      console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${current.source}:${oldUnlocked} new=${patchSource}:${newUnlocked} accepted=false reason=existing-newer`);
     }
 
     // ── Detect new unlocks using SNAPSHOT (loaded BEFORE comparison) ──

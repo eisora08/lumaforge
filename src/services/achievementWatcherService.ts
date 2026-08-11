@@ -1037,8 +1037,9 @@ class AchievementWatcherService {
               total: schemaEntries.length,
               unlocked,
               progressMap,
+              authoritative: true,
             };
-            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats`);
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats authoritative=true`);
           } else if (schemaEntries.length > 0) {
             const progressMap = new Map<string, { unlocked: boolean }>();
             for (const entry of schemaEntries) {
