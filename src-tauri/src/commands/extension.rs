@@ -330,7 +330,8 @@ pub async fn extension_download_file(
 
     let target = Path::new(&target_path);
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|e| format!("Failed to create target directory: {}", e))?;
     }
 
@@ -339,7 +340,8 @@ pub async fn extension_download_file(
         .await
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
-    fs::write(target, &bytes)
+    tokio::fs::write(target, &bytes)
+        .await
         .map_err(|e| format!("Failed to write file: {}", e))?;
 
     extension_log(format!("downloaded: {} -> {}", url, target_path));

@@ -10,6 +10,13 @@ export type GameAchievement = {
   rarityPercent?: number;
   statId?: number;
   bit?: number;
+  /** Schema metadata for progress tracking (carried through for cache round-trip) */
+  progressStatId?: number;
+  progressMin?: number;
+  progressMax?: number;
+  /** Runtime progress values (computed from binary stats) */
+  progress?: number;
+  maxProgress?: number;
 };
 
 export type UnlockEvent = {
@@ -33,6 +40,8 @@ export type GameAchievementsSummary = {
     | "local-cache"
     | "steam-appcache"
     | "schema-only"
+    | "schema-generated"
+    | "binary-stats"
     | "global-percentages"
     | "setup-required"
     | "disabled"

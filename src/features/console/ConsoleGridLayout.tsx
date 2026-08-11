@@ -349,7 +349,7 @@ export default function ConsoleGridLayout({
         </div>
 
         {/* Right preview panel — settings-driven width */}
-        <div className="lf-console-glass hidden relative shrink-0 overflow-hidden border-l border-(--color-border) lg:block"
+        <div className="lf-surface hidden relative shrink-0 overflow-hidden border-l border-(--color-border) lg:block"
              style={{ width: `${settings.sidePanelWidth}px`, minWidth: `${settings.sidePanelWidth}px`, maxWidth: `${settings.sidePanelWidth}px` }}>
           {/* Instant hover/focus backdrop layer */}
           {backdropSrc && (
@@ -614,7 +614,7 @@ export default function ConsoleGridLayout({
       </div>
 
       {/* Bottom category bar */}
-      <div className="lf-console-glass shrink-0 border-t border-(--color-border)">
+      <div className="lf-surface shrink-0 border-t border-(--color-border)">
         <ConsoleCategoryBar
           activeIndex={activeCategory}
           counts={categoryCounts}

@@ -256,7 +256,7 @@ export default function GamesPage({ onNavigate }: { onNavigate?: (page: string) 
         </PageContainer>
 
         {showFilters && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFilters(false)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowFilters(false)}>
             <div className="w-80 rounded-2xl border border-(--surface-active-border) bg-(--color-bg) p-5" onClick={(e) => e.stopPropagation()}>
               <h3 className="mb-4 text-sm font-bold text-(--color-text)">Filters</h3>
               <div className="space-y-3">

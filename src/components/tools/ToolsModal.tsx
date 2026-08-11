@@ -564,7 +564,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -633,7 +633,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
       {/* ── Online Fix mini modal ──────────────────────────────────────── */}
       {showOnlineFixModal && nativeAppId != null && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
           onMouseDown={(e) => { if (e.target === e.currentTarget) setShowOnlineFixModal(false); }}
           onKeyDown={(e) => { if (e.key === "Escape") setShowOnlineFixModal(false); }}
         >

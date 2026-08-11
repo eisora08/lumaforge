@@ -350,9 +350,9 @@ async fn download_file(client: &reqwest::Client, url: &str, dest: &Path) -> Resu
     }
 
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| format!("Failed to create dir: {e}"))?;
     }
-    std::fs::write(dest, &bytes).map_err(|e| format!("Failed to write downloaded file: {e}"))?;
+    tokio::fs::write(dest, &bytes).await.map_err(|e| format!("Failed to write downloaded file: {e}"))?;
     Ok(())
 }
 

@@ -182,7 +182,7 @@ export default function ProfileModal({ open, profile, onSave, onClose }: Props) 
         role="dialog"
         aria-modal="true"
         aria-label="Edit profile"
-        className={`fixed inset-0 z-50 flex items-center justify-center transition-all duration-200 ease-out ${isAnimating ? "bg-black/0 backdrop-blur-0" : "bg-black/60 backdrop-blur-sm"} ${reducedMotionClass}`}
+        className={`fixed inset-0 z-50 flex items-center justify-center transition-all duration-200 ease-out ${isAnimating ? "bg-black/0" : "bg-black/40"} ${reducedMotionClass}`}
       >
         <div
           ref={panelRef}

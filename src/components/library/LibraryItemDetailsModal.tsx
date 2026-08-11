@@ -97,7 +97,7 @@ export default function LibraryItemDetailsModal({
   const updateInfo = getLuaUpdateInfo(script);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="lf-surface max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-3xl border">
         <div className="relative h-56 overflow-hidden bg-white/5">
           {!imageFailed ? (

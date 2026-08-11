@@ -869,12 +869,9 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
   /* ── Surface style ── */
   const isSolid = surfaceMode === "solid";
-  const isLiquidGlass = surfaceMode === "liquid-glass";
   const surfaceBg = isSolid
     ? "bg-(--color-surface)"
-    : isLiquidGlass
-      ? "lf-console-glass"
-      : "lf-console-glass-strong";
+    : "lf-surface";
 
   /* ══════════════════════════════════════════
      FOCUS VISUALS — per-zone focus styling

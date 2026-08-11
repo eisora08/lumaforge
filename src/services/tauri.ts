@@ -21,6 +21,10 @@ export async function detectSteamPaths(): Promise<SteamPaths | null> {
   return await invoke<SteamPaths | null>("detect_steam_paths");
 }
 
+export async function detectSteamAccountIdForApp(steamPath: string, appId: number): Promise<string | null> {
+  return await invoke<string | null>("detect_steam_account_id_for_app", { steamPath, appId });
+}
+
 export async function downloadAndInstallPackage(params: {
   jobId: string;
   downloadUrl: string;
@@ -447,6 +451,9 @@ export type AppAchievementCacheEntry = {
   rarity_percent?: number;
   stat_id?: number;
   bit?: number;
+  progress_stat_id?: number;
+  progress_min?: number;
+  progress_max?: number;
 };
 
 /** Helper: resolve the effective icon path from an achievement cache entry.
@@ -486,6 +493,10 @@ export async function readAchievementCache(appId: number): Promise<AppAchievemen
 
 export async function writeAchievementCache(appId: number, data: AppAchievementCache, migrateIcons = true): Promise<void> {
   return await invoke<void>("write_achievement_cache", { appId, data, migrateIcons });
+}
+
+export async function deleteAchievementCache(appId: number): Promise<void> {
+  return await invoke<void>("delete_achievement_cache", { appId });
 }
 
 export type AchievementsAppSchemaResult = {
@@ -2850,6 +2861,8 @@ export async function readAchievementCacheWithFallback(appId: number): Promise<A
           unlocked: e.unlocked,
           unlock_time: e.unlockTime ?? undefined,
           rarity_percent: e.globalPct ?? undefined,
+          // Note: stat_id/bit/progress_* are NOT stored in SQLite achievement_entries table
+          // writeCacheInBackground merges these from the existing JSON disk cache
         })),
         achievement_percentages: percentages,
       };
@@ -3691,24 +3704,57 @@ export async function openThirdPartyFolder(): Promise<void> {
   await invoke<void>("open_thirdparty_folder");
 }
 
-export async function generateAchievementSchema(
-  appId: number,
-  schemaJson: string,
-  accountId?: number,
-  gameDir?: string,
-  gameName?: string,
-  savePath?: string,
-  platform?: string,
-): Promise<string> {
-  return await invoke<string>("generate_achievement_schema", {
-    appId,
-    schemaJson,
-    accountId: accountId ?? null,
-    gameDir: gameDir ?? null,
-    gameName: gameName ?? null,
-    savePath: savePath ?? null,
-    platform: platform ?? null,
+export type GenerateSchemaResult = {
+  entries_count: number;
+  source: string;
+  icons_downloaded: number;
+  progress_available: boolean;
+  error?: string;
+};
+
+export async function generateAchievementSchema(params: {
+  appId: number;
+  steamPath?: string;
+  steamAccountId?: string;
+  steamWebApiKey?: string;
+}): Promise<GenerateSchemaResult> {
+  return await invoke<GenerateSchemaResult>("generate_achievement_schema", {
+    appId: params.appId,
+    steamPath: params.steamPath ?? null,
+    steamAccountId: params.steamAccountId ?? null,
+    steamWebApiKey: params.steamWebApiKey ?? null,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Schema Tool (generate_emu_config.exe wrapper)
+// ---------------------------------------------------------------------------
+
+export type SchemaToolResult = {
+  entries_count: number;
+  images_copied: number;
+  source: string;
+  error?: string | null;
+};
+
+export type SchemaToolStatus = {
+  available: boolean;
+  exe_path: string;
+  output_dir: string;
+};
+
+export async function generateSchemaViaTool(params: {
+  appId: number;
+  steamPath?: string;
+}): Promise<SchemaToolResult> {
+  return await invoke<SchemaToolResult>("generate_schema_via_tool", {
+    appId: params.appId,
+    steamPath: params.steamPath ?? null,
+  });
+}
+
+export async function getSchemaToolStatus(): Promise<SchemaToolStatus> {
+  return await invoke<SchemaToolStatus>("get_schema_tool_status");
 }
 
 export async function downloadStoreImage(

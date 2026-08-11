@@ -615,10 +615,8 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
     return;
   }
 
-  // ── Part 6: Limit per-app based on priority ──
-  // low priority (startup/background): first 5 icons only
-  // normal/high priority (user-triggered): all icons
-  const maxIcons = job.priority === "low" ? 5 : Infinity;
+  // ── Part 6: All icons per-app (queue + concurrency handle throttling) ──
+  const maxIcons = Infinity;
 
   const generationId = nextGenerationId(job.appId, "background-job");
   const items: import("./achievementImageQueue").ImageQueueItem[] = [];

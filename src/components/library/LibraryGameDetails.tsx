@@ -98,6 +98,7 @@ import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedA
 import { achievementImageQueue, resolveImageSource, isResolvedUrl, nextGenerationId, cancelGeneration, ACHIEVEMENT_IMAGE_MIGRATION_AUTO, DEBUG_ACH_IMAGE_QUEUE, isImageResolved, markImageResolved } from "../../services/achievementImageQueue";
 import { achievementAutoSyncService } from "../../services/achievementAutoSyncService";
 import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
+import { ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS } from "../../services/achievementAutoFlags";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
 import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
@@ -756,10 +757,10 @@ export default function LibraryGameDetails({
     });
   }, [appIdStr]);
 
-  // Load achievements — only on explicit refresh, NOT on mount (auto-disabled)
+  // Load achievements on mount when auto-load is enabled, or on explicit refresh
   // Safe: reads existing disk cache for current visible appId only.
   // No stats/schema scan, no migration, no cache write, no full library scan.
-  const shouldAutoLoadAchievements = false; // ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS — hard-disabled
+  const shouldAutoLoadAchievements = ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS;
   const ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP = true;
   const diskCacheRef = useRef<{ updatedAt: number } | null>(null);
   useEffect(() => {
@@ -894,6 +895,10 @@ export default function LibraryGameDetails({
           setAchievementsSummary(summary);
           achievementStore.setSummary(appIdStr, summary);
           setAchievementsLoading(false);
+          // Enqueue image downloads for this game (fire-and-forget)
+          import("../../services/backgroundJobQueue").then(({ enqueueAchievementImageJobs }) => {
+            enqueueAchievementImageJobs([appIdStr], "normal");
+          }).catch(() => {});
           if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${summary.unlocked} total=${summary.total} progressAvailable=${summary.progressAvailable} source=${summary.source}`);
           console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);
           console.debug(`[ACH][PROGRESS] unlocked=${summary.achievements.filter((a: any) => a.unlocked).length}/${summary.total}`);
@@ -2315,12 +2320,27 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                         if (!appIdStr) return;
                         setAchievementsLoading(true);
                         try {
-                          // CRITICAL: delete existing store entry BEFORE resolving.
-                          // resolveSteamAchievements has a post-call store-freshness check (line ~968)
-                          // that returns store data if it has higher source priority.
-                          // Without this delete, a "librarycache" entry (priority 0) would
-                          // cause the resolver to return stale 13/42 instead of fresh 15/42.
+                          // CRITICAL: delete ALL cache layers BEFORE resolving.
+                          // 1. In-memory store
                           achievementStore.deleteSummary(appIdStr);
+                          // 2. Disk cache (achievements/steam/<appId>/)
+                          const { deleteAchievementCache } = await import("../../services/tauri");
+                          const appIdNum = Number(appIdStr);
+                          if (Number.isFinite(appIdNum)) {
+                            await deleteAchievementCache(appIdNum).catch(() => {});
+                          }
+                          // 3. Snapshot achievementSummary for this game
+                          try {
+                            const { getCachedSnapshot, notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                            const snap = getCachedSnapshot();
+                            if (snap?.library?.games) {
+                              const g = snap.library.games.find((sg: any) => sg.appId === appIdStr);
+                              if (g?.achievementSummary) {
+                                g.achievementSummary = undefined;
+                                notifyMediaUpdated(appIdStr, { source: "achievement-refresh-clear" }).catch(() => {});
+                              }
+                            }
+                          } catch { /* non-critical */ }
                           const s = await resolveSteamAchievements({
                             appId: appIdStr,
                             steamWebApiKey: settings.steamWebApiKey || undefined,

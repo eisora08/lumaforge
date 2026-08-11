@@ -287,13 +287,15 @@ pub async fn download_provider_media_from_url(
 
     // Atomic write: temp file then rename
     let tmp_path = dest_path.with_extension(format!("{}.tmp", ext));
-    fs::write(&tmp_path, &bytes)
+    tokio::fs::write(&tmp_path, &bytes)
+        .await
         .map_err(|e| format!("Failed to write downloaded file: {}", e))?;
 
-    if dest_path.exists() {
-        let _ = fs::remove_file(&dest_path);
+    if let Ok(()) = tokio::fs::metadata(&dest_path).await.map(|_| ()) {
+        let _ = tokio::fs::remove_file(&dest_path).await;
     }
-    fs::rename(&tmp_path, &dest_path)
+    tokio::fs::rename(&tmp_path, &dest_path)
+        .await
         .map_err(|e| format!("Failed to finalize downloaded file: {}", e))?;
 
     let rel = relative_media_path(&provider, &provider_game_id, &role, &ext)?;

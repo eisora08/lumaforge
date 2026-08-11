@@ -183,7 +183,7 @@ export default function ConsoleInstallModal({
         role="dialog"
         aria-modal="true"
         aria-label="Install game"
-        className="lf-console-glass-strong relative mx-auto w-[clamp(340px,40vw,480px)] overflow-hidden rounded-2xl border border-(--color-border)/30 shadow-2xl shadow-black/60"
+        className="lf-surface relative mx-auto w-[clamp(340px,40vw,480px)] overflow-hidden rounded-2xl border border-(--color-border)/30 shadow-2xl shadow-black/60"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close X */}

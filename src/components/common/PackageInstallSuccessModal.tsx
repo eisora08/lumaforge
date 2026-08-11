@@ -203,7 +203,7 @@ export default function PackageInstallSuccessModal({
       aria-modal="true"
       aria-labelledby="pkg-success-title"
       aria-describedby="pkg-success-desc"
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 backdrop-blur-md"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
       style={{ WebkitBackdropFilter: "blur(12px)" }}
     >
       <div

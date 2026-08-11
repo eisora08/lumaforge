@@ -819,7 +819,7 @@ async fn download_file(client: &reqwest::Client, url: &str, dest: &Path) -> AnyR
         anyhow::bail!("Downloaded file is empty: {}", url);
     }
 
-    std::fs::write(dest, &bytes).context("Failed to write downloaded file")?;
+    tokio::fs::write(dest, &bytes).await.context("Failed to write downloaded file")?;
     Ok(())
 }
 

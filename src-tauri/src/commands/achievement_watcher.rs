@@ -70,21 +70,6 @@ impl AchievementWatcher {
     )
     .map_err(|e| format!("Failed to create watcher: {}", e))?;
 
-    if librarycache_path.is_dir() {
-      watcher
-        .watch(&librarycache_path, RecursiveMode::NonRecursive)
-        .map_err(|e| format!("Failed to watch librarycache: {}", e))?;
-      eprintln!(
-        "[ACH][WATCHER] watching librarycache={}",
-        librarycache_path.display()
-      );
-    } else {
-      eprintln!(
-        "[ACH][WATCHER] librarycache path not found: {}",
-        librarycache_path.display()
-      );
-    }
-
     if appcache_stats_path.is_dir() {
       watcher
         .watch(&appcache_stats_path, RecursiveMode::NonRecursive)
@@ -101,7 +86,6 @@ impl AchievementWatcher {
     }
 
     let shutdown = self.shutdown.clone();
-    let lib_path = librarycache_path.clone();
     let stats_path = appcache_stats_path.clone();
     let debounce = Duration::from_millis(800);
     let poll_interval = Duration::from_millis(200);
@@ -117,7 +101,7 @@ impl AchievementWatcher {
         match rx.recv_timeout(poll_interval) {
           Ok(Ok(event)) => {
             for path in &event.paths {
-              if let Some(info) = extract_info(path, &lib_path, &stats_path) {
+              if let Some(info) = extract_info(path, &stats_path) {
                 let trace_id = next_trace_id();
                 pending.insert(
                   (info.appid, info.source.clone()),
@@ -218,61 +202,12 @@ struct FileInfo {
   size: u64,
 }
 
-fn extract_info(path: &Path, lib_path: &Path, stats_path: &Path) -> Option<FileInfo> {
+fn extract_info(path: &Path, stats_path: &Path) -> Option<FileInfo> {
   let parent = path.parent()?;
   let raw_path = path.to_string_lossy().to_string();
   let fname = path.file_name()?.to_string_lossy().to_string();
 
-    if parent == lib_path {
-    // Special case: global achievement_progress.json (not a per-game file)
-    if fname == "achievement_progress.json" {
-      if DEBUG_ACH_WATCHER {
-        eprintln!(
-          "[ACH][WATCHER] rawPath={} fileName={} source=achievement-progress",
-          raw_path, fname
-        );
-      }
-      let meta = std::fs::metadata(path).ok()?;
-      let modified = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-      return Some(FileInfo {
-        appid: 0, // sentinel: global file, not per-game
-        source: "achievement-progress".to_string(),
-        modified_at: modified,
-        size: meta.len(),
-      });
-    }
-
-    let stem = path.file_stem()?;
-    let name = stem.to_str()?;
-    let appid = name.parse::<u32>().ok()?;
-    if DEBUG_ACH_WATCHER {
-      eprintln!(
-        "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=librarycache",
-        raw_path, fname, appid
-      );
-    }
-    let meta = std::fs::metadata(path).ok()?;
-    let modified = meta
-      .modified()
-      .ok()?
-      .duration_since(std::time::UNIX_EPOCH)
-      .ok()
-      .map(|d| d.as_secs())
-      .unwrap_or(0);
-    return Some(FileInfo {
-      appid,
-      source: "librarycache".to_string(),
-      modified_at: modified,
-      size: meta.len(),
-    });
-  }
-
+  // Only handle appcache/stats files (UserGameStats_*.bin)
   if parent == stats_path {
     if fname.starts_with("UserGameStats_") && fname.ends_with(".bin") {
       let without_ext = fname.trim_end_matches(".bin");

@@ -2186,8 +2186,25 @@ export async function resolveRelativeAchievementImagePath(
 
   const base = await getAppDataBase();
   if (!base) return relativePath;
-  const abs = `${base}\\achievements\\${provider}\\${appId}\\${relativePath.replace(/\//g, "\\")}`;
-  return abs;
+
+  const rel = relativePath.replace(/\//g, "\\");
+
+  // Try new format first: achievements/schema/steam-official/<appId>/
+  const newPath = `${base}\\achievements\\schema\\steam-official\\${appId}\\${rel}`;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (await invoke<boolean>("file_exists", { path: newPath })) return newPath;
+  } catch { /* ignore */ }
+
+  // Fallback: achievements/schema/steam/<appId>/
+  const altPath = `${base}\\achievements\\schema\\steam\\${appId}\\${rel}`;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (await invoke<boolean>("file_exists", { path: altPath })) return altPath;
+  } catch { /* ignore */ }
+
+  // Legacy: achievements/steam/<appId>/
+  return `${base}\\achievements\\${provider}\\${appId}\\${rel}`;
 }
 
 /** Resolve all media paths in a GameMediaPaths object from relative to absolute. */

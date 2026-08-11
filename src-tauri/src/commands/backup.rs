@@ -39,6 +39,12 @@ fn get_app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
+pub fn get_app_data_dir_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let dir = get_app_data_dir(&app_handle)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub async fn write_backup_archive(
     app_handle: tauri::AppHandle,
     backup_json: String,

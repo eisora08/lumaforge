@@ -105,7 +105,7 @@ export default function GameHoverPreview({ game, position, onMouseEnter, onMouse
         onMouseLeave();
       }}
     >
-      <div className="overflow-hidden rounded-xl border border-white/10 bg-black/80 shadow-2xl shadow-black/60 backdrop-blur-xl">
+      <div className="overflow-hidden rounded-xl border border-white/10 lf-surface shadow-2xl shadow-black/60">
         {/* Screenshot area */}
         <div className="relative" style={{ height: POPUP_IMAGE_HEIGHT }}>
           {hasScreenshots ? (

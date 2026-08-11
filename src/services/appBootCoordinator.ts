@@ -758,7 +758,7 @@ export async function runBootTasks(): Promise<void> {
                           total: cache.summary.total,
                           unlocked: cache.summary.unlocked,
                           progressAvailable: cache.summary.progress_available,
-                          achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; rarity_level?: string | null }) => ({
+                          achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; stat_id?: number | null; bit?: number | null; progress_stat_id?: number | null; progress_min?: number | null; progress_max?: number | null }) => ({
                             apiName: a.api_name,
                             name: a.name,
                             description: a.description ?? "",
@@ -767,7 +767,11 @@ export async function runBootTasks(): Promise<void> {
                             unlocked: a.unlocked,
                             unlockTime: a.unlock_time ?? null,
                             rarityPercent: a.rarity_percent ?? null,
-                            rarityLevel: a.rarity_level ?? null,
+                            statId: a.stat_id ?? null,
+                            bit: a.bit ?? null,
+                            progressStatId: a.progress_stat_id ?? null,
+                            progressMin: a.progress_min ?? null,
+                            progressMax: a.progress_max ?? null,
                           })),
                           newlyUnlocked: [],
                         };
@@ -839,6 +843,7 @@ export async function runBootTasks(): Promise<void> {
                 await achievementWatcherService.start(
                   _cachedSettings.steamRoot,
                   _cachedSettings.steamAccountId,
+                  _cachedSettings.steamWebApiKey,
                 );
                 logBoot("achievement watcher started");
               } else {
@@ -873,7 +878,8 @@ export async function runBootTasks(): Promise<void> {
 
                 // Emergency stabilization: achievement migration disabled
                 if (_snapshotLoaded) {
-                  const { ACHIEVEMENT_SCHEMA_MIGRATION_AUTO, ACHIEVEMENT_IMAGE_MIGRATION_AUTO } = await import("./achievementStore");
+                  const { ACHIEVEMENT_SCHEMA_MIGRATION_AUTO } = await import("./achievementStore");
+                  const { ACHIEVEMENT_IMAGE_MIGRATION_AUTO } = await import("./achievementAutoFlags");
                   const { achievementStore } = await import("./achievementStore");
                   const appIds = _snapshotLoaded.library.games
                     .filter((g) => g.appId && g.source === "steam")

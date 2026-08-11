@@ -83,8 +83,11 @@ pub fn run() {
             commands::steam_achievements::fetch_steam_achievement_schema,
             commands::steam_achievements::scan_steam_appcache_achievements,
             commands::steam_achievements::parse_user_game_stats_raw,
+            commands::steam_achievements::detect_steam_account_id_for_app,
             commands::steam_achievements::write_achievement_cache,
             commands::steam_achievements::read_achievement_cache,
+            commands::steam_achievements::delete_achievement_cache,
+            commands::steam_achievements::generate_achievement_schema,
             commands::steam_achievements::read_achievements_app_schema_folder,
             commands::steam_achievements::download_achievement_image,
             commands::steam_achievements::resolve_achievement_image_paths,
@@ -310,6 +313,11 @@ pub fn run() {
             commands::backup::list_backup_archives,
             commands::backup::delete_backup_archive,
             commands::backup::validate_backup_file,
+            commands::backup::get_app_data_dir_path,
+            commands::file_utils::create_directory,
+            commands::file_utils::write_text_file,
+            commands::file_utils::read_text_file,
+            commands::file_utils::list_files_in_dir,
             commands::external_files::scan_external_file_collection,
             commands::external_files::read_file_collection_content,
             commands::external_files::restore_external_files,
@@ -390,6 +398,8 @@ pub fn run() {
             commands::sqlite_cache::get_all_provider_statuses,
             commands::sqlite_cache::upsert_game_catalog_blob,
             commands::sqlite_cache::get_game_catalog_blob,
+            commands::schema_tool::generate_schema_via_tool,
+            commands::schema_tool::get_schema_tool_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

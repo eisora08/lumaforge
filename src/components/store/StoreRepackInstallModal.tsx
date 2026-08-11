@@ -165,7 +165,7 @@ export default function StoreRepackInstallModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
     >
       <div

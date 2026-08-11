@@ -186,6 +186,9 @@ class AchievementAutoSyncService {
         rarityPercent: entry.rarity_percent,
         statId: entry.stat_id,
         bit: entry.bit,
+        progressStatId: entry.progress_stat_id,
+        progressMin: entry.progress_min,
+        progressMax: entry.progress_max,
       }));
       const summary = {
         appId,
@@ -315,6 +318,17 @@ class AchievementAutoSyncService {
       return;
     }
 
+    // Throttle: if last resolve was <5 min ago and result was schema-only, skip
+    const { achievementStore } = await import("./achievementStore");
+    const existing = achievementStore.getSummary(appId);
+    if (existing && existing.source === "schema-only" && !existing.progressAvailable) {
+      const elapsed = Date.now() - (existing.updatedAt || 0);
+      if (elapsed < 5 * 60 * 1000) {
+        console.debug(`[ACH][AUTO_SYNC] refresh skipped appid=${appId} reason=recent-schema-only elapsed=${Math.round(elapsed / 1000)}s`);
+        return;
+      }
+    }
+
     state.inFlight = true;
     console.debug(`[ACH][AUTO_SYNC] refreshing appid=${appId} reason=${reason}`);
 
@@ -327,7 +341,7 @@ class AchievementAutoSyncService {
         accountId: params.accountId,
         steamPath: params.steamPath,
         forceRefresh: true,
-        skipImageDownload: true,
+        skipImageDownload: true, // Auto-sync should NOT download images — only manual refresh does
         steamAchievementsEnabled: params.steamAchievementsEnabled,
         achievementSchemaPath: params.achievementSchemaPath,
       });

@@ -672,14 +672,17 @@ pub async fn download_store_image(
 ) -> Result<String, String> {
     let app_dir = _app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let images_dir = app_dir.join("store").join("images");
-    std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(&images_dir).await.map_err(|e| e.to_string())?;
 
     let safe_name = format!("{}_{}", app_id.replace('/', "_"), role.replace('/', "_"));
     let local_path = images_dir.join(format!("{}.jpg", safe_name));
 
     // Already downloaded — return absolute path (TS converts to asset://)
-    if local_path.exists() && local_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
-        return Ok(local_path.to_string_lossy().to_string());
+    if let Ok(meta) = tokio::fs::metadata(&local_path).await {
+        if meta.len() > 0 {
+            return Ok(local_path.to_string_lossy().to_string());
+        }
+        let _ = tokio::fs::remove_file(&local_path).await;
     }
 
     // Download via async reqwest
@@ -696,7 +699,7 @@ pub async fn download_store_image(
     }
 
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    std::fs::write(&local_path, &bytes).map_err(|e| e.to_string())?;
+    tokio::fs::write(&local_path, &bytes).await.map_err(|e| e.to_string())?;
 
     // Return absolute path — TS uses convertFileSrc() to get asset:// URL
     Ok(local_path.to_string_lossy().to_string())

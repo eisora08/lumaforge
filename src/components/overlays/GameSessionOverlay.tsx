@@ -88,7 +88,7 @@ export default function GameSessionOverlay({ event, onDismiss }: Props) {
       }}
     >
       <div
-        className="pointer-events-auto mx-4 w-full max-w-xs overflow-hidden rounded-2xl border border-(--surface-active-border) bg-(--surface-active) shadow-2xl transition-all duration-300"
+        className="pointer-events-auto mx-4 w-full max-w-xs overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface shadow-2xl transition-all duration-300"
         style={{
           transform: visible && !dismissing ? "translateY(0) scale(1)" : "translateY(20px) scale(0.95)",
         }}

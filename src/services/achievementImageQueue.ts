@@ -1,7 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { downloadAchievementImage } from "./tauri";
-
-export const ACHIEVEMENT_IMAGE_MIGRATION_AUTO = false;
+import { ACHIEVEMENT_IMAGE_MIGRATION_AUTO } from "./achievementAutoFlags";
+export { ACHIEVEMENT_IMAGE_MIGRATION_AUTO };
 export const DEBUG_ACH_MIGRATION = false;
 export const DEBUG_ACH_IMAGE_QUEUE = false;
 let _imgMigrationSkipLogged = false;
@@ -268,7 +268,7 @@ function extractAppIdFromPath(path: string): string | null {
 class AchievementImageQueueImpl {
   private queue: ImageQueueItem[] = [];
   private activeCount = 0;
-  private maxConcurrent = 1;
+  private maxConcurrent = 3;
   private failedCooldowns = new Map<string, number>();
   private callbacks: ImageUpdateCallback[] = [];
   private processing = false;

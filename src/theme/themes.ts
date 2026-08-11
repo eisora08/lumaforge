@@ -154,8 +154,13 @@ export const surfaceModes: SurfaceModeOption[] = [
     description: "Vidrio esmerilado oscuro con blur sutil. Premium sin distorsión.",
   },
   {
-    id: "liquid-glass",
-    name: "Liquid Glass",
-    description: "Superficies translúcidas con blur y profundidad visual.",
+    id: "dark-glass",
+    name: "Dark Glass",
+    description: "Vidrio oscuro premium con blur moderado. Sutil y elegante.",
+  },
+  {
+    id: "glass",
+    name: "Glass",
+    description: "Vidrio premium con blur intenso. Estilo lf-glass-strong.",
   },
 ];

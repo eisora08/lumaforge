@@ -23,7 +23,7 @@ export const ACHIEVEMENT_SCHEMA_SCAN_AUTO = false;
 export const ACHIEVEMENT_STATS_SCAN_AUTO = false;
 
 /** Auto-load achievements when GameDetails mounts (if false, only use cached store data) */
-export const ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS = false;
+export const ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS = true;
 
 /** Scan steam user game stats automatically during boot/library load */
 export const STEAM_USER_STATS_AUTO_SCAN = false;
@@ -32,10 +32,10 @@ export const STEAM_USER_STATS_AUTO_SCAN = false;
 export const ACHIEVEMENT_SCHEMA_MIGRATION_AUTO = false;
 
 /** Download achievement images automatically */
-export const ACHIEVEMENT_IMAGE_MIGRATION_AUTO = false;
+export const ACHIEVEMENT_IMAGE_MIGRATION_AUTO = true;
 
 /** Write achievement cache automatically */
-export const ACHIEVEMENT_WRITE_CACHE_AUTO = false;
+export const ACHIEVEMENT_WRITE_CACHE_AUTO = true;
 
 /** Watch librarycache changes and auto-sync — always enabled, interval hardcoded to 30s */
 export const ACHIEVEMENT_AUTO_SYNC_ENABLED = true;

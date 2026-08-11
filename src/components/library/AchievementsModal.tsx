@@ -1040,6 +1040,19 @@ function GlobalAchievementRow({ achievement, appId }: { achievement: GameAchieve
             </span>
           </div>
         )}
+        {!isUnlocked && achievement.progress != null && achievement.maxProgress != null && achievement.maxProgress > 0 && (
+          <div className="mt-1.5 flex items-center gap-2">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+              <div
+                className="h-full rounded-full bg-(--color-accent) transition-all duration-500"
+                style={{ width: `${Math.min(100, Math.round((achievement.progress / achievement.maxProgress) * 100))}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-[10px] tabular-nums text-(--color-muted)/70">
+              {achievement.progress}/{achievement.maxProgress}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

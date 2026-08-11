@@ -1090,7 +1090,7 @@ function BrowseExtensionsModal({
     <div
       ref={backdropRef}
       onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-md"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/40"
     >
       <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-2xl border border-white/10 bg-[--color-bg] p-6 lf-surface">
         {/* Header */}
