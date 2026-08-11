@@ -962,13 +962,16 @@ class AchievementWatcherService {
         }
       }
 
-      // If usergamestats-triggered, combine schema binary + binary stats timestamps + librarycache.
-      // Schema binary: stat_id, bit, name, icon (metadata per achievement)
-      // Binary stats timestamps: real-time unlock detection (Steam writes immediately on unlock)
-      // Librarycache: fallback when binary stats timestamps are missing
+      // If usergamestats-triggered, read schema binary + binary stats directly.
+      // Same model as reference app (Achievements-1.2.2):
+      // - Schema binary: stat_id, bit, name, icon per achievement
+      // - Binary stats: bitmask (data_u32) + timestamps (AchievementTimes)
+      // - Unlock detection: ((data_u32 >>> bit) & 1) === 1
+      // - Timestamps: stat.times[bit] for unlock time
+      // NO librarycache dependency — reads binary files directly.
       let effectivePatch: ProgressPatch | null = null;
       if (source === "usergamestats" || source === "librarycache") {
-        console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} reading-schema+stats+librarycache`);
+        console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} reading-schema+binary-stats`);
         try {
           // Step 1: Read schema binary for achievement metadata (stat_id + bit)
           let schemaEntries: { api_name: string; stat_id?: number; bit?: number; progress_stat_id?: number; progress_min?: number; progress_max?: number; name?: string; icon?: string; description?: string }[] = [];
@@ -986,9 +989,9 @@ class AchievementWatcherService {
             console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} schema-binary-failed: ${e}`);
           }
 
-          // Step 2: Read binary stats for timestamps (real-time unlock detection)
-          // Steam writes AchievementTimes immediately when achievement is unlocked
-          let timestampMap = new Map<string, number>(); // "statId:bit" → timestamp
+          // Step 2: Read binary stats — bitmask + timestamps (same as reference app)
+          let statsMap = new Map<number, number>(); // stat_id → data_u32 bitmask
+          let timestampMap = new Map<string, number>(); // "statId:bit" → unlock timestamp
           try {
             const { parseUserGameStatsRaw } = await import("./tauri");
             const statsResult = await parseUserGameStatsRaw({
@@ -997,88 +1000,36 @@ class AchievementWatcherService {
               appId: Number(appId),
             });
             if (statsResult.stat_pairs.length > 0) {
-              // Build timestamp map from stat_pairs: "statId:bit" → timestamp
               for (const pair of statsResult.stat_pairs) {
+                statsMap.set(pair.stat_id, pair.value);
                 if (pair.unlock_times) {
                   for (const [bit, ts] of Object.entries(pair.unlock_times)) {
                     timestampMap.set(`${pair.stat_id}:${bit}`, ts);
                   }
                 }
               }
-              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} binary-timestamps=${timestampMap.size} stat_pairs=${statsResult.stat_pairs.length}`);
+              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} stats=${statsMap.size} timestamps=${timestampMap.size}`);
             }
           } catch (e) {
             console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} stats-failed: ${e}`);
           }
 
-          // Step 3: Read librarycache for unlock status (fallback when timestamps missing)
-          let libcacheMap = new Map<string, boolean>();
-          let libcacheTotal = 0;
-          try {
-            const { invoke } = await import("@tauri-apps/api/core");
-            const libcacheResult = await invoke<{
-              n_total: number | null;
-              n_achieved: number | null;
-              entries: Array<{ str_id?: string; b_achieved?: boolean; rt_unlocked?: number }>;
-            } | null>(
-              "parse_librarycache_achievements",
-              { steamPath: this._steamPath, steamAccountId: this._steamAccountId, appId: Number(appId) }
-            );
-            if (libcacheResult && libcacheResult.n_total != null && libcacheResult.n_total > 0) {
-              libcacheTotal = libcacheResult.n_total;
-              for (const entry of libcacheResult.entries ?? []) {
-                if (entry.str_id) {
-                  libcacheMap.set(entry.str_id, entry.b_achieved === true);
-                }
-              }
-              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} librarycache ${libcacheResult.n_achieved ?? 0}/${libcacheTotal} entries=${libcacheMap.size}`);
-            }
-          } catch (e) {
-            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} librarycache-failed: ${e}`);
-          }
-
-          // Step 4: Combine — binary stats timestamps (primary) + librarycache (fallback)
-          if (schemaEntries.length > 0 && (libcacheTotal > 0 || timestampMap.size > 0)) {
+          // Step 3: Bitmask extraction — same as reference app
+          // Reference: earned = ((data_u32 >>> bit) & 1) === 1
+          if (schemaEntries.length > 0 && statsMap.size > 0) {
             const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
             let unlocked = 0;
-            let libcacheUnlockedCount = 0;
 
             for (const entry of schemaEntries) {
-              // Binary stats timestamp is primary (detects real-time unlocks off-focus)
-              const hasTimestamp = entry.stat_id != null && entry.bit != null
-                && timestampMap.has(`${entry.stat_id}:${entry.bit}`);
-              const timestamp = (entry.stat_id != null && entry.bit != null)
-                ? timestampMap.get(`${entry.stat_id}:${entry.bit}`)
-                : undefined;
-
-              // Librarycache is fallback (covers cases where binary stats is stale)
-              const libcacheAchieved = libcacheMap.get(entry.api_name) ?? false;
-              if (libcacheAchieved) libcacheUnlockedCount++;
-
-              const isUnlocked = hasTimestamp || libcacheAchieved;
+              if (entry.stat_id == null || entry.bit == null) continue;
+              const statValue = statsMap.get(entry.stat_id) ?? 0;
+              const isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
+              const timestamp = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
               if (isUnlocked) unlocked++;
               progressMap.set(entry.api_name, {
                 unlocked: isUnlocked,
                 unlockTime: timestamp,
               });
-            }
-
-            // nAchieved is authoritative: when it's higher than our count,
-            // mark remaining achievements as unlocked (hidden achievements
-            // that Steam doesn't list in per-achievement arrays).
-            if (libcacheUnlockedCount > unlocked) {
-              const remaining = libcacheUnlockedCount - unlocked;
-              let marked = 0;
-              for (const entry of schemaEntries) {
-                if (!progressMap.get(entry.api_name)?.unlocked && marked < remaining) {
-                  progressMap.set(entry.api_name, { unlocked: true });
-                  marked++;
-                  unlocked++;
-                }
-              }
-              if (marked > 0) {
-                console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} marked ${marked} hidden achievements as unlocked from nAchieved`);
-              }
             }
 
             effectivePatch = {
@@ -1087,9 +1038,8 @@ class AchievementWatcherService {
               unlocked,
               progressMap,
             };
-            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=stats+librarycache`);
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats`);
           } else if (schemaEntries.length > 0) {
-            // Schema found but no librarycache or binary stats — use schema only (all locked)
             const progressMap = new Map<string, { unlocked: boolean }>();
             for (const entry of schemaEntries) {
               progressMap.set(entry.api_name, { unlocked: false });

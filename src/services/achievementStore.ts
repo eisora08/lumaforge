@@ -183,6 +183,13 @@ class AchievementStoreImpl {
     let finalSummary: GameAchievementsSummary;
 
     if (existing) {
+      // Reject librarycache downgrade over binary-stats (librarycache can be stale)
+      if (safeSummary.unlocked != null && existing.unlocked != null
+          && safeSummary.unlocked < existing.unlocked
+          && safeSummary.source === "librarycache" && existing.source === "binary-stats") {
+        console.debug(`[ACH][SUMMARY_MERGE] appid=${appId} rejected reason=librarycache-stale-overwrites-binary-stats existing=${existing.unlocked}/${existing.total} incoming=${safeSummary.unlocked}/${safeSummary.total}`);
+        return;
+      }
       const accepted = isSourceNewerOrEqual(
         safeSummary.source, safeSummary.updatedAt,
         existing.source, existing.updatedAt,
