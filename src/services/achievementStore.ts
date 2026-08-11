@@ -221,6 +221,16 @@ class AchievementStoreImpl {
 
     this.summariesByAppId.set(appId, finalSummary);
     this.notify(appId, finalSummary);
+
+    // Save snapshot so applyProgressPatch can detect new unlocks against this state
+    const snapshots = loadSnapshots();
+    const snap: Record<string, boolean> = {};
+    for (const ach of finalSummary.achievements ?? []) {
+      snap[ach.apiName] = ach.unlocked;
+    }
+    snapshots[appId] = snap;
+    saveSnapshots(snapshots);
+
     // CRITICAL: Write to disk so data persists when librarycache is deleted
     // Use _writingToDisk flag to prevent applyProgressPatch from overwriting
     if (!this._writingToDisk.has(appId)) {
@@ -240,17 +250,33 @@ class AchievementStoreImpl {
     const tid = traceId ?? "no-trace";
 
     // Debounce: skip if wrote recently (prevent overwriting fresh librarycache data)
+    // BUT: never skip when the patch has a real unlock delta (new achievement unlocked)
     const now = Date.now();
     const lastWrite = this._lastWriteTime.get(appId) ?? 0;
-    if (now - lastWrite < 1000) {
-      console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} reason=debounce (${now - lastWrite}ms since last write)`);
-      return null;
+    const debounceActive = now - lastWrite < 1000;
+    if (debounceActive) {
+      const currentInStore = this.summariesByAppId.get(appId);
+      const currentUnlocked = currentInStore?.unlocked ?? 0;
+      const hasNewUnlocks = patch.unlocked > currentUnlocked;
+      if (!hasNewUnlocks) {
+        console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} reason=debounce (${now - lastWrite}ms since last write)`);
+        return null;
+      }
+      // Patch has genuinely new unlocks — process despite debounce
+      console.debug(`[ACH][STORE_PATCH][${tid}] debounce-bypassed appid=${appId} reason=new-unlocks patch=${patch.unlocked} current=${currentUnlocked}`);
     }
 
     // Guard: skip if setSummary is currently writing to disk
+    // BUT: never skip when the patch has a real unlock delta
     if (this._writingToDisk.has(appId)) {
-      console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} reason=writing-in-progress`);
-      return null;
+      const currentInStore = this.summariesByAppId.get(appId);
+      const currentUnlocked = currentInStore?.unlocked ?? 0;
+      const hasNewUnlocks = patch.unlocked > currentUnlocked;
+      if (!hasNewUnlocks) {
+        console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} reason=writing-in-progress`);
+        return null;
+      }
+      console.debug(`[ACH][STORE_PATCH][${tid}] writing-in-progress-bypassed appid=${appId} reason=new-unlocks`);
     }
 
     const RT = appId === "268910";

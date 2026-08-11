@@ -1204,9 +1204,21 @@ class AchievementWatcherService {
         return;
       }
 
-      // Use setSummary directly — preserves name, description, icons, stat_id, bit, progress_*
-      console.log(`[ACH][RT_RESOLVER_REFRESH] appid=${appId} total=${summary.total} unlocked=${summary.unlocked}`);
-      achievementStore.setSummary(appId, summary);
+      // Build ProgressPatch from resolver summary — applyProgressPatch detects unlocks + fires toasts
+      const patch: ProgressPatch = {
+        appid: appId,
+        total: summary.total,
+        unlocked: summary.unlocked ?? 0,
+        progressMap: new Map(summary.achievements.map(a => [a.apiName, {
+          unlocked: a.unlocked,
+          unlockTime: a.unlockTime,
+          progress: a.progress,
+          maxProgress: a.maxProgress,
+        }])),
+      };
+
+      console.log(`[ACH][RT_RESOLVER_REFRESH] appid=${appId} total=${patch.total} unlocked=${patch.unlocked}`);
+      achievementStore.applyProgressPatch(appId, patch, _traceId);
 
       // Enqueue image downloads for this game immediately after schema resolution
       try {
