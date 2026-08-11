@@ -412,7 +412,7 @@ class AchievementWatcherService {
             // Usergamestats cooldown: skip if processed within last 10s
             if (source === "usergamestats") {
               const last = this._usergamestatsCooldown.get(appIdStr);
-              if (last && Date.now() - last < 10000) {
+              if (last && Date.now() - last < 2000) {
                 console.log(`[ACH][PIPELINE] event_skipped appid=${appIdStr} reason=cooldown msSince=${Date.now() - last}`);
                 return;
               }
@@ -980,9 +980,8 @@ class AchievementWatcherService {
         }
       }
 
-      // If usergamestats-triggered, skip librarycache entirely — read binary stats directly.
-      // Librarycache nTotal is inflated by DLC/test achievements and its arrays are incomplete.
-      // The binary UserGameStats_*.bin is the authoritative source for unlock status.
+      // If usergamestats-triggered, read binary stats directly for fast unlock detection.
+      // Uses stat_pairs + schema entries with bit extraction (same model as reference app).
       let effectivePatch: ProgressPatch | null = null;
       if (source === "usergamestats") {
         console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} reading-binary-stats`);
@@ -992,61 +991,56 @@ class AchievementWatcherService {
             steamAccountId: this._steamAccountId,
             appId: Number(appId),
           });
-          if (statsResult.file_found && statsResult.achievement_entries.length > 0) {
-            // Build stat_id → value map for progress computation
-            const statsMap = new Map<number, number>();
-            for (const p of statsResult.stat_pairs) {
-              statsMap.set(p.stat_id, p.value);
-            }
-
-            // Load schema cache to get progress metadata (progress_stat_id, progress_max, progress_min)
-            let schemaProgressMap = new Map<string, { progressStatId?: number; progressMin?: number; progressMax?: number }>();
+          if (statsResult.file_found && statsResult.stat_pairs.length > 0) {
+            // Load schema entries from disk cache (stat_id + bit for each achievement)
+            let schemaEntries: { api_name: string; stat_id?: number; bit?: number; progress_stat_id?: number; progress_min?: number; progress_max?: number }[] = [];
             try {
               const cache = await readAchievementCacheWithFallback(Number(appId));
               if (cache?.achievements) {
-                for (const entry of cache.achievements) {
-                  if (entry.progress_stat_id != null && entry.progress_max != null && entry.progress_max > 0) {
-                    schemaProgressMap.set(entry.api_name, {
-                      progressStatId: entry.progress_stat_id,
-                      progressMin: entry.progress_min,
-                      progressMax: entry.progress_max,
-                    });
-                  }
+                schemaEntries = cache.achievements.filter(e => e.stat_id != null && e.bit != null);
+              }
+            } catch { /* schema not available */ }
+
+            if (schemaEntries.length > 0) {
+              // Build stat_id → value map
+              const statsMap = new Map<number, number>();
+              for (const p of statsResult.stat_pairs) {
+                statsMap.set(p.stat_id, p.value);
+              }
+
+              const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
+              let unlocked = 0;
+
+              for (const entry of schemaEntries) {
+                const statValue = statsMap.get(entry.stat_id!) ?? 0;
+                const isUnlocked = (statValue & (1 << entry.bit!)) !== 0;
+                if (isUnlocked) unlocked++;
+
+                let progress: number | undefined;
+                let maxProgress: number | undefined;
+                if (entry.progress_stat_id != null && entry.progress_max != null && entry.progress_max > 0) {
+                  const rawValue = statsMap.get(entry.progress_stat_id) ?? 0;
+                  const min = entry.progress_min ?? 0;
+                  const max = entry.progress_max;
+                  progress = Math.max(min, Math.min(rawValue, max));
+                  maxProgress = max;
                 }
-              }
-            } catch { /* schema not available — progress stays undefined */ }
 
-            const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
-            for (const entry of statsResult.achievement_entries) {
-              if (!entry.api_name) continue;
-              const unlockTime = entry.unlock_time && entry.unlock_time > 0
-                ? (entry.unlock_time < 1000000000000 ? entry.unlock_time * 1000 : entry.unlock_time)
-                : undefined;
-
-              // Compute per-achievement progress from stat pairs + schema metadata
-              let progress: number | undefined;
-              let maxProgress: number | undefined;
-              const schemaMeta = schemaProgressMap.get(entry.api_name);
-              if (schemaMeta?.progressStatId != null && schemaMeta.progressMax != null && schemaMeta.progressMax > 0) {
-                const rawValue = statsMap.get(schemaMeta.progressStatId) ?? 0;
-                const min = schemaMeta.progressMin ?? 0;
-                const max = schemaMeta.progressMax;
-                progress = Math.max(min, Math.min(rawValue, max));
-                maxProgress = max;
+                progressMap.set(entry.api_name, { unlocked: isUnlocked, progress, maxProgress });
               }
 
-              progressMap.set(entry.api_name, { unlocked: entry.unlocked, unlockTime, progress, maxProgress });
+              effectivePatch = {
+                appid: appId,
+                total: schemaEntries.length,
+                unlocked,
+                progressMap,
+              };
+              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats`);
+            } else {
+              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} no-schema-entries stat_pairs=${statsResult.stat_pairs.length}`);
             }
-            const unlocked = statsResult.achievement_entries.filter(a => a.unlocked).length;
-            effectivePatch = {
-              appid: appId,
-              total: statsResult.achievement_entries.length,
-              unlocked,
-              progressMap,
-            };
-            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats`);
           } else {
-            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} binary-stats-empty file_found=${statsResult.file_found} entries=${statsResult.achievement_entries.length}`);
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} binary-stats-empty file_found=${statsResult.file_found} stat_pairs=${statsResult.stat_pairs.length}`);
           }
         } catch (e) {
           console.warn(`[ACH][PIPELINE] usergamestats_direct appid=${appId} error=${e}`);
@@ -1189,7 +1183,7 @@ class AchievementWatcherService {
 
     try {
       // Wait 3s for librarycache to stabilize before using resolver
-      await sleep(3000);
+      await sleep(500);
 
       const { resolveSteamAchievements } = await import("./steamAchievementsResolver");
       const summary = await resolveSteamAchievements({

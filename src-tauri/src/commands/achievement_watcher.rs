@@ -87,7 +87,7 @@ impl AchievementWatcher {
 
     let shutdown = self.shutdown.clone();
     let stats_path = appcache_stats_path.clone();
-    let debounce = Duration::from_millis(800);
+    let debounce = Duration::from_millis(200);
     let poll_interval = Duration::from_millis(200);
 
     std::thread::spawn(move || {

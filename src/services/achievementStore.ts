@@ -222,8 +222,30 @@ class AchievementStoreImpl {
     this.summariesByAppId.set(appId, finalSummary);
     this.notify(appId, finalSummary);
 
-    // Save snapshot so applyProgressPatch can detect new unlocks against this state
+    // Detect new unlocks and fire callbacks for toasts
     const snapshots = loadSnapshots();
+    const oldSnap = snapshots[appId] ?? {};
+    const newUnlocks: UnlockEvent[] = [];
+    for (const ach of finalSummary.achievements ?? []) {
+      if (ach.unlocked && !oldSnap[ach.apiName]) {
+        newUnlocks.push({
+          apiName: ach.apiName,
+          name: ach.name,
+          iconUrl: ach.iconUrl,
+          iconGrayUrl: ach.iconGrayUrl,
+          unlockTime: ach.unlockTime,
+          rarityPercent: ach.rarityPercent,
+        });
+      }
+    }
+    if (newUnlocks.length > 0) {
+      console.log(`[ACH][SETSUMMARY_TOAST] appid=${appId} newUnlocks=${newUnlocks.length} names=${newUnlocks.map(u => u.name).join(",")}`);
+      for (const cb of this.unlockCallbacks) {
+        try { cb(appId, newUnlocks); } catch {}
+      }
+    }
+
+    // Save snapshot AFTER unlock detection (so next call can compare)
     const snap: Record<string, boolean> = {};
     for (const ach of finalSummary.achievements ?? []) {
       snap[ach.apiName] = ach.unlocked;
