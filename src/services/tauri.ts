@@ -512,6 +512,7 @@ export async function readAchievementsAppSchemaFolder(path: string, appId: numbe
 export type StatPair = {
   stat_id: number;
   value: number;
+  unlock_times?: Record<string, number>;
 };
 
 export type UserGameStatsRawResult = {

@@ -4,10 +4,9 @@ import {
   fetchSteamGlobalAchievementPercentages,
   readAchievementCache,
   writeAchievementCache,
-  parseUserGameStatsRaw,
   generateAchievementSchema,
 } from "./tauri";
-import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, UserGameStatsRawResult, DebugAchievementReport, GenerateSchemaResult } from "./tauri";
+import type { AppAchievementCacheEntry, AppAchievementPercentagesEntry, AppAchievementSummaryData, DebugAchievementReport, GenerateSchemaResult } from "./tauri";
 import { achievementStore, isSourceNewerOrEqual } from "./achievementStore";
 import { DEBUG_ACH_VERBOSE } from "./achievementAutoFlags";
 // Session 403 cache: do not retry GetPlayerAchievements for apps that returned 403
@@ -130,21 +129,6 @@ type SchemaAchievement = {
   icongray?: string;
 };
 
-function fuzzyNameMatch(protoName: string, schemaName: string): boolean {
-  const normalize = (s: string) => s.trim().toLowerCase().replace(/[\s\-\.]/g, "_").replace(/[^a-z0-9_]/g, "");
-  const pn = normalize(protoName);
-  const sn = normalize(schemaName);
-  if (pn === sn) return true;
-  if (pn.includes(sn) || sn.includes(pn)) return true;
-  const prefixes = ["ach_", "achievement_", "progress_", "stat_"];
-  for (const prefix of prefixes) {
-    const pnS = pn.startsWith(prefix) ? pn.slice(prefix.length) : pn;
-    const snS = sn.startsWith(prefix) ? sn.slice(prefix.length) : sn;
-    if (pnS === snS || pnS.includes(snS) || snS.includes(pnS)) return true;
-  }
-  return false;
-}
-
 type PlayerAchievement = {
   apiname: string;
   achieved: number | string;
@@ -262,103 +246,6 @@ function buildSchemaOnlySummary(
   };
 }
 
-function buildLocalProgressFromStats(
-  appId: string,
-  schemaEntries: AppAchievementCacheEntry[],
-  statsResult: UserGameStatsRawResult,
-  globalPctMap: Record<string, number>,
-): { summary: GameAchievementsSummary; progressAvailable: boolean } {
-  const statsMap = new Map<number, number>();
-  for (const p of statsResult.stat_pairs) {
-    statsMap.set(p.stat_id, p.value);
-  }
-
-  const unlockTimeMap = new Map<string, number | undefined>();
-  for (const a of statsResult.achievement_entries) {
-    unlockTimeMap.set(a.api_name, a.unlock_time);
-  }
-
-  let matchedCount = 0;
-  const achievements: GameAchievement[] = [];
-
-  for (const entry of schemaEntries) {
-    let unlocked = false;
-    let statValue = 0;
-
-    if (entry.stat_id != null && entry.bit != null) {
-      statValue = statsMap.get(entry.stat_id) ?? 0;
-      unlocked = (statValue & (1 << entry.bit)) !== 0;
-      matchedCount++;
-    }
-
-    // Extract per-achievement progress from binary stats
-    let progress: number | undefined;
-    let maxProgress: number | undefined;
-
-    if (entry.progress_stat_id != null && entry.progress_max != null && entry.progress_max > 0) {
-      const progressValue = statsMap.get(entry.progress_stat_id) ?? 0;
-      const max = entry.progress_max;
-      progress = Math.max(0, Math.min(progressValue, max));
-      maxProgress = max;
-    }
-
-    const unlockTime = unlockTimeMap.get(entry.api_name);
-
-    achievements.push({
-      id: entry.api_name,
-      apiName: entry.api_name,
-      name: entry.name,
-      description: entry.description,
-      iconUrl: entry.icon ?? entry.icon_url,
-      iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
-      unlocked,
-      unlockTime: unlockTime != null && unlockTime > 0 ? unlockTime * 1000 : undefined,
-      rarityPercent: globalPctMap[entry.api_name] ?? entry.rarity_percent ?? undefined,
-      statId: entry.stat_id,
-      bit: entry.bit,
-      progressStatId: entry.progress_stat_id,
-      progressMin: entry.progress_min,
-      progressMax: entry.progress_max,
-      progress,
-      maxProgress,
-    });
-  }
-
-  const total = achievements.length;
-  const unlockedCount = achievements.filter((a) => a.unlocked).length;
-  const progressAvailable = matchedCount > 0;
-
-  console.debug(`[ACH][PROGRESS] appid=${appId} statsFileFound=${statsResult.file_found} size=${statsResult.file_size}`);
-  console.debug(`[ACH][PROGRESS] parsedStats=${statsResult.stat_pairs.length}`);
-  const schemaWithStatIds = schemaEntries.filter((e) => e.stat_id != null).length;
-  console.debug(`[ACH][PROGRESS] schemaWithStatIds=${schemaWithStatIds}`);
-  console.debug(`[ACH][PROGRESS] matchedStats=${matchedCount}`);
-  console.debug(`[ACH][PROGRESS] unlocked=${unlockedCount}/${total}`);
-  console.debug(`[ACH][PROGRESS] progressAvailable=${progressAvailable}`);
-
-  for (let i = 0; i < Math.min(5, achievements.length); i++) {
-    const a = achievements[i];
-    const entryRaw = schemaEntries.find((e) => e.api_name === a.apiName);
-    const sid = entryRaw?.stat_id;
-    const sv = sid != null ? (statsMap.get(sid) ?? 0) : 0;
-    console.debug(`[ACH][PROGRESS_TEST] apiName=${a.apiName} statId=${sid} bit=${entryRaw?.bit} statValue=${sv} unlocked=${a.unlocked}`);
-  }
-
-  return {
-    summary: {
-      appId,
-      total,
-      ...(progressAvailable
-        ? { unlocked: unlockedCount, percent: total > 0 ? Math.round((unlockedCount / total) * 100) : 0 }
-        : {}),
-      progressAvailable,
-      achievements,
-      source: "schema-only",
-      updatedAt: Date.now(),
-    },
-    progressAvailable,
-  };
-}
 
 function cacheEntryToSummary(
   appId: string,
@@ -831,21 +718,7 @@ export async function resolveSteamAchievements(params: {
           };
         });
 
-        // If nAchieved > per-achievement data, mark remaining as unlocked
-        // (librarycache is authoritative — some achievements aren't in vecHighlight/vecAchievedHidden)
-        let computedUnlocked = achievements.filter(a => a.unlocked).length;
-        if (libcacheUnlocked > computedUnlocked) {
-          const remaining = libcacheUnlocked - computedUnlocked;
-          let marked = 0;
-          for (const a of achievements) {
-            if (!a.unlocked && marked < remaining) {
-              a.unlocked = true;
-              marked++;
-              computedUnlocked++;
-            }
-          }
-          console.log(`[ACH][PROGRESS] App ${appIdStr}: marked ${marked} additional achievements as unlocked from nAchieved`);
-        }
+        const computedUnlocked = achievements.filter(a => a.unlocked).length;
 
         localProgressSummary = {
           appId: appIdStr,
@@ -873,65 +746,6 @@ export async function resolveSteamAchievements(params: {
     if (cached && (cached.unlocked ?? 0) > 0 && cached.progressAvailable) {
       localProgressSummary = cached;
       console.log(`[ACH][PROGRESS] App ${appIdStr}: using cached summary ${cached.unlocked}/${cached.total} source=${cached.source}`);
-    }
-  }
-
-  if (!localProgressSummary && effectiveAccountId && appSchemaAchievements) {
-    console.log(`[ACH][PROGRESS] App ${appIdStr}: librarycache unavailable, trying binary stats...`);
-    try {
-      const statsResult = await parseUserGameStatsRaw({
-        steamPath: effectiveSteamPath,
-        steamAccountId: effectiveAccountId,
-        appId: appIdNum,
-      });
-      if (statsResult.file_found) {
-        if (appSchemaAchievements.some((a) => a.stat_id != null) && statsResult.stat_pairs.length > 0) {
-          const built = buildLocalProgressFromStats(appIdStr, appSchemaAchievements, statsResult, globalPctMap);
-          if (built.progressAvailable) {
-            localProgressSummary = built.summary;
-            console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=binary-stats-fallback unlocked=${built.summary.achievements.filter((a) => a.unlocked).length}/${built.summary.total}`);
-          }
-        }
-        if (!localProgressSummary && statsResult.achievement_entries.length > 0) {
-          const achievements = appSchemaAchievements.map(entry => {
-            const proto = statsResult.achievement_entries.find(e =>
-              e.api_name === entry.api_name || fuzzyNameMatch(e.api_name, entry.api_name)
-            );
-            return {
-              id: entry.api_name,
-              apiName: entry.api_name,
-              name: entry.name,
-              description: entry.description,
-              iconUrl: entry.icon ?? entry.icon_url,
-              iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
-              unlocked: proto?.unlocked ?? false,
-              unlockTime: proto?.unlock_time && proto.unlock_time > 0
-                ? (proto.unlock_time < 1000000000000 ? proto.unlock_time * 1000 : proto.unlock_time)
-                : undefined,
-              rarityPercent: globalPctMap[entry.api_name] ?? entry.rarity_percent ?? undefined,
-              statId: entry.stat_id,
-              bit: entry.bit,
-              progressStatId: entry.progress_stat_id,
-              progressMin: entry.progress_min,
-              progressMax: entry.progress_max,
-            };
-          });
-          const unlocked = achievements.filter(a => a.unlocked).length;
-          localProgressSummary = {
-            appId: appIdStr,
-            achievements,
-            total: achievements.length,
-            unlocked,
-            percent: achievements.length > 0 ? Math.round((unlocked / achievements.length) * 100) : 0,
-            progressAvailable: true,
-            source: "binary-stats",
-            updatedAt: Date.now(),
-          };
-          console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=proto-heuristic-fallback unlocked=${unlocked}/${achievements.length}`);
-        }
-      }
-    } catch (err) {
-      console.warn(`[ACH][PROGRESS] App ${appIdStr}: binary stats fallback failed:`, err);
     }
   }
 

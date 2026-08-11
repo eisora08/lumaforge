@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { achievementStore } from "./achievementStore";
 import type { ProgressPatch } from "./achievementStore";
-import { checkAchievementLibraryCacheMetadata, readAchievementCacheWithFallback, listLibraryCacheAppIds, readAchievementProgressIndex, parseUserGameStatsRaw } from "./tauri";
+import { checkAchievementLibraryCacheMetadata, readAchievementCacheWithFallback, listLibraryCacheAppIds, readAchievementProgressIndex, scanSteamAppcacheAchievements } from "./tauri";
 import type { AppAchievementCache, AchievementProgressEntry } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
 import { sendAchievementNativeNotification, showAchievementOverlay, showGroupedAchievementOverlay } from "./achievementNotificationService";
@@ -421,7 +421,7 @@ class AchievementWatcherService {
             if (DEBUG_ACH_WATCHER) console.log(`[ACH][WATCHER_STATE] event=before-process appid=${appIdStr} processing=false queued=${this._syncPendingAppIds.size} debouncedTotal=${this._debouncedAppIds.size}`);
             this._debouncedAppIds.add(appIdStr);
             console.log(`[ACH][PIPELINE] process_queued appid=${appIdStr} source=${source}`);
-            this.processLibrarycacheChange(appIdStr, path, "watcher", traceId).then((ok) => {
+            this.processLibrarycacheChange(appIdStr, path, source, traceId).then((ok) => {
               this._debouncedAppIds.delete(appIdStr);
               console.log(`[ACH][PIPELINE] process_completed appid=${appIdStr} ok=${ok}`);
               if (DEBUG_ACH_WATCHER) console.log(`[ACH][WATCHER_STATE] event=cleanup appid=${appIdStr} processingHas=${this._syncRunning} queuedCount=${this._syncPendingAppIds.size}`);
@@ -980,67 +980,127 @@ class AchievementWatcherService {
         }
       }
 
-      // If usergamestats-triggered, read binary stats directly for fast unlock detection.
-      // Uses stat_pairs + schema entries with bit extraction (same model as reference app).
+      // If usergamestats-triggered, combine schema binary + binary stats timestamps + librarycache.
+      // Schema binary: stat_id, bit, name, icon (metadata per achievement)
+      // Binary stats timestamps: real-time unlock detection (Steam writes immediately on unlock)
+      // Librarycache: fallback when binary stats timestamps are missing
       let effectivePatch: ProgressPatch | null = null;
       if (source === "usergamestats") {
-        console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} reading-binary-stats`);
+        console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} reading-schema+stats+librarycache`);
         try {
-          const statsResult = await parseUserGameStatsRaw({
-            steamPath: this._steamPath,
-            steamAccountId: this._steamAccountId,
-            appId: Number(appId),
-          });
-          if (statsResult.file_found && statsResult.stat_pairs.length > 0) {
-            // Load schema entries from disk cache (stat_id + bit for each achievement)
-            let schemaEntries: { api_name: string; stat_id?: number; bit?: number; progress_stat_id?: number; progress_min?: number; progress_max?: number }[] = [];
-            try {
-              const cache = await readAchievementCacheWithFallback(Number(appId));
-              if (cache?.achievements) {
-                schemaEntries = cache.achievements.filter(e => e.stat_id != null && e.bit != null);
-              }
-            } catch { /* schema not available */ }
-
-            if (schemaEntries.length > 0) {
-              // Build stat_id → value map
-              const statsMap = new Map<number, number>();
-              for (const p of statsResult.stat_pairs) {
-                statsMap.set(p.stat_id, p.value);
-              }
-
-              const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
-              let unlocked = 0;
-
-              for (const entry of schemaEntries) {
-                const statValue = statsMap.get(entry.stat_id!) ?? 0;
-                const isUnlocked = (statValue & (1 << entry.bit!)) !== 0;
-                if (isUnlocked) unlocked++;
-
-                let progress: number | undefined;
-                let maxProgress: number | undefined;
-                if (entry.progress_stat_id != null && entry.progress_max != null && entry.progress_max > 0) {
-                  const rawValue = statsMap.get(entry.progress_stat_id) ?? 0;
-                  const min = entry.progress_min ?? 0;
-                  const max = entry.progress_max;
-                  progress = Math.max(min, Math.min(rawValue, max));
-                  maxProgress = max;
-                }
-
-                progressMap.set(entry.api_name, { unlocked: isUnlocked, progress, maxProgress });
-              }
-
-              effectivePatch = {
-                appid: appId,
-                total: schemaEntries.length,
-                unlocked,
-                progressMap,
-              };
-              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats`);
-            } else {
-              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} no-schema-entries stat_pairs=${statsResult.stat_pairs.length}`);
+          // Step 1: Read schema binary for achievement metadata (stat_id + bit)
+          let schemaEntries: { api_name: string; stat_id?: number; bit?: number; progress_stat_id?: number; progress_min?: number; progress_max?: number; name?: string; icon?: string; description?: string }[] = [];
+          try {
+            const scanResult = await scanSteamAppcacheAchievements({
+              steamPath: this._steamPath,
+              steamAccountId: this._steamAccountId,
+              appId: Number(appId),
+            });
+            if (scanResult.schema_file_found && scanResult.parsed_schema.length > 0) {
+              schemaEntries = scanResult.parsed_schema;
+              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} schema-entries=${schemaEntries.length}`);
             }
+          } catch (e) {
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} schema-binary-failed: ${e}`);
+          }
+
+          // Step 2: Read binary stats for timestamps (real-time unlock detection)
+          // Steam writes AchievementTimes immediately when achievement is unlocked
+          let timestampMap = new Map<string, number>(); // "statId:bit" → timestamp
+          try {
+            const { parseUserGameStatsRaw } = await import("./tauri");
+            const statsResult = await parseUserGameStatsRaw({
+              steamPath: this._steamPath,
+              steamAccountId: this._steamAccountId,
+              appId: Number(appId),
+            });
+            if (statsResult.stat_pairs.length > 0) {
+              // Build timestamp map from stat_pairs: "statId:bit" → timestamp
+              for (const pair of statsResult.stat_pairs) {
+                if (pair.unlock_times) {
+                  for (const [bit, ts] of Object.entries(pair.unlock_times)) {
+                    timestampMap.set(`${pair.stat_id}:${bit}`, ts);
+                  }
+                }
+              }
+              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} binary-timestamps=${timestampMap.size} stat_pairs=${statsResult.stat_pairs.length}`);
+            }
+          } catch (e) {
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} stats-failed: ${e}`);
+          }
+
+          // Step 3: Read librarycache for unlock status (fallback when timestamps missing)
+          let libcacheMap = new Map<string, boolean>();
+          let libcacheTotal = 0;
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            const libcacheResult = await invoke<{
+              n_total: number | null;
+              n_achieved: number | null;
+              entries: Array<{ str_id?: string; b_achieved?: boolean; rt_unlocked?: number }>;
+            } | null>(
+              "parse_librarycache_achievements",
+              { steamPath: this._steamPath, steamAccountId: this._steamAccountId, appId: Number(appId) }
+            );
+            if (libcacheResult && libcacheResult.n_total != null && libcacheResult.n_total > 0) {
+              libcacheTotal = libcacheResult.n_total;
+              for (const entry of libcacheResult.entries ?? []) {
+                if (entry.str_id) {
+                  libcacheMap.set(entry.str_id, entry.b_achieved === true);
+                }
+              }
+              console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} librarycache ${libcacheResult.n_achieved ?? 0}/${libcacheTotal} entries=${libcacheMap.size}`);
+            }
+          } catch (e) {
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} librarycache-failed: ${e}`);
+          }
+
+          // Step 4: Combine — binary stats timestamps (primary) + librarycache (fallback)
+          if (schemaEntries.length > 0 && (libcacheTotal > 0 || timestampMap.size > 0)) {
+            const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
+            let unlocked = 0;
+
+            for (const entry of schemaEntries) {
+              // Binary stats timestamp is primary (detects real-time unlocks off-focus)
+              const hasTimestamp = entry.stat_id != null && entry.bit != null
+                && timestampMap.has(`${entry.stat_id}:${entry.bit}`);
+              const timestamp = (entry.stat_id != null && entry.bit != null)
+                ? timestampMap.get(`${entry.stat_id}:${entry.bit}`)
+                : undefined;
+
+              // Librarycache is fallback (covers cases where binary stats is stale)
+              const libcacheAchieved = libcacheMap.get(entry.api_name) ?? false;
+
+              const isUnlocked = hasTimestamp || libcacheAchieved;
+              if (isUnlocked) unlocked++;
+              progressMap.set(entry.api_name, {
+                unlocked: isUnlocked,
+                unlockTime: timestamp,
+              });
+            }
+
+            effectivePatch = {
+              appid: appId,
+              total: schemaEntries.length,
+              unlocked,
+              progressMap,
+            };
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=stats+librarycache`);
+          } else if (schemaEntries.length > 0) {
+            // Schema found but no librarycache or binary stats — use schema only (all locked)
+            const progressMap = new Map<string, { unlocked: boolean }>();
+            for (const entry of schemaEntries) {
+              progressMap.set(entry.api_name, { unlocked: false });
+            }
+            effectivePatch = {
+              appid: appId,
+              total: schemaEntries.length,
+              unlocked: 0,
+              progressMap,
+            };
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${schemaEntries.length} unlocked=0 source=schema-only`);
           } else {
-            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} binary-stats-empty file_found=${statsResult.file_found} stat_pairs=${statsResult.stat_pairs.length}`);
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} no-schema-entries`);
           }
         } catch (e) {
           console.warn(`[ACH][PIPELINE] usergamestats_direct appid=${appId} error=${e}`);

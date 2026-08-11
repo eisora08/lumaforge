@@ -191,24 +191,31 @@ class AchievementStoreImpl {
         if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appId} rejected reason=older-or-equal-source`);
         return;
       }
-      // Merge: keep higher unlock count, update metadata
+      // Trust the incoming source — use its unlock states directly
+      // (prevents stale data from perpetuating via never-downgrade OR merge)
       const mergedAchievements = safeSummary.achievements.map(a => {
         const existingAch = existing.achievements?.find(e => e.apiName === a.apiName);
-        if (existingAch) {
-          return {
-            ...a,
-            unlocked: a.unlocked || existingAch.unlocked,
-            unlockTime: a.unlockTime ?? existingAch.unlockTime,
-            progress: a.progress ?? existingAch.progress,
-            maxProgress: a.maxProgress ?? existingAch.maxProgress,
-          };
-        }
-        return a;
+        return {
+          ...a,
+          // Use incoming unlock state — if existing has schema fields the new source doesn't, preserve those
+          name: a.name && a.name !== a.apiName ? a.name : (existingAch?.name ?? a.name),
+          description: a.description ?? existingAch?.description,
+          iconUrl: a.iconUrl ?? existingAch?.iconUrl,
+          iconGrayUrl: a.iconGrayUrl ?? existingAch?.iconGrayUrl,
+          statId: a.statId ?? existingAch?.statId,
+          bit: a.bit ?? existingAch?.bit,
+          progressStatId: a.progressStatId ?? existingAch?.progressStatId,
+          progressMin: a.progressMin ?? existingAch?.progressMin,
+          progressMax: a.progressMax ?? existingAch?.progressMax,
+          // Unlock status: trust incoming source
+          unlocked: a.unlocked,
+          unlockTime: a.unlockTime ?? existingAch?.unlockTime,
+          progress: a.progress ?? existingAch?.progress,
+          maxProgress: a.maxProgress ?? existingAch?.maxProgress,
+        };
       });
-      const mergedUnlocked = Math.max(
-        safeSummary.unlocked ?? 0,
-        existing.unlocked ?? 0,
-      );
+      // Use incoming unlock count — trust the latest source
+      const mergedUnlocked = safeSummary.unlocked ?? 0;
       finalSummary = {
         ...safeSummary,
         achievements: mergedAchievements,
@@ -664,8 +671,8 @@ class AchievementStoreImpl {
           description: entry.description ?? diskAch?.description ?? existingAch?.description,
           icon: entry.iconUrl ?? diskAch?.icon ?? diskAch?.icon_url ?? existingAch?.iconUrl,
           icon_gray: entry.iconGrayUrl ?? diskAch?.icon_gray ?? diskAch?.icon_gray_url ?? existingAch?.iconGrayUrl,
-          // Keep higher unlock status
-          unlocked: entry.unlocked || existingAch?.unlocked || false,
+          // Trust incoming unlock state — never downgrade from stale disk cache
+          unlocked: entry.unlocked,
           unlock_time: entry.unlockTime ? Math.floor(entry.unlockTime / 1000) : existingAch?.unlockTime ?? entry.unlockTime,
           rarity_percent: entry.rarityPercent,
           // Preserve schema fields from disk when entry is missing them
@@ -677,11 +684,8 @@ class AchievementStoreImpl {
         };
       });
 
-      // Use the HIGHER unlock count from all sources (never downgrade)
-      const finalUnlocked = Math.max(
-        summary.unlocked ?? 0,
-        inMemory.unlocked ?? 0,
-      );
+      // Trust the incoming unlock count — never inflate from stale sources
+      const finalUnlocked = summary.unlocked ?? 0;
 
       // Preserve existing percentages from disk, or derive from rarityPercent in achievements
       const finalPercentages = diskPercentages.length > 0

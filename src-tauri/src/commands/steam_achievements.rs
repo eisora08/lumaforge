@@ -1671,9 +1671,10 @@ pub fn parse_user_game_stats_raw(
     Ok(stats) => {
       stat_pairs = stats
         .into_iter()
-        .map(|(stat_id, value, _times)| StatPair {
+        .map(|(stat_id, value, times)| StatPair {
           stat_id: stat_id.parse::<u32>().unwrap_or(0),
           value,
+          times,
         })
         .collect();
       diag_log(format!("KV parser extracted {} stat pairs", stat_pairs.len()));
@@ -1690,7 +1691,7 @@ pub fn parse_user_game_stats_raw(
       if !pairs.is_empty() {
         stat_pairs = pairs
           .into_iter()
-          .map(|(stat_id, value)| StatPair { stat_id, value })
+          .map(|(stat_id, value)| StatPair { stat_id, value, times: std::collections::HashMap::new() })
           .collect();
         diag_log(format!("v2 proto parser extracted {} stat pairs (overriding KV)", stat_pairs.len()));
       } else {
@@ -1900,7 +1901,7 @@ fn extract_stat_pairs_for_debug(data: &[u8]) -> Vec<StatPair> {
   for msg in &sub_msgs {
     if let Some((stat_id, value)) = parse_stat_value_from_submsg(&msg.raw) {
       if seen.insert(stat_id) {
-        pairs.push(StatPair { stat_id, value });
+        pairs.push(StatPair { stat_id, value, times: std::collections::HashMap::new() });
       }
     }
   }
@@ -3814,98 +3815,101 @@ pub fn generate_achievement_schema(
     if stats_path.is_file() {
       match fs::read(&stats_path) {
         Ok(raw_data) => {
-          // KV parser for stat_pairs
-          match kv_parse_user_stats(&raw_data) {
-            Ok(stats) => {
-              let stats_map: std::collections::HashMap<u32, u32> = stats
-                .into_iter()
-                .filter_map(|(stat_id_str, value, _times)| {
-                  stat_id_str.parse::<u32>().ok().map(|id| (id, value))
-                })
-                .collect();
+          // Parse the KV tree ONCE to get both stat values AND AchievementTimes
+          if let Ok((_root_name, tree)) = kv_parse(&raw_data) {
+            let tree_value = serde_json::Value::Object(tree);
 
-              // Bitfield extraction: for each schema entry with stat_id+bit
-              for entry in &kv_entries {
-                if let (Some(stat_id), Some(bit)) = (entry.stat_id, entry.bit) {
-                  let stat_value = stats_map.get(&stat_id).copied().unwrap_or(0);
-                  let unlocked = (stat_value & (1 << bit)) != 0;
-                  unlock_map.insert(entry.api_name.clone(), (unlocked, None));
-                  progress_available = true;
-                }
-              }
+            // Extract stat_id → data_u32 (bitmask) from the tree
+            let mut stats_map: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+            let mut stat_times: std::collections::HashMap<u32, std::collections::HashMap<u32, u64>> = std::collections::HashMap::new();
+            collect_stat_times(&tree_value, &[], &mut stat_times);
 
-              // Extract achievement times: re-parse with times included
-              // kv_parse_user_stats discards times, so we re-walk the tree for times
-              if let Ok((_root_name, tree)) = kv_parse(&raw_data) {
-                // For each stat node, collect times keyed by bit
-                let mut stat_times: std::collections::HashMap<u32, std::collections::HashMap<u32, u64>> = std::collections::HashMap::new();
-                let tree_value = serde_json::Value::Object(tree);
-                collect_stat_times(&tree_value, &[], &mut stat_times);
-
-                // Map stat_id:bit → api_name using schema entries, then assign times
-                for entry in &kv_entries {
-                  if let (Some(stat_id), Some(bit)) = (entry.stat_id, entry.bit) {
-                    if let Some(bit_times) = stat_times.get(&stat_id) {
-                      if let Some(&ts) = bit_times.get(&bit) {
-                        if let Some(e) = unlock_map.get_mut(&entry.api_name) {
-                          e.1 = Some(ts);
-                        }
+            // Walk tree again to extract stat values
+            if let serde_json::Value::Object(ref root) = tree_value {
+              for (key, val) in root {
+                if let serde_json::Value::Object(obj) = val {
+                  if let Some(serde_json::Value::Number(n)) = obj.get("data") {
+                    if let Ok(stat_id) = key.parse::<u32>() {
+                      if let Some(v) = n.as_u64() {
+                        stats_map.insert(stat_id, v as u32);
                       }
                     }
                   }
                 }
               }
+            }
 
-              schema_log!("[ACH][SCHEMA_GEN] binary stats: {} stat pairs, {} unlocked, progress={}",
-                stats_map.len(),
-                unlock_map.values().filter(|(u, _)| *u).count(),
-                progress_available,
-              );
+            // AchievementTimes is AUTHORITATIVE for unlock detection.
+            // The bitmask (data_u32) can be stale: bits set without timestamps (false positives)
+            // or timestamps without bits set (false negatives).
+            // Reference app: earned = ts !== null
+            for entry in &kv_entries {
+              if let (Some(stat_id), Some(bit)) = (entry.stat_id, entry.bit) {
+                let has_timestamp = stat_times
+                  .get(&stat_id)
+                  .and_then(|bt| bt.get(&bit))
+                  .is_some();
 
-              // Fallback: if no entries matched via bitfield (no stat_id/bit in schema),
-              // try proto heuristic parser which extracts unlocked booleans directly.
-              // Match proto entries to schema entries by fuzzy name matching.
-              if !progress_available {
-                schema_log!("[ACH][SCHEMA_GEN] no bitfield matches, trying proto heuristic parser...");
-                match try_parse_stats_proto(&raw_data) {
-                  Ok(achievements) => {
-                    if !achievements.is_empty() {
-                      // First pass: exact name match
-                      for ach in &achievements {
-                        if kv_entries.iter().any(|e| e.api_name == ach.api_name) {
-                          unlock_map.insert(ach.api_name.clone(), (ach.unlocked, ach.unlock_time));
+                if has_timestamp {
+                  // Timestamp exists → achievement IS unlocked (authoritative)
+                  let ts = stat_times[&stat_id][&bit];
+                  unlock_map.insert(entry.api_name.clone(), (true, Some(ts)));
+                } else {
+                  // No timestamp → achievement is NOT unlocked
+                  // (even if bitmask has the bit set — bitmask can be stale)
+                  unlock_map.insert(entry.api_name.clone(), (false, None));
+                }
+                progress_available = true;
+              }
+            }
+
+            schema_log!("[ACH][SCHEMA_GEN] binary stats: {} stat pairs, {} unlocked (from timestamps), progress={}",
+              stats_map.len(),
+              unlock_map.values().filter(|(u, _)| *u).count(),
+              progress_available,
+            );
+
+            // Fallback: if no entries matched via timestamps (no stat_id/bit in schema),
+            // try proto heuristic parser which extracts unlocked booleans directly.
+            if !progress_available {
+              schema_log!("[ACH][SCHEMA_GEN] no timestamp matches, trying proto heuristic parser...");
+              match try_parse_stats_proto(&raw_data) {
+                Ok(achievements) => {
+                  if !achievements.is_empty() {
+                    // First pass: exact name match
+                    for ach in &achievements {
+                      if kv_entries.iter().any(|e| e.api_name == ach.api_name) {
+                        unlock_map.insert(ach.api_name.clone(), (ach.unlocked, ach.unlock_time));
+                        progress_available = true;
+                      }
+                    }
+                    // Second pass: fuzzy match (strip common prefixes, lowercase, compare)
+                    if !progress_available {
+                      for kv_entry in &kv_entries {
+                        if let Some(ach) = achievements.iter().find(|a| {
+                          fuzzy_achievement_name_match(&a.api_name, &kv_entry.api_name)
+                        }) {
+                          unlock_map.insert(kv_entry.api_name.clone(), (ach.unlocked, ach.unlock_time));
                           progress_available = true;
                         }
                       }
-                      // Second pass: fuzzy match (strip common prefixes, lowercase, compare)
-                      if !progress_available {
-                        for kv_entry in &kv_entries {
-                          if let Some(ach) = achievements.iter().find(|a| {
-                            fuzzy_achievement_name_match(&a.api_name, &kv_entry.api_name)
-                          }) {
-                            unlock_map.insert(kv_entry.api_name.clone(), (ach.unlocked, ach.unlock_time));
-                            progress_available = true;
-                          }
-                        }
-                      }
-                      schema_log!("[ACH][SCHEMA_GEN] proto heuristic: {} achievements, {} matched, progress={}",
-                        achievements.len(),
-                        unlock_map.len(),
-                        progress_available,
-                      );
-                    } else {
-                      schema_log!("[ACH][SCHEMA_GEN] proto heuristic returned 0 entries");
                     }
+                    schema_log!("[ACH][SCHEMA_GEN] proto heuristic: {} achievements, {} matched, progress={}",
+                      achievements.len(),
+                      unlock_map.len(),
+                      progress_available,
+                    );
+                  } else {
+                    schema_log!("[ACH][SCHEMA_GEN] proto heuristic returned 0 entries");
                   }
-                  Err(e) => {
-                    schema_log!("[ACH][SCHEMA_GEN] proto heuristic failed: {}", e);
-                  }
+                }
+                Err(e) => {
+                  schema_log!("[ACH][SCHEMA_GEN] proto heuristic failed: {}", e);
                 }
               }
             }
-            Err(e) => {
-              schema_log!("[ACH][SCHEMA_GEN] KV stats parse failed: {}", e);
-            }
+          } else {
+            schema_log!("[ACH][SCHEMA_GEN] KV stats parse failed");
           }
         }
         Err(e) => {

@@ -387,6 +387,7 @@ pub struct UserGameStatsRawResult {
 pub struct StatPair {
   pub stat_id: u32,
   pub value: u32,
+  pub times: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
