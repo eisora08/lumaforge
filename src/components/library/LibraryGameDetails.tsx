@@ -1050,7 +1050,8 @@ export default function LibraryGameDetails({
       if (overlayEnabled) {
         showGroupedAchievementOverlay(events.length - maxShow);
       } else if (toastEnabled) {
-        showGroupedAchievementToast(events.length - maxShow);
+        const remainingUnlocks = events.slice(maxShow);
+        showGroupedAchievementToast(remainingUnlocks, appIdStr ?? undefined, detailTitle);
       }
     }
     if (nativeEnabled) {

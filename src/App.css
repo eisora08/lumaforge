@@ -1238,18 +1238,12 @@ html {
 ========================= */
 
 .lf-ach-toast-enter {
-  animation: lfAchToastEnter 220ms cubic-bezier(.2,.8,.2,1) forwards;
+  animation: lfAchToastEnter 120ms ease-out forwards;
 }
 
 @keyframes lfAchToastEnter {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* =========================
@@ -1259,18 +1253,12 @@ html {
 ========================= */
 
 .lf-ach-toast-exit {
-  animation: lfAchToastExit 180ms cubic-bezier(.2,.8,.2,1) forwards;
+  animation: lfAchToastExit 150ms ease-in forwards;
 }
 
 @keyframes lfAchToastExit {
-  from {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(20px) scale(0.98);
-  }
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(16px); }
 }
 
 /* =========================
@@ -1289,6 +1277,92 @@ html {
   }
   to {
     filter: brightness(1.08);
+  }
+}
+
+/* =========================
+   ACHIEVEMENT TOAST STAGGERED REVEAL
+   Icon springs in first, then badge, then text slides from right
+   Premium console-style entry animation
+======================== */
+
+.lf-ach-icon-reveal {
+  animation: lfAchIconReveal 350ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes lfAchIconReveal {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.lf-ach-text-reveal {
+  animation: lfAchTextReveal 280ms cubic-bezier(0.2, 0.8, 0.2, 1) 140ms both;
+}
+
+@keyframes lfAchTextReveal {
+  0% { opacity: 0; transform: translateX(14px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+/* =========================
+   MULTI-ACHIEVEMENT STRIP ICONS
+   Each icon pops in with staggered delay via inline animation-delay
+======================== */
+
+.lf-ach-strip-icon-reveal {
+  animation: lfAchStripIconReveal 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes lfAchStripIconReveal {
+  0% { opacity: 0; transform: scale(0.5); }
+  70% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* =========================
+   ACHIEVEMENT PLATINUM PREMIUM
+   Pulsing violet ring + sparkle particles
+======================== */
+
+.lf-ach-toast-platinum {
+  border-color: rgba(167, 139, 250, 0.9) !important;
+}
+
+.lf-ach-platinum-ring {
+  animation: lfAchPlatinumRing 1.5s ease-in-out infinite;
+}
+
+@keyframes lfAchPlatinumRing {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px 4px rgba(167, 139, 250, 0.35);
+  }
+}
+
+.lf-ach-platinum-sparkle {
+  animation: lfAchPlatinumSparkle 2s ease-in-out infinite;
+}
+
+@keyframes lfAchPlatinumSparkle {
+  0%, 100% {
+    background: radial-gradient(circle at 20% 20%, rgba(167, 139, 250, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(196, 181, 253, 0.12) 0%, transparent 50%);
+  }
+  50% {
+    background: radial-gradient(circle at 80% 20%, rgba(167, 139, 250, 0.2) 0%, transparent 50%),
+                radial-gradient(circle at 20% 80%, rgba(196, 181, 253, 0.15) 0%, transparent 50%);
   }
 }
 
@@ -1504,6 +1578,11 @@ html[data-compact="true"] .lf-sidebar-drawer-exit,
 html[data-compact="true"] .lf-card-stagger > *,
 html[data-compact="true"] .lf-ach-toast-enter,
 html[data-compact="true"] .lf-ach-toast-exit,
+html[data-compact="true"] .lf-ach-icon-reveal,
+html[data-compact="true"] .lf-ach-text-reveal,
+html[data-compact="true"] .lf-ach-strip-icon-reveal,
+html[data-compact="true"] .lf-ach-platinum-ring,
+html[data-compact="true"] .lf-ach-platinum-sparkle,
 html[data-compact="true"] .lf-toast-entry,
 html[data-compact="true"] .lf-toast-exit,
 html[data-compact="true"] .lf-press-effect,
@@ -1553,6 +1632,11 @@ html[data-compact="true"] .lf-launch-bar {
   .lf-launch-bar,
   .lf-ach-toast-enter,
   .lf-ach-toast-exit,
+  .lf-ach-icon-reveal,
+  .lf-ach-text-reveal,
+  .lf-ach-strip-icon-reveal,
+  .lf-ach-platinum-ring,
+  .lf-ach-platinum-sparkle,
   .lf-toast-entry,
   .lf-toast-exit {
     animation: none;

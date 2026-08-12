@@ -17,18 +17,18 @@ function AchievementToastInner({ t, achievement, duration }: Props) {
   return (
     <div
       className={`pointer-events-auto relative min-w-80 max-w-100 overflow-hidden rounded-2xl border bg-[#0d1117]/95 backdrop-blur-xl px-5 py-4 text-white ${
-        t.visible ? "lf-toast-entry" : "lf-toast-exit"
+        t.visible ? "lf-ach-toast-enter" : "lf-ach-toast-exit"
       }`}
       style={{ borderColor: `var(--toast-border, rgba(255,255,255,0.1))` }}
     >
       <div className={`pointer-events-none absolute inset-x-0 top-0 h-0.75 ${RARITY_ACCENT_BAR[achievement.rarity]}`} />
 
       <div className="relative z-10 flex items-start gap-3.5">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 lf-ach-icon-reveal">
           <AchIcon className="h-5 w-5 text-white/80" />
         </div>
 
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 lf-ach-text-reveal">
           <p className="text-[10px] uppercase tracking-widest text-amber-400/80 font-semibold">
             Achievement Unlocked
           </p>

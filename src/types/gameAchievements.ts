@@ -27,6 +27,8 @@ export type UnlockEvent = {
   iconGrayUrl?: string;
   unlockTime?: number;
   rarityPercent?: number;
+  /** True when this unlock completes 100% of the game (platinum trophy). */
+  isPlatinum?: boolean;
 };
 
 export type GameAchievementsSummary = {

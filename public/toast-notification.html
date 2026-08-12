@@ -73,11 +73,11 @@
       backdrop-filter: blur(24px);
       -webkit-backdrop-filter: blur(24px);
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-      animation: achToastEntry 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      animation: achEntry 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
     }
 
     .toast.achieve.exit {
-      animation: achToastExit 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+      animation: achFadeOut 180ms ease-in forwards;
     }
 
     .toast.achieve .ach-icon-container {
@@ -130,11 +130,6 @@
       color: color-mix(in srgb, var(--ach-muted) 30%, transparent);
     }
 
-    .toast.achieve .ach-rarity {
-      font-size: 10px;
-      color: color-mix(in srgb, var(--ach-muted) 50%, transparent);
-    }
-
     .toast.achieve .ach-desc {
       margin: 2px 0 0;
       font-size: 11px;
@@ -147,31 +142,50 @@
       overflow: hidden;
     }
 
-    .toast.achieve .ach-rarity-badge {
-      position: absolute;
-      bottom: -6px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 1px 8px;
-      border-radius: 999px;
-      border: 1px solid;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      white-space: nowrap;
-      z-index: 20;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.9);
-    }
-
+    /* Rare — border glow + breathing brightness */
     .toast.achieve.achieve-rare {
       border-width: 2px;
-      animation: achToastEntry 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards,
-                 achRareGlow 2s ease-in-out infinite alternate;
+      animation: achEntry 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards,
+                 achRareGlow 2s ease-in-out 400ms infinite alternate;
+    }
+
+    /* Platinum — violet glow + pulsing ring + gradient text */
+    .toast.achieve.achieve-platinum {
+      border-width: 2px;
+      border-color: rgba(167, 139, 250, 0.9) !important;
+      animation: achEntry 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards,
+                 achRareGlow 2s ease-in-out 400ms infinite alternate;
+    }
+
+    .toast.achieve.achieve-platinum .ach-icon-container {
+      animation: achPlatRing 1.5s ease-in-out infinite;
+    }
+
+    .toast.achieve.achieve-platinum .ach-header {
+      background: linear-gradient(90deg, #a78bfa, #8b5cf6, #c4b5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    @keyframes achEntry {
+      from { opacity: 0; transform: translateY(16px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes achFadeOut {
+      from { opacity: 1; transform: translateX(0); }
+      to { opacity: 0; transform: translateX(16px); }
     }
 
     @keyframes achRareGlow {
       from { filter: brightness(1); }
-      to { filter: brightness(1.06); }
+      to { filter: brightness(1.08); }
+    }
+
+    @keyframes achPlatRing {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.5); }
+      50% { box-shadow: 0 0 18px 3px rgba(167, 139, 250, 0.35); }
     }
 
     .toast.achieve .ach-close-btn {
@@ -679,18 +693,6 @@
         iconHtml = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>';
       }
 
-      // Rarity badge
-      var rarityBadgeHtml = '';
-      if (isRare && rarity !== null) {
-        rarityBadgeHtml = '<div class="ach-rarity-badge" style="border-color:' + tc.badgeBorder + ';background:' + tc.badgeBg + ';color:' + tc.badgeText + '">' + rarity.toFixed(1) + '%</div>';
-      }
-
-      // Description
-      var descHtml = '';
-      if (data.description) {
-        descHtml = '<p class="ach-desc">' + escapeHtml(data.description) + '</p>';
-      }
-
       // Rarity label
       var rarityLabelHtml = '';
       if (isRare) {
@@ -699,27 +701,23 @@
         rarityLabelHtml = '<span class="ach-header">Achievement Unlocked</span>';
       }
 
-      // Rarity text
-      var rarityTextHtml = '';
-      if (rarity !== null) {
-        var rarityColor = isRare ? tc.badgeText : 'color-mix(in srgb, var(--ach-muted) 50%, transparent)';
-        rarityTextHtml = '<span class="ach-rarity" style="color:' + rarityColor + '">' + rarity.toFixed(1) + '% rarity</span>';
+      // Description
+      var descHtml = '';
+      if (data.description) {
+        descHtml = '<p class="ach-desc">' + escapeHtml(data.description) + '</p>';
       }
 
-      // Meta line
+      // Meta line (game title only — no rarity percent)
       var metaDiv = '<div class="ach-meta">';
       if (data.gameTitle) metaDiv += '<span class="ach-game-title">' + escapeHtml(data.gameTitle) + '</span>';
-      if (data.gameTitle && rarityTextHtml) metaDiv += '<span class="ach-bullet">·</span>';
-      if (rarityTextHtml) metaDiv += rarityTextHtml;
       metaDiv += '</div>';
 
       var toast = document.createElement('div');
-      toast.className = 'toast achieve';
+      toast.className = 'toast achieve' + (tier === 'platinum' ? ' achieve-platinum' : (isRare ? ' achieve-rare' : ''));
       toast.innerHTML =
         '<div class="toast-body" style="align-items:flex-start">' +
           '<div class="ach-icon-container" style="border-color:' + (tc ? tc.iconRing : 'rgba(255,255,255,0.1)') + '">' +
             iconHtml +
-            rarityBadgeHtml +
           '</div>' +
           '<div style="flex:1;min-width:0">' +
             rarityLabelHtml +

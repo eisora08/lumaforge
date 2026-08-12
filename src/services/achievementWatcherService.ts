@@ -276,7 +276,9 @@ class AchievementWatcherService {
       console.log(`[ACH][NOTIFY_DRAIN] route=in-app-drain apiName=${unique[i].unlock.apiName}`);
     }
     if (unique.length > maxShow && toastEnabled) {
-      showGroupedAchievementToast(unique.length - maxShow);
+      const remainingUnlocks = unique.slice(maxShow).map(u => u.unlock);
+      const firstAppId = unique[0]?.appId;
+      showGroupedAchievementToast(remainingUnlocks, firstAppId, undefined);
     }
     this._pendingUnfocusUnlocks = [];
     console.log(`[ACH][NOTIFY_DRAIN] drained total=${unique.length} shown=${Math.min(unique.length, maxShow)}`);
@@ -470,6 +472,7 @@ class AchievementWatcherService {
             appId,
             rarity: unlocks[i].rarityPercent,
             gameTitle: this._getGameTitle(appId),
+            isPlatinum: unlocks[i].isPlatinum,
           });
           this.markToastShown(appId, unlocks[i].apiName);
         }
@@ -501,7 +504,8 @@ class AchievementWatcherService {
           const remaining = unlocks.length - shownCount;
           console.log(`[ACH][TOAST_CAP] appid=${appId} notificationOnly=true storeUnaffected=true individualShown=${shownCount} groupedRemaining=${remaining}`);
           if (remaining > 0 && toastEnabled) {
-            showGroupedAchievementToast(remaining);
+            const remainingUnlocks = unlocks.slice(shownCount);
+            showGroupedAchievementToast(remainingUnlocks, appId, this._getGameTitle(appId));
             console.log(`[ACH][NOTIFY_ROUTE] visual=in-app-grouped remaining=${remaining} native=${nativeEnabled}`);
           } else {
             const visual = toastEnabled ? "in-app" : "none";

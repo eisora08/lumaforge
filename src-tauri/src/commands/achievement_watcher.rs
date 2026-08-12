@@ -256,6 +256,27 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<
 
   // Handle librarycache files (<appid>.json)
   if parent == libcache_path {
+    // Special case: achievement_progress.json is a global progress index (not per-game)
+    if fname == "achievement_progress.json" {
+      eprintln!(
+        "[ACH][WATCHER] rawPath={} fileName={} extractedAppId=0 source=achievement-progress",
+        raw_path, fname
+      );
+      let meta = std::fs::metadata(path).ok()?;
+      let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+      return Some(FileInfo {
+        appid: 0,
+        source: "achievement-progress".to_string(),
+        modified_at: modified,
+        size: meta.len(),
+      });
+    }
     if fname.ends_with(".json") && !fname.starts_with("achievement_progress") {
       if let Ok(appid) = fname.trim_end_matches(".json").parse::<u32>() {
         eprintln!(

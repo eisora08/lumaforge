@@ -244,6 +244,7 @@ class AchievementStoreImpl {
     // Detect new unlocks and fire callbacks for toasts
     const snapshots = loadSnapshots();
     const oldSnap = snapshots[appId] ?? {};
+    const prevUnlocked = Object.values(oldSnap).filter(Boolean).length;
     const newUnlocks: UnlockEvent[] = [];
     for (const ach of finalSummary.achievements ?? []) {
       if (ach.unlocked && !oldSnap[ach.apiName]) {
@@ -257,6 +258,13 @@ class AchievementStoreImpl {
           rarityPercent: ach.rarityPercent,
         });
       }
+    }
+    // Platinum detection: batch completes 100% of the game
+    const finalTotal = finalSummary.total ?? finalSummary.achievements?.length ?? 0;
+    const finalUnlocked = finalSummary.unlocked ?? finalSummary.achievements?.filter(a => a.unlocked).length ?? 0;
+    if (newUnlocks.length > 0 && finalUnlocked >= finalTotal && finalTotal > 0 && prevUnlocked < finalTotal) {
+      newUnlocks[newUnlocks.length - 1].isPlatinum = true;
+      console.log(`[ACH][PLATINUM] appid=${appId} triggered at ${finalUnlocked}/${finalTotal} via setSummary`);
     }
     if (newUnlocks.length > 0) {
       console.log(`[ACH][SETSUMMARY_TOAST] appid=${appId} newUnlocks=${newUnlocks.length} names=${newUnlocks.map(u => u.name).join(",")}`);
@@ -558,6 +566,12 @@ class AchievementStoreImpl {
             rarityPercent: ach.rarityPercent,
           });
         }
+      }
+
+      // Platinum detection: batch completes 100% of the game
+      if (newUnlocks.length > 0 && newUnlockedCount >= total && total > 0 && prevUnlocked < total) {
+        newUnlocks[newUnlocks.length - 1].isPlatinum = true;
+        console.log(`[ACH][PLATINUM] appid=${appId} triggered at ${newUnlockedCount}/${total}`);
       }
 
       const previousSource = hasSnapshot ? "snapshot" : "store";
