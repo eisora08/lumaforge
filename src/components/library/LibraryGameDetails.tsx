@@ -342,12 +342,17 @@ export default function LibraryGameDetails({
   const achievementsSyncing = achievementsSummary != null && achievementsLoading;
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
   const [localAchSupportFound, setLocalAchSupportFound] = useState(false);
-  const [achSource, setAchSource] = useState<"steam-official" | "steam">("steam-official");
+  // Lazy initializer: read persisted choice synchronously so the FIRST resolve uses the correct
+  // platform (avoids writing to steam-official/ before async detectCrackType completes).
+  const [achSource, setAchSource] = useState<"steam-official" | "steam">(() => {
+    if (!appIdStr) return "steam-official";
+    const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
+    return saved ?? "steam-official";
+  });
   const [hasCrackSave, setHasCrackSave] = useState(false);
 
-  // Auto-detect crack source on mount — respect persisted user choice
-  // The cancelled flag prevents the async callback from overwriting a manual user switch:
-  // if the user changes the dropdown before detectCrackType resolves, the callback is a no-op.
+  // Auto-detect crack source on mount — only auto-select when user has no persisted choice.
+  // The cancelled flag prevents the async callback from overwriting a manual user switch.
   useEffect(() => {
     if (!appIdStr) return;
     userSwitchedSourceRef.current = false;
@@ -355,11 +360,11 @@ export default function LibraryGameDetails({
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
     import("../../services/achievementConfigService").then(({ detectCrackType }) => {
       detectCrackType(appIdStr).then((result: any) => {
-        if (cancelled) return; // user already switched manually — don't overwrite
+        if (cancelled) return;
         const hasCrack = !!result?.savePath;
         setHasCrackSave(hasCrack);
         if (saved) {
-          setAchSource(saved);
+          // achSource is already correct from the lazy initializer — no setAchSource needed
           console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} loaded from localStorage=${saved} hasCrack=${hasCrack}`);
         } else if (hasCrack) {
           setAchSource("steam");
