@@ -990,7 +990,6 @@ export default function LibraryGameDetails({
   useEffect(() => {
     const unsub = achievementAutoSyncService.subscribe((event) => {
       if (event.appId !== appIdStr) return;
-      if (userSwitchedSourceRef.current) return;
       setAchievementsSummary(event.summary);
       achievementStore.setSummary(event.appId, event.summary, achSource);
     });
@@ -1025,8 +1024,7 @@ export default function LibraryGameDetails({
   useEffect(() => {
     const unsub = achievementStore.subscribe((appId, summary, subPlatform) => {
       if (appId !== appIdStr) return;
-      if (subPlatform && subPlatform !== achSource) return;
-      if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
+      if (subPlatform && subPlatform !== achSource) return; // platform filter already guards cross-platform
       setAchievementsSummary(summary);
     });
     return unsub;
