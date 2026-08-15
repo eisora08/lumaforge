@@ -770,6 +770,9 @@ class AchievementWatcherService {
           // Seed baseline from existing disk cache (no librarycache dependency)
           const cached = await readAchievementCacheWithFallback(Number(appIdStr));
           if (cached && cached.achievements && cached.achievements.length > 0) {
+            const basePlatform = this._platformByAppId.get(appIdStr);
+            const baseSourceConflict = basePlatform === "steam-official" && (cached.summary?.source === "crack");
+
             const appSnap: AppSnapshot = {};
             for (const entry of cached.achievements) {
               appSnap[entry.api_name] = entry.unlocked;
@@ -777,12 +780,14 @@ class AchievementWatcherService {
             snapshot[appIdStr] = appSnap;
             baselineCount++;
             seededAppIds.push(appIdStr);
-            console.debug(`[ACH][WATCHER][${traceId}] baseline appid=${appIdStr} unlocked=${cached.summary?.unlocked ?? 0}`);
+            console.debug(`[ACH][WATCHER][${traceId}] baseline appid=${appIdStr} unlocked=${cached.summary?.unlocked ?? 0} source=${cached.summary?.source ?? "unknown"}${baseSourceConflict ? " SKIP_STORE(cross-platform)" : ""}`);
 
             // Seed the in-memory achievementStore from disk cache using full data
-            // (setSummary preserves name, description, icons, stat_id, bit, progress_*)
-            const summary = this.cacheToSummary(appIdStr, cached);
-            achievementStore.setSummary(appIdStr, summary, this._platformByAppId.get(appIdStr));
+            // Skip when disk data source conflicts with user's chosen platform
+            if (!baseSourceConflict) {
+              const summary = this.cacheToSummary(appIdStr, cached);
+              achievementStore.setSummary(appIdStr, summary, basePlatform);
+            }
           }
         } catch {
           // skip individual file failures
@@ -1043,10 +1048,18 @@ class AchievementWatcherService {
           console.log(`[ACH][PIPELINE] canonical_disk appid=${appId} found=${!!cached}`);
           if (cached) {
             const cachedSummary = this.cacheToSummary(appId, cached);
-            if (DEBUG_ACH_WATCHER) console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=cache(watcher) unlocked=${cachedSummary.unlocked}/${cachedSummary.total} updatedAt=${cachedSummary.updatedAt} progressAvailable=${cachedSummary.progressAvailable}`);
-            achievementStore.setSummary(appId, cachedSummary, this._platformByAppId.get(appId));
-            loaded = true;
-            console.log(`[ACH][PIPELINE] canonical_loaded appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
+            const canonPlatform = this._platformByAppId.get(appId);
+            // Guard: don't load cross-platform disk data into the store.
+            // When user chose steam-official, crack data from disk would create false toasts.
+            const sourceConflicts = canonPlatform === "steam-official" && cachedSummary.source === "crack";
+            if (sourceConflicts) {
+              console.log(`[ACH][PIPELINE] canonical_skip_conflict appid=${appId} platform=${canonPlatform} disk-source=${cachedSummary.source} reason=cross-platform-data`);
+            } else {
+              if (DEBUG_ACH_WATCHER) console.log(`[ACH][SUMMARY_SOURCE] appid=${appId} source=cache(watcher) unlocked=${cachedSummary.unlocked}/${cachedSummary.total} updatedAt=${cachedSummary.updatedAt} progressAvailable=${cachedSummary.progressAvailable}`);
+              achievementStore.setSummary(appId, cachedSummary, canonPlatform);
+              loaded = true;
+              console.log(`[ACH][PIPELINE] canonical_loaded appid=${appId} total=${cachedSummary.total} unlocked=${cachedSummary.unlocked}`);
+            }
           }
         } catch (e) {
           console.log(`[ACH][PIPELINE] canonical_disk_err appid=${appId} error=${e}`);

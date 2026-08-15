@@ -258,8 +258,10 @@ class AchievementStoreImpl {
     this.notify(appId, finalSummary, platform);
 
     // Detect new unlocks and fire callbacks for toasts
+    // Use composite key for snapshots so platform switches don't create false "new unlocks"
     const snapshots = loadSnapshots();
-    const oldSnap = snapshots[appId] ?? {};
+    const snapshotKey = platform ? `${appId}:${platform}` : appId;
+    const oldSnap = snapshots[snapshotKey] ?? snapshots[appId] ?? {}; // fallback: bare key for migration
     const prevUnlocked = Object.values(oldSnap).filter(Boolean).length;
     const newUnlocks: UnlockEvent[] = [];
     for (const ach of finalSummary.achievements ?? []) {
@@ -290,11 +292,12 @@ class AchievementStoreImpl {
     }
 
     // Save snapshot AFTER unlock detection (so next call can compare)
+    // Use composite key so platform-specific snapshots don't bleed into each other
     const snap: Record<string, boolean> = {};
     for (const ach of finalSummary.achievements ?? []) {
       snap[ach.apiName] = ach.unlocked;
     }
-    snapshots[appId] = snap;
+    snapshots[snapshotKey] = snap;
     saveSnapshots(snapshots);
 
     // CRITICAL: Write to disk so data persists when librarycache is deleted
@@ -537,7 +540,13 @@ class AchievementStoreImpl {
     const patchSource = patch.authoritative ? "binary-stats" : "librarycache";
     const oldUnlocked = `${prevUnlocked}/${current.total}`;
     const newUnlocked = `${newUnlockedCount}/${total}`;
-    const accepted = isSourceNewerOrEqual(patchSource, Date.now(), current.source, current.updatedAt);
+    let accepted = isSourceNewerOrEqual(patchSource, Date.now(), current.source, current.updatedAt);
+    // Binary-stats from Steam official path can't downgrade crack/authoritative data.
+    // Crack saves have their own complete achievement set that Steam's appcache doesn't know about.
+    if (accepted && patchSource === "binary-stats" && (current.source === "crack" || current.source === "binary-stats") && newUnlockedCount < prevUnlocked) {
+      accepted = false;
+      console.log(`[ACH][SUMMARY_MERGE] appid=${appId} old=${current.source}:${oldUnlocked} new=${patchSource}:${newUnlocked} accepted=false reason=binary-stats-downgrade-guard`);
+    }
     console.debug(`[ACH][STORE_PATCH][${tid}] before=${oldUnlocked} after=${newUnlocked} authoritative=${!!patch.authoritative}`);
     console.debug(`[ACH][STORE_PATCH][${tid}] summaryLoaded=${this.summariesByAppId.has(appId)} createdMinimalSummary=${createdMinimalSummary}`);
     if (accepted) {
@@ -547,9 +556,11 @@ class AchievementStoreImpl {
     }
 
     // ── Detect new unlocks using SNAPSHOT (loaded BEFORE comparison) ──
+    // Use composite key so platform switches don't create false "new unlocks"
     const snapshots = loadSnapshots();
-    const oldSnapshot = snapshots[appId] ?? {};
-    const hasSnapshot = snapshots[appId] !== undefined;
+    const patchSnapshotKey = platform ? `${appId}:${platform}` : appId;
+    const oldSnapshot = snapshots[patchSnapshotKey] ?? snapshots[appId] ?? {}; // fallback: bare key for migration
+    const hasSnapshot = snapshots[patchSnapshotKey] !== undefined || snapshots[appId] !== undefined;
 
     // If no snapshot and no previous store progress, create baseline
     const isBaseline = !hasSnapshot && (!current.progressAvailable || prevUnlocked === 0);
@@ -656,7 +667,7 @@ class AchievementStoreImpl {
     for (const ach of mergedAchievements) {
       newAppSnap[ach.apiName] = ach.unlocked;
     }
-    snapshots[appId] = newAppSnap;
+    snapshots[patchSnapshotKey] = newAppSnap;
     saveSnapshots(snapshots);
     if (RT) console.log(`[ACH][RT_SNAPSHOT] appid=${appId} entries=${Object.keys(newAppSnap).length}`);
 

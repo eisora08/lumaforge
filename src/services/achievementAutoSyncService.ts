@@ -100,6 +100,12 @@ class AchievementAutoSyncService {
     const appId = params.appId;
     if (this.watchers.has(appId)) {
       this.watchers.get(appId)!.params = params;
+      // Always propagate platform — user may have switched platform since watcher was created
+      if (params.platform) {
+        import("./achievementWatcherService").then(({ achievementWatcherService }) => {
+          achievementWatcherService.setPlatform(appId, params.platform!);
+        }).catch(() => {});
+      }
       return;
     }
     this.watchers.set(appId, { params, inFlight: false });
