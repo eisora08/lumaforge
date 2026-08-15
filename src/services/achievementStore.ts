@@ -704,9 +704,10 @@ class AchievementStoreImpl {
     this._lastWriteTime.set(key, now);
 
     // Infer platform from source when not explicitly provided:
-    // crack sources → "steam" directory, everything else → "steam-official"
+    // crack/binary-stats sources → "steam" directory, everything else → "steam-official"
+    // "binary-stats" comes from processCrackIniChange (authoritative: true) — same as "crack"
     const effectivePlatform = platform
-      ?? (summary.source === "crack" ? "steam" : "steam-official");
+      ?? ((summary.source === "crack" || summary.source === "binary-stats") ? "steam" : "steam-official");
     try {
       const appIdNum = Number(appId);
       // Use IN-MEMORY summary as source of truth (not disk cache)

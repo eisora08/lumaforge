@@ -725,13 +725,11 @@ export async function resolveSteamAchievements(params: {
         console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} crack detected but no Steam Web API key — skipping schema`);
       }
 
-      // ALSO create official schema for icons + KV data → steam-official/<appId>/
-      // This ensures both schemas exist independently (crack icons + official Steam icons)
-      if (hasApiKey) {
-        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} also creating official schema for icons → steam-official/${appIdStr}/`);
-        await ensureSchemaGenerated(appIdStr, effectiveSteamPath, effectiveAccountId, params.steamWebApiKey, "steam-official")
-          .catch((e: unknown) => console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} official schema non-fatal: ${String(e)}`));
-      }
+      // Do NOT create steam-official schema for cracked games.
+      // The crack schema (steam/<appId>/) already contains icon URLs from the Steam Web API.
+      // Icon resolution (resolveAchievementIconPath) falls back from steam-official/ to steam/.
+      // Writing to steam-official/ for cracked games would contaminate the official schema
+      // with crack-sourced data and cause cross-platform interference.
 
       // Read from crack schema (primary for crack progress)
       generatedCache = generatedCache ?? await readAchievementCache(appIdNum, readPlatform);

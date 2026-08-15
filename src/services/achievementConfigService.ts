@@ -213,25 +213,19 @@ export async function updateConfigForCrack(
   await writeConfig(crackConfig);
   console.log(`[ACH][CONFIG] wrote crack config for ${appId} → platform=steam save_path=${crackSavePath}`);
 
-  // Config official — configs/steam-official/<Name>.json
-  let steamPath = "";
+  // Do NOT write an official config for cracked games — it contaminates steam-official with
+  // stale appcache/stats paths and causes cross-platform interference when the resolver runs.
+  // readConfig() searches steam/ first, so the crack config is always found.
+
+  // Clean up any stale official config from a previous steam-official assignment
   try {
-    steamPath = await resolveSteamPath();
-  } catch { /* detection failed */ }
-  const officialConfigPath = `${appDataDir}\\achievements\\configs\\schema\\steam-official\\${appId}`;
-  const officialConfig: AchievementGameConfig = {
-    app_id: appId,
-    name,
-    platform: "steam-official",
-    save_path: steamPath ? `${steamPath}\\appcache\\stats` : "",
-    config_path: officialConfigPath,
-    executable: "",
-    arguments: "",
-    process_name: processName || "",
-    updated_at: Date.now(),
-  };
-  await writeConfig(officialConfig);
-  console.log(`[ACH][CONFIG] wrote official config for ${appId} → platform=steam-official save_path=${officialConfig.save_path}`);
+    const staleOfficialPath = `${appDataDir}\\achievements\\configs\\schema\\steam-official\\${appId}`;
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (await invoke<boolean>("file_exists", { path: staleOfficialPath })) {
+      await invoke("delete_file", { path: staleOfficialPath });
+      console.log(`[ACH][CONFIG] cleaned stale official config for ${appId}`);
+    }
+  } catch { /* best-effort cleanup */ }
 
   return crackConfig;
 }

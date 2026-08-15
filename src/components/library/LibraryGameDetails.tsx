@@ -346,12 +346,16 @@ export default function LibraryGameDetails({
   const [hasCrackSave, setHasCrackSave] = useState(false);
 
   // Auto-detect crack source on mount — respect persisted user choice
+  // The cancelled flag prevents the async callback from overwriting a manual user switch:
+  // if the user changes the dropdown before detectCrackType resolves, the callback is a no-op.
   useEffect(() => {
     if (!appIdStr) return;
     userSwitchedSourceRef.current = false;
+    let cancelled = false;
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
     import("../../services/achievementConfigService").then(({ detectCrackType }) => {
       detectCrackType(appIdStr).then((result: any) => {
+        if (cancelled) return; // user already switched manually — don't overwrite
         const hasCrack = !!result?.savePath;
         setHasCrackSave(hasCrack);
         if (saved) {
@@ -365,6 +369,7 @@ export default function LibraryGameDetails({
         }
       }).catch(() => {});
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, [appIdStr]);
 
   // Re-resolve achievements when source changes — always re-resolve, even without summary
@@ -2214,7 +2219,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                     <div className="flex items-center gap-2">
                       <select
                         value={achSource}
-                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
                         className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
                       >
                         <option value="steam-official">Steam Official</option>
@@ -2363,7 +2368,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                     <div className="flex items-center gap-2">
                       <select
                         value={achSource}
-                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
                         className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
                       >
                         <option value="steam-official">Steam Official</option>
@@ -2492,7 +2497,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                       <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
                       <select
                         value={achSource}
-                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
                         className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
                       >
                         <option value="steam-official">Steam Official (appcache/stats)</option>
@@ -2575,7 +2580,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                       <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
                       <select
                         value={achSource}
-                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } setAchSource(v); }}
                         className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
                       >
                         <option value="steam-official">Steam Official (appcache/stats)</option>

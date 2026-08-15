@@ -1070,16 +1070,25 @@ class AchievementWatcherService {
         }
       }
 
-      // If usergamestats-triggered, read schema binary + binary stats directly.
+      // Binary stats pipeline: reads schema binary + binary stats from appcache/stats/.
       // Same model as reference app (Achievements-1.2.2):
       // - Schema binary: stat_id, bit, name, icon per achievement
       // - Binary stats: bitmask (data_u32) + timestamps (AchievementTimes)
       // - Unlock detection: ((data_u32 >>> bit) & 1) === 1
       // - Timestamps: stat.times[bit] for unlock time
-      // NO librarycache dependency — reads binary files directly.
+      //
+      // IMPORTANT: Binary stats are NEVER used for cracked games (platform "steam").
+      // Cracks (RUNE, GSE SAVES, etc.) write achievements to achievements.ini/json in the
+      // save dir — they never touch appcache/stats/. The binary stats pipeline reads from
+      // <steamRoot>/appcache/stats/ which only contains official Steam achievement data.
+      // Using it for cracked games would read stale/incorrect data and overwrite the crack's
+      // achievement data in schema/steam/<appId>/.
+      // Cracked game achievements are handled exclusively by processCrackIniChange.
       let effectivePatch: ProgressPatch | null = null;
-      if (source === "usergamestats" || source === "librarycache") {
-        console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} reading-schema+binary-stats`);
+      const isCrackedGame = this._platformByAppId.get(appId) === "steam";
+      const runBinaryStats = !isCrackedGame && (source === "usergamestats" || source === "librarycache");
+      if (runBinaryStats) {
+        console.log(`[ACH][PIPELINE] binary-stats appid=${appId} source=${source} cracked=${isCrackedGame} reading-schema+binary-stats`);
         try {
           // Step 1: Read schema binary for achievement metadata (stat_id + bit)
           let schemaEntries: { api_name: string; stat_id?: number; bit?: number; progress_stat_id?: number; progress_min?: number; progress_max?: number; name?: string; icon?: string; description?: string }[] = [];
@@ -1168,10 +1177,16 @@ class AchievementWatcherService {
         }
       }
 
-      // No librarycache fallback — binary stats is the only fast-path source.
+      // No binary stats patch produced.
+      // For cracked games on librarycache source: skip binary stats entirely (crack data
+      // comes from processCrackIniChange, not from appcache/stats/).
       // Schedule resolver refresh to get authoritative data when binary stats unavailable.
       if (!effectivePatch) {
-        console.log(`[ACH][PIPELINE] no-binary-stats appid=${appId} scheduling-resolver-refresh`);
+        if (isCrackedGame) {
+          console.log(`[ACH][PIPELINE] binary-stats-skipped appid=${appId} reason=cracked-game platform=steam`);
+        } else {
+          console.log(`[ACH][PIPELINE] no-binary-stats appid=${appId} scheduling-resolver-refresh`);
+        }
         this._scheduleResolverRefresh(appId, traceId).catch(() => {});
         return false;
       }
@@ -1307,11 +1322,13 @@ class AchievementWatcherService {
       await sleep(500);
 
       const { resolveSteamAchievements } = await import("./steamAchievementsResolver");
+      const detectedPlatform = this._platformByAppId.get(appId) ?? "steam";
       const summary = await resolveSteamAchievements({
         appId: Number(appId),
         steamPath: this._steamPath,
         accountId: this._steamAccountId,
         steamWebApiKey: this._steamWebApiKey,
+        platform: detectedPlatform,
       });
 
       if (!summary || !summary.achievements) {
@@ -1332,8 +1349,8 @@ class AchievementWatcherService {
         }])),
       };
 
-      console.log(`[ACH][RT_RESOLVER_REFRESH] appid=${appId} total=${patch.total} unlocked=${patch.unlocked}`);
-      achievementStore.applyProgressPatch(appId, patch, _traceId, this._platformByAppId.get(appId));
+      console.log(`[ACH][RT_RESOLVER_REFRESH] appid=${appId} total=${patch.total} unlocked=${patch.unlocked} platform=${detectedPlatform}`);
+      achievementStore.applyProgressPatch(appId, patch, _traceId, detectedPlatform);
 
       // Enqueue image downloads for this game immediately after schema resolution
       try {
