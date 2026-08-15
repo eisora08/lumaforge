@@ -41,7 +41,6 @@ where
 }
 
 /// Custom deserializer for bool that accepts both boolean (true/false) and integer (0/1).
-/// The generate_emu_config.exe tool outputs `"hidden": 0` instead of `"hidden": false`.
 pub fn deserialize_bool_from_int<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
   D: Deserializer<'de>,

@@ -53,7 +53,8 @@ export type GameAchievementsSummary = {
     | "librarycache-stale"
     | "steam-web-api-stale"
     | "steam-appcache-stale"
-    | "local-cache-stale";
+    | "local-cache-stale"
+    | "crack";
   errorReason?: string;
   updatedAt?: number;
   newlyUnlocked?: UnlockEvent[];

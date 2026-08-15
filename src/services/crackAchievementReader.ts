@@ -22,6 +22,11 @@ export interface CrackAchievementData {
   source: string;
 }
 
+export interface CrackAchievement extends GameAchievement {
+  progress?: number;
+  maxProgress?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Main reader
 // ---------------------------------------------------------------------------
@@ -56,18 +61,24 @@ async function readAchievementsJson(
   appId: string,
 ): Promise<CrackAchievementData | null> {
   try {
-    const { readTextFile, exists } = await import("@tauri-apps/plugin-fs");
+    const { invoke } = await import("@tauri-apps/api/core");
     const jsonPath = `${savePath}\\achievements.json`;
 
-    if (!await exists(jsonPath)) {
+    try {
+      const content = await invoke<string>("read_text_file", { path: jsonPath });
+      return parseAchievementsJson(content, appId, "gse-json");
+    } catch {
       // Try subdirectory: savePath/<appId>/achievements.json
       const subPath = `${savePath}\\${appId}\\achievements.json`;
-      if (!await exists(subPath)) return null;
-      return parseAchievementsJson(await readTextFile(subPath), appId, "gse-json");
+      try {
+        const content = await invoke<string>("read_text_file", { path: subPath });
+        return parseAchievementsJson(content, appId, "gse-json");
+      } catch {
+        return null;
+      }
     }
-
-    return parseAchievementsJson(await readTextFile(jsonPath), appId, "gse-json");
-  } catch {
+  } catch (err) {
+    console.warn(`[ACH][CRACK] Failed to invoke read_text_file for ${appId}:`, err);
     return null;
   }
 }
@@ -144,7 +155,8 @@ function parseAchievementsJson(
       unlocked,
       source,
     };
-  } catch {
+  } catch (err) {
+    console.warn(`[ACH][CRACK] Failed to parse achievements.json for ${appId}:`, err);
     return null;
   }
 }
@@ -158,14 +170,17 @@ async function readAchievementsIni(
   appId: string,
 ): Promise<CrackAchievementData | null> {
   try {
-    const { readTextFile, exists } = await import("@tauri-apps/plugin-fs");
+    const { invoke } = await import("@tauri-apps/api/core");
     const iniPath = `${savePath}\\achievements.ini`;
 
-    if (!await exists(iniPath)) return null;
-
-    const content = await readTextFile(iniPath);
-    return parseAchievementsIni(content, appId);
-  } catch {
+    try {
+      const content = await invoke<string>("read_text_file", { path: iniPath });
+      return parseAchievementsIni(content, appId);
+    } catch {
+      return null;
+    }
+  } catch (err) {
+    console.warn(`[ACH][CRACK] Failed to invoke read_text_file for ini ${appId}:`, err);
     return null;
   }
 }
@@ -175,7 +190,7 @@ function parseAchievementsIni(
   appId: string,
 ): CrackAchievementData | null {
   try {
-    const achievements: GameAchievement[] = [];
+    const achievements: CrackAchievement[] = [];
     let unlocked = 0;
     let currentSection = "";
 
@@ -208,6 +223,25 @@ function parseAchievementsIni(
           if (earned) unlocked++;
         }
       }
+
+      // Parse CurProgress / MaxProgress for progress tracking
+      if (currentSection) {
+        const ach = achievements.find(a => a.apiName === currentSection);
+        if (ach) {
+          if (key === "curprogress" || key === "progress") {
+            const num = Number(value);
+            if (Number.isFinite(num)) (ach as CrackAchievement).progress = num;
+          } else if (key === "maxprogress" || key === "max_progress" || key === "max") {
+            const num = Number(value);
+            if (Number.isFinite(num)) (ach as CrackAchievement).maxProgress = num;
+          } else if (key === "unlocktime" || key === "unlock_time" || key === "time") {
+            const num = Number(value);
+            if (Number.isFinite(num) && num > 0) {
+              ach.unlockTime = num < 10_000_000_000 ? num * 1000 : num;
+            }
+          }
+        }
+      }
     }
 
     if (achievements.length === 0) return null;
@@ -217,9 +251,10 @@ function parseAchievementsIni(
       achievements,
       total: achievements.length,
       unlocked,
-      source: "onlinefix-ini",
+      source: "ini",
     };
-  } catch {
+  } catch (err) {
+    console.warn(`[ACH][CRACK] Failed to parse achievements.ini for ${appId}:`, err);
     return null;
   }
 }

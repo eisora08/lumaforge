@@ -559,6 +559,50 @@ pub fn resolve_app_data_dir(
     Ok(dir.to_string_lossy().to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Crack save detection (uses std::env::var, works in Rust but not browser)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CrackSaveResult {
+    pub crack_type: String,
+    pub save_path: String,
+}
+
+#[tauri::command]
+pub fn detect_crack_save_type(app_id: String) -> Result<Option<CrackSaveResult>, String> {
+    let bases: Vec<(&str, Vec<&str>, &str)> = vec![
+        ("PUBLIC", vec!["Documents", "Steam", "RUNE"], "rune"),
+        ("PUBLIC", vec!["Documents", "Steam", "CODEX"], "codex"),
+        ("PUBLIC", vec!["Documents", "OnlineFix"], "onlinefix"),
+        ("PUBLIC", vec!["Documents", "EMPRESS"], "empress"),
+        ("APPDATA", vec!["GSE Saves"], "gse"),
+        ("APPDATA", vec!["Goldberg SteamEmu Saves"], "goldberg"),
+        ("APPDATA", vec!["Goldberg UplayEmu Saves"], "goldberg"),
+        ("APPDATA", vec!["Goldberg SocialClub Emu Saves"], "goldberg"),
+        ("APPDATA", vec!["Steam", "CODEX"], "codex"),
+        ("APPDATA", vec!["SmartSteamEmu"], "gse"),
+    ];
+
+    for (env_key, segments, crack_type) in bases {
+        if let Ok(env_val) = std::env::var(env_key) {
+            let mut path = std::path::PathBuf::from(env_val);
+            for seg in &segments {
+                path.push(seg);
+            }
+            path.push(&app_id);
+            // Verify directory exists AND has actual achievement data
+            if path.is_dir() && (path.join("achievements.ini").exists() || path.join("achievements.json").exists()) {
+                return Ok(Some(CrackSaveResult {
+                    crack_type: crack_type.to_string(),
+                    save_path: path.to_string_lossy().to_string(),
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

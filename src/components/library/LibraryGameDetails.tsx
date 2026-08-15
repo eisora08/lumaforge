@@ -100,7 +100,7 @@ import { achievementAutoSyncService } from "../../services/achievementAutoSyncSe
 import { achievementStore, isSourceNewerOrEqual } from "../../services/achievementStore";
 import { ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS } from "../../services/achievementAutoFlags";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
-import { notifyMediaUpdated, getCachedSnapshot } from "../../services/startupSnapshotService";
+import { getCachedSnapshot } from "../../services/startupSnapshotService";
 import { useSettings } from "../../context/SettingsContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import GameEditDialog from "../games/GameEditDialog";
@@ -313,7 +313,7 @@ export default function LibraryGameDetails({
   const [achievementsSummary, setAchievementsSummary] = useState<GameAchievementsSummary | null>(() => {
     if (!appIdStr) return null;
     // 1. Check in-memory store first
-    const fromStore = achievementStore.getSummary(appIdStr);
+    const fromStore = achievementStore.getSummary(appIdStr, "steam-official");
     if (fromStore) return fromStore;
     // 2. Fallback to snapshot's achievementSummary (updated by full rebuild after refresh)
     const snap = getCachedSnapshot();
@@ -342,6 +342,70 @@ export default function LibraryGameDetails({
   const achievementsSyncing = achievementsSummary != null && achievementsLoading;
   const [showAchievementsModal, setShowAchievementsModal] = useState(false);
   const [localAchSupportFound, setLocalAchSupportFound] = useState(false);
+  const [achSource, setAchSource] = useState<"steam-official" | "steam">("steam-official");
+  const [hasCrackSave, setHasCrackSave] = useState(false);
+
+  // Auto-detect crack source on mount — respect persisted user choice
+  useEffect(() => {
+    if (!appIdStr) return;
+    userSwitchedSourceRef.current = false;
+    const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
+    import("../../services/achievementConfigService").then(({ detectCrackType }) => {
+      detectCrackType(appIdStr).then((result: any) => {
+        const hasCrack = !!result?.savePath;
+        setHasCrackSave(hasCrack);
+        if (saved) {
+          setAchSource(saved);
+          console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} loaded from localStorage=${saved} hasCrack=${hasCrack}`);
+        } else if (hasCrack) {
+          setAchSource("steam");
+          console.log(`[ACH][SOURCE_DETECT] appid=${appIdStr} detected crack save=${result.savePath} type=${result.crackType}`);
+        } else {
+          setAchSource("steam-official");
+        }
+      }).catch(() => {});
+    }).catch(() => {});
+  }, [appIdStr]);
+
+  // Re-resolve achievements when source changes — always re-resolve, even without summary
+  const achSourceRef = useRef<string | null>(null); // null = never fired → forces resolve on mount
+  const userSwitchedSourceRef = useRef(false);
+  useEffect(() => {
+    if (!appIdStr) return;
+    if (achSourceRef.current === achSource) return;
+    achSourceRef.current = achSource;
+    userSwitchedSourceRef.current = true; // block disk cache effect during resolve
+    // Trigger refresh with new source
+    (async () => {
+      const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+      setAchievementsLoading(true);
+      try {
+        const gameSource = achSource === "steam" ? "debrid" : "steam";
+        const s = await resolveSteamAchievements({
+          appId: appIdStr,
+          steamWebApiKey: settings.steamWebApiKey || undefined,
+          steamId64: settings.steamId64 || undefined,
+          accountId: settings.steamAccountId || undefined,
+          steamPath: settings.steamRoot || undefined,
+          forceRefresh: true,
+          steamAchievementsEnabled: settings.steamAchievementsEnabled,
+          achievementSchemaPath: settings.achievementSchemaPath || undefined,
+          gameSource,
+          platform: achSource,
+        });
+        if (appIdStr) {
+          achievementStore.deleteSummary(appIdStr, achSource);
+          setAchievementsSummary(s);
+          achievementStore.setSummary(appIdStr, s, achSource);
+          console.log(`[ACH][SOURCE_CHANGED] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${s.unlocked}/${s.total}`);
+        }
+      } catch (err) {
+        console.warn(`[ACH][SOURCE_CHANGED] failed appid=${appIdStr} reason=${err}`);
+      } finally {
+        setAchievementsLoading(false);
+      }
+    })();
+  }, [achSource]);
   const supportCheckDoneRef = useRef(false);
 
   useEffect(() => {
@@ -747,7 +811,8 @@ export default function LibraryGameDetails({
       setAchievementsSummary(null);
       return;
     }
-    const stored = achievementStore.getSummary(appIdStr) ?? null;
+    if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
+    const stored = achievementStore.getSummary(appIdStr, achSource) ?? null;
     if (stored) {
       if (DEBUG_ACH_DETAILS) console.log(`[ACH][STATE_PRESERVE] appid=${appIdStr} reason=route-change unlocked=${stored.unlocked}/${stored.total}`);
     }
@@ -755,7 +820,7 @@ export default function LibraryGameDetails({
       if (prev?.appId === stored?.appId && prev?.source === stored?.source && prev?.unlocked === stored?.unlocked && prev?.total === stored?.total) return prev;
       return stored;
     });
-  }, [appIdStr]);
+  }, [appIdStr, achSource]);
 
   // Load achievements on mount when auto-load is enabled, or on explicit refresh
   // Safe: reads existing disk cache for current visible appId only.
@@ -765,10 +830,11 @@ export default function LibraryGameDetails({
   const diskCacheRef = useRef<{ updatedAt: number } | null>(null);
   useEffect(() => {
     if (!appIdStr) return;
+    if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
     if (!shouldAutoLoadAchievements) {
       let cancelled = false;
       // 1. Check in-memory store first
-      const stored = achievementStore.getSummary(appIdStr);
+      const stored = achievementStore.getSummary(appIdStr, achSource);
       if (stored) {
         setAchievementsSummary(stored);
         if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${stored.unlocked} total=${stored.total} progressAvailable=${stored.progressAvailable} source=${stored.source}`);
@@ -778,12 +844,12 @@ export default function LibraryGameDetails({
       if (ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP) {
         const appIdNum = Number(appIdStr);
         if (Number.isFinite(appIdNum)) {
-          import("../../services/tauri").then(({ readAchievementCacheWithFallback }) => {
+          import("../../services/tauri").then(({ readAchievementCache }) => {
               if (cancelled) return;
-              readAchievementCacheWithFallback(appIdNum).then((diskCache) => {
+              readAchievementCache(appIdNum, achSource).then((diskCache) => {
                 if (cancelled) return;
                 const diskUpdatedAt = diskCache?.summary?.updated_at ?? 0;
-                const storeUpdatedAt = achievementStore.getSummary(appIdStr)?.updatedAt ?? 0;
+                const storeUpdatedAt = achievementStore.getSummary(appIdStr, achSource)?.updatedAt ?? 0;
                 const lastSeenAt = diskCacheRef.current?.updatedAt ?? 0;
                 if (!diskCache || !diskCache.achievements?.length) {
                   if (appIdStr === "1167630") console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=no-disk-cache`);
@@ -828,7 +894,7 @@ export default function LibraryGameDetails({
                 console.log(`[ACH][VISIBLE_LOCAL_REFRESH] appid=${appIdStr} cacheFound=true updated=true diskUpdatedAt=${diskUpdatedAt} storeUpdatedAt=${storeUpdatedAt}`);
                 console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${unlocked}/${total} reason=newer-local-cache`);
                 if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${unlocked} total=${total} progressAvailable=${hasRealProgress} source=local-cache`);
-                achievementStore.setSummary(appIdStr, summary);
+                achievementStore.setSummary(appIdStr, summary, achSource);
                 setAchievementsSummary(summary);
                 setAchievementsLoading(false);
                 // ── Fallback: schema-only disk cache → try resolver for librarycache progress ──
@@ -843,14 +909,16 @@ export default function LibraryGameDetails({
                     steamPath: settings.steamRoot || undefined,
                     steamAchievementsEnabled: settings.steamAchievementsEnabled,
                     achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                    gameSource: game.source,
+                    platform: achSource,
                   }).then((resolved) => {
                     if (cancelled || !resolved.progressAvailable) {
                       if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
                       return;
                     }
-                    const stored = achievementStore.getSummary(appIdStr);
+          const stored = achievementStore.getSummary(appIdStr, achSource);
                     if (stored && !isSourceNewerOrEqual(resolved.source, resolved.updatedAt, stored.source, stored.updatedAt)) return;
-                    achievementStore.setSummary(appIdStr, resolved);
+                    achievementStore.setSummary(appIdStr, resolved, achSource);
                     setAchievementsSummary(resolved);
                     console.log(`[ACH][SUMMARY_APPLY] appid=${appIdStr} unlocked=${resolved.unlocked}/${resolved.total} reason=resolver-librarycache-fallback`);
                   }).catch(() => {});
@@ -880,11 +948,14 @@ export default function LibraryGameDetails({
       steamPath: settings.steamRoot || undefined,
       steamAchievementsEnabled: settings.steamAchievementsEnabled,
       achievementSchemaPath: settings.achievementSchemaPath || undefined,
+      gameSource: game.source,
+      platform: achSource,
     })
       .then((summary) => {
         if (!cancelled) {
+          if (userSwitchedSourceRef.current) return; // user already switched — this resolve is stale
           // Only update local state if resolver result is fresher than store
-          const stored = achievementStore.getSummary(appIdStr);
+          const stored = achievementStore.getSummary(appIdStr, achSource);
           if (stored && stored.source !== summary.source) {
             if (!isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt)) {
               console.debug(`[ACH][DETAILS] skip-set-from-resolver reason=store-newer source=${stored.source} updatedAt=${stored.updatedAt}`);
@@ -892,8 +963,9 @@ export default function LibraryGameDetails({
               return;
             }
           }
+          achievementStore.deleteSummary(appIdStr, achSource);
           setAchievementsSummary(summary);
-          achievementStore.setSummary(appIdStr, summary);
+          achievementStore.setSummary(appIdStr, summary, achSource);
           setAchievementsLoading(false);
           // Enqueue image downloads for this game (fire-and-forget)
           import("../../services/backgroundJobQueue").then(({ enqueueAchievementImageJobs }) => {
@@ -918,8 +990,9 @@ export default function LibraryGameDetails({
   useEffect(() => {
     const unsub = achievementAutoSyncService.subscribe((event) => {
       if (event.appId !== appIdStr) return;
+      if (userSwitchedSourceRef.current) return;
       setAchievementsSummary(event.summary);
-      achievementStore.setSummary(event.appId, event.summary);
+      achievementStore.setSummary(event.appId, event.summary, achSource);
     });
     return unsub;
   }, [appIdStr]);
@@ -943,18 +1016,21 @@ export default function LibraryGameDetails({
       progressAvailable: true,
     };
     if (DEBUG_ACH_DETAILS) console.log(`[ACH][SUMMARY_DERIVED] appid=${appIdStr} unlocked=${unlocked}/${total} percent=${percent}`);
-    achievementStore.setSummary(appIdStr, patched);
+    if (userSwitchedSourceRef.current) return;
+    achievementStore.setSummary(appIdStr, patched, achSource);
     setAchievementsSummary(patched);
-  }, [appIdStr, achievementsSummary]);
+  }, [appIdStr, achievementsSummary, achSource]);
 
   // Store: subscribe to central store for fast patches from watcher
   useEffect(() => {
-    const unsub = achievementStore.subscribe((appId, summary) => {
+    const unsub = achievementStore.subscribe((appId, summary, subPlatform) => {
       if (appId !== appIdStr) return;
+      if (subPlatform && subPlatform !== achSource) return;
+      if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
       setAchievementsSummary(summary);
     });
     return unsub;
-  }, [appIdStr]);
+  }, [appIdStr, achSource]);
 
   // Auto-sync: start/stop watching based on appId + settings
   useEffect(() => {
@@ -972,11 +1048,12 @@ export default function LibraryGameDetails({
       steamPath: settings.steamRoot || undefined,
       steamAchievementsEnabled: settings.steamAchievementsEnabled,
       achievementSchemaPath: settings.achievementSchemaPath || undefined,
+      platform: achSource,
     });
     return () => {
       achievementAutoSyncService.stopWatching(appIdStr);
     };
-  }, [appIdStr, settings.achievementAutoSyncEnabled, settings.achievementAutoSyncIntervalSeconds,
+  }, [appIdStr, achSource, settings.achievementAutoSyncEnabled, settings.achievementAutoSyncIntervalSeconds,
       settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot,
       settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
@@ -1620,7 +1697,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
 
             {/* Inline stats */}
             <div className="flex min-w-0 flex-1 animate-stats-in flex-wrap items-center gap-x-4 gap-y-1">
-              <StatInline icon={<Cloud className="h-5 w-5" />} label="Cloud Status" value={cloudStatus} />
+              {/*    */}
               <StatInline icon={<CalendarClock  className="h-5 w-5" />} label="Last Played" value={lastPlayed} />
               <StatInline icon={<ClockFading className="h-5 w-5" />} label="Play Time" value={playTimeDisplay} />
               <StatInline icon={<HardDrive className="h-5 w-5" />} label="Size" value={formatBytes(game.sizeOnDisk)} />
@@ -2134,6 +2211,63 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                       </div>
                     )}
 
+                    {/* Source selector + refresh — only shown when crack save exists */}
+                    {hasCrackSave && (
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={achSource}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                      >
+                        <option value="steam-official">Steam Official</option>
+                        <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                          if (!appIdStr) return;
+                          setAchievementsLoading(true);
+                          try {
+                            achievementStore.deleteSummary(appIdStr, achSource);
+                            const { deleteAchievementCache } = await import("../../services/tauri");
+                            const appIdNum = Number(appIdStr);
+                            if (Number.isFinite(appIdNum)) {
+                              await deleteAchievementCache(appIdNum, achSource).catch(() => {});
+                            }
+                            const gameSource = achSource === "steam" ? "debrid" : "steam";
+                            const s = await resolveSteamAchievements({
+                              appId: appIdStr,
+                              steamWebApiKey: settings.steamWebApiKey || undefined,
+                              steamId64: settings.steamId64 || undefined,
+                              accountId: settings.steamAccountId || undefined,
+                              steamPath: settings.steamRoot || undefined,
+                              forceRefresh: true,
+                              steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                              achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                              gameSource,
+                              platform: achSource,
+                            });
+                            if (appIdStr) {
+                              setAchievementsSummary(s);
+                              achievementStore.setSummary(appIdStr, s, achSource);
+                              const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                              notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => {});
+                            }
+                          } catch (err) {
+                            console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                          } finally {
+                            setAchievementsLoading(false);
+                          }
+                        }}
+                        className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[10px] text-(--color-muted) transition hover:bg-white/10"
+                        title="Refresh from selected source"
+                      >
+                        {achievementsLoading ? "..." : "↻"}
+                      </button>
+                    </div>
+                    )}
+
                     {/* Progress bar */}
                     <AchievementProgressBar
                       unlocked={effectiveUnlocked}
@@ -2226,8 +2360,65 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                   </div>
                 ) : achievementsSummary && !effectiveProgressAvailable && achievementsSummary.achievements.length > 0 ? (
                   <div className="mt-3 space-y-3">
+                    {/* Source selector — only shown when crack save exists */}
+                    {hasCrackSave && (
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={achSource}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-[10px] text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                      >
+                        <option value="steam-official">Steam Official</option>
+                        <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                          if (!appIdStr) return;
+                          setAchievementsLoading(true);
+                          try {
+                            achievementStore.deleteSummary(appIdStr, achSource);
+                            const { deleteAchievementCache } = await import("../../services/tauri");
+                            const appIdNum = Number(appIdStr);
+                            if (Number.isFinite(appIdNum)) {
+                              await deleteAchievementCache(appIdNum, achSource).catch(() => {});
+                            }
+                            const gameSource = achSource === "steam" ? "debrid" : "steam";
+                            const s = await resolveSteamAchievements({
+                              appId: appIdStr,
+                              steamWebApiKey: settings.steamWebApiKey || undefined,
+                              steamId64: settings.steamId64 || undefined,
+                              accountId: settings.steamAccountId || undefined,
+                              steamPath: settings.steamRoot || undefined,
+                              forceRefresh: true,
+                              steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                              achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                              gameSource,
+                              platform: achSource,
+                            });
+                            if (appIdStr) {
+                              setAchievementsSummary(s);
+                              achievementStore.setSummary(appIdStr, s, achSource);
+                              const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                              notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => {});
+                            }
+                          } catch (err) {
+                            console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                          } finally {
+                            setAchievementsLoading(false);
+                          }
+                        }}
+                        className="cursor-pointer rounded-lg border border-(--surface-active-border) bg-white/5 px-2 py-1 text-[10px] text-(--color-muted) transition hover:bg-white/10"
+                        title="Refresh from selected source"
+                      >
+                        {achievementsLoading ? "..." : "↻"}
+                      </button>
+                    </div>
+                    )}
+
                     <p className="text-xs text-(--color-muted)">
-                      Achievement list available. Progress unavailable.
+                      Achievement list available. Progress unavailable for this source.
                     </p>
                     {achievementsSummary.errorReason === "api-403-fallback" && (
                       <p className="text-[10px] text-(--color-muted)/60">
@@ -2296,23 +2487,111 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                     </div>
                   </div>
                 ) : achievementsSummary && achievementsSummary.source === "unavailable" && (game.achievementsSupported || localAchSupportFound) ? (
-                  <div className="mt-3">
+                  <div className="mt-3 space-y-3">
+                    {/* Source selector — only shown when crack save exists */}
+                    {hasCrackSave && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
+                      <select
+                        value={achSource}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                      >
+                        <option value="steam-official">Steam Official (appcache/stats)</option>
+                        <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                      </select>
+                    </div>
+                    )}
                     <p className="text-xs text-(--color-muted)">
-                      Achievement tracking requires Steam Web API setup.
-                    </p>
-                    <p className="mt-1 text-[10px] text-(--color-accent) cursor-pointer hover:underline"
-                      onClick={() => onNavigate?.("settings")}
-                    >
-                      Configure in Settings
-                    </p>
-                  </div>
-                ) : (game.achievementsSupported || localAchSupportFound) ? (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-xs text-(--color-muted)">
-                      Achievements not loaded
+                      {achSource === "steam"
+                        ? "No achievement data found in crack save directory."
+                        : "Achievement tracking requires Steam Web API setup."}
                     </p>
                     <p className="text-[10px] text-(--color-muted)/60">
-                      Manual refresh checks local Steam data for this game.
+                      {achSource === "steam"
+                        ? "Try Manual Refresh to read from crack save (achievements.ini)."
+                        : "Configure in Settings or switch to Crack Save source."}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const { resolveSteamAchievements } = await import("../../services/steamAchievementsResolver");
+                          if (!appIdStr) return;
+                          setAchievementsLoading(true);
+                          try {
+                            achievementStore.deleteSummary(appIdStr, achSource);
+                            const { deleteAchievementCache } = await import("../../services/tauri");
+                            const appIdNum = Number(appIdStr);
+                            if (Number.isFinite(appIdNum)) {
+                              await deleteAchievementCache(appIdNum, achSource).catch(() => {});
+                            }
+                            const gameSource = achSource === "steam" ? "debrid" : "steam";
+                            const s = await resolveSteamAchievements({
+                              appId: appIdStr,
+                              steamWebApiKey: settings.steamWebApiKey || undefined,
+                              steamId64: settings.steamId64 || undefined,
+                              accountId: settings.steamAccountId || undefined,
+                              steamPath: settings.steamRoot || undefined,
+                              forceRefresh: true,
+                              steamAchievementsEnabled: settings.steamAchievementsEnabled,
+                              achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                              gameSource,
+                              platform: achSource,
+                            });
+                            if (appIdStr) {
+                              setAchievementsSummary(s);
+                              achievementStore.setSummary(appIdStr, s, achSource);
+                              const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
+                              console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${unlocked}/${s.total}`);
+                              const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
+                              notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => {});
+                            }
+                          } catch (err) {
+                            console.warn(`[ACH][REFRESH] failed appid=${appIdStr} reason=${err}`);
+                            toast.error("Failed to refresh achievements");
+                          } finally {
+                            setAchievementsLoading(false);
+                          }
+                        }}
+                        className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
+                      >
+                        {achievementsLoading ? "Loading..." : "Refresh Achievements"}
+                      </button>
+                      {achSource === "steam-official" && (
+                        <button
+                          type="button"
+                          onClick={() => onNavigate?.("settings")}
+                          className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-muted) transition hover:bg-white/10"
+                        >
+                          Settings
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (game.achievementsSupported || localAchSupportFound) ? (
+                  <div className="mt-3 space-y-3">
+                    {/* Source selector — only shown when crack save exists */}
+                    {hasCrackSave && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
+                      <select
+                        value={achSource}
+                        onChange={(e) => { const v = e.target.value as "steam-official" | "steam"; setAchSource(v); if (appIdStr) { localStorage.setItem(`lumaforge-ach-platform-${appIdStr}`, v); console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} selected=${v}`); } }}
+                        className="rounded-lg border border-(--surface-active-border) bg-(--color-surface)/50 px-2 py-1 text-xs text-(--color-text) backdrop-blur-sm focus:outline-none focus:ring-1 focus:ring-(--color-accent)/50"
+                      >
+                        <option value="steam-official">Steam Official (appcache/stats)</option>
+                        <option value="steam">Crack Save (RUNE/GSE/OnlineFix)</option>
+                      </select>
+                    </div>
+                    )}
+                    <p className="text-xs text-(--color-muted)">
+                      Achievements not loaded for this source.
+                    </p>
+                    <p className="text-[10px] text-(--color-muted)/60">
+                      {achSource === "steam"
+                        ? "Reading from crack save directory (achievements.ini)."
+                        : "Reading from Steam appcache/stats binary files."}
                     </p>
                     <button
                       type="button"
@@ -2322,15 +2601,12 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                         setAchievementsLoading(true);
                         try {
                           // CRITICAL: delete ALL cache layers BEFORE resolving.
-                          // 1. In-memory store
-                          achievementStore.deleteSummary(appIdStr);
-                          // 2. Disk cache (achievements/steam/<appId>/)
+                          achievementStore.deleteSummary(appIdStr, achSource);
                           const { deleteAchievementCache } = await import("../../services/tauri");
                           const appIdNum = Number(appIdStr);
                           if (Number.isFinite(appIdNum)) {
-                            await deleteAchievementCache(appIdNum).catch(() => {});
+                            await deleteAchievementCache(appIdNum, achSource).catch(() => {});
                           }
-                          // 3. Snapshot achievementSummary for this game
                           try {
                             const { getCachedSnapshot, notifyMediaUpdated } = await import("../../services/startupSnapshotService");
                             const snap = getCachedSnapshot();
@@ -2342,6 +2618,8 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                               }
                             }
                           } catch { /* non-critical */ }
+                          // Pass gameSource based on selected source
+                          const gameSource = achSource === "steam" ? "debrid" : "steam";
                           const s = await resolveSteamAchievements({
                             appId: appIdStr,
                             steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -2351,21 +2629,15 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                             forceRefresh: true,
                             steamAchievementsEnabled: settings.steamAchievementsEnabled,
                             achievementSchemaPath: settings.achievementSchemaPath || undefined,
+                            gameSource,
+                            platform: achSource,
                           });
                           if (appIdStr) {
-                            if (appIdStr === "268910") {
-                              const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
-                              console.log(`[ACH][TRACE_RESOLVED] appid=268910 source=${s.source} unlocked=${unlocked}/${s.total} progressAvailable=${s.progressAvailable} updatedAt=${s.updatedAt}`);
-                            }
                             setAchievementsSummary(s);
-                            achievementStore.setSummary(appIdStr, s);
+                            achievementStore.setSummary(appIdStr, s, achSource);
                             const unlocked = s.achievements.filter((a: any) => a.unlocked).length;
-                            if (appIdStr === "268910") {
-                              console.log(`[ACH][TRACE_STORE_SET] appid=268910 source=${s.source} unlocked=${unlocked}/${s.total} updatedAt=${s.updatedAt}`);
-                            }
-                            console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${s.achievements.length} summary=${unlocked}/${s.total}`);
-                            console.log(`[ACH][MANUAL_REFRESH_APPLY] appid=${appIdStr} unlocked=${unlocked}/${s.total}`);
-                            // Phase 9: Schedule snapshot write so achievement summary persists after restart
+                            console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${unlocked}/${s.total}`);
+                            const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
                             notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => {});
                           }
                         } catch (err) {
@@ -2375,7 +2647,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                           setAchievementsLoading(false);
                         }
                       }}
-                      className="mt-1 cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
+                      className="cursor-pointer rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-white/10"
                     >
                       {achievementsLoading ? "Loading..." : "Refresh Achievements"}
                     </button>
@@ -2494,14 +2766,14 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                   errorReason: "showing-last-known-progress",
                 };
                 setAchievementsSummary(staleSummary);
-                if (appIdStr) achievementStore.setSummary(appIdStr, staleSummary);
+                if (appIdStr) achievementStore.setSummary(appIdStr, staleSummary, achSource);
                 toast("Showing last known achievement progress.", { duration: 4000, icon: "🔄" });
               } else {
                 setAchievementsSummary(s);
-                if (appIdStr) achievementStore.setSummary(appIdStr, s);
+                if (appIdStr) achievementStore.setSummary(appIdStr, s, achSource);
               }
               if (appIdStr) {
-                const summary = achievementStore.getSummary(appIdStr);
+                const summary = achievementStore.getSummary(appIdStr, achSource);
                 console.log(`[ACH][MANUAL_REFRESH_DONE] appid=${appIdStr} count=${summary?.achievements?.length ?? 0} summary=${summary?.unlocked}/${summary?.total}`);
                 console.log(`[ACH][SUMMARY_PERSISTED] appid=${appIdStr} unlocked=${summary?.unlocked}/${summary?.total}`);
               }
@@ -2521,7 +2793,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
             // higher source priority. Without this delete, a "librarycache" entry
             // would cause the resolver to return the stale stored summary — the UI
             // would show old progress until restart (fresh data is only on disk).
-            achievementStore.deleteSummary(appIdStr!);
+            achievementStore.deleteSummary(appIdStr!, achSource);
             resolveSteamAchievements({
               appId: appIdStr!,
               steamWebApiKey: settings.steamWebApiKey || undefined,
@@ -2531,6 +2803,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
               forceRefresh: true,
               steamAchievementsEnabled: settings.steamAchievementsEnabled,
               achievementSchemaPath: settings.achievementSchemaPath || undefined,
+              platform: achSource,
             }).then(handleResult).catch(handleError);
           }}
           refreshing={achievementsRefreshing}

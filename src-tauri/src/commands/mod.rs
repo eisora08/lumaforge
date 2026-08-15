@@ -53,4 +53,3 @@ pub mod torrent;
 pub mod thirdparty;
 pub mod game_fix;
 pub mod file_utils;
-pub mod schema_tool;

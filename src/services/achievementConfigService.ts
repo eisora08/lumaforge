@@ -43,29 +43,6 @@ export interface AutoDetectResult {
 }
 
 // ---------------------------------------------------------------------------
-// Known crack save directories (from reference: watched-folders.js)
-// ---------------------------------------------------------------------------
-
-interface CrackPathSpec {
-  envKey: string;
-  segments: string[];
-  crackType: CrackType;
-  label: string;
-}
-
-const CRACK_PATHS: CrackPathSpec[] = [
-  { envKey: "APPDATA", segments: ["GSE Saves"], crackType: "gse", label: "GSE Saves" },
-  { envKey: "PUBLIC", segments: ["Documents", "Steam", "RUNE"], crackType: "rune", label: "RUNE" },
-  { envKey: "PUBLIC", segments: ["Documents", "OnlineFix"], crackType: "onlinefix", label: "OnlineFix" },
-  { envKey: "PUBLIC", segments: ["Documents", "Steam", "CODEX"], crackType: "codex", label: "CODEX" },
-  { envKey: "PUBLIC", segments: ["Documents", "EMPRESS"], crackType: "empress", label: "EMPRESS" },
-  { envKey: "APPDATA", segments: ["Goldberg SteamEmu Saves"], crackType: "goldberg", label: "Goldberg" },
-  { envKey: "APPDATA", segments: ["Goldberg UplayEmu Saves"], crackType: "goldberg", label: "Goldberg Uplay" },
-  { envKey: "APPDATA", segments: ["Steam", "CODEX"], crackType: "codex", label: "CODEX (AppData)" },
-  { envKey: "APPDATA", segments: ["SmartSteamEmu"], crackType: "gse", label: "SmartSteamEmu" },
-];
-
-// ---------------------------------------------------------------------------
 // Path helpers
 // ---------------------------------------------------------------------------
 
@@ -89,15 +66,6 @@ function sanitizeFileName(name: string): string {
 // ---------------------------------------------------------------------------
 // File I/O via Tauri commands (replaces @tauri-apps/plugin-fs)
 // ---------------------------------------------------------------------------
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<boolean>("file_exists", { path });
-  } catch {
-    return false;
-  }
-}
 
 async function readJsonFile<T>(path: string): Promise<T | null> {
   try {
@@ -129,6 +97,13 @@ async function listJsonFiles(dir: string): Promise<string[]> {
   }
 }
 
+async function deleteFile(path: string): Promise<void> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("delete_file", { path });
+  } catch { /* file may not exist */ }
+}
+
 // ---------------------------------------------------------------------------
 // Auto-detect steamPath
 // ---------------------------------------------------------------------------
@@ -154,16 +129,15 @@ export async function resolveSteamPath(): Promise<string> {
 // ---------------------------------------------------------------------------
 
 export async function detectCrackType(appId: string): Promise<{ crackType: CrackType; savePath: string } | null> {
-  for (const spec of CRACK_PATHS) {
-    const envBase = process.env[spec.envKey];
-    if (!envBase) continue;
-
-    const savePath = [envBase, ...spec.segments, appId].join("\\");
-    if (await fileExists(savePath)) {
-      return { crackType: spec.crackType, savePath };
+  try {
+    const { detectCrackSaveType } = await import("./tauri");
+    const result = await detectCrackSaveType(appId);
+    if (result) {
+      return { crackType: result.crack_type as CrackType, savePath: result.save_path };
     }
+  } catch (err) {
+    console.warn(`[ACH][CONFIG] detectCrackType failed for ${appId}:`, err);
   }
-
   return null;
 }
 
@@ -174,8 +148,8 @@ export async function detectCrackType(appId: string): Promise<{ crackType: Crack
 export async function readConfig(appId: string): Promise<AchievementGameConfig | null> {
   const appDataDir = await getAppDataDir();
 
-  // Search both platform directories
-  for (const platform of ["steam-official", "steam"]) {
+  // Search both platform directories — steam first (cracked), then steam-official
+  for (const platform of ["steam", "steam-official"]) {
     const configsDir = getConfigsDir(appDataDir, platform);
     const files = await listJsonFiles(configsDir);
 
@@ -183,6 +157,12 @@ export async function readConfig(appId: string): Promise<AchievementGameConfig |
       const filePath = `${configsDir}\\${file}`;
       const config = await readJsonFile<AchievementGameConfig>(filePath);
       if (config && config.app_id === appId) {
+        // Validate: config.platform must match the directory it was found in
+        if (config.platform !== platform) {
+          console.warn(`[ACH][CONFIG] config platform mismatch: found in ${platform}/ but platform=${config.platform} — deleting stale config ${filePath}`);
+          await deleteFile(filePath);
+          return null;
+        }
         return config;
       }
     }
@@ -194,14 +174,66 @@ export async function readConfig(appId: string): Promise<AchievementGameConfig |
 export async function writeConfig(config: AchievementGameConfig): Promise<void> {
   const appDataDir = await getAppDataDir();
   const configName = sanitizeFileName(config.name || `Game ${config.app_id}`);
-  const filePath = getConfigFilePath(appDataDir, config.platform, configName);
+  const newFilePath = getConfigFilePath(appDataDir, config.platform, configName);
 
-  await writeJsonFile(filePath, {
+  await writeJsonFile(newFilePath, {
     ...config,
     updated_at: Date.now(),
   });
 
-  console.log(`[ACH][CONFIG] wrote ${filePath}`);
+  console.log(`[ACH][CONFIG] wrote ${newFilePath}`);
+}
+
+/**
+ * Update an existing config when crack detection finds a save directory.
+ * Creates BOTH configs (steam + steam-official) so the user can switch freely.
+ */
+export async function updateConfigForCrack(
+  appId: string,
+  crackSavePath: string,
+  gameName?: string,
+  processName?: string,
+): Promise<AchievementGameConfig | null> {
+  const appDataDir = await getAppDataDir();
+  const name = gameName || `Game ${appId}`;
+
+  // Config crack — configs/steam/<Name>.json
+  const crackConfigPath = `${appDataDir}\\achievements\\configs\\schema\\steam\\${appId}`;
+  const crackConfig: AchievementGameConfig = {
+    app_id: appId,
+    name,
+    platform: "steam",
+    save_path: crackSavePath,
+    config_path: crackConfigPath,
+    executable: "",
+    arguments: "",
+    process_name: processName || "",
+    updated_at: Date.now(),
+  };
+  await writeConfig(crackConfig);
+  console.log(`[ACH][CONFIG] wrote crack config for ${appId} → platform=steam save_path=${crackSavePath}`);
+
+  // Config official — configs/steam-official/<Name>.json
+  let steamPath = "";
+  try {
+    steamPath = await resolveSteamPath();
+  } catch { /* detection failed */ }
+  const officialConfigPath = `${appDataDir}\\achievements\\configs\\schema\\steam-official\\${appId}`;
+  const officialConfig: AchievementGameConfig = {
+    app_id: appId,
+    name,
+    platform: "steam-official",
+    save_path: steamPath ? `${steamPath}\\appcache\\stats` : "",
+    config_path: officialConfigPath,
+    executable: "",
+    arguments: "",
+    process_name: processName || "",
+    updated_at: Date.now(),
+  };
+  await writeConfig(officialConfig);
+  console.log(`[ACH][CONFIG] wrote official config for ${appId} → platform=steam-official save_path=${officialConfig.save_path}`);
+
+  return crackConfig;
 }
 
 export async function listConfigs(): Promise<AchievementGameConfig[]> {
@@ -251,7 +283,7 @@ export async function autoDetectAndCreateConfig(
     const crackResult = await detectCrackType(appId);
 
     const savePath = crackResult?.savePath ?? `${steamPath}\\appcache\\stats`;
-    const configPath = `${appDataDir}\\achievements\\configs\\schema\\steam\\${appId}`;
+    const configPath = `${appDataDir}\\achievements\\schema\\steam\\${appId}`;
     const config: AchievementGameConfig = {
       app_id: appId,
       name: gameName || `Game ${appId}`,
@@ -270,7 +302,7 @@ export async function autoDetectAndCreateConfig(
   }
 
   // Steam library game (steam/lua/epic) — reads from appcache/stats/
-  const configPath = `${appDataDir}\\achievements\\configs\\schema\\steam-official\\${appId}`;
+  const configPath = `${appDataDir}\\achievements\\schema\\steam-official\\${appId}`;
   const config: AchievementGameConfig = {
     app_id: appId,
     name: gameName || `Game ${appId}`,

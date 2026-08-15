@@ -52,8 +52,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/tools/schema_parse.zip"
-    ]
+    "resources": []
   }
 }

@@ -2473,6 +2473,16 @@ pub fn resolve_achievement_image_paths(
   let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
   let img_dir = cache_dir.join("img");
 
+  // When the active cache dir is the crack dir (steam/<appId>/), also check
+  // the official dir (steam-official/<appId>/img/) so already-downloaded icons
+  // from the official schema are detected as existing and not re-downloaded.
+  let official_img_dir = {
+    let app_dir = app_handle.path().app_data_dir()
+      .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    app_dir.join("achievements").join("schema").join("steam-official")
+      .join(app_id.to_string()).join("img")
+  };
+
   let cache_path = cache_dir.join("achievements.json");
   if !cache_path.is_file() {
     return Ok(vec![]);
@@ -2487,11 +2497,11 @@ pub fn resolve_achievement_image_paths(
   for entry in &entries {
     let icon_exists = entry.icon_url.as_ref().map_or(false, |path| {
       let fname = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
-      img_dir.join(fname).is_file()
+      img_dir.join(fname).is_file() || official_img_dir.join(fname).is_file()
     });
     let icon_gray_exists = entry.icon_gray_url.as_ref().map_or(false, |path| {
       let fname = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
-      img_dir.join(fname).is_file()
+      img_dir.join(fname).is_file() || official_img_dir.join(fname).is_file()
     });
     results.push(AchievementImageStatus {
       api_name: entry.api_name.clone(),
@@ -2606,27 +2616,50 @@ fn get_achievement_cache_dir(app_handle: &AppHandle, app_id: u32) -> Result<Path
     .app_data_dir()
     .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-  // New format: achievements/schema/steam-official/<appid>/ (default for Steam library games)
-  let new_dir = app_dir.join("achievements").join("schema").join("steam-official").join(app_id.to_string());
+  // Cracked games: achievements/schema/steam/<appid>/
+  let crack_dir = app_dir.join("achievements").join("schema").join("steam").join(app_id.to_string());
+  let crack_json = crack_dir.join("achievements.json");
+
+  // Steam library games: achievements/schema/steam-official/<appid>/
+  let official_dir = app_dir.join("achievements").join("schema").join("steam-official").join(app_id.to_string());
+  let official_json = official_dir.join("achievements.json");
 
   // Legacy format: achievements/steam/<appid>/
   let legacy_dir = app_dir.join("achievements").join("steam").join(app_id.to_string());
 
-  if new_dir.exists() {
-    Ok(new_dir)
+  // Priority: cracked (steam/) with valid content > official (steam-official/) > legacy
+  if crack_json.exists() && std::fs::read_to_string(&crack_json).map(|c| c.len() > 10).unwrap_or(false) {
+    Ok(crack_dir)
+  } else if official_json.exists() && std::fs::read_to_string(&official_json).map(|c| c.len() > 10).unwrap_or(false) {
+    Ok(official_dir)
   } else if legacy_dir.exists() {
-    // Migrate from legacy to new format
-    let _ = fs::rename(&legacy_dir, &new_dir);
-    Ok(new_dir)
+    let _ = fs::rename(&legacy_dir, &official_dir);
+    Ok(official_dir)
   } else {
-    // Return path WITHOUT creating directory — only create when writing files
-    Ok(new_dir)
+    Ok(official_dir)
   }
 }
 
+/// Get the write directory for achievement schema based on platform.
+/// "steam" = cracked games → writes to steam/<appId>/
+/// "steam-official" = Steam library games → writes to steam-official/<appId>/
+fn get_achievement_write_dir(app_handle: &AppHandle, app_id: u32, platform: &str) -> Result<PathBuf, String> {
+  let app_dir = app_handle
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+  let sub = if platform == "steam" { "steam" } else { "steam-official" };
+  Ok(app_dir.join("achievements").join("schema").join(sub).join(app_id.to_string()))
+}
+
 #[tauri::command]
-pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchievementCache, migrate_icons: bool) -> Result<(), String> {
-  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchievementCache, migrate_icons: bool, platform: Option<String>) -> Result<(), String> {
+  let cache_dir = match platform.as_deref() {
+    Some("steam") => get_achievement_write_dir(&app_handle, app_id, "steam")?,
+    Some("steam-official") => get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    _ => get_achievement_cache_dir(&app_handle, app_id)?,
+  };
 
   // Create directory only when actually writing files
   fs::create_dir_all(&cache_dir)
@@ -2645,6 +2678,25 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
     }
     entry
   }).collect();
+
+  // Guard: skip write when existing cache has higher cache_version (schema tool writes v7)
+  // BUT: always allow overwriting "schema-generated" (skeleton with no real unlock data)
+  let summary_path = cache_dir.join("summary.json");
+  if summary_path.exists() {
+    if let Ok(existing) = fs::read_to_string(&summary_path) {
+      if let Ok(existing_summary) = serde_json::from_str::<crate::models::steam_appcache_achievements::AppAchievementSummary>(&existing) {
+        let existing_ver = existing_summary.cache_version.unwrap_or(0);
+        let is_schema_skeleton = existing_summary.source == "schema-generated" || existing_summary.source == "schema-only";
+        if existing_ver >= 7 && !is_schema_skeleton {
+          diag_log(format!("Skipping write_achievement_cache app_id={} reason=higher-cache-version exist={} source={}", app_id, existing_ver, existing_summary.source));
+          return Ok(());
+        }
+        if is_schema_skeleton {
+          diag_log(format!("Overwriting schema skeleton app_id={} exist_ver={} exist_source={} new_source={}", app_id, existing_ver, existing_summary.source, data.summary.source));
+        }
+      }
+    }
+  }
 
   // Write summary.json
   let mut summary = data.summary;
@@ -2712,19 +2764,32 @@ pub fn write_achievement_cache(app_handle: AppHandle, app_id: u32, data: AppAchi
 }
 
 #[tauri::command]
-pub fn delete_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<(), String> {
-  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
-  if cache_dir.exists() {
-    fs::remove_dir_all(&cache_dir)
-      .map_err(|e| format!("Failed to delete achievement cache dir: {}", e))?;
-    diag_log(format!("Deleted achievement cache for app_id={}", app_id));
+pub fn delete_achievement_cache(app_handle: AppHandle, app_id: u32, platform: Option<String>) -> Result<(), String> {
+  let dirs: Vec<std::path::PathBuf> = match platform.as_deref() {
+    Some("steam") => vec![get_achievement_write_dir(&app_handle, app_id, "steam")?],
+    Some("steam-official") => vec![get_achievement_write_dir(&app_handle, app_id, "steam-official")?],
+    _ => vec![
+      get_achievement_write_dir(&app_handle, app_id, "steam")?,
+      get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    ],
+  };
+  for dir in dirs {
+    if dir.exists() {
+      fs::remove_dir_all(&dir)
+        .map_err(|e| format!("Failed to delete achievement cache dir: {}", e))?;
+    }
   }
+  diag_log(format!("Deleted achievement cache for app_id={}", app_id));
   Ok(())
 }
 
 #[tauri::command]
-pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32) -> Result<Option<AppAchievementCache>, String> {
-  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+pub fn read_achievement_cache(app_handle: AppHandle, app_id: u32, platform: Option<String>) -> Result<Option<AppAchievementCache>, String> {
+  let cache_dir = match platform.as_deref() {
+    Some("steam") => get_achievement_write_dir(&app_handle, app_id, "steam")?,
+    Some("steam-official") => get_achievement_write_dir(&app_handle, app_id, "steam-official")?,
+    _ => get_achievement_cache_dir(&app_handle, app_id)?,
+  };
 
   let summary_path = cache_dir.join("summary.json");
   let achievements_path = cache_dir.join("achievements.json");
@@ -3762,8 +3827,12 @@ pub fn generate_achievement_schema(
   steam_path: Option<String>,
   steam_account_id: Option<String>,
   steam_web_api_key: Option<String>,
+  platform: Option<String>,
 ) -> Result<GenerateSchemaResult, String> {
-  schema_log!("[ACH][SCHEMA_GEN] === generate schema app_id={} ===", app_id);
+  // Respect the platform param from the frontend — never override.
+  // "steam-official" = KV binary writes to steam-official/<appId>/
+  // "steam" = crack path writes to steam/<appId>/
+  schema_log!("[ACH][SCHEMA_GEN] === generate schema app_id={} platform={} ===", app_id, platform.as_deref().unwrap_or("steam-official"));
 
   // Step 1: Read KV binary schema
   let steam_root = resolve_steam_root(steam_path.as_deref())?;
@@ -4027,9 +4096,20 @@ pub fn generate_achievement_schema(
           // Don't overwrite existing good cache with text fallback entries (no stat_id)
           let has_stat_id = final_entries.iter().any(|e| e.stat_id.is_some() && e.bit.is_some());
           if has_stat_id || progress_available {
-            write_achievement_cache(app_handle.clone(), app_id, cache, false)?;
-            schema_log!("[ACH][SCHEMA_GEN] written {} entries (unlocked={}/{}, progress={})",
-              total, unlocked_count, total, progress_available);
+            let write_platform = platform.as_deref().unwrap_or("steam-official");
+            let cache_dir = get_achievement_write_dir(&app_handle, app_id, write_platform)?;
+            fs::create_dir_all(&cache_dir).map_err(|e| format!("Failed to create cache dir: {}", e))?;
+            let achievements_path = cache_dir.join("achievements.json");
+            let summary_path = cache_dir.join("summary.json");
+            let pcts_path = cache_dir.join("achievementpercentages.json");
+            fs::write(&achievements_path, serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?)
+              .map_err(|e| format!("Failed to write achievements: {}", e))?;
+            fs::write(&summary_path, serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?)
+              .map_err(|e| format!("Failed to write summary: {}", e))?;
+            fs::write(&pcts_path, serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?)
+              .map_err(|e| format!("Failed to write percentages: {}", e))?;
+            schema_log!("[ACH][SCHEMA_GEN] written {} entries to {} (unlocked={}/{}, progress={})",
+              total, cache_dir.display(), unlocked_count, total, progress_available);
           } else {
             schema_log!("[ACH][SCHEMA_GEN] skipping cache write — entries lack stat_id (text fallback)");
           }
@@ -4108,9 +4188,20 @@ pub fn generate_achievement_schema(
     // Only write cache if entries have real data (stat_id/bit from KV parser)
     let has_stat_id = final_entries.iter().any(|e| e.stat_id.is_some() && e.bit.is_some());
     if has_stat_id || progress_available {
-      write_achievement_cache(app_handle.clone(), app_id, cache, false)?;
-      schema_log!("[ACH][SCHEMA_GEN] KV-only: {} entries (unlocked={}/{}, progress={})",
-        total, unlocked_count, total, progress_available);
+      let write_platform = platform.as_deref().unwrap_or("steam-official");
+      let cache_dir = get_achievement_write_dir(&app_handle, app_id, write_platform)?;
+      fs::create_dir_all(&cache_dir).map_err(|e| format!("Failed to create cache dir: {}", e))?;
+      let achievements_path = cache_dir.join("achievements.json");
+      let summary_path = cache_dir.join("summary.json");
+      let pcts_path = cache_dir.join("achievementpercentages.json");
+      fs::write(&achievements_path, serde_json::to_string_pretty(&cache.achievements).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Failed to write achievements: {}", e))?;
+      fs::write(&summary_path, serde_json::to_string_pretty(&cache.summary).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Failed to write summary: {}", e))?;
+      fs::write(&pcts_path, serde_json::to_string_pretty(&cache.achievement_percentages).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Failed to write percentages: {}", e))?;
+      schema_log!("[ACH][SCHEMA_GEN] KV-only: {} entries written to {} (unlocked={}/{}, progress={})",
+        total, cache_dir.display(), unlocked_count, total, progress_available);
     } else {
       schema_log!("[ACH][SCHEMA_GEN] KV-only: skipping cache write — entries lack stat_id");
     }

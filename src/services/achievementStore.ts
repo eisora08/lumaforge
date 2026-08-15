@@ -28,6 +28,7 @@ function logMigrationSkipOnce(): void {
 
 export const SOURCE_PRIORITY: Record<string, number> = {
   "binary-stats": 0,
+  "crack": 1,
   "local-cache": 1,
   "local-cache-stale": 1,
   "librarycache": 2,
@@ -93,7 +94,7 @@ export type ProgressChangeEvent = {
   prevProgress?: number;
 };
 
-export type StoreUpdateCallback = (appId: string, summary: GameAchievementsSummary) => void;
+export type StoreUpdateCallback = (appId: string, summary: GameAchievementsSummary, platform?: string) => void;
 export type UnlockCallback = (appId: string, unlocks: UnlockEvent[], gameTitle?: string) => void;
 export type ProgressChangeCallback = (appId: string, changes: ProgressChangeEvent[]) => void;
 
@@ -125,14 +126,20 @@ function saveSnapshots(snapshots: Record<string, Record<string, boolean>>): void
 // ---------------------------------------------------------------------------
 
 class AchievementStoreImpl {
+  // Per-platform storage: key = "appId:platform" or "appId" for platform-unknown callers
   private summariesByAppId = new Map<string, GameAchievementsSummary>();
   private subscribers = new Set<StoreUpdateCallback>();
   private unlockCallbacks = new Set<UnlockCallback>();
   private progressChangeCallbacks = new Set<ProgressChangeCallback>();
-  // Debounce: prevent watcher from overwriting during writes
+  // Debounce: prevent watcher from overwriting during writes (keyed by composite key)
   private _lastWriteTime = new Map<string, number>();
-  // Guard: prevent applyProgressPatch from overwriting while setSummary is writing
+  // Guard: prevent applyProgressPatch from overwriting while setSummary is writing (keyed by composite key)
   private _writingToDisk = new Set<string>();
+
+  /** Build composite storage key. When platform is provided, isolation is guaranteed. */
+  private compositeKey(appId: string, platform?: string): string {
+    return platform ? `${appId}:${platform}` : appId;
+  }
 
   // ── Subscriptions ──
 
@@ -159,7 +166,12 @@ class AchievementStoreImpl {
 
   // ── Read ──
 
-  getSummary(appId: string): GameAchievementsSummary | undefined {
+  getSummary(appId: string, platform?: string): GameAchievementsSummary | undefined {
+    if (platform) {
+      // Try platform-specific key first, fall back to no-platform key (watcher writes there)
+      return this.summariesByAppId.get(this.compositeKey(appId, platform))
+        ?? this.summariesByAppId.get(appId);
+    }
     return this.summariesByAppId.get(appId);
   }
 
@@ -168,40 +180,44 @@ class AchievementStoreImpl {
   }
 
   /** Remove a store entry so the next setSummary is always accepted (used by manual refresh) */
-  deleteSummary(appId: string): void {
-    this.summariesByAppId.delete(appId);
+  deleteSummary(appId: string, platform?: string): void {
+    this.summariesByAppId.delete(this.compositeKey(appId, platform));
   }
 
   // ── Write full summary (from resolver) ──
 
-  setSummary(appId: string, summary: GameAchievementsSummary): void {
+  setSummary(appId: string, summary: GameAchievementsSummary, platform?: string): void {
+    const key = this.compositeKey(appId, platform);
     // Normalize missing source / updatedAt to prevent SOURCE_PRIORITY crashes
     const safeSummary = {
       ...summary,
       source: summary.source ? summary.source : "local-cache",
       updatedAt: summary.updatedAt || Date.now(),
     };
-    const existing = this.summariesByAppId.get(appId);
+    const existing = this.summariesByAppId.get(key);
     let finalSummary: GameAchievementsSummary;
 
     if (existing) {
       // ── DOWNGRADE GUARD ──
       // Reject any downgrade when existing data has progress (lock count never decreases via resolver).
-      // Binary-stats blocking goes through applyProgressPatch (not setSummary), so setSummary
-      // should never write fewer unlocks than what's already stored.
-      if (safeSummary.unlocked != null && existing.unlocked != null
+      // BUT: when user explicitly chose a platform, always accept (different platform = different truth).
+      const isExplicitPlatform = !!platform;
+      if (!isExplicitPlatform
+          && safeSummary.unlocked != null && existing.unlocked != null
           && safeSummary.unlocked < existing.unlocked
           && existing.progressAvailable) {
-        console.log(`[ACH][COUNT_GUARD] appid=${appId} REJECTED reason=count-decreased existing=${existing.unlocked}/${existing.total} source=${existing.source} incoming=${safeSummary.unlocked}/${safeSummary.total} source=${safeSummary.source}`);
+        console.log(`[ACH][COUNT_GUARD] appid=${appId} platform=${platform ?? "none"} REJECTED reason=count-decreased existing=${existing.unlocked}/${existing.total} source=${existing.source} incoming=${safeSummary.unlocked}/${safeSummary.total} source=${safeSummary.source}`);
         return;
       }
-      const accepted = isSourceNewerOrEqual(
-        safeSummary.source, safeSummary.updatedAt,
-        existing.source, existing.updatedAt,
-      );
-      if (!accepted) {
-        if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appId} rejected reason=older-or-equal-source`);
-        return;
+      if (!isExplicitPlatform) {
+        const accepted = isSourceNewerOrEqual(
+          safeSummary.source, safeSummary.updatedAt,
+          existing.source, existing.updatedAt,
+        );
+        if (!accepted) {
+          if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appId} platform=${platform ?? "none"} rejected reason=older-or-equal-source`);
+          return;
+        }
       }
       // Trust the incoming source — use its unlock states directly
       // (prevents stale data from perpetuating via never-downgrade OR merge)
@@ -238,8 +254,8 @@ class AchievementStoreImpl {
       finalSummary = safeSummary;
     }
 
-    this.summariesByAppId.set(appId, finalSummary);
-    this.notify(appId, finalSummary);
+    this.summariesByAppId.set(key, finalSummary);
+    this.notify(appId, finalSummary, platform);
 
     // Detect new unlocks and fire callbacks for toasts
     const snapshots = loadSnapshots();
@@ -283,10 +299,10 @@ class AchievementStoreImpl {
 
     // CRITICAL: Write to disk so data persists when librarycache is deleted
     // Use _writingToDisk flag to prevent applyProgressPatch from overwriting
-    if (!this._writingToDisk.has(appId)) {
-      this._writingToDisk.add(appId);
-      this.writeCacheInBackground(appId, finalSummary, "setSummary")
-        .finally(() => this._writingToDisk.delete(appId));
+    if (!this._writingToDisk.has(key)) {
+      this._writingToDisk.add(key);
+      this.writeCacheInBackground(appId, finalSummary, "setSummary", platform)
+        .finally(() => this._writingToDisk.delete(key));
     }
   }
 
@@ -296,41 +312,43 @@ class AchievementStoreImpl {
     appId: string,
     patch: ProgressPatch,
     traceId?: string,
+    platform?: string,
   ): GameAchievementsSummary | null {
     const tid = traceId ?? "no-trace";
+    const key = this.compositeKey(appId, platform);
 
     // Debounce: skip if wrote recently (prevent overwriting fresh librarycache data)
     // BUT: never skip when the patch has a real unlock delta (new achievement unlocked)
     const now = Date.now();
-    const lastWrite = this._lastWriteTime.get(appId) ?? 0;
+    const lastWrite = this._lastWriteTime.get(key) ?? 0;
     const debounceActive = now - lastWrite < 1000;
     if (debounceActive) {
-      const currentInStore = this.summariesByAppId.get(appId);
+      const currentInStore = this.summariesByAppId.get(key);
       const currentUnlocked = currentInStore?.unlocked ?? 0;
       const hasNewUnlocks = patch.unlocked > currentUnlocked;
       if (!hasNewUnlocks) {
-        console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} reason=debounce (${now - lastWrite}ms since last write)`);
+        console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} platform=${platform ?? "none"} reason=debounce (${now - lastWrite}ms since last write)`);
         return null;
       }
       // Patch has genuinely new unlocks — process despite debounce
-      console.debug(`[ACH][STORE_PATCH][${tid}] debounce-bypassed appid=${appId} reason=new-unlocks patch=${patch.unlocked} current=${currentUnlocked}`);
+      console.debug(`[ACH][STORE_PATCH][${tid}] debounce-bypassed appid=${appId} platform=${platform ?? "none"} reason=new-unlocks patch=${patch.unlocked} current=${currentUnlocked}`);
     }
 
     // Guard: skip if setSummary is currently writing to disk
     // BUT: never skip when the patch has a real unlock delta
-    if (this._writingToDisk.has(appId)) {
-      const currentInStore = this.summariesByAppId.get(appId);
+    if (this._writingToDisk.has(key)) {
+      const currentInStore = this.summariesByAppId.get(key);
       const currentUnlocked = currentInStore?.unlocked ?? 0;
       const hasNewUnlocks = patch.unlocked > currentUnlocked;
       if (!hasNewUnlocks) {
-        console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} reason=writing-in-progress`);
+        console.debug(`[ACH][STORE_PATCH][${tid}] skipped appid=${appId} platform=${platform ?? "none"} reason=writing-in-progress`);
         return null;
       }
-      console.debug(`[ACH][STORE_PATCH][${tid}] writing-in-progress-bypassed appid=${appId} reason=new-unlocks`);
+      console.debug(`[ACH][STORE_PATCH][${tid}] writing-in-progress-bypassed appid=${appId} platform=${platform ?? "none"} reason=new-unlocks`);
     }
 
     const RT = appId === "268910";
-    if (RT) console.log(`[ACH][RT_STORE_ENTRY] appid=${appId} total=${patch.total} unlocked=${patch.unlocked} mapSize=${patch.progressMap.size} summaryLoaded=${this.summariesByAppId.has(appId)}`);
+    if (RT) console.log(`[ACH][RT_STORE_ENTRY] appid=${appId} platform=${platform ?? "none"} total=${patch.total} unlocked=${patch.unlocked} mapSize=${patch.progressMap.size} summaryLoaded=${this.summariesByAppId.has(key)}`);
 
     // Don't downgrade — only apply if progress is available
     if (!patch.progressMap.size && patch.total === 0) {
@@ -344,10 +362,10 @@ class AchievementStoreImpl {
     );
 
     // ── Build base achievements to patch onto ──
-    let current = this.summariesByAppId.get(appId);
+    let current = this.summariesByAppId.get(key) ?? this.summariesByAppId.get(appId);
     let createdMinimalSummary = false;
     const summaryLoaded = !!current;
-    if (RT) console.log(`[ACH][RT_STORE_BASE] appid=${appId} hasExistingSummary=${summaryLoaded} existingUnlocked=${current?.unlocked ?? "N/A"}/${current?.total ?? "N/A"}`);
+    if (RT) console.log(`[ACH][RT_STORE_BASE] appid=${appId} platform=${platform ?? "none"} hasExistingSummary=${summaryLoaded} existingUnlocked=${current?.unlocked ?? "N/A"}/${current?.total ?? "N/A"}`);
 
     console.debug(`[ACH][STORE_PATCH][${tid}] summaryLoaded=${summaryLoaded}`);
 
@@ -370,7 +388,7 @@ class AchievementStoreImpl {
           achievements: [],
           updatedAt: Date.now(),
         };
-        this.summariesByAppId.set(appId, current);
+        this.summariesByAppId.set(key, current);
         // Don't proceed to merge — just return the minimal total summary
         console.debug(`[ACH][STORE_PATCH][${tid}] partialSummaryReturned total=${current.total} unlocked=${current.unlocked}`);
         return current;
@@ -402,7 +420,7 @@ class AchievementStoreImpl {
         achievements: minimalAchievements,
         updatedAt: Date.now(),
       };
-      this.summariesByAppId.set(appId, current);
+      this.summariesByAppId.set(key, current);
       console.debug(`[ACH][STORE_PATCH][${tid}] createdMinimalSummary=true total=${patch.total} entries=${minimalAchievements.length}`);
     }
 
@@ -586,27 +604,27 @@ class AchievementStoreImpl {
 
     // ── Patch store (AFTER unlock detection, BEFORE snapshot save) ──
     // Check freshness against current store value (may have been updated by another source)
-    const storeCurrent = this.summariesByAppId.get(appId);
+    const storeCurrent = this.summariesByAppId.get(key);
     const patchAccepted = !storeCurrent || isSourceNewerOrEqual(
       patched.source, patched.updatedAt,
       storeCurrent.source, storeCurrent.updatedAt,
     );
-    if (RT) console.log(`[ACH][RT_STORE_WRITE_PATCH] appid=${appId} accepted=${patchAccepted} new=${patched.unlocked}/${patched.total} old=${storeCurrent?.unlocked ?? "N/A"}/${storeCurrent?.total ?? "N/A"}`);
+    if (RT) console.log(`[ACH][RT_STORE_WRITE_PATCH] appid=${appId} platform=${platform ?? "none"} accepted=${patchAccepted} new=${patched.unlocked}/${patched.total} old=${storeCurrent?.unlocked ?? "N/A"}/${storeCurrent?.total ?? "N/A"}`);
     if (!patchAccepted) {
-      if (RT) console.log(`[ACH][RT_STORE_SKIP] appid=${appId} reason=existing-newer`);
+      if (RT) console.log(`[ACH][RT_STORE_SKIP] appid=${appId} platform=${platform ?? "none"} reason=existing-newer`);
       console.debug(`[ACH][STORE_PATCH][${tid}] skipped-write reason=existing-newer source=${storeCurrent?.source} updatedAt=${storeCurrent?.updatedAt}`);
-      this.notify(appId, storeCurrent!); // re-notify with current state
+      this.notify(appId, storeCurrent!, platform); // re-notify with current state
       return null;
     }
-    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=store-update unlocked=${patched.unlocked}/${patched.total}`);
-    console.log(`[ACH][SYNC_BATCH] appid=${appId} patchUnlocked=${patch.unlocked} previousUnlocked=${prevUnlocked} afterUnlocked=${newUnlockedCount} delta=${newUnlockedCount - prevUnlocked}`);
-    this.summariesByAppId.set(appId, patched);
-    console.log(`[ACH][STORE_AFTER_PATCH] appid=${appId} unlocked=${patched.unlocked}/${patched.total}`);
-    if (RT) console.log(`[ACH][RT_STORE_SET] appid=${appId} unlocked=${patched.unlocked}/${patched.total}`);
+    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SYNC_TRACE] appid=${appId} platform=${platform ?? "none"} stage=store-update unlocked=${patched.unlocked}/${patched.total}`);
+    console.log(`[ACH][SYNC_BATCH] appid=${appId} platform=${platform ?? "none"} patchUnlocked=${patch.unlocked} previousUnlocked=${prevUnlocked} afterUnlocked=${newUnlockedCount} delta=${newUnlockedCount - prevUnlocked}`);
+    this.summariesByAppId.set(key, patched);
+    console.log(`[ACH][STORE_AFTER_PATCH] appid=${appId} platform=${platform ?? "none"} unlocked=${patched.unlocked}/${patched.total}`);
+    if (RT) console.log(`[ACH][RT_STORE_SET] appid=${appId} platform=${platform ?? "none"} unlocked=${patched.unlocked}/${patched.total}`);
     console.debug(`[ACH][STORE_PATCH][${tid}] subscribersNotified=true`);
 
     // Notify UI subscribers
-    this.notify(appId, patched);
+    this.notify(appId, patched, platform);
 
     // ── Fire unlock callbacks (toast, native notification) ──
     if (newUnlocks.length > 0) {
@@ -643,10 +661,10 @@ class AchievementStoreImpl {
     if (RT) console.log(`[ACH][RT_SNAPSHOT] appid=${appId} entries=${Object.keys(newAppSnap).length}`);
 
     // ── Write cache in background (fire-and-forget, after snapshot save) ──
-    if (RT) console.log(`[ACH][RT_CACHE_WRITE_START] appid=${appId} createdMinimal=${createdMinimalSummary}`);
+    if (RT) console.log(`[ACH][RT_CACHE_WRITE_START] appid=${appId} platform=${platform ?? "none"} createdMinimal=${createdMinimalSummary}`);
     console.debug(`[ACH][CACHE][${tid}] background write scheduled`);
     if (!createdMinimalSummary) {
-      this.writeCacheInBackground(appId, patched, tid).catch(() => {});
+      this.writeCacheInBackground(appId, patched, tid, platform).catch(() => {});
     }
 
     return patched;
@@ -658,24 +676,30 @@ class AchievementStoreImpl {
     appId: string,
     summary: GameAchievementsSummary,
     traceId?: string,
+    platform?: string,
   ): Promise<void> {
     if (!ACHIEVEMENTS_AUTO_ENABLED) {
       return;
     }
+    const tid = traceId ?? "no-trace";
+    const key = this.compositeKey(appId, platform);
     // Debounce: skip if wrote recently (prevent watcher overwrite)
     const now = Date.now();
-    const lastWrite = this._lastWriteTime.get(appId) ?? 0;
+    const lastWrite = this._lastWriteTime.get(key) ?? 0;
     if (now - lastWrite < 500) {
-      console.debug(`[ACH][CACHE][${traceId}] skipped appid=${appId} reason=debounce`);
+      console.debug(`[ACH][CACHE][${traceId}] skipped appid=${appId} platform=${platform ?? "none"} reason=debounce`);
       return;
     }
-    this._lastWriteTime.set(appId, now);
+    this._lastWriteTime.set(key, now);
 
-    const tid = traceId ?? "no-trace";
+    // Infer platform from source when not explicitly provided:
+    // crack sources → "steam" directory, everything else → "steam-official"
+    const effectivePlatform = platform
+      ?? (summary.source === "crack" ? "steam" : "steam-official");
     try {
       const appIdNum = Number(appId);
       // Use IN-MEMORY summary as source of truth (not disk cache)
-      const inMemory = this.summariesByAppId.get(appId) ?? summary;
+      const inMemory = this.summariesByAppId.get(key) ?? summary;
 
       // Build achievements from the best available data
       // First, try to read existing disk cache to preserve schema fields (stat_id, bit, name, icons)
@@ -683,7 +707,7 @@ class AchievementStoreImpl {
       let diskPercentages: { name: string; percent: number }[] = [];
       try {
         const { readAchievementCache } = await import("./tauri");
-        const diskCache = await readAchievementCache(appIdNum);
+        const diskCache = await readAchievementCache(appIdNum, effectivePlatform);
         if (diskCache?.achievements?.length) {
           diskCacheMap = new Map(diskCache.achievements.map((e) => [e.api_name, e]));
         }
@@ -742,7 +766,7 @@ class AchievementStoreImpl {
         },
         achievements,
         achievement_percentages: finalPercentages,
-      }, false);
+      }, false, effectivePlatform);
 
       console.log(`[ACH][CACHE][${tid}] wrote appid=${appId} unlocked=${finalUnlocked}/${summary.total} source=${summary.source}`);
 
@@ -783,9 +807,10 @@ class AchievementStoreImpl {
 
   // ── Fill missing icons from disk cache ──
 
-  async fillMissingIconsFromCache(appId: string, traceId?: string): Promise<void> {
+  async fillMissingIconsFromCache(appId: string, traceId?: string, platform?: string): Promise<void> {
     const tid = traceId ?? "no-trace";
-    const summary = this.summariesByAppId.get(appId);
+    const key = this.compositeKey(appId, platform);
+    const summary = this.summariesByAppId.get(key);
     if (!summary) return;
 
     const missing = summary.achievements.filter((a) => !a.iconUrl);
@@ -812,8 +837,8 @@ class AchievementStoreImpl {
       }
 
       if (filled > 0) {
-        console.debug(`[ACH][STORE][${tid}] filledMissingIcons appid=${appId} filled=${filled}`);
-        this.notify(appId, summary);
+        console.debug(`[ACH][STORE][${tid}] filledMissingIcons appid=${appId} platform=${platform ?? "none"} filled=${filled}`);
+        this.notify(appId, summary, platform);
       }
     } catch {
       // non-critical
@@ -823,7 +848,7 @@ class AchievementStoreImpl {
   // ── Part 5: Repair existing cache entries where icon_gray points to img/<hash>.jpg
   // instead of img/<hash>_gray.jpg ──
 
-  async repairGrayIconPaths(appId: string, _traceId?: string): Promise<void> {
+  async repairGrayIconPaths(appId: string, _traceId?: string, platform?: string): Promise<void> {
     if (!ACHIEVEMENT_SCHEMA_MIGRATION_AUTO) {
       logMigrationSkipOnce();
       return;
@@ -854,7 +879,8 @@ class AchievementStoreImpl {
         }, true);
         console.debug(`[ACH][SCHEMA_REPAIR_GRAY] appid=${appId} repaired=${repaired} entries`);
         // Also update in-memory summary if present
-        const summary = this.summariesByAppId.get(appId);
+        const key = this.compositeKey(appId, platform);
+        const summary = this.summariesByAppId.get(key);
         if (summary) {
           for (const ach of summary.achievements) {
             const patch = patched.find((p) => p.api_name === ach.apiName);
@@ -862,7 +888,7 @@ class AchievementStoreImpl {
               ach.iconGrayUrl = patch.icon_gray_url;
             }
           }
-          this.notify(appId, summary);
+          this.notify(appId, summary, platform);
         }
       }
     } catch {
@@ -872,10 +898,10 @@ class AchievementStoreImpl {
 
   // ── Internal notify ──
 
-  private notify(appId: string, summary: GameAchievementsSummary): void {
+  private notify(appId: string, summary: GameAchievementsSummary, platform?: string): void {
     for (const cb of this.subscribers) {
       try {
-        cb(appId, summary);
+        cb(appId, summary, platform);
       } catch {
         // don't break
       }

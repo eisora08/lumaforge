@@ -487,16 +487,16 @@ export type AppAchievementCache = {
   summary: AppAchievementSummaryData;
 };
 
-export async function readAchievementCache(appId: number): Promise<AppAchievementCache | null> {
-  return await invoke<AppAchievementCache | null>("read_achievement_cache", { appId });
+export async function readAchievementCache(appId: number, platform?: string): Promise<AppAchievementCache | null> {
+  return await invoke<AppAchievementCache | null>("read_achievement_cache", { appId, platform });
 }
 
-export async function writeAchievementCache(appId: number, data: AppAchievementCache, migrateIcons = true): Promise<void> {
-  return await invoke<void>("write_achievement_cache", { appId, data, migrateIcons });
+export async function writeAchievementCache(appId: number, data: AppAchievementCache, migrateIcons = true, platform?: string): Promise<void> {
+  return await invoke<void>("write_achievement_cache", { appId, data, migrateIcons, platform });
 }
 
-export async function deleteAchievementCache(appId: number): Promise<void> {
-  return await invoke<void>("delete_achievement_cache", { appId });
+export async function deleteAchievementCache(appId: number, platform?: string): Promise<void> {
+  return await invoke<void>("delete_achievement_cache", { appId, platform });
 }
 
 export type AchievementsAppSchemaResult = {
@@ -2642,6 +2642,15 @@ export async function resolveAppDataDir(): Promise<string> {
   return await invoke<string>("resolve_app_data_dir");
 }
 
+export type CrackSaveResult = {
+  crack_type: string;
+  save_path: string;
+};
+
+export async function detectCrackSaveType(appId: string): Promise<CrackSaveResult | null> {
+  return await invoke<CrackSaveResult | null>("detect_crack_save_type", { appId });
+}
+
 // ── Dev console exposure ──
 
 if (typeof window !== "undefined") {
@@ -3718,44 +3727,15 @@ export async function generateAchievementSchema(params: {
   steamPath?: string;
   steamAccountId?: string;
   steamWebApiKey?: string;
+  platform?: string;
 }): Promise<GenerateSchemaResult> {
   return await invoke<GenerateSchemaResult>("generate_achievement_schema", {
     appId: params.appId,
     steamPath: params.steamPath ?? null,
     steamAccountId: params.steamAccountId ?? null,
     steamWebApiKey: params.steamWebApiKey ?? null,
+    platform: params.platform ?? null,
   });
-}
-
-// ---------------------------------------------------------------------------
-// Schema Tool (generate_emu_config.exe wrapper)
-// ---------------------------------------------------------------------------
-
-export type SchemaToolResult = {
-  entries_count: number;
-  images_copied: number;
-  source: string;
-  error?: string | null;
-};
-
-export type SchemaToolStatus = {
-  available: boolean;
-  exe_path: string;
-  output_dir: string;
-};
-
-export async function generateSchemaViaTool(params: {
-  appId: number;
-  steamPath?: string;
-}): Promise<SchemaToolResult> {
-  return await invoke<SchemaToolResult>("generate_schema_via_tool", {
-    appId: params.appId,
-    steamPath: params.steamPath ?? null,
-  });
-}
-
-export async function getSchemaToolStatus(): Promise<SchemaToolStatus> {
-  return await invoke<SchemaToolStatus>("get_schema_tool_status");
 }
 
 export async function downloadStoreImage(

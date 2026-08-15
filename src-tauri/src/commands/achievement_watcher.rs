@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::steam_achievements::resolve_steam_root;
 
@@ -33,6 +33,7 @@ pub struct AchievementFileChangedPayload {
   pub modified_at: u64,
   pub size: u64,
   pub trace_id: String,
+  pub save_path: Option<String>,
 }
 
 pub struct AchievementWatcher {
@@ -101,6 +102,36 @@ impl AchievementWatcher {
       );
     }
 
+    // Watch crack save directories (RUNE, CODEX, GSE, OnlineFix, Goldberg, etc.)
+    let crack_bases = resolve_crack_save_bases();
+    let mut crack_dirs_watched = 0;
+    for base in &crack_bases {
+      // Watch each <appId> subdirectory that has achievement data
+      if let Ok(entries) = std::fs::read_dir(base) {
+        for entry in entries.flatten() {
+          let p = entry.path();
+          if p.is_dir() && (p.join("achievements.ini").exists() || p.join("achievements.json").exists()) {
+            if let Err(e) = watcher.watch(&p, RecursiveMode::NonRecursive) {
+              eprintln!("[ACH][WATCHER] failed to watch crack dir {}: {}", p.display(), e);
+            } else {
+              crack_dirs_watched += 1;
+              if DEBUG_ACH_WATCHER {
+                eprintln!("[ACH][WATCHER] watching crackSaveDir={}", p.display());
+              }
+            }
+          }
+        }
+      }
+    }
+    eprintln!(
+      "[ACH][WATCHER] watching crackSaveBases={} crackDirs={}",
+      crack_bases.len(),
+      crack_dirs_watched
+    );
+
+    // Schema generation happens on-demand when GameDetails opens (via resolver).
+    // Watcher only watches for achievements.ini changes.
+
     let shutdown = self.shutdown.clone();
     let stats_path = appcache_stats_path.clone();
     let libcache_path = librarycache_path;
@@ -108,7 +139,7 @@ impl AchievementWatcher {
     let poll_interval = Duration::from_millis(200);
 
     std::thread::spawn(move || {
-      let mut pending: HashMap<(u32, String), (PathBuf, Instant, u64, u64)> = HashMap::new();
+      let mut pending: HashMap<(u32, String), (PathBuf, Instant, u64, u64, Option<String>)> = HashMap::new();
 
       loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -122,7 +153,7 @@ impl AchievementWatcher {
                 let trace_id = next_trace_id();
                 pending.insert(
                   (info.appid, info.source.clone()),
-                  (path.clone(), Instant::now(), info.modified_at, info.size),
+                  (path.clone(), Instant::now(), info.modified_at, info.size, info.save_path),
                 );
                 if DEBUG_ACH_WATCHER {
                   eprintln!(
@@ -145,16 +176,16 @@ impl AchievementWatcher {
             let now = Instant::now();
             let mut emit = Vec::new();
 
-            pending.retain(|key, (path, ts, modified, size)| {
+            pending.retain(|key, (path, ts, modified, size, save_path)| {
               if now.saturating_duration_since(*ts) >= debounce {
-                emit.push((key.0, key.1.clone(), path.clone(), *modified, *size));
+                emit.push((key.0, key.1.clone(), path.clone(), *modified, *size, save_path.clone()));
                 false
               } else {
                 true
               }
             });
 
-            for (appid, source, path, modified_at, size) in emit {
+            for (appid, source, path, modified_at, size, save_path) in emit {
               let trace_id = next_trace_id();
                 if DEBUG_ACH_WATCHER {
                   eprintln!(
@@ -176,6 +207,7 @@ impl AchievementWatcher {
                 modified_at,
                 size,
                 trace_id,
+                save_path,
               };
               let _ = app_handle.emit("achievement-progress-file-changed", &payload);
             }
@@ -217,6 +249,76 @@ struct FileInfo {
   source: String,
   modified_at: u64,
   size: u64,
+  save_path: Option<String>,
+}
+
+// Known crack save base directories: (env_key, segments_after_env)
+// e.g. ("PUBLIC", ["Documents","Steam","RUNE"]) → %PUBLIC%\Documents\Steam\RUNE
+const CRACK_SAVE_BASES: &[(&str, &[&str])] = &[
+  ("PUBLIC", &["Documents", "Steam", "RUNE"]),
+  ("PUBLIC", &["Documents", "Steam", "CODEX"]),
+  ("PUBLIC", &["Documents", "OnlineFix"]),
+  ("PUBLIC", &["Documents", "EMPRESS"]),
+  ("APPDATA", &["GSE Saves"]),
+  ("APPDATA", &["Goldberg SteamEmu Saves"]),
+  ("APPDATA", &["Goldberg UplayEmu Saves"]),
+  ("APPDATA", &["Goldberg SocialClub Emu Saves"]),
+  ("APPDATA", &["Steam", "CODEX"]),
+  ("APPDATA", &["SmartSteamEmu"]),
+];
+
+/// Resolve known crack save base paths from environment variables.
+fn resolve_crack_save_bases() -> Vec<PathBuf> {
+  let mut bases = Vec::new();
+  for (env_key, segments) in CRACK_SAVE_BASES {
+    if let Ok(env_val) = std::env::var(env_key) {
+      let mut p = PathBuf::from(env_val);
+      for seg in segments.iter() {
+        p.push(seg);
+      }
+      if p.is_dir() {
+        bases.push(p);
+      }
+    }
+  }
+  bases
+}
+
+/// Given a file path, check if it's achievements.ini inside a crack save dir.
+/// Returns Some((appid, save_dir)) if so.
+fn crack_ini_from_path(path: &Path) -> Option<(u32, PathBuf)> {
+  let fname = path.file_name()?.to_string_lossy();
+  if fname != "achievements.ini" {
+    return None;
+  }
+  crack_save_dir_from_path(path)
+}
+
+/// Given a file path, check if it's achievements.json inside a crack save dir.
+/// Returns Some((appid, save_dir)) if so.
+fn crack_json_from_path(path: &Path) -> Option<(u32, PathBuf)> {
+  let fname = path.file_name()?.to_string_lossy();
+  if fname != "achievements.json" {
+    return None;
+  }
+  crack_save_dir_from_path(path)
+}
+
+/// Shared helper: extract (appid, save_dir) from a crack achievement file path.
+/// Validates that the parent directory name is a numeric appId and that
+/// the grandparent is a known crack save base.
+fn crack_save_dir_from_path(path: &Path) -> Option<(u32, PathBuf)> {
+  let save_dir = path.parent()?;
+  let appid_str = save_dir.file_name()?.to_string_lossy();
+  let appid = appid_str.parse::<u32>().ok()?;
+  let parent_of_save = save_dir.parent()?;
+  let bases = resolve_crack_save_bases();
+  for base in &bases {
+    if parent_of_save == base.as_path() {
+      return Some((appid, save_dir.to_path_buf()));
+    }
+  }
+  None
 }
 
 fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<FileInfo> {
@@ -248,6 +350,7 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<
             source: "usergamestats".to_string(),
             modified_at: modified,
             size: meta.len(),
+            save_path: None,
           });
         }
       }
@@ -275,6 +378,7 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<
         source: "achievement-progress".to_string(),
         modified_at: modified,
         size: meta.len(),
+        save_path: None,
       });
     }
     if fname.ends_with(".json") && !fname.starts_with("achievement_progress") {
@@ -296,9 +400,56 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<
           source: "librarycache".to_string(),
           modified_at: modified,
           size: meta.len(),
+          save_path: None,
         });
       }
     }
+  }
+
+  // Handle crack save achievements.ini
+  if let Some((appid, save_dir)) = crack_ini_from_path(path) {
+    eprintln!(
+      "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=crack-ini savePath={}",
+      raw_path, fname, appid, save_dir.display()
+    );
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta
+      .modified()
+      .ok()?
+      .duration_since(std::time::UNIX_EPOCH)
+      .ok()
+      .map(|d| d.as_secs())
+      .unwrap_or(0);
+    return Some(FileInfo {
+      appid,
+      source: "crack-ini".to_string(),
+      modified_at: modified,
+      size: meta.len(),
+      save_path: Some(save_dir.to_string_lossy().to_string()),
+    });
+  }
+
+  // Handle crack save achievements.json (GSE / Goldberg newer format)
+  if let Some((appid, save_dir)) = crack_json_from_path(path) {
+    eprintln!(
+      "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=crack-json savePath={}",
+      raw_path, fname, appid, save_dir.display()
+    );
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta
+      .modified()
+      .ok()?
+      .duration_since(std::time::UNIX_EPOCH)
+      .ok()
+      .map(|d| d.as_secs())
+      .unwrap_or(0);
+    return Some(FileInfo {
+      appid,
+      source: "crack-json".to_string(),
+      modified_at: modified,
+      size: meta.len(),
+      save_path: Some(save_dir.to_string_lossy().to_string()),
+    });
   }
 
   eprintln!(
@@ -306,6 +457,33 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<
     raw_path, fname
   );
   None
+}
+
+// ---------------------------------------------------------------------------
+// Auto-generate achievement schemas for cracked games
+// ---------------------------------------------------------------------------
+
+/// Collect all <appId> subdirectories from crack save base directories that have achievement data.
+fn collect_crack_app_ids(bases: &[PathBuf]) -> Vec<(u32, PathBuf)> {
+  let mut result = Vec::new();
+  for base in bases {
+    if let Ok(entries) = std::fs::read_dir(base) {
+      for entry in entries.flatten() {
+        if entry.path().is_dir() {
+          if let Some(name) = entry.file_name().to_str() {
+            if let Ok(appid) = name.parse::<u32>() {
+              // Only include dirs that have actual achievement data
+              let p = entry.path();
+              if p.join("achievements.ini").exists() || p.join("achievements.json").exists() {
+                result.push((appid, p));
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  result
 }
 
 // ---------------------------------------------------------------------------

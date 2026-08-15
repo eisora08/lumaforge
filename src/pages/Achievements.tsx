@@ -18,6 +18,36 @@ function resolveGameIconUrl(appId: string | undefined): string | undefined {
   return `${STEAM_CDN}/${appId}/${appId}.jpg`;
 }
 
+/**
+ * Given the composite-keyed map from getAllSummaries(), produce an appId-keyed map
+ * with one entry per game — the summary with the most unlocks (ties favor no-platform suffix).
+ */
+function deduplicateByAppId(
+  compositeMap: Map<string, GameAchievementsSummary>,
+): Map<string, GameAchievementsSummary> {
+  const result = new Map<string, GameAchievementsSummary>();
+  for (const [key, summary] of compositeMap) {
+    const colonIdx = key.indexOf(":");
+    const appId = colonIdx > 0 ? key.slice(0, colonIdx) : key;
+    const hasPlatform = colonIdx > 0;
+    const existing = result.get(appId);
+    if (!existing) {
+      result.set(appId, summary);
+      continue;
+    }
+    // Prefer higher unlock count
+    const incomingUnlocked = summary.unlocked ?? 0;
+    const existingUnlocked = existing.unlocked ?? 0;
+    if (incomingUnlocked > existingUnlocked) {
+      result.set(appId, summary);
+    } else if (incomingUnlocked === existingUnlocked && !hasPlatform) {
+      // Tie-break: prefer the no-platform-suffix entry (platform-unknown = authoritative)
+      result.set(appId, summary);
+    }
+  }
+  return result;
+}
+
 export default function Achievements() {
   const { games } = useLibraryGames();
   const { settings } = useSettings();
@@ -31,11 +61,15 @@ export default function Achievements() {
 
   // Subscribe to store for reactive updates
   useEffect(() => {
-    setStoreSummaries(achievementStore.getAllSummaries());
-    const unsub = achievementStore.subscribe((appId, summary) => {
+    setStoreSummaries(deduplicateByAppId(achievementStore.getAllSummaries()));
+    const unsub = achievementStore.subscribe((appId, summary, _platform) => {
       setStoreSummaries((prev) => {
         const next = new Map(prev);
-        next.set(appId, summary);
+        const existing = next.get(appId);
+        // Only overwrite if the new summary has more unlocks (or prev is empty)
+        if (!existing || (summary.unlocked ?? 0) > (existing.unlocked ?? 0)) {
+          next.set(appId, summary);
+        }
         return next;
       });
     });

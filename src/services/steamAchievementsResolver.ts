@@ -2,6 +2,7 @@ import type { GameAchievement, GameAchievementsSummary } from "../types/gameAchi
 import {
   fetchSteamPlayerAchievements,
   fetchSteamGlobalAchievementPercentages,
+  fetchSteamAchievementSchema,
   readAchievementCache,
   writeAchievementCache,
   generateAchievementSchema,
@@ -363,25 +364,53 @@ const ACHIEVEMENT_IMAGE_DOWNLOAD_CONCURRENCY = 3;
 async function downloadAchievementIconsInBackground(
   appIdStr: string,
   appIdNum: number,
-  iconCdnUrls: string[],
-  grayCdnUrls: string[],
+  achievements: Array<{ apiName: string; iconUrl?: string; iconGrayUrl?: string }>,
 ): Promise<void> {
   const startTime = Date.now();
 
-  // Build work list with correct filenames
+  // Pre-check: which icons already exist on disk?
+  let existingByApiName: Map<string, { icon_exists: boolean; icon_gray_exists: boolean }> | null = null;
+  try {
+    const { resolveAchievementImagePaths } = await import("./tauri");
+    const statuses = await resolveAchievementImagePaths(appIdNum);
+    existingByApiName = new Map(statuses.map((s) => [s.api_name, s]));
+  } catch {
+    // Non-critical — proceed with full download
+  }
+
+  // Build work list with correct filenames, skipping existing
   type WorkItem = { url: string; fileName: string };
   const items: WorkItem[] = [];
+  let skippedExisting = 0;
 
-  for (const url of iconCdnUrls) {
-    const fileName = url.split("/").pop();
-    if (fileName) items.push({ url, fileName });
-  }
-  for (const url of grayCdnUrls) {
-    const baseName = url.split("/").pop();
-    if (baseName) {
-      // Gray icons need _gray suffix to match normalized cache paths
-      const fileName = baseName.replace(/\.jpg$/i, "_gray.jpg").replace(/\.png$/i, "_gray.png");
-      items.push({ url, fileName });
+  for (const a of achievements) {
+    const status = existingByApiName?.get(a.apiName);
+
+    if (a.iconUrl) {
+      if (status?.icon_exists) {
+        skippedExisting++;
+      } else {
+        const iconCdn = resolveIconToCdnUrl(appIdStr, a.iconUrl);
+        if (iconCdn) {
+          const fileName = iconCdn.split("/").pop();
+          if (fileName) items.push({ url: iconCdn, fileName });
+        }
+      }
+    }
+
+    if (a.iconGrayUrl) {
+      if (status?.icon_gray_exists) {
+        skippedExisting++;
+      } else {
+        const grayCdn = resolveIconToCdnUrl(appIdStr, a.iconGrayUrl);
+        if (grayCdn) {
+          const baseName = grayCdn.split("/").pop();
+          if (baseName) {
+            const fileName = baseName.replace(/\.jpg$/i, "_gray.jpg").replace(/\.png$/i, "_gray.png");
+            items.push({ url: grayCdn, fileName });
+          }
+        }
+      }
     }
   }
 
@@ -393,8 +422,8 @@ async function downloadAchievementIconsInBackground(
     return true;
   });
 
-  const totalSources = deduped.length;
-  console.log(`[ACH][IMG_REPAIR_START] appid=${appIdStr} totalSources=${totalSources} queued=${deduped.length} skippedExisting=0`);
+  const totalSources = deduped.length + skippedExisting;
+  console.log(`[ACH][IMG_REPAIR_START] appid=${appIdStr} totalAchievements=${achievements.length} totalSources=${totalSources} queued=${deduped.length} skippedExisting=${skippedExisting}`);
 
   let downloaded = 0;
   let failed = 0;
@@ -451,12 +480,13 @@ async function ensureSchemaGenerated(
   steamPath?: string,
   accountId?: string,
   apiKey?: string,
+  platform?: string,
 ): Promise<import("./tauri").AppAchievementCache | null> {
   const appIdNum = Number(appId);
   const SCHEMA_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   try {
-    const cached = await readAchievementCache(appIdNum);
+    const cached = await readAchievementCache(appIdNum, platform);
     // Return cache if: has entries and is fresh (<24h). Accept ANY source including
     // "schema-only" to avoid infinite regeneration loop.
     if (cached && cached.achievements.length > 0) {
@@ -469,20 +499,21 @@ async function ensureSchemaGenerated(
   } catch { /* cache read failed, generate fresh */ }
 
   // Step 1: KV binary parser + API enrichment (primary — already works with type fixes)
-  console.log(`[ACH][SCHEMA_GEN] appid=${appId} generating from KV binary...`);
+  console.log(`[ACH][SCHEMA_GEN] appid=${appId} generating from KV binary... platform=${platform ?? "steam-official"}`);
   try {
     const result: GenerateSchemaResult = await generateAchievementSchema({
       appId: appIdNum,
       steamPath,
       steamAccountId: accountId,
       steamWebApiKey: apiKey,
+      platform,
     });
     console.log(`[ACH][SCHEMA_GEN] appid=${appId} result=${result.source} entries=${result.entries_count} icons=${result.icons_downloaded} progress=${result.progress_available}`);
     if (result.error) {
       console.warn(`[ACH][SCHEMA_GEN] appid=${appId} error=${result.error}`);
     }
     if (result.entries_count > 0) {
-      const generated = await readAchievementCache(appIdNum);
+      const generated = await readAchievementCache(appIdNum, platform);
       if (generated && generated.achievements.length > 0) {
         const hasStatId = generated.achievements.some(a => a.stat_id != null);
         const hasDisplayName = generated.achievements.some(a => a.name && a.name !== a.api_name);
@@ -499,36 +530,8 @@ async function ensureSchemaGenerated(
     console.warn(`[ACH][SCHEMA_GEN] appid=${appId} KV parser failed:`, err);
   }
 
-  // Step 2: Fallback to schema tool (generate_emu_config.exe) — when KV parser fails
-  // Only run if we don't already have a good cache (with statId or display names)
-  const existingCache = await readAchievementCache(appIdNum).catch(() => null);
-  const hasGoodCache = existingCache?.achievements.some(a => a.stat_id != null || (a.name && a.name !== a.api_name));
-  if (hasGoodCache) {
-    console.log(`[ACH][SCHEMA_GEN] appid=${appId} skipping tool — existing cache has good data`);
-    return existingCache;
-  }
-
-  console.log(`[ACH][SCHEMA_GEN] appid=${appId} trying schema tool as fallback...`);
-  try {
-    const { generateSchemaViaTool } = await import("./tauri");
-    const toolResult = await generateSchemaViaTool({
-      appId: appIdNum,
-      steamPath,
-    });
-    console.log(`[ACH][SCHEMA_GEN] appid=${appId} tool result=${toolResult.source} entries=${toolResult.entries_count} images=${toolResult.images_copied}`);
-    if (toolResult.error) {
-      console.warn(`[ACH][SCHEMA_GEN] appid=${appId} tool error=${toolResult.error}`);
-    }
-    if (toolResult.entries_count > 0) {
-      const generated = await readAchievementCache(appIdNum);
-      if (generated && generated.achievements.length > 0) {
-        console.log(`[ACH][SCHEMA_GEN] appid=${appId} returning tool cache ${generated.achievements.length} entries`);
-        return generated;
-      }
-    }
-  } catch (err) {
-    console.warn(`[ACH][SCHEMA_GEN] appid=${appId} tool failed:`, err);
-  }
+  // KV parser failed or produced no useful data — no schema available
+  // (generate_emu_config.exe removed — was unreliable and blocked boot)
   return null;
 }
 
@@ -544,6 +547,7 @@ export async function resolveSteamAchievements(params: {
   steamAchievementsEnabled?: boolean;
   achievementSchemaPath?: string;
   gameSource?: string; // "steam" | "lua" | "debrid" | "manual" | "epic"
+  platform?: string; // "steam" | "steam-official" — force platform, skip auto-detect
 }): Promise<GameAchievementsSummary> {
   const appIdStr = normalizeValidAppId(params.appId);
 
@@ -602,7 +606,52 @@ export async function resolveSteamAchievements(params: {
     } catch { /* snapshot not available */ }
   }
 
-  console.log(`[ACH][RESOLVE] appid=${appIdStr} effectiveAccountId=${effectiveAccountId || "EMPTY"} steamPath=${effectiveSteamPath || "EMPTY"} platform=${gameConfig?.platform ?? "none"} savePath=${gameConfig?.save_path ?? "none"}`);
+  // Platform detection — respect explicit user choice, otherwise auto-detect
+  const { detectCrackType, updateConfigForCrack } = await import("./achievementConfigService");
+  let readPlatform = gameConfig?.platform ?? "steam-official";
+  let readSavePath = gameConfig?.save_path ?? "";
+
+  if (params.platform === "steam-official") {
+    // User explicitly chose "Steam Official" — skip crack detection entirely
+    readPlatform = "steam-official";
+    const steamPath = effectiveSteamPath || await (async () => {
+      const { resolveSteamPath } = await import("./achievementConfigService");
+      return resolveSteamPath();
+    })();
+    readSavePath = steamPath ? `${steamPath}\\appcache\\stats` : "";
+    console.log(`[ACH][RESOLVE] appid=${appIdStr} user chose steam-official, skipping crack detect`);
+  } else if (params.platform === "steam") {
+    // User explicitly chose crack — force crack path
+    readPlatform = "steam";
+    const crackResult = await detectCrackType(appIdStr).catch(() => null);
+    if (crackResult?.savePath) {
+      readSavePath = crackResult.savePath;
+      console.log(`[ACH][RESOLVE] appid=${appIdStr} user chose crack, savePath=${readSavePath}`);
+      try {
+        gameConfig = await updateConfigForCrack(appIdStr, readSavePath, gameConfig?.name) ?? gameConfig;
+      } catch { /* config update failed, continue with local vars */ }
+    }
+  } else {
+    // Auto-detect (default behavior)
+    const crackResult = await detectCrackType(appIdStr).catch(() => null);
+    if (crackResult?.savePath) {
+      readPlatform = "steam";
+      readSavePath = crackResult.savePath;
+      console.log(`[ACH][RESOLVE] appid=${appIdStr} crack save detected platform=steam savePath=${readSavePath}`);
+      try {
+        gameConfig = await updateConfigForCrack(appIdStr, readSavePath, gameConfig?.name) ?? gameConfig;
+      } catch { /* config update failed, continue with local vars */ }
+    } else if (!readSavePath || readSavePath.includes("appcache")) {
+      readPlatform = "steam-official";
+      const steamPath = effectiveSteamPath || await (async () => {
+        const { resolveSteamPath } = await import("./achievementConfigService");
+        return resolveSteamPath();
+      })();
+      readSavePath = steamPath ? `${steamPath}\\appcache\\stats` : "";
+    }
+  }
+
+  console.log(`[ACH][RESOLVE] appid=${appIdStr} effectiveAccountId=${effectiveAccountId || "EMPTY"} steamPath=${effectiveSteamPath || "EMPTY"} platform=${readPlatform} savePath=${readSavePath}`);
 
   if (!achievementsEnabled) {
     return disabledSummary(appIdStr);
@@ -624,9 +673,72 @@ export async function resolveSteamAchievements(params: {
   let appSchemaAchievements: AppAchievementCacheEntry[] | null = null;
 
   // 1. Canonical schema — single source of truth for achievement list + optional progress
+  // Split by platform: crack → Steam Web API (writes to steam/<appId>/), official → KV binary (writes to steam-official/<appId>/)
   let generatedCache: import("./tauri").AppAchievementCache | null = null;
   try {
-    generatedCache = await ensureSchemaGenerated(appIdStr, effectiveSteamPath, effectiveAccountId, params.steamWebApiKey);
+    if (readPlatform === "steam") {
+      // Crack path: Steam Web API schema → steam/<appId>/ (crack schema — names/icons/descriptions)
+      if (hasApiKey) {
+        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} crack detected, using Steam Web API → steam/${appIdStr}/`);
+        try {
+          const schemaResponse = await fetchSteamAchievementSchema({
+            appId: appIdNum,
+            apiKey: params.steamWebApiKey!,
+            language: params.language,
+          });
+          // Steam GetSchemaForGame/v2 returns { "game": { "availableGameStats": { "achievements": [...] } } }
+          const gameData = (schemaResponse as any)?.game ?? (schemaResponse as any);
+          const achievementList = gameData?.availableGameStats?.achievements ?? gameData?.achievements?.highlighted ?? gameData?.achievements ?? [];
+          if (Array.isArray(achievementList) && achievementList.length > 0) {
+            const entries: import("./tauri").AppAchievementCacheEntry[] = achievementList.map((a: any) => ({
+              id: a.name,
+              api_name: a.name,
+              name: a.displayName ?? a.name ?? "",
+              description: a.description ?? "",
+              icon: a.icon ?? undefined,
+              icon_gray: a.icongray ?? undefined,
+              unlocked: false,
+              unlock_time: undefined,
+            }));
+            await writeAchievementCache(appIdNum, {
+              achievements: entries,
+              achievement_percentages: [],
+              summary: {
+                app_id: appIdStr,
+                total: entries.length,
+                unlocked: 0,
+                percent: 0,
+                progress_available: false,
+                source: "steam-web-api",
+                updated_at: Math.floor(Date.now() / 1000),
+              },
+            }, false, "steam");
+            console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Steam Web API schema: ${entries.length} achievements written to steam/${appIdStr}/`);
+            generatedCache = await readAchievementCache(appIdNum, readPlatform);
+          } else {
+            console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} Steam Web API returned no achievements`);
+          }
+        } catch (e) {
+          console.warn(`[ACH][SCHEMA_GEN] appid=${appIdStr} Steam Web API failed: ${String(e)}`);
+        }
+      } else {
+        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} crack detected but no Steam Web API key — skipping schema`);
+      }
+
+      // ALSO create official schema for icons + KV data → steam-official/<appId>/
+      // This ensures both schemas exist independently (crack icons + official Steam icons)
+      if (hasApiKey) {
+        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} also creating official schema for icons → steam-official/${appIdStr}/`);
+        await ensureSchemaGenerated(appIdStr, effectiveSteamPath, effectiveAccountId, params.steamWebApiKey, "steam-official")
+          .catch((e: unknown) => console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} official schema non-fatal: ${String(e)}`));
+      }
+
+      // Read from crack schema (primary for crack progress)
+      generatedCache = generatedCache ?? await readAchievementCache(appIdNum, readPlatform);
+    } else {
+      // Official path: KV binary + API enrichment → writes schema to steam-official/<appId>/
+      generatedCache = await ensureSchemaGenerated(appIdStr, effectiveSteamPath, effectiveAccountId, params.steamWebApiKey, "steam-official");
+    }
     if (generatedCache && generatedCache.achievements.length > 0) {
       appSchemaAchievements = generatedCache.achievements;
       for (const a of generatedCache.achievements) {
@@ -642,11 +754,13 @@ export async function resolveSteamAchievements(params: {
       }
       // If schema generation included progress (binary stats available), use it directly
       // Only return early if the cache has actual unlock data (unlocked > 0)
-      // If all entries are locked, continue to binary stats path for fresh unlock detection
-      if (generatedCache.summary.progress_available && !params.forceRefresh && (generatedCache.summary.unlocked ?? 0) > 0) {
+      // OR if user explicitly chose this platform — 0/81 IS correct official data
+      // If all entries are locked AND no explicit platform, continue to binary stats for fresh detection
+      if (generatedCache.summary.progress_available && !params.forceRefresh &&
+          ((generatedCache.summary.unlocked ?? 0) > 0 || params.platform)) {
         const cacheSummary = cacheEntryToSummary(appIdStr, generatedCache.achievements, generatedCache.achievement_percentages, generatedCache.summary);
         // Check store freshness
-        const stored = achievementStore.getSummary(appIdStr);
+        const stored = achievementStore.getSummary(appIdStr, params.platform);
         if (stored) {
           const accept = isSourceNewerOrEqual(cacheSummary.source, cacheSummary.updatedAt, stored.source, stored.updatedAt);
           if (!accept) {
@@ -760,19 +874,38 @@ export async function resolveSteamAchievements(params: {
   // 4. Binary stats — FALLBACK only when librarycache didn't provide data
   // But first check if the achievementStore has better data (from previous librarycache read)
   if (!localProgressSummary) {
-    const cached = achievementStore.getSummary(appIdStr);
-    if (cached && (cached.unlocked ?? 0) > 0 && cached.progressAvailable) {
+    const cached = achievementStore.getSummary(appIdStr, readPlatform);
+    if (cached && (cached.unlocked ?? 0) > 0 && cached.progressAvailable
+        && !(readPlatform === "steam-official" && cached.source === "crack")) {
       localProgressSummary = cached;
       console.log(`[ACH][PROGRESS] App ${appIdStr}: using cached summary ${cached.unlocked}/${cached.total} source=${cached.source}`);
     }
   }
 
-  // 3c. Crack achievements (GSE/RUNE/OnlineFix/Goldberg) — for non-official games
-  if (!localProgressSummary && gameConfig && gameConfig.platform === "steam" && gameConfig.save_path) {
+  // 3c. Crack achievements (GSE/RUNE/OnlineFix/Goldberg)
+  // Always try crack reader when we have a save path with real achievement data
+  if (readPlatform === "steam" && readSavePath) {
+    console.log(`[ACH][CRACK_READ] appid=${appIdStr} platform=${readPlatform} savePath=${readSavePath}`);
     try {
       const { readCrackAchievements } = await import("./crackAchievementReader");
-      const crackData = await readCrackAchievements(gameConfig.save_path, appIdStr);
+      const crackData = await readCrackAchievements(readSavePath, appIdStr);
       if (crackData && crackData.achievements.length > 0) {
+        console.log(`[ACH][CRACK_READ] appid=${appIdStr} found ${crackData.achievements.length} achievements, ${crackData.unlocked}/${crackData.total} unlocked, schemaMap.size=${schemaMap.size}`);
+        // Enrich crack achievements with schema metadata (names, descriptions, icons)
+        let enrichedCount = 0;
+        for (const ach of crackData.achievements) {
+          const schema = schemaMap.get(ach.apiName);
+          if (schema) {
+            ach.name = schema.displayName || ach.name;
+            ach.description = schema.description || ach.description;
+            ach.iconUrl = schema.icon || ach.iconUrl;
+            ach.iconGrayUrl = schema.icongray || ach.iconGrayUrl;
+            enrichedCount++;
+          }
+        }
+        console.log(`[ACH][CRACK_READ] appid=${appIdStr} enriched ${enrichedCount}/${crackData.achievements.length} with schema data`);
+        // Crack reader found real data — force platform to "steam"
+        readPlatform = "steam";
         localProgressSummary = {
           appId: appIdStr,
           achievements: crackData.achievements,
@@ -780,14 +913,18 @@ export async function resolveSteamAchievements(params: {
           unlocked: crackData.unlocked,
           percent: crackData.total > 0 ? Math.round((crackData.unlocked / crackData.total) * 100) : 0,
           progressAvailable: true,
-          source: "librarycache" as GameAchievementsSummary["source"],
+          source: "crack" as GameAchievementsSummary["source"],
           updatedAt: Date.now(),
         };
         console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=crack-${crackData.source} unlocked=${crackData.unlocked}/${crackData.total}`);
+      } else {
+        console.log(`[ACH][CRACK_READ] appid=${appIdStr} crackData=${crackData ? `null or empty (achievements.length=${crackData?.achievements?.length ?? 0})` : "null"}`);
       }
     } catch (err) {
-      console.debug(`[ACH][PROGRESS] App ${appIdStr}: crack achievement read failed (non-critical):`, err);
+      console.warn(`[ACH][PROGRESS] App ${appIdStr}: crack achievement read failed (non-critical):`, err);
     }
+  } else {
+    console.log(`[ACH][CRACK_READ] appid=${appIdStr} skipped — platform=${readPlatform} savePath=${readSavePath ?? "null"}`);
   }
 
   // 4. Web API player progress — fallback when forceRefresh=true and no binary stats
@@ -822,7 +959,7 @@ export async function resolveSteamAchievements(params: {
 
   if (localProgressSummary?.progressAvailable) {
     summary = localProgressSummary;
-    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=binary-stats reason=local-progress unlocked=${summary.unlocked}/${summary.total}`);
+    console.log(`[ACH][PROGRESS_DECISION] appid=${appIdStr} selected=${summary.source} reason=local-progress unlocked=${summary.unlocked}/${summary.total}`);
   } else if (playerAchievements.length > 0) {
     summary = mergeAchievements({
       playerAchievements,
@@ -857,7 +994,7 @@ export async function resolveSteamAchievements(params: {
 
   // CRITICAL GUARD: Never overwrite existing progress with schema-only data.
   // If the store already has progress_available=true data, keep it.
-  const existingStore = achievementStore.getSummary(appIdStr);
+  const existingStore = achievementStore.getSummary(appIdStr, params.platform);
   if (existingStore?.progressAvailable && !summary.progressAvailable && !params.forceRefresh) {
     console.log(`[ACH][PROGRESS_PRESERVE] appid=${appIdStr} keeping existing ${existingStore.unlocked}/${existingStore.total} source=${existingStore.source} over schema-only ${summary.unlocked}/${summary.total}`);
     // Still write the enriched metadata (icons, names) from the new summary to the store,
@@ -891,7 +1028,7 @@ export async function resolveSteamAchievements(params: {
     // SKIP when forceRefresh=true — manual refresh should NOT preserve stale progress
     if (!summary.progressAvailable && !params.forceRefresh) {
       try {
-        const existing = await readAchievementCache(appIdNum);
+        const existing = await readAchievementCache(appIdNum, readPlatform);
         if (existing?.summary?.progress_available === true) {
           const existingUnlocked = existing.summary.unlocked ?? 0;
           const existingTotal = existing.summary.total ?? 0;
@@ -939,7 +1076,7 @@ export async function resolveSteamAchievements(params: {
         achievements,
         achievement_percentages: pcts,
         summary: summaryData,
-      }, _migrateIcons);
+      }, _migrateIcons, readPlatform);
       if (appIdStr === "268910") {
         const unlocked = achievements.filter((a: any) => a.unlocked).length;
         console.log(`[ACH][TRACE_DISK_WRITE] appid=268910 unlocked=${unlocked}/${achievements.length} progressAvailable=${summary.progressAvailable} updatedAt=${summaryData.updated_at}`);
@@ -988,27 +1125,25 @@ export async function resolveSteamAchievements(params: {
 
   // Image download for manual refresh — fire-and-forget, does NOT block refresh
   if (_downloadImages && summary.achievements.length > 0) {
-    const iconUrls: string[] = [];
-    const grayUrls: string[] = [];
-    for (const a of summary.achievements) {
-      const iconCdn = a.iconUrl ? resolveIconToCdnUrl(appIdStr, a.iconUrl) : null;
-      if (iconCdn) iconUrls.push(iconCdn);
-      const grayCdn = a.iconGrayUrl ? resolveIconToCdnUrl(appIdStr, a.iconGrayUrl) : null;
-      if (grayCdn) grayUrls.push(grayCdn);
-    }
     // Fire background download — NOT awaited, refresh continues immediately
-    downloadAchievementIconsInBackground(appIdStr, appIdNum, iconUrls, grayUrls);
+    downloadAchievementIconsInBackground(appIdStr, appIdNum, summary.achievements);
     console.log(`[ACH][IMG_REPAIR_NON_BLOCKING] appid=${appIdStr} refreshContinued=true`);
   }
 
   // Check store freshness before returning — prefer newer data from watcher/auto-sync
-  const stored = achievementStore.getSummary(appIdStr);
+  // BUT: when user explicitly chose a platform, never override with cross-platform stale data
+  const stored = achievementStore.getSummary(appIdStr, params.platform);
   if (stored) {
-    const accept = isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt);
-    if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=${accept} existingSource=${stored.source} existingUnlocked=${stored.unlocked}/${stored.total}`);
-    if (!accept) {
-      if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
-      return stored;
+    const crossPlatformConflict = params.platform === "steam-official" && stored.source === "crack";
+    if (crossPlatformConflict) {
+      console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} SKIP store freshness — user chose steam-official but store has crack data, not overriding`);
+    } else {
+      const accept = isSourceNewerOrEqual(summary.source, summary.updatedAt, stored.source, stored.updatedAt);
+      if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=${accept} existingSource=${stored.source} existingUnlocked=${stored.unlocked}/${stored.total}`);
+      if (!accept) {
+        if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_MERGE] appid=${appIdStr} accepted=false reason=store-has-newer returning store summary`);
+        return stored;
+      }
     }
   } else {
     if (DEBUG_ACH_VERBOSE) console.log(`[ACH][SUMMARY_SOURCE] appid=${appIdStr} source=${summary.source} unlocked=${summary.unlocked}/${summary.total} updatedAt=${summary.updatedAt} progressAvailable=${summary.progressAvailable} accepted=true reason=first-summary`);

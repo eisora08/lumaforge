@@ -217,6 +217,7 @@ pub fn run() {
             commands::installed_games_registry::read_installed_games_registry,
             commands::installed_games_registry::write_installed_games_registry,
             commands::process::file_exists,
+            commands::process::delete_file,
             commands::process::get_file_metadata,
             commands::process::pick_file,
             commands::process::pick_folder,
@@ -326,6 +327,7 @@ pub fn run() {
             commands::external_files::verify_file_checksums,
             commands::external_files::resolve_achievements_root_dir,
             commands::external_files::resolve_app_data_dir,
+            commands::external_files::detect_crack_save_type,
             commands::steam_achievement_sources::audit_steam_achievement_sources,
             commands::steam_achievement_sources::export_steam_achievement_sources,
             commands::steam_achievement_sources::read_steam_achievement_source_for_game,
@@ -398,8 +400,6 @@ pub fn run() {
             commands::sqlite_cache::get_all_provider_statuses,
             commands::sqlite_cache::upsert_game_catalog_blob,
             commands::sqlite_cache::get_game_catalog_blob,
-            commands::schema_tool::generate_schema_via_tool,
-            commands::schema_tool::get_schema_tool_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
