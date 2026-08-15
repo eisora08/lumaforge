@@ -51,6 +51,7 @@ export type BackgroundJob = {
   appId?: string;
   priority: JobPriority;
   tier?: JobTier;
+  platform?: string;
   status: JobStatus;
   createdAt: number;
   startedAt?: number;
@@ -138,6 +139,7 @@ export const backgroundJobQueue = {
     appId?: string;
     priority?: JobPriority;
     tier?: JobTier;
+    platform?: string;
   }): string {
     const key = stableKey(type, provider, options?.appId);
     const tier = options?.tier;
@@ -179,6 +181,7 @@ export const backgroundJobQueue = {
       appId: options?.appId,
       priority,
       tier,
+      platform: options?.platform,
       status: "queued",
       createdAt: Date.now(),
     };
@@ -609,9 +612,12 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
   if (!job.appId) throw new Error("appId required for ensure-achievement-images");
   const { achievementImageQueue, resolveImageSource, nextGenerationId } = await import("./achievementImageQueue");
   const achievementStoreMod = await import("./achievementStore");
-  const summary = achievementStoreMod.achievementStore.getSummary(job.appId);
+  const platform = job.platform
+    ?? (typeof window !== "undefined" ? localStorage.getItem(`lumaforge-ach-platform-${job.appId}`) as string | undefined : undefined)
+    ?? undefined;
+  const summary = achievementStoreMod.achievementStore.getSummary(job.appId, platform);
   if (!summary) {
-    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[ACH][IMG_JOB] skipped appid=${job.appId} reason=no-summary`);
+    if (ENABLE_JOB_QUEUE_LOGS) console.log(`[ACH][IMG_JOB] skipped appid=${job.appId} reason=no-summary platform=${platform ?? "none"}`);
     return;
   }
 
@@ -707,9 +713,9 @@ export function enqueueAchievementSchemaJobs(appIds: string[], priority: JobPrio
   }
 }
 
-export function enqueueAchievementImageJobs(appIds: string[], priority: JobPriority = "low"): void {
+export function enqueueAchievementImageJobs(appIds: string[], priority: JobPriority = "low", platform?: string): void {
   for (const appId of appIds) {
-    backgroundJobQueue.enqueue("ensure-achievement-images", "steam", { appId, priority });
+    backgroundJobQueue.enqueue("ensure-achievement-images", "steam", { appId, priority, platform });
   }
 }
 

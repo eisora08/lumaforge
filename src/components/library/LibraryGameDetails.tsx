@@ -988,7 +988,7 @@ export default function LibraryGameDetails({
           setAchievementsLoading(false);
           // Enqueue image downloads for this game (fire-and-forget)
           import("../../services/backgroundJobQueue").then(({ enqueueAchievementImageJobs }) => {
-            enqueueAchievementImageJobs([appIdStr], "normal");
+            enqueueAchievementImageJobs([appIdStr], "normal", achSource);
           }).catch(() => {});
           if (appIdStr === "1167630") console.log(`[ACH][UI_PROGRESS_SOURCE] appid=1167630 headerUnlocked=${summary.unlocked} total=${summary.total} progressAvailable=${summary.progressAvailable} source=${summary.source}`);
           console.debug(`[ACH][PROGRESS] appid=${appIdStr}`);

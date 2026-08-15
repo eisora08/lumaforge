@@ -248,45 +248,6 @@ function buildSchemaOnlySummary(
 }
 
 
-function cacheEntryToSummary(
-  appId: string,
-  cacheData: AppAchievementCacheEntry[],
-  pcts: AppAchievementPercentagesEntry[],
-  summaryData: AppAchievementSummaryData,
-): GameAchievementsSummary {
-  const pctMap: Record<string, number> = {};
-  for (const p of pcts) {
-    pctMap[p.name] = p.percent;
-  }
-
-  const achievements: GameAchievement[] = cacheData.map((e) => ({
-    id: e.api_name,
-    apiName: e.api_name,
-    name: e.name,
-    description: e.description,
-    iconUrl: e.icon ?? e.icon_url,
-    iconGrayUrl: e.icon_gray ?? e.icon_gray_url,
-    unlocked: e.unlocked,
-    unlockTime: e.unlock_time ? e.unlock_time * 1000 : undefined,
-    rarityPercent: e.rarity_percent ?? pctMap[e.api_name] ?? undefined,
-    statId: e.stat_id,
-    bit: e.bit,
-    progressStatId: e.progress_stat_id,
-    progressMin: e.progress_min,
-    progressMax: e.progress_max,
-  }));
-
-  return {
-    appId,
-    total: summaryData.total,
-    unlocked: summaryData.unlocked,
-    percent: summaryData.percent,
-    progressAvailable: summaryData.progress_available,
-    achievements,
-    source: summaryData.source as GameAchievementsSummary["source"],
-    updatedAt: summaryData.updated_at,
-  };
-}
 
 function summaryToCacheData(summary: GameAchievementsSummary): {
   achievements: AppAchievementCacheEntry[];
@@ -750,25 +711,14 @@ export async function resolveSteamAchievements(params: {
           });
         }
       }
-      // If schema generation included progress (binary stats available), use it directly
-      // Only return early if the cache has actual unlock data (unlocked > 0)
-      // OR if user explicitly chose this platform — 0/81 IS correct official data
-      // If all entries are locked AND no explicit platform, continue to binary stats for fresh detection
-      if (generatedCache.summary.progress_available && !params.forceRefresh &&
-          ((generatedCache.summary.unlocked ?? 0) > 0 || params.platform)) {
-        const cacheSummary = cacheEntryToSummary(appIdStr, generatedCache.achievements, generatedCache.achievement_percentages, generatedCache.summary);
-        // Check store freshness
-        const stored = achievementStore.getSummary(appIdStr, params.platform);
-        if (stored) {
-          const accept = isSourceNewerOrEqual(cacheSummary.source, cacheSummary.updatedAt, stored.source, stored.updatedAt);
-          if (!accept) {
-            console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} store-has-newer returning store summary`);
-            return stored;
-          }
-        }
-        console.log(`[ACH][SCHEMA_GEN] appid=${appIdStr} returning cache summary ${cacheSummary.unlocked}/${cacheSummary.total} source=${cacheSummary.source}`);
-        return cacheSummary;
-      }
+      // Schema progress data is baked-in at generation time — by the time the resolver
+      // runs, the binary stats / librarycache / crack reader may have fresher data.
+      // Skip early return so the pipeline below can produce an authoritative source
+      // (binary-stats, librarycache, crack) with current unlock counts.
+      // Schema data is still used for names/icons/descriptions via schemaMap above.
+      // NOTE: the old early-return with "schema-generated" source was disabled because
+      // the 24h TTL cache in ensureSchemaGenerated could return stale unlock counts,
+      // and the 5-icon download bug (getSummary without platform) prevented image jobs.
       console.debug(`[ACH][SCHEMA_GEN] appid=${appIdStr} schema-only=${!generatedCache.summary.progress_available} continuing to progress sources`);
     }
   } catch (err) {
