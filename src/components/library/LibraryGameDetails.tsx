@@ -403,8 +403,7 @@ export default function LibraryGameDetails({
           gameSource,
           platform: achSource,
         });
-        if (appIdStr) {
-          achievementStore.deleteSummary(appIdStr, achSource);
+        if (appIdStr && s && s.achievements?.length > 0) {
           setAchievementsSummary(s);
           achievementStore.setSummary(appIdStr, s, achSource);
           console.log(`[ACH][SOURCE_CHANGED] appid=${appIdStr} source=${achSource} count=${s.achievements.length} unlocked=${s.unlocked}/${s.total}`);
@@ -997,11 +996,13 @@ export default function LibraryGameDetails({
   }, [appIdStr, settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot, settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 
   // Auto-sync: subscribe to auto-sync events to update achievements state
+  // NOTE: refresh() already writes to achievementStore. The store subscription (below) picks that up
+  // and calls setAchievementsSummary. We only need the subscriber for the initial push from
+  // performLocalCacheRefresh which writes directly to the store.
   useEffect(() => {
     const unsub = achievementAutoSyncService.subscribe((event) => {
       if (event.appId !== appIdStr) return;
       setAchievementsSummary(event.summary);
-      achievementStore.setSummary(event.appId, event.summary, achSource);
     });
     return unsub;
   }, [appIdStr]);

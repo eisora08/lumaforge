@@ -346,6 +346,15 @@ class AchievementAutoSyncService {
       }
     }
 
+    // Throttle: if store has fresh progress data, skip full resolve (disk-cache-only path handles freshness)
+    if (existing && existing.progressAvailable && (existing.unlocked ?? 0) > 0) {
+      const elapsed = Date.now() - (existing.updatedAt || 0);
+      if (elapsed < 60 * 1000) {
+        console.debug(`[ACH][AUTO_SYNC] refresh skipped appid=${appId} reason=store-fresh elapsed=${Math.round(elapsed / 1000)}s`);
+        return;
+      }
+    }
+
     state.inFlight = true;
     console.debug(`[ACH][AUTO_SYNC] refreshing appid=${appId} reason=${reason}`);
 
@@ -394,7 +403,8 @@ class AchievementAutoSyncService {
     this.focusHandler = () => {
       if (!this.enabled) return;
       for (const appId of this.watchers.keys()) {
-        this.triggerRefresh(appId, "window-focus");
+        // Lightweight disk-cache read on focus — avoids full resolve pipeline (config/schema/crack re-read)
+        this.performLocalCacheRefresh(appId, "window-focus").catch(() => {});
       }
     };
     window.addEventListener("focus", this.focusHandler);
