@@ -378,7 +378,7 @@ export default function LibraryGameDetails({
   }, [appIdStr]);
 
   // Re-resolve achievements when source changes — always re-resolve, even without summary
-  const achSourceRef = useRef<string | null>(null); // null = never fired → forces resolve on mount
+  const achSourceRef = useRef<string | null>(achSource); // initialized with achSource → only fires on actual platform switch
   const userSwitchedSourceRef = useRef(false);
   useEffect(() => {
     if (!appIdStr) return;
@@ -837,6 +837,7 @@ export default function LibraryGameDetails({
   const shouldAutoLoadAchievements = ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS;
   const ACHIEVEMENT_READ_EXISTING_CACHE_FOR_VISIBLE_APP = true;
   const diskCacheRef = useRef<{ updatedAt: number } | null>(null);
+  const isInitialAchMountRef = useRef(true); // only skip resolver on first mount (not settings change)
   useEffect(() => {
     if (!appIdStr) return;
     if (userSwitchedSourceRef.current) return; // user manually chose platform — don't overwrite
@@ -946,6 +947,15 @@ export default function LibraryGameDetails({
       }
       setAchievementsLoading(false);
       return;
+    }
+    // On first mount: if store already has data (from previous mount or auto-sync), skip full resolve
+    if (isInitialAchMountRef.current) {
+      isInitialAchMountRef.current = false;
+      const existing = achievementStore.getSummary(appIdStr, achSource);
+      if (existing && existing.progressAvailable) {
+        setAchievementsLoading(false);
+        return;
+      }
     }
     let cancelled = false;
     setAchievementsLoading(true);
