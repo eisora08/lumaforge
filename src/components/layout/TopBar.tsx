@@ -261,7 +261,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
 
   return (
     <>
-    <header className="sticky top-0 z-20 flex h-14 select-none items-stretch lf-surface border-b border-white/[0.06]" style={{ WebkitBackdropFilter: "var(--surface-active-blur)" } as React.CSSProperties}>
+    <header className="absolute top-0 left-0 right-0 z-20 flex h-14 select-none items-stretch border-b border-white/[0.06]" style={{ background: "var(--surface-active)", backdropFilter: "var(--surface-active-blur)", WebkitBackdropFilter: "var(--surface-active-blur)" } as React.CSSProperties}>
       {/* Logo — leftmost */}
       <button
         onClick={() => onNavigate?.("home")}
