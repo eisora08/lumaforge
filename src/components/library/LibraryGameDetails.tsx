@@ -1557,7 +1557,7 @@ export default function LibraryGameDetails({
         )}
       </div>
       {/* Action row — surface-mode glass overlay on hero bottom */}
-      <div className="relative z-20 -mt-16 shrink-0 lf-surface border-t border-white/[0.06]">
+      <div className="relative z-10 -mt-16 shrink-0 lf-surface border-t border-white/[0.06]">
         <div className="mx-auto w-full max-w-[1440px] px-5 py-4">
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
@@ -2158,7 +2158,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
               <div className="mt-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 ${isPerfected ? "text-amber-400/90" : "text-(--color-muted)"}`}>
                   <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
-                  {isPerfected ? "All Unlocked" : "Achievements"}
+                  {isPerfected ? null : "Achievements"}
                 </h3>
 
                 {achievementsLoading ? (
