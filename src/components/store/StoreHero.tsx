@@ -12,7 +12,7 @@ export default function StoreHero({
   installedCount,
 }: StoreHeroProps) {
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-(--surface-active-border) bg-linear-to-br from-(--color-accent)/20 via-white/5 to-black/40 p-6 lg:p-8">
+    <section className="relative overflow-hidden rounded-3xl ring-1 ring-(--surface-active-border)/40 bg-linear-to-br from-(--color-accent)/20 via-white/5 to-black/40 p-6 lg:p-8">
       <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-(--color-accent)/20 blur-3xl" />
       <div className="absolute -bottom-20 left-1/3 h-52 w-52 rounded-full bg-blue-500/10 blur-3xl" />
 

@@ -145,7 +145,7 @@ export default function StoreDiscoverHeroCarousel({
         onMouseLeave={() => setIsPaused(false)}
         aria-roledescription="carousel"
         aria-label="Featured games"
-        className="group relative min-h-[300px] sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px] overflow-hidden rounded-3xl border border-(--surface-active-border) bg-white/5"
+        className="group relative min-h-[300px] sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px] overflow-hidden rounded-3xl ring-1 ring-(--surface-active-border)/40 bg-white/5"
       >
         <div
           role="button"
