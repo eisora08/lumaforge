@@ -1440,7 +1440,7 @@ export default function LibraryGameDetails({
       )}
 
       {/* Hero banner — Steam-style header */}
-      <div className="relative w-full shrink-0 overflow-hidden bg-black" style={{ minHeight: "calc(100vh - 3.5rem)" }}>
+      <div className="relative w-full shrink-0 overflow-hidden bg-black" style={{ minHeight: "calc(70vh - 3.5rem)", maxHeight: "600px" }}>
         {/* Layer 1 — Steam-style colorful blurred backdrop */}
         {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
             object-position: center ensures the same crop region as the sharp image.
