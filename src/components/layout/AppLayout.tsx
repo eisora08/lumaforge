@@ -153,7 +153,7 @@ export default function AppLayout({
           />
 
           <div className="flex min-w-0 flex-1 flex-col lf-page">
-              <main className="min-h-0 flex-1 overflow-y-auto pt-14">
+              <main className="min-h-0 flex-1 overflow-y-auto">
                 <RouteErrorBoundary>
                   {children}
                 </RouteErrorBoundary>

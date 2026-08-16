@@ -100,7 +100,7 @@ export default function Sidebar({
 
   const sidebarContent = (
     <div
-      className={`relative flex h-full flex-col lf-sidebar-panel bg-(--shell-bg)`}
+      className={`relative flex h-full flex-col lf-sidebar-panel bg-(--shell-bg) pt-14`}
       style={{ width: isCollapsed ? undefined : "100%", backdropFilter: 'var(--shell-blur, none)', WebkitBackdropFilter: 'var(--shell-blur, none)' } as React.CSSProperties}
     >
       {/* Drawer: close button at top right */}
