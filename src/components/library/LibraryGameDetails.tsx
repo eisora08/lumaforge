@@ -1331,36 +1331,36 @@ export default function LibraryGameDetails({
     return (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] overflow-hidden bg-black">
-          <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-black/40" />
+        <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-black/40" />
+      </div>
+      <div className="relative z-10 shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
+        <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
+          <div className="mb-2 h-9 w-24 animate-pulse rounded-xl bg-white/10" />
+          <div className="flex flex-wrap gap-x-5 gap-y-1">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-3 w-24 animate-pulse rounded bg-white/5" />
+            ))}
+          </div>
         </div>
-        <div className="relative z-10 shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
-          <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
-            <div className="mb-2 h-9 w-24 animate-pulse rounded-xl bg-white/10" />
-            <div className="flex flex-wrap gap-x-5 gap-y-1">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-3 w-24 animate-pulse rounded bg-white/5" />
-              ))}
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[1440px] px-5 py-6 lg:py-8">
+          <div className="lg:grid lg:grid-cols-[1fr_340px] lg:gap-8">
+            <div className="space-y-4">
+              <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
+              <div className="h-4 w-full animate-pulse rounded bg-white/5" />
+              <div className="h-4 w-full animate-pulse rounded bg-white/5" />
+              <div className="h-4 w-2/3 animate-pulse rounded bg-white/5" />
+            </div>
+            <div className="mt-6 lg:mt-0">
+              <div className="h-64 animate-pulse rounded-2xl bg-white/5" />
             </div>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1440px] px-5 py-6 lg:py-8">
-            <div className="lg:grid lg:grid-cols-[1fr_340px] lg:gap-8">
-              <div className="space-y-4">
-                <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
-                <div className="h-4 w-full animate-pulse rounded bg-white/5" />
-                <div className="h-4 w-full animate-pulse rounded bg-white/5" />
-                <div className="h-4 w-2/3 animate-pulse rounded bg-white/5" />
-              </div>
-              <div className="mt-6 lg:mt-0">
-                <div className="h-64 animate-pulse rounded-2xl bg-white/5" />
-              </div>
-            </div>
-          </div>
       </div>
     </div>
-  );
-}
+    );
+  }
 
   if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) {
     console.log(`[MEDIA][DETAILS_RENDER] appid=${game.appId} title=${detailTitle} imageUrl=${imageUrl ? "set" : "null"} logoUrl=${logoUrl ? "set" : "null"} canonicalMedia=${canonicalAppInfo?.media ? "set" : "null"}`);
@@ -1372,8 +1372,9 @@ export default function LibraryGameDetails({
   return (
     <div ref={scrollRef} className="flex h-full flex-col">
       {/* Sticky bar — appears when hero+action row scroll away */}
-      <div className={`sticky top-0 z-30 shrink-0 transition-transform duration-200 ease-out ${showStickyBar ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0 pointer-events-none"}`}>
-        <div className="bg-(--color-bg)/90 border-b border-white/[0.06] px-5 py-2.5 backdrop-blur-sm">
+      {showStickyBar && (
+        <div className="sticky top-0 z-30 shrink-0 animate-[slideInDown_200ms_ease-out]">
+          <div className="bg-(--color-bg)/90 border-b border-white/[0.06] px-5 py-2.5 backdrop-blur-sm">
           <div className="mx-auto flex max-w-[1440px] items-center gap-3">
             {/* Play / Install button */}
             <button
@@ -1435,7 +1436,8 @@ export default function LibraryGameDetails({
             </button>
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Hero banner — Steam-style header */}
       <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
