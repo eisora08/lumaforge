@@ -219,10 +219,11 @@ class AchievementAutoSyncService {
       } as GameAchievementsSummary;
       achievementStore.setSummary(appId, summary, this.watchers.get(appId)?.params.platform);
       console.log(`[ACH][SUMMARY_APPLY] appid=${appId} unlocked=${newUnlocked}/${newTotal} reason=session-stop-local-cache`);
-      // Phase 4: Persist to disk cache immediately
+      // Phase 4: Persist to disk cache immediately — pass platform to avoid cross-directory write
+      const watchPlatform = this.watchers.get(appId)?.params.platform;
       try {
-        await writeAchievementCache(Number(appId), cached);
-        console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt}`);
+        await writeAchievementCache(Number(appId), cached, false, watchPlatform);
+        console.log(`[ACH][CACHE_WRITE] appid=${appId} unlocked=${newUnlocked}/${newTotal} updatedAt=${diskUpdatedAt} platform=${watchPlatform ?? "none"}`);
       } catch (writeErr) {
         console.warn(`[ACH][CACHE_WRITE] failed appid=${appId}`, String(writeErr));
       }

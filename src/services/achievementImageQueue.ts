@@ -62,6 +62,7 @@ export type ImageQueueItem = {
   caller: ImageCaller;
   createdAt: number;
   generationId: string;
+  platform?: string;
 };
 
 export type ImageUpdateCallback = (appId: string, apiName: string, type: ImageType, resolvedUrl: string) => void;
@@ -543,6 +544,7 @@ class AchievementImageQueueImpl {
         appId: Number(item.appId),
         url: item.sourceUrl,
         fileName: item.fileName,
+        platform: item.platform,
       });
       if (filePath) {
         this.completedKeys.add(key);

@@ -168,9 +168,7 @@ class AchievementStoreImpl {
 
   getSummary(appId: string, platform?: string): GameAchievementsSummary | undefined {
     if (platform) {
-      // Try platform-specific key first, fall back to no-platform key (watcher writes there)
-      return this.summariesByAppId.get(this.compositeKey(appId, platform))
-        ?? this.summariesByAppId.get(appId);
+      return this.summariesByAppId.get(this.compositeKey(appId, platform));
     }
     return this.summariesByAppId.get(appId);
   }
@@ -186,7 +184,7 @@ class AchievementStoreImpl {
 
   // ── Write full summary (from resolver) ──
 
-  setSummary(appId: string, summary: GameAchievementsSummary, platform?: string): void {
+  setSummary(appId: string, summary: GameAchievementsSummary, platform?: string, options?: { skipUnlockDetection?: boolean }): void {
     const key = this.compositeKey(appId, platform);
     // Normalize missing source / updatedAt to prevent SOURCE_PRIORITY crashes
     const safeSummary = {
@@ -284,7 +282,7 @@ class AchievementStoreImpl {
       newUnlocks[newUnlocks.length - 1].isPlatinum = true;
       console.log(`[ACH][PLATINUM] appid=${appId} triggered at ${finalUnlocked}/${finalTotal} via setSummary`);
     }
-    if (newUnlocks.length > 0) {
+    if (!options?.skipUnlockDetection && newUnlocks.length > 0) {
       console.log(`[ACH][SETSUMMARY_TOAST] appid=${appId} newUnlocks=${newUnlocks.length} names=${newUnlocks.map(u => u.name).join(",")}`);
       for (const cb of this.unlockCallbacks) {
         try { cb(appId, newUnlocks); } catch {}
@@ -298,6 +296,11 @@ class AchievementStoreImpl {
       snap[ach.apiName] = ach.unlocked;
     }
     snapshots[snapshotKey] = snap;
+    // Also save under bare appId key so callers without platform (e.g. attemptAchievementRefresh)
+    // still find the snapshot instead of treating all achievements as "new"
+    if (platform && snapshotKey !== appId) {
+      snapshots[appId] = snap;
+    }
     saveSnapshots(snapshots);
 
     // CRITICAL: Write to disk so data persists when librarycache is deleted
@@ -704,10 +707,11 @@ class AchievementStoreImpl {
     this._lastWriteTime.set(key, now);
 
     // Infer platform from source when not explicitly provided:
-    // crack/binary-stats sources → "steam" directory, everything else → "steam-official"
-    // "binary-stats" comes from processCrackIniChange (authoritative: true) — same as "crack"
+    // crack source → "steam" directory, everything else → "steam-official"
+    // NOTE: "binary-stats" comes from Steam's own appcache .bin files (NOT crack data),
+    // so it must write to steam-official, not steam.
     const effectivePlatform = platform
-      ?? ((summary.source === "crack" || summary.source === "binary-stats") ? "steam" : "steam-official");
+      ?? (summary.source === "crack" ? "steam" : "steam-official");
     try {
       const appIdNum = Number(appId);
       // Use IN-MEMORY summary as source of truth (not disk cache)

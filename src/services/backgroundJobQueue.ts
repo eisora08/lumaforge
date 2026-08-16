@@ -641,6 +641,7 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
           caller: "unknown",
           createdAt: Date.now(),
           generationId,
+          platform,
         });
       }
     }
@@ -658,6 +659,7 @@ async function executeEnsureAchievementImages(job: BackgroundJob): Promise<void>
           caller: "unknown",
           createdAt: Date.now(),
           generationId,
+          platform,
         });
       }
     }

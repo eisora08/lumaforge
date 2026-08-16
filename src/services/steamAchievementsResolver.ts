@@ -326,6 +326,7 @@ async function downloadAchievementIconsInBackground(
   appIdStr: string,
   appIdNum: number,
   achievements: Array<{ apiName: string; iconUrl?: string; iconGrayUrl?: string }>,
+  platform?: string,
 ): Promise<void> {
   const startTime = Date.now();
 
@@ -401,6 +402,7 @@ async function downloadAchievementIconsInBackground(
           appId: appIdNum,
           url: item.url,
           fileName: item.fileName,
+          platform,
         });
         const elapsed = Date.now() - t0;
         if (result) {
@@ -733,8 +735,89 @@ export async function resolveSteamAchievements(params: {
     console.warn(`[ACH][RARITY] App ${appIdStr}: global percentages failed:`, err);
   }
 
-  // 3. Librarycache — PRIMARY source for unlock status (authoritative Steam data)
-  if (effectiveAccountId && effectiveSteamPath) {
+  // 2b. Binary-stats — read directly from .bin files (more reliable than librarycache)
+  // Uses appSchemaAchievements (from step 1) for icons/names + parseUserGameStatsRaw for bitmask.
+  // Falls through to librarycache (step 3) when .bin is empty or schema unavailable.
+  if (!localProgressSummary && effectiveSteamPath && effectiveAccountId) {
+    try {
+      const { parseUserGameStatsRaw } = await import("./tauri");
+
+      // Read bitmask from .bin file
+      const statsResult = await parseUserGameStatsRaw({
+        steamPath: effectiveSteamPath,
+        steamAccountId: effectiveAccountId,
+        appId: appIdNum,
+      });
+
+      if (statsResult.file_found && statsResult.stat_pairs.length > 0) {
+        // Build stat_id → bitmask map
+        const statsMap = new Map<number, number>();
+        const timestampMap = new Map<string, number>();
+        for (const pair of statsResult.stat_pairs) {
+          statsMap.set(pair.stat_id, pair.value);
+          if (pair.unlock_times) {
+            for (const [bit, ts] of Object.entries(pair.unlock_times)) {
+              timestampMap.set(`${pair.stat_id}:${bit}`, ts);
+            }
+          }
+        }
+
+        if (appSchemaAchievements && appSchemaAchievements.length > 0) {
+          // Schema available — cross-reference schema (with icons) + bitmask
+          const achievements: GameAchievement[] = [];
+          let unlocked = 0;
+          for (const entry of appSchemaAchievements) {
+            let isUnlocked = false;
+            let unlockTime: number | undefined;
+            if (entry.stat_id != null && entry.bit != null) {
+              const statValue = statsMap.get(entry.stat_id) ?? 0;
+              isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
+              const ts = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
+              if (ts) unlockTime = ts * 1000;
+            }
+            if (isUnlocked) unlocked++;
+            achievements.push({
+              id: entry.api_name,
+              apiName: entry.api_name,
+              name: entry.name ?? entry.api_name,
+              description: entry.description,
+              iconUrl: entry.icon,
+              iconGrayUrl: entry.icon_gray,
+              unlocked: isUnlocked,
+              unlockTime,
+              rarityPercent: globalPctMap[entry.api_name] ?? undefined,
+              statId: entry.stat_id,
+              bit: entry.bit,
+            });
+          }
+
+          const total = achievements.length;
+          localProgressSummary = {
+            appId: appIdStr,
+            achievements,
+            total,
+            unlocked,
+            percent: total > 0 ? Math.round((unlocked / total) * 100) : 0,
+            progressAvailable: true,
+            source: "binary-stats",
+            updatedAt: Date.now(),
+          };
+          console.log(`[ACH][PROGRESS_SOURCE] appid=${appIdStr} source=binary-stats(direct) unlocked=${unlocked}/${total}`);
+        } else {
+          // No schema yet (first boot) — build minimal achievements from bitmask only
+          // Names/icons will be enriched by librarycache fallback or next schema generation
+          console.log(`[ACH][PROGRESS] App ${appIdStr}: binary-stats .bin has data but no schema — building minimal list from bitmask`);
+        }
+      } else {
+        console.log(`[ACH][PROGRESS] App ${appIdStr}: binary-stats .bin not found or empty`);
+      }
+    } catch (err) {
+      console.debug(`[ACH][PROGRESS] App ${appIdStr}: binary-stats direct read failed:`, err);
+    }
+  }
+
+  // 3. Librarycache — FALLBACK source when binary-stats not available
+  if (!localProgressSummary && effectiveAccountId && effectiveSteamPath) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const libcacheResult = await invoke<{
@@ -761,24 +844,51 @@ export async function resolveSteamAchievements(params: {
         }
 
         // Build achievements list with librarycache unlock status
-        const achievements: GameAchievement[] = (appSchemaAchievements ?? []).map(entry => {
-          const libAchieved = libcacheMap.get(entry.api_name);
-          return {
-            id: entry.api_name,
-            apiName: entry.api_name,
-            name: entry.name,
-            description: entry.description,
-            iconUrl: entry.icon ?? entry.icon_url,
-            iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
-            unlocked: libAchieved ?? false,
-            rarityPercent: globalPctMap[entry.api_name] ?? entry.rarity_percent ?? undefined,
-            statId: entry.stat_id,
-            bit: entry.bit,
-            progressStatId: entry.progress_stat_id,
-            progressMin: entry.progress_min,
-            progressMax: entry.progress_max,
-          };
-        });
+        // When appSchemaAchievements is empty (first boot, no KV binary),
+        // build from librarycache entries directly — names/icons come later from
+        // writeAchievementCache + downloadAchievementIconsInBackground.
+        let achievements: GameAchievement[];
+        if (appSchemaAchievements && appSchemaAchievements.length > 0) {
+          achievements = appSchemaAchievements.map(entry => {
+            const libAchieved = libcacheMap.get(entry.api_name);
+            return {
+              id: entry.api_name,
+              apiName: entry.api_name,
+              name: entry.name,
+              description: entry.description,
+              iconUrl: entry.icon ?? entry.icon_url,
+              iconGrayUrl: entry.icon_gray ?? entry.icon_gray_url,
+              unlocked: libAchieved ?? false,
+              rarityPercent: globalPctMap[entry.api_name] ?? entry.rarity_percent ?? undefined,
+              statId: entry.stat_id,
+              bit: entry.bit,
+              progressStatId: entry.progress_stat_id,
+              progressMin: entry.progress_min,
+              progressMax: entry.progress_max,
+            };
+          });
+        } else {
+          // First boot: no KV binary schema — build achievements from librarycache entries alone
+          // str_id is the achievement API name; unlock status from b_achieved
+          // Icons/names will be enriched on next boot via ensureSchemaGenerated
+          const builtFromLibcache: GameAchievement[] = [];
+          for (const entry of libcacheResult.entries ?? []) {
+            if (!entry.str_id) continue;
+            builtFromLibcache.push({
+              id: entry.str_id,
+              apiName: entry.str_id,
+              name: entry.str_id,
+              description: undefined,
+              iconUrl: undefined,
+              iconGrayUrl: undefined,
+              unlocked: entry.b_achieved === false ? false : true,
+              unlockTime: entry.rt_unlocked ? entry.rt_unlocked * 1000 : undefined,
+              rarityPercent: globalPctMap[entry.str_id] ?? undefined,
+            });
+          }
+          achievements = builtFromLibcache;
+          console.log(`[ACH][LIBCACHE_SCHEMA] appid=${appIdStr} built ${achievements.length} achievements from librarycache (no schema available)`);
+        }
 
         let computedUnlocked = achievements.filter(a => a.unlocked).length;
 
@@ -966,7 +1076,6 @@ export async function resolveSteamAchievements(params: {
   // Save to disk cache if we have achievements (progress or schema-only)
   // Only write cache with icon migration when forceRefresh=true (explicit manual/developer action)
   const _migrateIcons = params.forceRefresh === true;
-  const _downloadImages = params.forceRefresh === true && !params.skipImageDownload;
   if (DEBUG_ACH_DIAG) {
     console.log(`[ACH][DIAG] appid=${appIdStr} writeCheck achievementsLength=${summary.achievements.length} willWrite=${summary.achievements.length > 0}`);
   }
@@ -1071,11 +1180,13 @@ export async function resolveSteamAchievements(params: {
     console.log(`[ACH][DIAG] appid=${appIdStr} writeSkipped reason=empty-achievements`);
   }
 
-  // Image download for manual refresh — fire-and-forget, does NOT block refresh
-  if (_downloadImages && summary.achievements.length > 0) {
+  // Image download — fire-and-forget, does NOT block refresh
+  // Always trigger icon downloads when the resolver has achievements with icon URLs,
+  // not just on Manual Refresh. This ensures icons are created on first boot too.
+  if (summary.achievements.length > 0) {
     // Fire background download — NOT awaited, refresh continues immediately
-    downloadAchievementIconsInBackground(appIdStr, appIdNum, summary.achievements);
-    console.log(`[ACH][IMG_REPAIR_NON_BLOCKING] appid=${appIdStr} refreshContinued=true`);
+    downloadAchievementIconsInBackground(appIdStr, appIdNum, summary.achievements, readPlatform);
+    console.log(`[ACH][IMG_REPAIR_NON_BLOCKING] appid=${appIdStr} source=${summary.source} icons=${summary.achievements.filter(a => a.iconUrl).length}/${summary.achievements.length} refreshContinued=true`);
   }
 
   // Check store freshness before returning — prefer newer data from watcher/auto-sync

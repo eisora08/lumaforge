@@ -2402,12 +2402,14 @@ pub async fn download_achievement_image(
   app_id: u32,
   url: String,
   file_name: String,
+  platform: Option<String>,
 ) -> Result<Option<String>, String> {
   if url.starts_with("data:") {
     return Ok(Some(url));
   }
 
-  let cache_dir = get_achievement_cache_dir(&app_handle, app_id)?;
+  let write_platform = platform.as_deref().unwrap_or("steam-official");
+  let cache_dir = get_achievement_write_dir(&app_handle, app_id, write_platform)?;
   let img_dir = cache_dir.join("img");
   let dest_path = img_dir.join(&file_name);
 
@@ -2628,6 +2630,8 @@ fn get_achievement_cache_dir(app_handle: &AppHandle, app_id: u32) -> Result<Path
   let legacy_dir = app_dir.join("achievements").join("steam").join(app_id.to_string());
 
   // Priority: cracked (steam/) with valid content > official (steam-official/) > legacy
+  // NOTE: callers that know the platform should use get_achievement_write_dir() instead.
+  // This reader is only for unknown-platform fallback reads.
   if crack_json.exists() && std::fs::read_to_string(&crack_json).map(|c| c.len() > 10).unwrap_or(false) {
     Ok(crack_dir)
   } else if official_json.exists() && std::fs::read_to_string(&official_json).map(|c| c.len() > 10).unwrap_or(false) {

@@ -539,11 +539,13 @@ export async function downloadAchievementImage(params: {
   appId: number;
   url: string;
   fileName: string;
+  platform?: string;
 }): Promise<string | null> {
   return await invoke<string | null>("download_achievement_image", {
     appId: params.appId,
     url: params.url,
     fileName: params.fileName,
+    platform: params.platform ?? null,
   });
 }
 
