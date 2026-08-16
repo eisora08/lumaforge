@@ -209,6 +209,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   // Load local cache (media cache + canonical appinfo + media manifest + details/{appid}.json) immediately
   // Clear ALL state on any appId change to prevent stale cross-appId data during async fetch.
   useEffect(() => {
+    // Reset scroll to top on game entry/switch
+    document.querySelector('main')?.scrollTo(0, 0);
+
     // Cancel pending media downloads for any previously-active appId
     if (_prevAppIdRef.current) {
       cancelMediaJobsForApp(_prevAppIdRef.current);
