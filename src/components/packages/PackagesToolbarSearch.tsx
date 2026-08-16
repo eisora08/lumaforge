@@ -67,6 +67,7 @@ export default function PackagesToolbarSearch({
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches());
   const internalInputRef = useRef<HTMLInputElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Sync internal ref to external ref when provided
   useEffect(() => {
@@ -93,6 +94,7 @@ export default function PackagesToolbarSearch({
         return;
       }
 
+      if (dropdownRef.current?.contains(event.target as Node)) return;
       if (!wrapper.contains(event.target as Node)) {
         setDropdownOpen(false);
       }
@@ -229,6 +231,7 @@ export default function PackagesToolbarSearch({
         <>
           <div className="fixed inset-0 z-[99997] bg-black/40" onClick={() => setDropdownOpen(false)} />
           <div
+            ref={dropdownRef}
             className="lf-popover-enter fixed z-[99998] overflow-hidden rounded-2xl border border-(--surface-active-border) lf-surface shadow-2xl"
           style={{ top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width }}
         >
