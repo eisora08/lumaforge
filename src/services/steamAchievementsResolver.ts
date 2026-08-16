@@ -511,6 +511,7 @@ export async function resolveSteamAchievements(params: {
   achievementSchemaPath?: string;
   gameSource?: string; // "steam" | "lua" | "debrid" | "manual" | "epic"
   platform?: string; // "steam" | "steam-official" — force platform, skip auto-detect
+  installDir?: string; // game install directory — used for Tenoke crack detection
 }): Promise<GameAchievementsSummary> {
   const appIdStr = normalizeValidAppId(params.appId);
 
@@ -553,7 +554,7 @@ export async function resolveSteamAchievements(params: {
   }
 
   // Get or create achievement config for this game
-  let gameConfig = await getOrCreateConfig(appIdStr, undefined, params.gameSource);
+  let gameConfig = await getOrCreateConfig(appIdStr, undefined, params.gameSource, params.installDir);
 
   // Try to get game name from snapshot if config has placeholder name
   if (gameConfig && gameConfig.name.startsWith("Game ")) {
@@ -586,7 +587,7 @@ export async function resolveSteamAchievements(params: {
   } else if (params.platform === "steam") {
     // User explicitly chose crack — force crack path
     readPlatform = "steam";
-    const crackResult = await detectCrackType(appIdStr).catch(() => null);
+    const crackResult = await detectCrackType(appIdStr, params.installDir).catch(() => null);
     if (crackResult?.savePath) {
       readSavePath = crackResult.savePath;
       console.log(`[ACH][RESOLVE] appid=${appIdStr} user chose crack, savePath=${readSavePath}`);
@@ -596,7 +597,7 @@ export async function resolveSteamAchievements(params: {
     }
   } else {
     // Auto-detect (default behavior)
-    const crackResult = await detectCrackType(appIdStr).catch(() => null);
+    const crackResult = await detectCrackType(appIdStr, params.installDir).catch(() => null);
     if (crackResult?.savePath) {
       readPlatform = "steam";
       readSavePath = crackResult.savePath;
@@ -770,10 +771,16 @@ export async function resolveSteamAchievements(params: {
             let isUnlocked = false;
             let unlockTime: number | undefined;
             if (entry.stat_id != null && entry.bit != null) {
-              const statValue = statsMap.get(entry.stat_id) ?? 0;
-              isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
               const ts = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
-              if (ts) unlockTime = ts * 1000;
+              if (ts) {
+                // Timestamp is authoritative (matches Rust generate_achievement_schema logic)
+                isUnlocked = true;
+                unlockTime = ts * 1000;
+              } else {
+                // Fallback: bitmask check
+                const statValue = statsMap.get(entry.stat_id) ?? 0;
+                isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
+              }
             }
             if (isUnlocked) unlocked++;
             achievements.push({
@@ -962,6 +969,34 @@ export async function resolveSteamAchievements(params: {
           }
         }
         console.log(`[ACH][CRACK_READ] appid=${appIdStr} enriched ${enrichedCount}/${crackData.achievements.length} with schema data`);
+
+        // CRITICAL: RUNE/CODEX/OnlineFix INI formats only list UNLOCKED achievements.
+        // When schemaMap has MORE entries than the crack data, the crack total is wrong
+        // (e.g. 5 unlocked out of 50 total → crack reports 5/5 = 100% instead of 5/50 = 10%).
+        // Rebuild the full achievement list from schemaMap, overlaying crack unlock status.
+        if (schemaMap.size > crackData.achievements.length) {
+          const crackUnlockMap = new Map(crackData.achievements.map(a => [a.apiName, { unlocked: a.unlocked, unlockTime: a.unlockTime }]));
+          const fullAchievements: GameAchievement[] = [];
+          for (const [apiName, schema] of schemaMap.entries()) {
+            const crackState = crackUnlockMap.get(apiName);
+            fullAchievements.push({
+              id: apiName,
+              apiName,
+              name: schema.displayName || apiName,
+              description: schema.description,
+              iconUrl: schema.icon,
+              iconGrayUrl: schema.icongray,
+              unlocked: crackState?.unlocked ?? false,
+              unlockTime: crackState?.unlockTime,
+            });
+          }
+          const oldCount = crackData.achievements.length;
+          crackData.achievements = fullAchievements;
+          crackData.total = schemaMap.size;
+          crackData.unlocked = fullAchievements.filter(a => a.unlocked).length;
+          console.log(`[ACH][CRACK_READ] appid=${appIdStr} REBUILT from schema: total=${crackData.total} unlocked=${crackData.unlocked} (crack had ${oldCount} entries, schemaMap.size=${schemaMap.size})`);
+        }
+
         // Crack reader found real data — force platform to "steam"
         readPlatform = "steam";
         localProgressSummary = {

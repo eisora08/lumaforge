@@ -472,7 +472,13 @@ fn kv_extract_user_stats(data: &serde_json::Map<String, serde_json::Value>) -> V
 
   kv_walk_stats(&Value::Object(data.clone()), &[], &mut |stat_id, node| {
     let data_u32 = match node.get("data") {
-      Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u32,
+      Some(Value::Number(n)) => {
+        // Negative i32 (e.g. -16 for 0xFFFFFFF0) needs i64→u32 cast to preserve bits.
+        // serde_json::Number::as_u64() returns None for negative values.
+        n.as_u64()
+          .unwrap_or_else(|| n.as_i64().unwrap_or(0) as u64)
+          as u32
+      }
       Some(Value::String(s)) => s.parse::<u32>().unwrap_or(0),
       _ => 0,
     };
@@ -674,9 +680,9 @@ fn kv_extract_schema(data: &serde_json::Value) -> Vec<SteamAppcacheSchemaEntry> 
               } else if inferred_stat_id.is_none() {
                 inferred_stat_id = Some(n);
                 break;
-              }
-            }
-          }
+    }
+  }
+}
 
           if let (Some(stat_id), Some(bit)) = (inferred_stat_id, inferred_bit) {
             let api_name = name.clone();
@@ -3903,9 +3909,10 @@ pub fn generate_achievement_schema(
                 if let serde_json::Value::Object(obj) = val {
                   if let Some(serde_json::Value::Number(n)) = obj.get("data") {
                     if let Ok(stat_id) = key.parse::<u32>() {
-                      if let Some(v) = n.as_u64() {
-                        stats_map.insert(stat_id, v as u32);
-                      }
+                      // Negative i32 (e.g. -16 for 0xFFFFFFF0) needs i64→u32 cast to preserve bits.
+                      let v = n.as_u64()
+                        .unwrap_or_else(|| n.as_i64().unwrap_or(0) as u64);
+                      stats_map.insert(stat_id, v as u32);
                     }
                   }
                 }
@@ -4461,5 +4468,51 @@ fn collect_stat_times(
       child_path.push(k);
       collect_stat_times(v, &child_path, result);
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// Regression: negative i32 bitmask (e.g. -16 = 0xFFFFFFF0) must preserve bits.
+  #[test]
+  fn kv_extract_user_stats_preserves_negative_i32_bitmask() {
+    use serde_json::json;
+
+    // Build a minimal tree: root "cache" → stat_id "2" with data=-16
+    let mut root_map = serde_json::Map::new();
+    let mut stat_node = serde_json::Map::new();
+    // -16 as i32 → 0xFFFFFFF0 bitmask (bits 4-31 set)
+    stat_node.insert("data".into(), json!(-16i32));
+    stat_node.insert("state".into(), json!(2));
+    root_map.insert("2".into(), Value::Object(stat_node));
+
+    // stat_id=1 with data=100 (positive, unaffected)
+    let mut stat1 = serde_json::Map::new();
+    stat1.insert("data".into(), json!(100));
+    root_map.insert("1".into(), Value::Object(stat1));
+
+    // stat_id=5 with data=16383 (positive, unaffected)
+    let mut stat5 = serde_json::Map::new();
+    stat5.insert("data".into(), json!(16383));
+    root_map.insert("5".into(), Value::Object(stat5));
+
+    let result = kv_extract_user_stats(&root_map);
+
+    // Find stat_id=2 entry
+    let entry2 = result.iter().find(|(sid, _, _)| sid == "2").expect("stat_id 2 missing");
+    assert_eq!(entry2.1, 0xFFFFFFF0, "Negative i32 -16 must produce bitmask 0xFFFFFFF0, got {:#x}", entry2.1);
+
+    // Verify bit 4 and bit 31 are set
+    assert_ne!(entry2.1 & (1 << 4), 0, "Bit 4 must be set");
+    assert_ne!(entry2.1 & (1 << 31), 0, "Bit 31 must be set");
+    assert_eq!(entry2.1 & (1 << 0), 0, "Bit 0 must be clear");
+
+    // stat_id=1 and stat_id=5 unchanged
+    let entry1 = result.iter().find(|(sid, _, _)| sid == "1").expect("stat_id 1 missing");
+    assert_eq!(entry1.1, 100);
+    let entry5 = result.iter().find(|(sid, _, _)| sid == "5").expect("stat_id 5 missing");
+    assert_eq!(entry5.1, 16383);
   }
 }

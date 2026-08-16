@@ -6,7 +6,7 @@ import type { ProgressPatch } from "./achievementStore";
 import { checkAchievementLibraryCacheMetadata, readAchievementCacheWithFallback, listLibraryCacheAppIds, readAchievementProgressIndex, scanSteamAppcacheAchievements } from "./tauri";
 import type { AppAchievementCache, AchievementProgressEntry } from "./tauri";
 import type { GameAchievement, GameAchievementsSummary, UnlockEvent } from "../types/gameAchievements";
-import { sendAchievementNativeNotification, showGroupedAchievementOverlay, queueAchievementOverlay } from "./achievementNotificationService";
+import { sendAchievementNativeNotification, queueAchievementOverlay } from "./achievementNotificationService";
 import { showAchievementToast, showGroupedAchievementToast } from "../components/library/AchievementToast";
 import {
   ACHIEVEMENTS_AUTO_ENABLED,
@@ -34,9 +34,8 @@ import { isSystemToolApp } from "./gameCacheService";
 //   - Any scenario where LumaForge does not know the active appId
 //
 // The Rust watcher fires for ALL librarycache/usergamestats file changes,
-// but the downgrade guard + resolver refresh (processLibrarycacheChange +
-// _scheduleResolverRefresh) requires an in-memory canonical base to detect
-// stale/partial reads. Without that base, the event is silently skipped.
+// but librarycache events are gated by LIBRARYCACHE_PROCESSING_ENABLED (committed).
+// Only usergamestats (binary-stats) triggers the processing pipeline.
 //
 // Future feature: process detection / external launch detection to expand scope.
 // ---------------------------------------------------------------------------
@@ -51,6 +50,12 @@ export const ACHIEVEMENT_LIBRARYCACHE_SCAN_ON_BOOT = false;
 export const ACHIEVEMENT_PROCESS_MISSING_CACHE_ON_BOOT = false;
 export const DEBUG_ACH_LIBRARYCACHE = false;
 export const DEBUG_ACH_WATCHER = false;
+
+/**
+ * committed: librarycache processing disabled — binary-stats (usergamestats)
+ * is the authoritative source. Re-enable if binary-stats stops working.
+ */
+const LIBRARYCACHE_PROCESSING_ENABLED = false;
 
 let _fullScanSkipLogged = false;
 
@@ -397,7 +402,7 @@ class AchievementWatcherService {
           this._lastFileMeta.set(path, { size, modified: modified_at });
 
           // Process usergamestats (binary stats), librarycache (Steam achievement data), and crack-ini
-          const isAcceptedSource = source === "usergamestats" || source === "librarycache" || source === "achievement-progress" || source === "crack-ini" || source === "crack-json";
+          const isAcceptedSource = source === "usergamestats" || (LIBRARYCACHE_PROCESSING_ENABLED && source === "librarycache") || source === "achievement-progress" || source === "crack-ini" || source === "crack-json";
           console.log(`[ACH][PIPELINE] source_check appid=${appIdStr} source=${source} accepted=${isAcceptedSource}`);
 
           // Special handling for global achievement_progress.json changes
@@ -483,13 +488,10 @@ class AchievementWatcherService {
       const traceSettings = `overlay=${overlayEnabled} native=${nativeEnabled} inApp=${toastEnabled} appFocused=${appFocused}`;
       console.log(`[ACH][NOTIFY_SETTINGS] ${traceSettings}`);
 
-      // ── Overlay enabled: queue achievements one at a time ──
+      // ── Overlay enabled: queue all unlocks (batched into single window) ──
       if (overlayEnabled) {
-        const maxShow = 3;
-        console.log(`[ACH][TOAST_BATCH] appid=${appId} newUnlocks=${unlocks.length} maxShow=${maxShow} route=overlay-queue`);
-        const queued: string[] = [];
-        for (let i = 0; i < Math.min(unlocks.length, maxShow); i++) {
-          queued.push(unlocks[i].apiName);
+        console.log(`[ACH][TOAST_BATCH] appid=${appId} newUnlocks=${unlocks.length} route=overlay-batch`);
+        for (let i = 0; i < unlocks.length; i++) {
           queueAchievementOverlay({
             name: unlocks[i].name,
             description: unlocks[i].description,
@@ -501,11 +503,6 @@ class AchievementWatcherService {
             isPlatinum: unlocks[i].isPlatinum,
           });
           this.markToastShown(appId, unlocks[i].apiName);
-        }
-        const remaining = unlocks.length - queued.length;
-        console.log(`[ACH][TOAST_CAP] appid=${appId} queued=${queued.length} remaining=${remaining}`);
-        if (remaining > 0) {
-          showGroupedAchievementOverlay(remaining);
         }
       }
 
@@ -786,7 +783,7 @@ class AchievementWatcherService {
             // Skip when disk data source conflicts with user's chosen platform
             if (!baseSourceConflict) {
               const summary = this.cacheToSummary(appIdStr, cached);
-              achievementStore.setSummary(appIdStr, summary, basePlatform);
+              achievementStore.setSummary(appIdStr, summary, basePlatform, { skipUnlockDetection: true });
             }
           }
         } catch {
@@ -1139,9 +1136,15 @@ class AchievementWatcherService {
 
             for (const entry of schemaEntries) {
               if (entry.stat_id == null || entry.bit == null) continue;
-              const statValue = statsMap.get(entry.stat_id) ?? 0;
-              const isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
               const timestamp = timestampMap.get(`${entry.stat_id}:${entry.bit}`);
+              let isUnlocked: boolean;
+              if (timestamp) {
+                // Timestamp is authoritative (matches Rust generate_achievement_schema logic)
+                isUnlocked = true;
+              } else {
+                const statValue = statsMap.get(entry.stat_id) ?? 0;
+                isUnlocked = ((statValue >>> entry.bit) & 1) === 1;
+              }
               if (isUnlocked) unlocked++;
               progressMap.set(entry.api_name, {
                 unlocked: isUnlocked,
@@ -1154,9 +1157,9 @@ class AchievementWatcherService {
               total: schemaEntries.length,
               unlocked,
               progressMap,
-              authoritative: true,
+              authoritative: source === "usergamestats",
             };
-            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats authoritative=true`);
+            console.log(`[ACH][PIPELINE] usergamestats_direct appid=${appId} total=${effectivePatch.total} unlocked=${unlocked} source=binary-stats authoritative=${source === "usergamestats"}`);
           } else if (schemaEntries.length > 0) {
             const progressMap = new Map<string, { unlocked: boolean }>();
             for (const entry of schemaEntries) {
