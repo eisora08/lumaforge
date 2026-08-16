@@ -3,8 +3,8 @@ import { createPortal } from "react-dom";
 import type { LibraryGame } from "../../types/libraryGame";
 import { getPlaytimeEntryByAppId, formatPlaytime } from "../../services/playtimeService";
 
-const POPUP_WIDTH = 360;
-const POPUP_IMAGE_HEIGHT = 202;
+const POPUP_WIDTH = 300;
+const POPUP_IMAGE_HEIGHT = 170;
 const CYCLE_MS = 2000;
 const CROSSFADE_MS = 400;
 
@@ -22,11 +22,9 @@ function formatRelativeTime(unixSeconds: number | null): string {
 type GameHoverPreviewProps = {
   game: LibraryGame;
   position: DOMRect;
-  onMouseEnter: () => void;
-  onMouseLeave: () => void;
 };
 
-export default function GameHoverPreview({ game, position, onMouseEnter, onMouseLeave }: GameHoverPreviewProps) {
+export default function GameHoverPreview({ game, position }: GameHoverPreviewProps) {
   const popupRef = useRef<HTMLDivElement>(null);
 
   // Screenshot carousel
@@ -98,11 +96,9 @@ export default function GameHoverPreview({ game, position, onMouseEnter, onMouse
       }}
       onMouseEnter={() => {
         pausedRef.current = true;
-        onMouseEnter();
       }}
       onMouseLeave={() => {
         pausedRef.current = false;
-        onMouseLeave();
       }}
     >
       <div className="overflow-hidden rounded-xl border border-white/10 lf-surface shadow-2xl shadow-black/60">

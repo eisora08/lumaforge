@@ -105,6 +105,20 @@ export default function LibraryPage({ onNavigate }: Props) {
     setGamePosition(null);
   }, []);
 
+  // Clear hover preview on scroll
+  useEffect(() => {
+    const main = document.querySelector('main');
+    if (!main) return;
+    function handleScroll() {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+      setHoveredGame(null);
+      setGamePosition(null);
+    }
+    main.addEventListener('scroll', handleScroll, { passive: true });
+    return () => main.removeEventListener('scroll', handleScroll);
+  }, []);
+
   // Library focus mode — when navigating from Store after package download
   const [focusAppId, setFocusAppId] = useState<string | null>(null);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
@@ -814,10 +828,6 @@ export default function LibraryPage({ onNavigate }: Props) {
         <GameHoverPreview
           game={hoveredGame}
           position={gamePosition}
-          onMouseEnter={() => {
-            if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-          }}
-          onMouseLeave={handleHoverEnd}
         />
       )}
     </div>

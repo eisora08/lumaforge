@@ -256,9 +256,6 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
     setShowPanel(false);
   }
 
-  const iconIdle = "text-(--color-text)/60";
-  const iconHover = "group-hover:text-(--color-text)";
-
   return (
     <>
     <header className="absolute top-0 left-0 right-0 z-20 flex h-14 select-none items-stretch border-b border-white/[0.06]" style={{ background: "var(--surface-active)", backdropFilter: "var(--surface-active-blur)", WebkitBackdropFilter: "var(--surface-active-blur)" } as React.CSSProperties}>
@@ -417,38 +414,38 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
         </button>
       </div>
 
-      {/* window controls — sibling, NOT inside drag region */}
-      <div className="flex h-full items-stretch">
+      {/* window controls — compact premium */}
+      <div className="flex h-full items-center gap-1 pr-1.5">
         <button
           onClick={handleMinimize}
           aria-label="Minimize window"
           title="Minimize"
-          className="group flex w-[46px] cursor-default items-center justify-center transition-colors hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--color-accent)/60"
+          className="flex h-[32px] w-[40px] cursor-default items-center justify-center rounded-lg transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
         >
-          <Minus className={`h-4 w-4 ${iconIdle} ${iconHover}`} />
+          <Minus className="h-3.5 w-3.5 text-(--color-text)/60" />
         </button>
         <button
           onClick={handleToggleMaximize}
           aria-label={isMaximized ? "Restore window" : "Maximize window"}
           title={isMaximized ? "Restore Down" : "Maximize"}
-          className="group flex w-[46px] cursor-default items-center justify-center transition-colors hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--color-accent)/60"
+          className="flex h-[32px] w-[40px] cursor-default items-center justify-center rounded-lg transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
         >
           {isMaximized ? (
-            <svg className={`h-3.5 w-3.5 ${iconIdle} ${iconHover}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="h-3.5 w-3.5 text-(--color-text)/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="8" y="3" width="13" height="13" rx="2" />
               <path d="M3 8h13v13H8a2 2 0 0 1-2-2V8z" />
             </svg>
           ) : (
-            <Square className={`h-3.5 w-3.5 ${iconIdle} ${iconHover}`} />
+            <Square className="h-3.5 w-3.5 text-(--color-text)/60" />
           )}
         </button>
         <button
           onClick={handleClose}
           aria-label="Close window"
           title="Close"
-          className="group flex w-[46px] cursor-default items-center justify-center transition-colors hover:bg-red-500/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--color-accent)/60"
+          className="flex h-[32px] w-[40px] cursor-default items-center justify-center rounded-lg transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
         >
-          <X className={`h-4 w-4 ${iconIdle} group-hover:text-white`} />
+          <X className="h-3.5 w-3.5 text-(--color-text)/60 group-hover:text-white" />
         </button>
       </div>
     </header>
