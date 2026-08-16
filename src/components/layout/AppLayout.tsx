@@ -136,12 +136,10 @@ export default function AppLayout({
         <StoreTabProvider>
         <SearchProvider>
         {/* TopBar — full width, above sidebar */}
-        <div className="relative z-20">
-            <TopBarShell
-              activePage={activePage}
-              onNavigate={onNavigate}
-            />
-        </div>
+        <TopBarShell
+          activePage={activePage}
+          onNavigate={onNavigate}
+        />
 
         {/* Sidebar + Content — below TopBar */}
         <div className="relative z-10 flex flex-1 min-h-0 overflow-hidden">

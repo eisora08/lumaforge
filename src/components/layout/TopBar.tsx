@@ -34,8 +34,7 @@ type TopBarProps = {
 
 export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreTab, onStoreTabChange }: TopBarProps) {
   const { setQuery } = useSearch();
-  const { selectGame, selectedGame } = useGameDetails();
-  const isGameDetailsActive = activePage === "library-game-detail" || !!selectedGame;
+  const { selectGame } = useGameDetails();
   const showSearch = true;
   const [luaUpdateCount, setLuaUpdateCount] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
@@ -262,7 +261,7 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
 
   return (
     <>
-    <header className={`sticky top-0 z-20 flex h-14 select-none items-stretch transition-colors duration-300 ${isGameDetailsActive ? "bg-transparent" : "bg-(--shell-bg)"}`} style={{ backdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)', WebkitBackdropFilter: isGameDetailsActive ? 'blur(20px) saturate(1.2)' : 'var(--shell-blur, none)' } as React.CSSProperties}>
+    <header className="sticky top-0 z-20 flex h-14 select-none items-stretch lf-surface border-b border-white/[0.06]" style={{ WebkitBackdropFilter: "var(--surface-active-blur)" } as React.CSSProperties}>
       {/* Logo — leftmost */}
       <button
         onClick={() => onNavigate?.("home")}

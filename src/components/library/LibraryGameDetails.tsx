@@ -4,6 +4,7 @@ const DEBUG_LAUNCH_BUTTON_RENDER = false;
 const DEBUG_MANUAL_REMOVE = false;
 // Debug flag for hero layer composition (blur backdrop vs sharp foreground)
 const DEBUG_HERO_LAYERS = false;
+const SHOW_ACH_DEBUG_BUTTONS = false;
 
 // Compares two media URLs/paths by normalized basename (case-insensitive, ignores query/hash).
 // The snapshot stores relative paths (media/background.jpg) while canonicalAppInfo resolves
@@ -22,6 +23,7 @@ function sameHeroFile(a: string, b: string): boolean {
 }
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { countRender, isInteractionBusy } from "../../services/perfCounters";
 import {
   BookMarked,
@@ -286,6 +288,13 @@ export default function LibraryGameDetails({
   const favoriteId = getFavoriteKey(game) ?? game.id;
   const favorite = isFavorite(favoriteId);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const stickyActionsBtnRef = useRef<HTMLButtonElement>(null);
+  const dropdownMenuRef = useRef<HTMLDivElement>(null);
+  const [anchorRect, setAnchorRect] = useState<{ top: number; right: number } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const stickyHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showStickyBar, setShowStickyBar] = useState(false);
   const isManualGame = game.source === "manual";
   const isEpicGame = game.source === "epic";
   const linkedSteamAppId = isManualGame ? ((localDetailsData as any)?.linkedSteamAppId ?? null) : null;
@@ -626,6 +635,25 @@ export default function LibraryGameDetails({
   }, [_validatedLogoSrc, resolvedLogoSync, game.appId]);
   const logoUrl = resolvedLogoSync ?? resolvedRelativeLogoUrl;
   useEffect(() => { setLogoNaturalHeight(null); }, [logoUrl]);
+
+  // Sticky bar — shows when the action row scrolls out of view (with hysteresis to prevent flicker)
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) {
+          if (stickyHideTimerRef.current) { clearTimeout(stickyHideTimerRef.current); stickyHideTimerRef.current = null; }
+          setShowStickyBar(true);
+        } else {
+          stickyHideTimerRef.current = setTimeout(() => { stickyHideTimerRef.current = null; setShowStickyBar(false); }, 80);
+        }
+      },
+      { root: null, threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => { observer.disconnect(); if (stickyHideTimerRef.current) { clearTimeout(stickyHideTimerRef.current); stickyHideTimerRef.current = null; } };
+  }, [loading, game?.appId]);
   // Responsive logo sizing: width scales with the viewport, height stays proportional to the
   // logo's intrinsic aspect ratio once loaded. max-height caps extreme ratios.
   const logoWidth = "clamp(160px, 44vw, 540px)";
@@ -1270,9 +1298,11 @@ export default function LibraryGameDetails({
   useEffect(() => {
     if (!showActions) return;
     function handleClick(e: MouseEvent) {
-      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
-        setShowActions(false);
-      }
+      const target = e.target as Node;
+      if (dropdownMenuRef.current?.contains(target)) return;
+      if (actionsRef.current?.contains(target)) return;
+      if (stickyActionsBtnRef.current?.contains(target)) return;
+      setShowActions(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -1299,8 +1329,8 @@ export default function LibraryGameDetails({
 
   if (loading) {
     return (
-      <div className="flex h-full flex-col overflow-y-auto">
-        <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] overflow-hidden bg-black">
+    <div className="flex h-full flex-col overflow-y-auto">
+      <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] overflow-hidden bg-black">
           <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-black/40" />
         </div>
         <div className="relative z-10 shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
@@ -1340,7 +1370,73 @@ export default function LibraryGameDetails({
   }
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div ref={scrollRef} className="flex h-full flex-col">
+      {/* Sticky bar — appears when hero+action row scroll away */}
+      <div className={`sticky top-0 z-30 shrink-0 transition-transform duration-200 ease-out ${showStickyBar ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0 pointer-events-none"}`}>
+        <div className="bg-(--color-bg)/90 border-b border-white/[0.06] px-5 py-2.5 backdrop-blur-sm">
+          <div className="mx-auto flex max-w-[1440px] items-center gap-3">
+            {/* Play / Install button */}
+            <button
+              type="button"
+              onClick={() => onPlay(game)}
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-(--color-accent) px-3.5 py-1.5 text-xs font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
+            >
+              <Play className="h-3.5 w-3.5" />
+              {effectiveAction === "install" ? "Install" : "Play"}
+            </button>
+
+            {/* Game cover icon */}
+            {(() => {
+              const coverRaw = game.coverPath || game.landscapePath || canonicalAppInfo?.media?.coverPath;
+              if (!coverRaw) return <div className="h-7 w-7 shrink-0 rounded-md bg-white/5 ring-1 ring-white/10" />;
+              const coverUrl = coverRaw.startsWith("http") || coverRaw.startsWith("asset://") || coverRaw.startsWith("data:") || coverRaw.startsWith("file://")
+                ? coverRaw
+                : isLocalPath(coverRaw) ? localPathToUrl(coverRaw) : coverRaw;
+              return (
+                <img
+                  src={coverUrl ?? undefined}
+                  alt=""
+                  className="h-7 w-7 shrink-0 rounded-md object-cover ring-1 ring-white/10"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              );
+            })()}
+
+            {/* Title */}
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white drop-shadow-sm">
+              {detailTitle}
+            </span>
+
+            {/* Actions dropdown */}
+            <button
+              type="button"
+              ref={stickyActionsBtnRef}
+              onClick={() => {
+                const rect = stickyActionsBtnRef.current?.getBoundingClientRect();
+                if (rect) setAnchorRect({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                setShowActions(!showActions);
+              }}
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-(--surface-active-border) bg-white/5 px-2.5 py-1.5 text-xs font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text)"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+
+            {/* Favorite heart */}
+            <button
+              type="button"
+              onClick={() => { toggleFavorite(favoriteId); }}
+              className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full p-1.5 transition hover:bg-white/10"
+              title={favorite ? "Remove from favorites" : "Add to favorites"}
+            >
+              <Heart
+                className={`h-4 w-4 ${favorite ? "text-rose-400" : "text-white/50"}`}
+                fill={favorite ? "currentColor" : "none"}
+              />
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Hero banner — Steam-style header */}
       <div className="relative aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
         {/* Layer 1 — Steam-style colorful blurred backdrop */}
@@ -1391,7 +1487,7 @@ export default function LibraryGameDetails({
 
         {/* Bottom content: logo + title */}
         {canonicalLoaded && (
-        <div className="absolute bottom-0 left-0 right-0 z-30">
+        <div className="absolute bottom-0 left-0 right-0 z-30 pointer-events-none">
           <div className="mx-auto w-full max-w-[1440px] px-5 pb-4 lg:pb-5">
             {logoUrl ? (
               <img
@@ -1414,42 +1510,53 @@ export default function LibraryGameDetails({
                 {detailTitle}
               </h1>
             )}
-
-            {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
-              <p className="mt-0.5 text-sm text-white/70">
-                {(localDetailsData as any)?.developer || game.metadata?.developer}
-              </p>
-            )}
             {game.source === "debrid" && game.repacker && (
               <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-medium text-cyan-400 ring-1 ring-cyan-500/25">
                 {game.repacker.toUpperCase()}
               </span>
             )}
-            {(() => {
-              const srcBadge = game.hasLua
-                ? { label: "LUA", cls: "bg-emerald-500/15 text-emerald-400 ring-emerald-500/25" }
-                : game.source === "epic"
-                  ? { label: "EPIC", cls: "bg-purple-500/15 text-purple-400 ring-purple-500/25" }
-                  : game.source === "debrid"
-                    ? { label: "DEBRID", cls: "bg-cyan-500/15 text-cyan-400 ring-cyan-500/25" }
-                    : game.source === "manual"
-                      ? { label: "MANUAL", cls: "bg-amber-500/15 text-amber-300 ring-amber-500/25" }
-                      : game.source === "steam"
-                        ? { label: "STEAM", cls: "bg-blue-500/15 text-blue-400 ring-blue-500/25" }
-                        : null;
-              if (!srcBadge) return null;
-              return (
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${srcBadge.cls}`}>
-                  {srcBadge.label}
-                </span>
-              );
-            })()}
           </div>
         </div>
         )}
+
+        {/* Floating developer + source badge — raised above action row */}
+        {canonicalLoaded && (game.metadata?.developer || (localDetailsData as any)?.developer || (() => {
+          const b = game.hasLua ? "LUA" : game.source === "epic" ? "EPIC" : game.source === "debrid" ? "DEBRID" : game.source === "manual" ? "MANUAL" : game.source === "steam" ? "STEAM" : null;
+          return b;
+        })()) && (
+          <div className="absolute bottom-20 right-0 z-30 pointer-events-none px-5 text-right lg:px-8">
+            <div className="flex items-center gap-2">
+              {(game.metadata?.developer || (localDetailsData as any)?.developer) && (
+                <span className="text-sm text-white/60 drop-shadow-sm">
+                  {(localDetailsData as any)?.developer || game.metadata?.developer}
+                </span>
+              )}
+              {(() => {
+                const srcBadge = game.hasLua
+                  ? { label: "LUA", cls: "bg-emerald-500/15 text-emerald-400 ring-emerald-500/25" }
+                  : game.source === "epic"
+                    ? { label: "EPIC", cls: "bg-purple-500/15 text-purple-400 ring-purple-500/25" }
+                    : game.source === "debrid"
+                      ? { label: "DEBRID", cls: "bg-cyan-500/15 text-cyan-400 ring-cyan-500/25" }
+                      : game.source === "manual"
+                        ? { label: "MANUAL", cls: "bg-amber-500/15 text-amber-300 ring-amber-500/25" }
+                        : game.source === "steam"
+                          ? { label: "STEAM", cls: "bg-blue-500/15 text-blue-400 ring-blue-500/25" }
+                          : null;
+                if (!srcBadge) return null;
+                return (
+                  <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ring-1 ${srcBadge.cls}`}>
+                    {srcBadge.label}
+                  </span>
+                );
+              })()}
+            </div>
+          </div>
+        )}
       </div>
-      <div className="relative z-10 shrink-0 bg-linear-to-b from-white/[0.03] to-transparent">
-        <div className="mx-auto w-full max-w-[1440px] px-5 py-3">
+      {/* Action row — surface-mode glass overlay on hero bottom */}
+      <div className={`relative z-20 -mt-16 shrink-0 lf-surface border-t border-white/[0.06] transition-[background-color,backdrop-filter] duration-300`}>
+        <div className="mx-auto w-full max-w-[1440px] px-5 py-4">
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* Play / Install button */}
             <div className="shrink-0">
@@ -1737,143 +1844,16 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
               <div className="relative" ref={actionsRef}>
                 <button
                   type="button"
-                  onClick={() => setShowActions(!showActions)}
+                  onClick={() => {
+                    const rect = actionsRef.current?.querySelector('button')?.getBoundingClientRect();
+                    if (rect) setAnchorRect({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                    setShowActions(!showActions);
+                  }}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-xs font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-(--color-accent)/50"
                 >
                   <MoreHorizontal className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Actions</span>
                 </button>
-
-                {showActions && (
-                  <>
-                    <div className="fixed inset-0 z-30" onClick={() => setShowActions(false)} />
-                    <div className="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-(--surface-active-border) lf-surface p-1 shadow-lg">
-                      {hasPendingUninstall ? (
-                        <DropdownItem
-                          label="Cancel tracking"
-                          onClick={() => {
-                            setShowActions(false);
-                            if (!game.appId) return;
-                            console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel before=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
-                            clearPendingUninstall(game.appId);
-                            showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
-                            console.log(`[UNINSTALL_PENDING] appid=${game.appId} phase=manual-cancel after=${isPendingUninstall(game.appId)} source=gamedetails-actions`);
-                          }}
-                        />
-                      ) : game.source === "debrid" ? (
-                        <DropdownItem
-                          label="Remove from Library"
-                          destructive
-                          onClick={() => {
-                            setShowActions(false);
-                            const providerGameId = game.providerGameId;
-                            if (providerGameId) {
-                              removeDebridGameFromLibrary(providerGameId);
-                              showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
-                            } else {
-                              showError("Could not remove this game from the library.");
-                            }
-                          }}
-                        />
-                      ) : game.steamInstalled && game.source !== "epic" ? (
-                        <DropdownItem
-                          label="Uninstall in Steam"
-                          onClick={async () => {
-                            setShowActions(false);
-                            const appIdStr = String(game.appId);
-                            const appIdNum = Number(game.appId);
-                            markPendingUninstall(appIdStr);
-                            console.log(`[UNINSTALL_PENDING] appid=${appIdStr} phase=start source=gamedetails-actions`);
-                            showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
-                            try {
-                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} source=gamedetails-actions`);
-                              await uninstallSteamApp(appIdNum);
-                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} result=ok source=gamedetails-actions`);
-                            } catch (e1) {
-                              console.log(`[STEAM_UNINSTALL_OPEN] appid=${appIdNum} result=error error=${e1} source=gamedetails-actions`);
-                              try {
-                                console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appIdNum} attempt=2 source=gamedetails-actions`);
-                                await openSteamStoreApp(appIdNum);
-                              } catch (e2) {
-                                console.log(`[STEAM_UNINSTALL_FALLBACK] appid=${appIdNum} uri=${getSteamStoreUrl(appIdNum)} attempt=3 source=gamedetails-actions`);
-                                await openExternalUrl(getSteamStoreUrl(appIdNum));
-                              }
-                            }
-                          }}
-                        />
-                      ) : null}
-                      {script && onDeleteScript && (
-                        <DropdownItem
-                          label="Delete Lua"
-                          onClick={() => {
-                            setShowActions(false);
-                            onDeleteScript(game);
-                          }}
-                        />
-                      )}
-                      {(!script || !onDeleteScript) && (
-                        <DropdownItem
-                          label="Delete Lua"
-                          disabled={!script}
-                          subtitle={!script ? "No Lua script" : undefined}
-                        />
-                      )}
-                      <div className="border-t border-(--surface-active-border) my-1" />
-                      {game.source === "manual" && (
-                        <DropdownItem
-                          label="Remove from Library"
-                          destructive
-                          disabled={isManualRunning}
-                          subtitle={isManualRunning ? "Stop the game first" : undefined}
-                          onClick={() => {
-                            if (isManualRunning) return;
-                            setShowActions(false);
-                            const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
-                            if (rawId && window.confirm(`Remove "${game.title}" from your library?`)) {
-                              if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][DETAILS] rawId=${rawId} title="${game.title}"`);
-                              removeManualGame(rawId);
-                              showInfo(`"${game.title ?? rawId}" removed from library`);
-                              onBack();
-                            }
-                          }}
-                        />
-                      )}
-                      <DropdownItem
-                        label="Edit Game Details"
-                        onClick={() => {
-                          setShowActions(false);
-                          setEditDialogTab("general");
-                          setEditDialogOpen(true);
-                        }}
-                      />
-                      <DropdownItem
-                        label={game.source === "epic" || (game.source === "manual" && !game.appId) ? "Manage Artwork" : "Refresh Artwork"}
-                        onClick={() => {
-                          setShowActions(false);
-                          if (game.source === "epic" || (game.source === "manual" && !game.appId)) {
-                            setEditDialogTab("media");
-                            setEditDialogOpen(true);
-                          } else {
-                            onRefreshArtwork?.();
-                          }
-                        }}
-                      />
-                      {onOpenTools && (
-                        <DropdownItem
-                          label="Game Fixes"
-                          onClick={() => {
-                            setShowActions(false);
-                            onOpenTools(game);
-                          }}
-                        />
-                      )}
-                      <DropdownItem
-                        label="Close"
-                        onClick={() => setShowActions(false)}
-                      />
-                    </div>
-                  </>
-                )}
               </div>
 
               {/* Favorite button */}
@@ -1893,8 +1873,11 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
         </div>
       </div>
 
+      {/* Sentinel — triggers sticky bar when hero+action row scrolls out of view */}
+      <div ref={sentinelRef} className="h-0 w-full shrink-0" aria-hidden="true" />
+
       {/* Main content: two columns */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1">
         <div className="mx-auto w-full max-w-[1440px] px-5 py-6 lg:py-8">
           <div className="lg:grid lg:grid-cols-[1fr_340px] lg:gap-8">
             {/* Left: Overview */}
@@ -2067,7 +2050,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
             {/* Right: Side panel */}
             <aside className="mt-8 lg:mt-0">
               {(!isManualGame || linkedSteamAppId || !!appIdStr) && (!isEpicGame || linkedSteamAppId) && (
-              <div className="sticky top-4 space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
+              <div className="space-y-4 rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-4">
                 <h3 className="text-xs font-bold text-(--color-muted) uppercase tracking-wider">
                   {isManualGame ? "Steam Links" : "Links"}
                 </h3>
@@ -2351,7 +2334,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                           View all achievements ({achievementsSummary.total})
                         </button>
                       )}
-                      {import.meta.env.DEV && (
+                      {SHOW_ACH_DEBUG_BUTTONS && (
                         <>
                           <button
                             type="button"
@@ -2489,7 +2472,7 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
                         <Trophy className="h-3.5 w-3.5" />
                         View all achievements
                       </button>
-                      {import.meta.env.DEV && (
+                      {SHOW_ACH_DEBUG_BUTTONS && (
                         <button
                           type="button"
                           onClick={() => { if (appIdStr) debugAchievements(appIdStr, {
@@ -2850,6 +2833,83 @@ className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-(--colo
             bingSearchApiKey: (settings as Record<string, unknown>).bingSearchApiKey as string,
           }}
         />
+      )}
+
+      {/* Actions dropdown — portal to body like CardActionMenu */}
+      {showActions && anchorRect && createPortal(
+        <>
+          <div className="fixed inset-0 z-[99999]" onMouseDown={() => setShowActions(false)} />
+          <div
+            ref={dropdownMenuRef}
+            className="fixed z-[100000] w-52 overflow-hidden rounded-xl border border-(--surface-active-border)/60 lf-surface p-1 shadow-2xl"
+            style={{ top: anchorRect.top, right: anchorRect.right }}
+          >
+            {hasPendingUninstall ? (
+              <DropdownItem label="Cancel tracking" onClick={() => {
+                setShowActions(false);
+                if (!game.appId) return;
+                clearPendingUninstall(game.appId);
+                showInfo(`"${game.title ?? game.appId}" uninstall tracking cancelled.`);
+              }} />
+            ) : game.source === "debrid" ? (
+              <DropdownItem label="Remove from Library" destructive onClick={() => {
+                setShowActions(false);
+                const providerGameId = game.providerGameId;
+                if (providerGameId) {
+                  removeDebridGameFromLibrary(providerGameId);
+                  showSuccess(`"${game.title ?? providerGameId}" removed from library. Files on disk are kept.`);
+                } else {
+                  showError("Could not remove this game from the library.");
+                }
+              }} />
+            ) : game.steamInstalled && game.source !== "epic" ? (
+              <DropdownItem label="Uninstall in Steam" onClick={async () => {
+                setShowActions(false);
+                const appIdNum = Number(game.appId);
+                markPendingUninstall(String(game.appId));
+                showInfo("Steam uninstall opened. Complete uninstall in Steam. LumaForge will update automatically.", { title: "Uninstall" });
+                try { await uninstallSteamApp(appIdNum); } catch { try { await openSteamStoreApp(appIdNum); } catch { await openExternalUrl(getSteamStoreUrl(appIdNum)); } }
+              }} />
+            ) : null}
+            {script && onDeleteScript && (
+              <DropdownItem label="Delete Lua" onClick={() => { setShowActions(false); onDeleteScript(game); }} />
+            )}
+            {(!script || !onDeleteScript) && (
+              <DropdownItem label="Delete Lua" disabled={!script} subtitle={!script ? "No Lua script" : undefined} />
+            )}
+            <div className="border-t border-(--surface-active-border) my-1" />
+            {game.source === "manual" && (
+              <DropdownItem label="Remove from Library" destructive disabled={isManualRunning}
+                subtitle={isManualRunning ? "Stop the game first" : undefined}
+                onClick={() => {
+                  if (isManualRunning) return;
+                  setShowActions(false);
+                  const rawId = normalizeManualGameId(game.providerGameId || game.id || "");
+                  if (rawId && window.confirm(`Remove "${game.title}" from your library?`)) {
+                    if (DEBUG_MANUAL_REMOVE) console.log(`[MANUAL_REMOVE][DETAILS] rawId=${rawId} title="${game.title}"`);
+                    removeManualGame(rawId);
+                    showInfo(`"${game.title ?? rawId}" removed from library`);
+                    onBack();
+                  }
+                }} />
+            )}
+            <DropdownItem label="Edit Game Details" onClick={() => { setShowActions(false); setEditDialogTab("general"); setEditDialogOpen(true); }} />
+            <DropdownItem
+              label={game.source === "epic" || (game.source === "manual" && !game.appId) ? "Manage Artwork" : "Refresh Artwork"}
+              onClick={() => {
+                setShowActions(false);
+                if (game.source === "epic" || (game.source === "manual" && !game.appId)) {
+                  setEditDialogTab("media");
+                  setEditDialogOpen(true);
+                } else { onRefreshArtwork?.(); }
+              }} />
+            {onOpenTools && (
+              <DropdownItem label="Game Fixes" onClick={() => { setShowActions(false); onOpenTools(game); }} />
+            )}
+            <DropdownItem label="Close" onClick={() => setShowActions(false)} />
+          </div>
+        </>,
+        document.body
       )}
     </div>
   );
