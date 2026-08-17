@@ -879,7 +879,14 @@ export default function GameEditDialog({
   }, [workingDirectoryDraft, installDirDraft]);
 
   const handleOpenInstallFolder = useCallback(async () => {
-    const folder = installDirDraft.trim() || game?.installDir || "";
+    // For Debrid: prefer exe parent directory (real game location) over extraction folder
+    const exe = executablePathDraft.trim();
+    let folder = "";
+    if (exe) {
+      const sep = Math.max(exe.lastIndexOf("\\"), exe.lastIndexOf("/"));
+      if (sep > 0) folder = exe.substring(0, sep);
+    }
+    if (!folder) folder = installDirDraft.trim() || game?.installDir || "";
     if (!folder) {
       showError("No install folder configured");
       return;
@@ -889,7 +896,7 @@ export default function GameEditDialog({
     } catch {
       showError("Could not open install folder");
     }
-  }, [installDirDraft, game]);
+  }, [executablePathDraft, installDirDraft, game]);
 
   // ── Save all fields ──
   const handleSave = useCallback(async () => {
@@ -2176,61 +2183,12 @@ export default function GameEditDialog({
       <div className="space-y-5">
         {isDebridInstall ? (
           <>
-            {/* ── Section: Debrid Install Info ── */}
+            {/* ── Section: Game Configuration ── */}
             <div>
               <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
-                Debrid / Repack Installation
+                Game Configuration
               </h4>
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-(--color-text)">Steam App ID</span>
-                  <span className="text-xs text-(--color-muted)">{appId ?? "—"}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-(--color-text)">Installed</span>
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${game?.installDir ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-500/15 text-zinc-400"}`}>
-                    {game?.installDir ? "Yes" : "No"}
-                  </span>
-                </div>
-
-                {/* Install Directory */}
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
-                    Install Directory
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={installDirDraft}
-                      onChange={(e) => { setInstallDirDraft(e.target.value); setHasEdits(true); }}
-                      placeholder="C:\Games\My Game"
-                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
-                    />
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const folder = await pickFolder("Select Install Folder", installDirDraft.trim() || undefined);
-                        if (folder) { setInstallDirDraft(folder); setHasEdits(true); }
-                      }}
-                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                </div>
-
-                {/* Open Install Folder */}
-                {installDirDraft.trim() && (
-                  <button
-                    type="button"
-                    onClick={handleOpenInstallFolder}
-                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
-                  >
-                    <FolderOpen className="h-4 w-4 text-(--color-muted)" />
-                    Open Install Folder
-                  </button>
-                )}
-
                 {/* Executable Path */}
                 <div>
                   <label className="mb-1 block text-xs font-medium text-(--color-muted)">
@@ -2240,7 +2198,14 @@ export default function GameEditDialog({
                     <input
                       type="text"
                       value={executablePathDraft}
-                      onChange={(e) => { setExecutablePathDraft(e.target.value); setHasEdits(true); }}
+                      onChange={(e) => {
+                        setExecutablePathDraft(e.target.value);
+                        if (!installDirDraft.trim() && !workingDirectoryDraft.trim()) {
+                          const parent = e.target.value.replace(/[\\/][^/\\]+$/, "");
+                          if (parent) { setInstallDirDraft(parent); setWorkingDirectoryDraft(parent); }
+                        }
+                        setHasEdits(true);
+                      }}
                       placeholder="C:\Path\To\Game.exe"
                       className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
                     />
@@ -2257,9 +2222,6 @@ export default function GameEditDialog({
                       Warning: This looks like a bare filename. Use Browse to select the full path so the game can launch.
                     </p>
                   )}
-                  <p className="mt-1 text-[11px] text-(--color-muted)/60">
-                    Required to launch the game. Other fields launch the game directly.
-                  </p>
                 </div>
 
                 {/* Working Directory */}
@@ -2305,6 +2267,69 @@ export default function GameEditDialog({
                   />
                 </div>
 
+                {/* Install Folder */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-(--color-muted)">
+                    Install Folder
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={installDirDraft}
+                      onChange={(e) => { setInstallDirDraft(e.target.value); setHasEdits(true); }}
+                      placeholder="C:\Games\My Game"
+                      className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2.5 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)/50 focus:border-(--color-accent)/50 focus:ring-2 focus:ring-(--color-accent)/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const folder = await pickFolder("Select Install Folder", installDirDraft.trim() || undefined);
+                        if (folder) { setInstallDirDraft(folder); setHasEdits(true); }
+                      }}
+                      className="shrink-0 rounded-xl border border-(--surface-active-border) bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[11px] text-(--color-muted)/60">
+                    Auto-filled to executable parent folder if empty.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Section: Install Info ── */}
+            <div className="border-t border-(--color-border) pt-4">
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">
+                Install Info
+              </h4>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Steam App ID</span>
+                  <span className="text-xs text-(--color-muted)">{appId ?? "—"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Installed</span>
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${hasExe ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-500/15 text-zinc-400"}`}>
+                    {hasExe ? "Yes" : "Not configured"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Install Size</span>
+                  <span className="text-xs text-(--color-muted)">
+                    {game?.sizeOnDisk ? formatBytes(game.sizeOnDisk) : "Calculation not available yet"}
+                  </span>
+                </div>
+                {(installDirDraft.trim() || hasExe) && (
+                  <button
+                    type="button"
+                    onClick={handleOpenInstallFolder}
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                  >
+                    <FolderOpen className="h-4 w-4 text-(--color-muted)" />
+                    Open Install Folder
+                  </button>
+                )}
               </div>
             </div>
           </>
