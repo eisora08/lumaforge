@@ -584,26 +584,26 @@ export default function LibraryPage({ onNavigate }: Props) {
                         {addMenuOpen && (
                           <>
                             <div className="fixed inset-0 z-40" onClick={() => setAddMenuOpen(false)} />
-                            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-white/10 bg-[#1a1a2e] shadow-2xl shadow-black/50">
+                            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-(--color-border) bg-(--color-surface) shadow-2xl shadow-black/50">
                               <button
                                 onClick={() => { setAddGameOpen(true); setAddMenuOpen(false); }}
-                                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-white/70 transition hover:bg-white/[0.08] hover:text-white"
+                                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                                 <div>
                                   <div className="font-medium">Manual Entry</div>
-                                  <div className="text-[10px] text-white/30">Create game from scratch</div>
+                                  <div className="text-[10px] text-(--color-muted)/50">Create game from scratch</div>
                                 </div>
                               </button>
-                              <div className="mx-2 border-t border-white/[0.06]" />
+                              <div className="mx-2 border-t border-(--surface-active-border)/30" />
                               <button
                                 onClick={() => { setScannerOpen(true); setAddMenuOpen(false); }}
-                                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-white/70 transition hover:bg-white/[0.08] hover:text-white"
+                                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
                               >
                                 <Scan className="h-3.5 w-3.5" />
                                 <div>
                                   <div className="font-medium">Scan Installed</div>
-                                  <div className="text-[10px] text-white/30">Detect games on your PC</div>
+                                  <div className="text-[10px] text-(--color-muted)/50">Detect games on your PC</div>
                                 </div>
                               </button>
                             </div>

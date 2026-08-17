@@ -1027,10 +1027,10 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
         {addMenuOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setAddMenuOpen(false)} />
-            <div className="relative z-50 -mt-0.5 overflow-hidden rounded-lg border border-white/10 bg-[#1a1a2e] shadow-xl shadow-black/40">
+            <div className="relative z-50 -mt-0.5 overflow-hidden rounded-lg border border-(--color-border) bg-(--color-surface) shadow-xl shadow-black/40">
               <button
                 onClick={() => { setScannerOpen(true); setAddMenuOpen(false); }}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/70 transition hover:bg-white/[0.08] hover:text-white"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] text-(--color-muted) transition hover:bg-white/5 hover:text-(--color-text)"
               >
                 <Scan className="h-3 w-3" />
                 Scan Installed
