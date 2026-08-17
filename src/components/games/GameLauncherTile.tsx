@@ -169,7 +169,7 @@ function GameLauncherTileInner({
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editInitialTab, setEditInitialTab] = useState<"general" | "media">("general");
+  const [editInitialTab, setEditInitialTab] = useState<"details" | "media">("details");
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const _favKey = getFavoriteKey(game);
@@ -942,7 +942,7 @@ function GameLauncherTileInner({
                 {
                   label: "Edit Game Details",
                   icon: <Edit className="h-3.5 w-3.5" />,
-                  onClick: () => { setMenuOpen(false); setEditInitialTab("general"); setEditDialogOpen(true); onOverlayToggle?.(true); },
+                  onClick: () => { setMenuOpen(false); setEditInitialTab("details"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
                 {
                   label: "Manage Artwork",

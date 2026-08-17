@@ -879,7 +879,7 @@ export default function LibraryPage({ onNavigate }: Props) {
       <GameEditDialog
         open={addGameOpen}
         onClose={() => setAddGameOpen(false)}
-        initialTab="general"
+        initialTab="details"
         settings={{
           rawgApiKey: settings?.rawgApiKey ?? "",
           igdbClientId: settings?.igdbClientId ?? "",

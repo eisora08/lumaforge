@@ -159,7 +159,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editDialogInitialTab, setEditDialogInitialTab] = useState<"general" | "media">("general");
+  const [editDialogInitialTab, setEditDialogInitialTab] = useState<"details" | "media">("details");
   const [editDialogGame, setEditDialogGame] = useState<LibraryGame | null>(null);
   const [toolsGame, setToolsGame] = useState<LibraryGame | null>(null);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
@@ -873,7 +873,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                           onClick: () => {
                             setMenuOpen(false);
                             setEditDialogGame(menuGame);
-                            setEditDialogInitialTab("general");
+                            setEditDialogInitialTab("details");
                             setEditDialogOpen(true);
                           },
                         },
@@ -1011,7 +1011,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
             type="button"
             onClick={() => {
               setEditDialogGame(null);
-              setEditDialogInitialTab("general");
+              setEditDialogInitialTab("details");
               setEditDialogOpen(true);
             }}
             className="flex flex-1 items-center gap-2 rounded-l-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"

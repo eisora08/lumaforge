@@ -5,7 +5,6 @@ import {
   Save,
   Image,
   Type,
-  Link,
   FileImage,
   Monitor,
   PanelTop,
@@ -18,7 +17,6 @@ import {
   Code,
   HardDrive,
   Info,
-  Eye,
   Globe,
   ChevronDown,
   ExternalLink,
@@ -73,7 +71,7 @@ export type GameEditDialogProps = {
   } | null;
 };
 
-type TabId = "general" | "advanced" | "media" | "links" | "installation" | "actions" | "scripts";
+type TabId = "details" | "installation" | "media" | "info";
 
 type MediaRole = "cover" | "landscape" | "background" | "logo" | "icon";
 
@@ -84,13 +82,10 @@ type MetadataSourceId = "steam" | "igdb" | "rawg";
 // ── Tab config ──
 
 const TABS: { id: TabId; label: string; icon: typeof Type }[] = [
-  { id: "general", label: "General", icon: Type },
-  { id: "advanced", label: "Advanced", icon: Info },
-  { id: "media", label: "Media", icon: Image },
-  { id: "links", label: "Links", icon: Link },
+  { id: "details", label: "Details", icon: Type },
   { id: "installation", label: "Installation", icon: HardDrive },
-  { id: "actions", label: "Actions", icon: Eye },
-  { id: "scripts", label: "Scripts", icon: Code },
+  { id: "media", label: "Media", icon: Image },
+  { id: "info", label: "Info", icon: Info },
 ];
 
 const MEDIA_ROLES: { role: MediaRole; label: string; icon: typeof FileImage; desc: string }[] = [
@@ -168,7 +163,7 @@ export default function GameEditDialog({
   debridProviderGameId,
   open,
   onClose,
-  initialTab = "general",
+  initialTab = "details",
   game,
   settings,
 }: GameEditDialogProps) {
@@ -1944,13 +1939,6 @@ export default function GameEditDialog({
               maxLength={128}
             />
             <EditableField
-              label="Sorting Name"
-              value={sortingNameDraft}
-              onChange={setSortingNameDraft}
-              placeholder="Name used for alphabetical sorting"
-              maxLength={128}
-            />
-            <EditableField
               label="Genres"
               value={genresDraft}
               onChange={setGenresDraft}
@@ -1979,45 +1967,12 @@ export default function GameEditDialog({
               placeholder="e.g. Jan 15, 2024"
             />
             <EditableField
-              label="Features"
-              value={featuresDraft}
-              onChange={setFeaturesDraft}
-              placeholder="Steam Cloud, Controller Support (comma-separated)"
-            />
-            <EditableField
-              label="Tags"
-              value={tagsDraft}
-              onChange={setTagsDraft}
-              placeholder="open-world, fps, horror (comma-separated)"
-            />
-            <EditableField
               label="Categories"
               value={categoriesDraft}
               onChange={setCategoriesDraft}
               placeholder="Single-player, Multi-player (comma-separated)"
             />
-            <EditableField
-              label="Series"
-              value={seriesDraft}
-              onChange={setSeriesDraft}
-              placeholder="e.g. Dark Souls, Call of Duty"
-            />
-            <div className="grid grid-cols-2 gap-3">
-              <EditableField
-                label="Age Rating"
-                value={ageRatingDraft}
-                onChange={setAgeRatingDraft}
-                placeholder="e.g. ESRB M, PEGI 18"
-              />
-              <EditableField
-                label="Region"
-                value={regionDraft}
-                onChange={setRegionDraft}
-                placeholder="e.g. NA, EU, WW"
-              />
-            </div>
             <FieldRow label="Source" value={isManualMode || isCreateMode ? "manual" : (game?.source ?? appInfo?.provider ?? (metadata ? "steam" : null))} />
-            <FieldRow label="Completion" value={completionStatusDraft || "—"} />
             <div>
               <label className="mb-1 block text-xs font-medium text-(--color-muted)">Steam App ID</label>
               <input
@@ -2037,51 +1992,6 @@ export default function GameEditDialog({
           </div>
         </div>
 
-        {/* Reviews / Ratings */}
-        <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
-          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">Reviews & Ratings</h4>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <EditableField
-              label="User Score"
-              value={userScoreDraft}
-              onChange={setUserScoreDraft}
-              placeholder="e.g. 8.5 / 10"
-            />
-            <EditableField
-              label="Critic Score"
-              value={criticScoreDraft}
-              onChange={setCriticScoreDraft}
-              placeholder="e.g. 86 / 100"
-            />
-            <EditableField
-              label="Community Score"
-              value={communityScoreDraft}
-              onChange={setCommunityScoreDraft}
-              placeholder="e.g. Very Positive"
-            />
-          </div>
-          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <EditableField
-              label="Review Summary"
-              value={reviewSummaryDraft}
-              onChange={setReviewSummaryDraft}
-              placeholder="e.g. Overwhelmingly Positive"
-            />
-            <EditableField
-              label="Review Count"
-              value={reviewCountDraft}
-              onChange={setReviewCountDraft}
-              placeholder="e.g. 125,432"
-            />
-            <EditableField
-              label="Review Source"
-              value={reviewSourceDraft}
-              onChange={setReviewSourceDraft}
-              placeholder="e.g. Steam, Metacritic"
-            />
-          </div>
-        </div>
-
         {/* Description */}
         <div>
           <EditableField
@@ -2097,52 +2007,14 @@ export default function GameEditDialog({
     );
   }
 
-  function renderAdvancedTab() {
-    return (
-      <div className="space-y-5">
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-          <div className="space-y-4">
-            <EditableField
-              label="Completion Status"
-              value={completionStatusDraft}
-              onChange={setCompletionStatusDraft}
-              placeholder="e.g. Complete, In Progress, Not Played"
-            />
-            {metadata?.platforms?.length ? (
-              <FieldRow label="Platforms" value={metadata.platforms.join(", ")} />
-            ) : null}
-            {metadata?.languages?.length ? (
-              <FieldRow label="Languages" value={metadata.languages.join(", ")} />
-            ) : null}
-          </div>
-          <div className="space-y-4">
-            {metadata?.dlc_count != null && metadata.dlc_count > 0 && (
-              <FieldRow label="DLC Count" value={String(metadata.dlc_count)} />
-            )}
-            {metadata?.legal_notice && (
-              <FieldRow label="Legal Notice" value={metadata.legal_notice} />
-            )}
-            {metadata?.store_drm_notice && (
-              <FieldRow label="DRM Notice" value={metadata.store_drm_notice} />
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  function renderInfoTab() {
+    const hasId = !!appId || !!effectiveId;
+    const scripts = game?.luaScripts ?? [];
 
-  function renderLinksTab() {
-    if ((isManualMode || isCreateMode) && !appIdDraft) {
-      return (
-        <div className="py-8 text-center text-sm text-(--color-muted)">
-          No external links for manual games.
-        </div>
-      );
-    }
-    if (!appId) return null;
-    const appIdNum = Number(appId);
+    // External links
     const links: { label: string; url: string; icon: typeof Globe }[] = [];
-    if (!isNaN(appIdNum)) {
+    const appIdNum = Number(appId);
+    if (appId && !isNaN(appIdNum)) {
       links.push({ label: "Steam Store", url: `https://store.steampowered.com/app/${appIdNum}`, icon: Globe });
       links.push({ label: "SteamDB", url: `https://steamdb.info/app/${appIdNum}`, icon: ExternalLink });
       links.push({ label: "ProtonDB", url: `https://www.protondb.com/app/${appIdNum}`, icon: ExternalLink });
@@ -2150,26 +2022,163 @@ export default function GameEditDialog({
       links.push({ label: "PCGamingWiki", url: `https://www.pcgamingwiki.com/api/appid.php?appid=${appIdNum}`, icon: ExternalLink });
     }
 
+    // Action buttons
+    const actionButtons: { label: string; icon: typeof FolderOpen; onClick: () => void; disabled?: boolean }[] = [
+      {
+        label: "Open Metadata Folder",
+        icon: FolderOpen,
+        onClick: () => { if (effectiveId) openGameMetadataFolder(effectiveId); onClose(); },
+        disabled: !hasId,
+      },
+      {
+        label: "Open Media Folder",
+        icon: FolderOpen,
+        onClick: () => {
+          if (isManualMode && manualGameId) { openProviderMediaFolder("manual", manualGameId); }
+          else if (effectiveId) { openGameMediaFolder(effectiveId); }
+          onClose();
+        },
+        disabled: !hasId,
+      },
+      ...(!isManualMode && !isCreateMode && appId ? [{
+        label: "Refresh Artwork",
+        icon: RefreshCw,
+        onClick: async () => {
+          try {
+            await refreshGameDetailsArtwork(
+              appId,
+              appInfo?.media ?? null,
+              metadata,
+              null,
+              null,
+              {
+                sgdbApiKey: settings?.steamGridDbApiKey ?? "",
+                sgdbEnabled: !!(settings?.steamGridDbArtworkEnabled && settings?.steamGridDbApiKey),
+                rawgApiKey: settings?.rawgApiKey ?? "",
+                useRawg: !!settings?.rawgApiKey,
+              },
+            );
+            invalidateResolvedMediaCache(appId);
+            notifyMediaUpdated(appId);
+            showSuccess("Artwork refresh triggered");
+            onClose();
+          } catch {
+            showError("Artwork refresh failed");
+          }
+        },
+        disabled: false,
+      }] : []),
+      {
+        label: "Copy App ID",
+        icon: Copy,
+        onClick: () => {
+          navigator.clipboard.writeText(effectiveId).catch(() => {});
+          showSuccess("App ID copied");
+        },
+        disabled: !hasId,
+      },
+      ...(!isManualMode && !isCreateMode && appId ? [{
+        label: "Open Steam Page",
+        icon: Globe,
+        onClick: () => {
+          window.open(`https://store.steampowered.com/app/${appId}`, "_blank");
+          onClose();
+        },
+        disabled: false,
+      }] : []),
+    ];
+
     return (
-      <div className="space-y-2">
-        {links.map((link) => (
-          <a
-            key={link.label}
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
-          >
-            <link.icon className="h-4 w-4 text-(--color-accent)" />
-            <span className="flex-1">{link.label}</span>
-            <ExternalLink className="h-3.5 w-3.5 text-(--color-muted)" />
-          </a>
-        ))}
-        {links.length === 0 && (
-          <p className="py-8 text-center text-sm text-(--color-muted)">
-            No links available for this game.
-          </p>
+      <div className="space-y-6">
+        {/* ── Game Information (metadata) ── */}
+        <div>
+          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">Game Information</h4>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-3">
+              <EditableField
+                label="Completion Status"
+                value={completionStatusDraft}
+                onChange={setCompletionStatusDraft}
+                placeholder="e.g. Complete, In Progress, Not Played"
+              />
+              {metadata?.platforms?.length ? (
+                <FieldRow label="Platforms" value={metadata.platforms.join(", ")} />
+              ) : null}
+              {metadata?.languages?.length ? (
+                <FieldRow label="Languages" value={metadata.languages.join(", ")} />
+              ) : null}
+            </div>
+            <div className="space-y-3">
+              {metadata?.dlc_count != null && metadata.dlc_count > 0 && (
+                <FieldRow label="DLC Count" value={String(metadata.dlc_count)} />
+              )}
+              {metadata?.legal_notice && (
+                <FieldRow label="Legal Notice" value={metadata.legal_notice} />
+              )}
+              {metadata?.store_drm_notice && (
+                <FieldRow label="DRM Notice" value={metadata.store_drm_notice} />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Lua Scripts ── */}
+        {scripts.length > 0 && (
+          <div className="border-t border-(--color-border) pt-4">
+            <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">Lua Scripts</h4>
+            <FieldRow label="Has Lua Scripts" value={game?.hasLua ? "Yes" : "No"} />
+            <FieldRow label="Active" value={game?.isLuaActive ? "Active" : "Inactive"} />
+            <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
+              {scripts.map((s: { name?: string; path?: string }, i: number) => (
+                <div key={i} className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-3 py-2">
+                  <Code className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
+                  <span className="truncate text-xs text-(--color-text)">{s.name ?? s.path ?? `Script ${i + 1}`}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
+
+        {/* ── External Links ── */}
+        {links.length > 0 && (
+          <div className="border-t border-(--color-border) pt-4">
+            <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">External Links</h4>
+            <div className="space-y-2">
+              {links.map((link) => (
+                <a
+                  key={link.label}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10"
+                >
+                  <link.icon className="h-4 w-4 text-(--color-accent)" />
+                  <span className="flex-1">{link.label}</span>
+                  <ExternalLink className="h-3.5 w-3.5 text-(--color-muted)" />
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Actions ── */}
+        <div className="border-t border-(--color-border) pt-4">
+          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">Actions</h4>
+          <div className="space-y-2">
+            {actionButtons.map((btn) => (
+              <button
+                key={btn.label}
+                type="button"
+                onClick={btn.onClick}
+                disabled={btn.disabled}
+                className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <btn.icon className="h-4 w-4 text-(--color-muted)" />
+                {btn.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -2539,140 +2548,6 @@ export default function GameEditDialog({
     );
   }
 
-  function renderActionsTab() {
-    const hasId = !!appId || !!effectiveId;
-    const actionButtons: { label: string; icon: typeof FolderOpen; onClick: () => void; disabled?: boolean }[] = [
-      {
-        label: "Open Metadata Folder",
-        icon: FolderOpen,
-        onClick: () => { if (effectiveId) openGameMetadataFolder(effectiveId); onClose(); },
-        disabled: !hasId,
-      },
-      {
-        label: "Open Media Folder",
-        icon: FolderOpen,
-        onClick: () => {
-          if (isManualMode && manualGameId) { openProviderMediaFolder("manual", manualGameId); }
-          else if (effectiveId) { openGameMediaFolder(effectiveId); }
-          onClose();
-        },
-        disabled: !hasId,
-      },
-      ...(!isManualMode && !isCreateMode && appId ? [{
-        label: "Refresh Artwork",
-        icon: RefreshCw,
-        onClick: async () => {
-          try {
-            await refreshGameDetailsArtwork(
-              appId,
-              appInfo?.media ?? null,
-              metadata,
-              null,
-              null,
-              {
-                sgdbApiKey: settings?.steamGridDbApiKey ?? "",
-                sgdbEnabled: !!(settings?.steamGridDbArtworkEnabled && settings?.steamGridDbApiKey),
-                rawgApiKey: settings?.rawgApiKey ?? "",
-                useRawg: !!settings?.rawgApiKey,
-              },
-            );
-            invalidateResolvedMediaCache(appId);
-            notifyMediaUpdated(appId);
-            showSuccess("Artwork refresh triggered");
-            onClose();
-          } catch {
-            showError("Artwork refresh failed");
-          }
-        },
-        disabled: false,
-      }] : []),
-      {
-        label: "Copy App ID",
-        icon: Copy,
-        onClick: () => {
-          navigator.clipboard.writeText(effectiveId).catch(() => {});
-          showSuccess("App ID copied");
-        },
-        disabled: !hasId,
-      },
-      ...(!isManualMode && !isCreateMode && appId ? [{
-        label: "Open Steam Page",
-        icon: Globe,
-        onClick: () => {
-          window.open(`https://store.steampowered.com/app/${appId}`, "_blank");
-          onClose();
-        },
-        disabled: false,
-      }] : []),
-    ];
-
-    return (
-      <div className="space-y-3">
-        {actionButtons.map((btn) => (
-          <button
-            key={btn.label}
-            type="button"
-            onClick={btn.onClick}
-            disabled={btn.disabled}
-            className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3 text-sm font-medium text-(--color-text) transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <btn.icon className="h-4 w-4 text-(--color-muted)" />
-            {btn.label}
-          </button>
-        ))}
-        <p className="mt-2 text-xs text-(--color-muted)/60">
-          These actions do not modify the game installation.
-        </p>
-      </div>
-    );
-  }
-
-  function renderScriptsTab() {
-    const scripts = game?.luaScripts ?? [];
-    return (
-      <div className="space-y-4">
-        <FieldRow
-          label="Has Lua Scripts"
-          value={game ? (game.hasLua ? "Yes" : "No") : "Unknown"}
-        />
-        <FieldRow
-          label="Active"
-          value={game ? (game.isLuaActive ? "Active" : "Inactive") : null}
-        />
-        {scripts.length > 0 && (
-          <div>
-            <label className="mb-2 block text-sm font-medium text-(--color-text)">
-              Scripts ({scripts.length})
-            </label>
-            <div className="max-h-40 space-y-1.5 overflow-y-auto">
-              {scripts.map((s: { name?: string; path?: string }, i: number) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/[0.02] px-3 py-2"
-                >
-                  <Code className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
-                  <span className="truncate text-xs text-(--color-text)">
-                    {s.name ?? s.path ?? `Script ${i + 1}`}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {!game && (
-          <p className="text-xs text-(--color-muted)/60">
-            Install the game to see script details.
-          </p>
-        )}
-        {game && scripts.length === 0 && (
-          <p className="text-xs text-(--color-muted)/60">
-            No Lua scripts found for this game.
-          </p>
-        )}
-      </div>
-    );
-  }
-
   function renderMediaTab() {
     // Manual-create mode: show "Save first" message
     if (isCreateMode && !createdManualId) {
@@ -2845,13 +2720,10 @@ export default function GameEditDialog({
   }
 
   const tabContent: Record<TabId, () => React.ReactNode> = {
-    general: renderGeneralTab,
-    advanced: renderAdvancedTab,
-    media: renderMediaTab,
-    links: renderLinksTab,
+    details: renderGeneralTab,
     installation: renderInstallationTab,
-    actions: renderActionsTab,
-    scripts: renderScriptsTab,
+    media: renderMediaTab,
+    info: renderInfoTab,
   };
 
   return createPortal(

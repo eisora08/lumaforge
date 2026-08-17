@@ -279,7 +279,7 @@ export default function LibraryGameDetails({
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editDialogTab, setEditDialogTab] = useState<"general" | "media">("general");
+  const [editDialogTab, setEditDialogTab] = useState<"details" | "media">("details");
   const [heroImgError, setHeroImgError] = useState(false);
   const [loadedHeroUrl, setLoadedHeroUrl] = useState<string | undefined>(undefined);
   const [placeholderUrl, setPlaceholderUrl] = useState<string | undefined>(undefined);
@@ -1308,10 +1308,16 @@ export default function LibraryGameDetails({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showActions]);
 
-  // Show launch errors as toast instead of inline
+  // Show launch errors as toast instead of inline — dedup by message to avoid repeat on re-mount
+  const lastShownErrorRef = useRef<string | null>(null);
   useEffect(() => {
     if (launchInfo?.state === "error" && launchInfo.error) {
-      showError(launchInfo.error);
+      if (lastShownErrorRef.current !== launchInfo.error) {
+        lastShownErrorRef.current = launchInfo.error;
+        showError(launchInfo.error);
+      }
+    } else {
+      lastShownErrorRef.current = null;
     }
   }, [launchInfo?.state, launchInfo?.error]);
 
@@ -1505,7 +1511,7 @@ export default function LibraryGameDetails({
                   loading="eager"
                   decoding="async"
                   onLoad={handleLogoLoad}
-                  className="mb-2 object-contain drop-shadow-2xl"
+                  className="mb-2 object-contain drop-shadow-2xl transition-[height] duration-300"
                   style={{
                     width: logoWidth,
                     height: logoNaturalHeight != null ? "auto" : logoHeightFallback,
@@ -1966,7 +1972,7 @@ export default function LibraryGameDetails({
                 </section>
               )}
 
-              {!shortIntro && !longDescText && (
+              {!shortIntro && !longDescText && canonicalLoaded && (
                 <p className="text-sm text-(--color-muted)">
                   Game description is not available yet.
                 </p>
@@ -2679,7 +2685,9 @@ export default function LibraryGameDetails({
                   Release Date
                 </h3>
                 <p className="mt-1 text-sm text-(--color-text)">
-                  {game.metadata?.release_date || (localDetailsData as any)?.releaseDate || "Unknown"}
+                  {canonicalLoaded
+                    ? (game.metadata?.release_date || (localDetailsData as any)?.releaseDate || "Unknown")
+                    : "Loading…"}
                 </p>
               </div>
 
@@ -2901,7 +2909,7 @@ export default function LibraryGameDetails({
                   }
                 }} />
             )}
-            <DropdownItem label="Edit Game Details" onClick={() => { setShowActions(false); setEditDialogTab("general"); setEditDialogOpen(true); }} />
+            <DropdownItem label="Edit Game Details" onClick={() => { setShowActions(false); setEditDialogTab("details"); setEditDialogOpen(true); }} />
             <DropdownItem
               label={game.source === "epic" || (game.source === "manual" && !game.appId) ? "Manage Artwork" : "Refresh Artwork"}
               onClick={() => {
