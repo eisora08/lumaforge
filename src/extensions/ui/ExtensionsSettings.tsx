@@ -636,19 +636,6 @@ export default function ExtensionsSettings() {
         </div>
       )}
 
-      {/* Empty state */}
-      {!loading && !hasExtensions && (
-        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-8 text-center">
-          <Puzzle className="mx-auto mb-3 h-8 w-8 text-white/20" />
-          <p className="text-sm text-(--color-muted)">
-            No extensions available.
-          </p>
-          <p className="mt-1 text-xs text-white/30">
-            Extension support is coming soon.
-          </p>
-        </div>
-      )}
-
       {/* Browse Extensions Modal */}
       {createPortal(
         <BrowseExtensionsModal

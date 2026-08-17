@@ -1,8 +1,6 @@
 export type ApiProviderId =
   | "hubcapdb"
   | "ryuu"
-  | "twentytwo-cloud"
-  | "sushi"
   | "custom"
   | "repack";
 

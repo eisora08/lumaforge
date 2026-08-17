@@ -69,55 +69,6 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     supportedFileTypes: ["zip", "lua", "manifest"],
   },
   {
-    id: "twentytwo-cloud",
-    name: "TwentyTwo Cloud",
-    description: "Proveedor alternativo compatible con descargas por AppID.",
-    baseUrl: "https://api.twentytwocloud.com",
-
-    availabilityUrlTemplate:
-      "https://api.twentytwocloud.com/download?appid=<appid>",
-
-    downloadUrlTemplate:
-      "https://api.twentytwocloud.com/download?appid=<appid>",
-
-    enabledByDefault: true,
-    requiresApiKey: false,
-
-    authType: "none",
-
-    successCode: 200,
-    unavailableCode: 404,
-
-    capabilities: ["availability-check", "download-zip", "metadata"],
-
-    supportedFileTypes: ["zip"],
-  },
-  {
-    id: "sushi",
-    name: "Sushi",
-    description: "Repositorio estático basado en archivos ZIP por AppID.",
-    baseUrl:
-      "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt",
-
-    availabilityUrlTemplate:
-      "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip",
-
-    downloadUrlTemplate:
-      "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip",
-
-    enabledByDefault: true,
-    requiresApiKey: false,
-
-    authType: "none",
-
-    successCode: 200,
-    unavailableCode: 404,
-
-    capabilities: ["availability-check", "download-zip"],
-
-    supportedFileTypes: ["zip"],
-  },
-  {
     id: "custom",
     name: "Custom API",
     description: "Proveedor personalizado configurado por el usuario.",
@@ -159,17 +110,6 @@ export const defaultProviderSettings: Record<
   ryuu: {
     enabled: true,
     baseUrl: "https://generator.ryuu.lol",
-    apiKey: "",
-  },
-  "twentytwo-cloud": {
-    enabled: true,
-    baseUrl: "https://api.twentytwocloud.com",
-    apiKey: "",
-  },
-  sushi: {
-    enabled: true,
-    baseUrl:
-      "https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt",
     apiKey: "",
   },
   custom: {

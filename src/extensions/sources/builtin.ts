@@ -37,7 +37,7 @@ const BUILTIN_EXTENSION_FACTORIES: Record<string, () => Promise<Extension>> = {
 const BUILTIN_BASE_PATH = "/extensions/builtin";
 
 /** Known built-in extension directory names. */
-const BUILTIN_EXTENSION_DIRS = ["placeholder"];
+const BUILTIN_EXTENSION_DIRS: string[] = [];
 
 /**
  * BuiltInSource discovers extensions from a known local directory.

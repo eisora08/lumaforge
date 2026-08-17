@@ -15,7 +15,6 @@ import {
   Gamepad2,
   Cog,
   Database,
-  Image,
   Library,
   Power,
   ExternalLink,
@@ -64,7 +63,6 @@ type SettingsSectionId =
   | "library"
   | "notifications"
   | "metadata"
-  | "artwork"
   | "extensions"
   | "providers"
   | "backup"
@@ -78,10 +76,9 @@ const navSections: {
 }[] = [
   { key: "general", label: "General", icon: <Cog className="h-4 w-4" />, description: "Steam paths, account and auto-detection" },
   { key: "appearance", label: "Appearance", icon: <Palette className="h-4 w-4" />, description: "Theme, surface mode and accent color" },
-  { key: "library", label: "Library", icon: <Library className="h-4 w-4" />, description: "Dashboard, card layout and display mode" },
+  { key: "library", label: "Layout", icon: <Library className="h-4 w-4" />, description: "Dashboard, card layout and display mode" },
   { key: "notifications", label: "Notifications", icon: <Gamepad2 className="h-4 w-4" />, description: "Achievement alerts and session overlay" },
-  { key: "metadata", label: "Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG, Google and Bing API keys" },
-  { key: "artwork", label: "Artwork Providers", icon: <Image className="h-4 w-4" />, description: "SteamGridDB artwork configuration" },
+  { key: "metadata", label: "Artwork & Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG and SteamGridDB API keys" },
   { key: "extensions", label: "Extensions", icon: <Puzzle className="h-4 w-4" />, description: "External tool integrations" },
   { key: "providers", label: "Providers & Tools", icon: <Zap className="h-4 w-4" />, description: "Package sources, integrations and tools" },
   { key: "backup", label: "Cloud & Backup", icon: <Cloud className="h-4 w-4" />, description: "Backups, restore and cloud sync" },
@@ -125,8 +122,6 @@ export default function Settings({ onSectionChange }: SettingsProps) {
   const [showSteamApiKey, setShowSteamApiKey] = useState(false);
   const [showIgdbSecret, setShowIgdbSecret] = useState(false);
   const [showRawgKey, setShowRawgKey] = useState(false);
-  const [showGoogleKey, setShowGoogleKey] = useState(false);
-  const [showBingKey, setShowBingKey] = useState(false);
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
 
@@ -563,7 +558,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                 >
                   <div className="space-y-4">
                     <ToggleOption
-                      label="Overlay notification (experimental)"
+                      label="Overlay notification window"
                       description="Use a transparent always-on-top overlay window for game launch and stop notifications."
                       enabled={settings.gameSessionOverlayEnabled}
                       onChange={(enabled) => updateSetting("gameSessionOverlayEnabled", enabled)}
@@ -756,157 +751,55 @@ export default function Settings({ onSectionChange }: SettingsProps) {
 
                   <div className="border-t border-(--surface-active-border) pt-6 space-y-4">
                     <div className="flex items-center gap-2 text-sm text-(--color-accent)">
-                      <Globe className="h-4 w-4" />
-                      Google Custom Search
+                      <Crosshair className="h-4 w-4" />
+                      SteamGridDB Artwork
                     </div>
 
                     <p className="text-xs text-(--color-muted)">
-                      Google Custom Search enables in-app image search for manual artwork selection. Requires a Custom Search API Key and Search Engine ID (cx) from the Google Cloud Console.
+                      SteamGridDB provides poster, hero and logo artwork for Library cards. Requires an API key.
                     </p>
 
-                    {(!settings.googleSearchApiKey || !settings.googleSearchCx) && (
+                    <ToggleOption
+                      label="Enable SteamGridDB Artwork"
+                      description="Use SteamGridDB to fetch poster, hero and logo artwork for Library and Juegos."
+                      enabled={settings.steamGridDbArtworkEnabled}
+                      onChange={(enabled) => updateSetting("steamGridDbArtworkEnabled", enabled)}
+                    />
+
+                    {settings.steamGridDbArtworkEnabled && !settings.steamGridDbApiKey && (
                       <p className="text-xs text-amber-400">
-                        Fill in both fields to enable Google image search in the Media editor.
+                        Add a SteamGridDB API key to fetch artwork.
                       </p>
                     )}
 
                     <label className="block">
                       <div className="mb-2">
                         <p className="text-sm font-medium text-(--color-text)">
-                          API Key
+                          API Key (optional)
+                        </p>
+                        <p className="mt-1 text-xs text-(--color-muted)">
+                          Used to fetch native poster, hero and logo artwork for Library cards.
                         </p>
                       </div>
                       <div className="relative">
                         <input
-                          type={showGoogleKey ? "text" : "password"}
-                          value={settings.googleSearchApiKey}
-                          onChange={(e) => updateSetting("googleSearchApiKey", e.target.value)}
+                          type={showSgdbKey ? "text" : "password"}
+                          value={settings.steamGridDbApiKey}
+                          onChange={(e) => updateSetting("steamGridDbApiKey", e.target.value)}
                           className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                          placeholder="Enter your Google API key"
+                          placeholder="Enter your SteamGridDB API key"
                         />
                         <button
                           type="button"
-                          onClick={() => setShowGoogleKey(!showGoogleKey)}
+                          onClick={() => setShowSgdbKey(!showSgdbKey)}
                           className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
                           tabIndex={-1}
                         >
-                          {showGoogleKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                    </label>
-
-                    <label className="block">
-                      <div className="mb-2">
-                        <p className="text-sm font-medium text-(--color-text)">
-                          Search Engine ID (cx)
-                        </p>
-                      </div>
-                      <input
-                        type="text"
-                        value={settings.googleSearchCx}
-                        onChange={(e) => updateSetting("googleSearchCx", e.target.value)}
-                        className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                        placeholder="Enter your Search Engine ID"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="border-t border-(--surface-active-border) pt-6 space-y-4">
-                    <div className="flex items-center gap-2 text-sm text-(--color-accent)">
-                      <Globe className="h-4 w-4" />
-                      Bing Image Search
-                    </div>
-
-                    <p className="text-xs text-(--color-muted)">
-                      Bing Image Search provides an alternative in-app image search source. Requires a Bing Search API key from the Azure portal.
-                    </p>
-
-                    {!settings.bingSearchApiKey && (
-                      <p className="text-xs text-amber-400">
-                        Add a Bing Search API key to enable Bing image search in the Media editor.
-                      </p>
-                    )}
-
-                    <label className="block">
-                      <div className="mb-2">
-                        <p className="text-sm font-medium text-(--color-text)">
-                          API Key
-                        </p>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type={showBingKey ? "text" : "password"}
-                          value={settings.bingSearchApiKey}
-                          onChange={(e) => updateSetting("bingSearchApiKey", e.target.value)}
-                          className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                          placeholder="Enter your Bing Search API key"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowBingKey(!showBingKey)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
-                          tabIndex={-1}
-                        >
-                          {showBingKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          {showSgdbKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                         </button>
                       </div>
                     </label>
                   </div>
-                </div>
-              </SettingsSection>
-            )}
-
-            {activeSection === "artwork" && (
-              <SettingsSection
-                title="Artwork Providers"
-                description="Configura las fuentes de arte para carátulas, heroes y logos."
-              >
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm text-(--color-accent)">
-                    <Crosshair className="h-4 w-4" />
-                    SteamGridDB Artwork
-                  </div>
-
-                  <ToggleOption
-                    label="Enable SteamGridDB Artwork"
-                    description="Use SteamGridDB to fetch poster, hero and logo artwork for Biblioteca y Juegos. Requires an API key."
-                    enabled={settings.steamGridDbArtworkEnabled}
-                    onChange={(enabled) => updateSetting("steamGridDbArtworkEnabled", enabled)}
-                  />
-
-                  {settings.steamGridDbArtworkEnabled && !settings.steamGridDbApiKey && (
-                    <p className="text-xs text-amber-400">
-                      Add a SteamGridDB API key to fetch artwork.
-                    </p>
-                  )}
-
-                  <label className="block">
-                    <div className="mb-2">
-                      <p className="text-sm font-medium text-(--color-text)">
-                        API Key (optional)
-                      </p>
-                      <p className="mt-1 text-xs text-(--color-muted)">
-                        Used to fetch native poster, hero and logo artwork for Library cards.
-                      </p>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type={showSgdbKey ? "text" : "password"}
-                        value={settings.steamGridDbApiKey}
-                        onChange={(e) => updateSetting("steamGridDbApiKey", e.target.value)}
-                        className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 pr-10 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                        placeholder="Enter your SteamGridDB API key"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowSgdbKey(!showSgdbKey)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-(--color-muted) hover:text-(--color-text) transition"
-                        tabIndex={-1}
-                      >
-                        {showSgdbKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </label>
                 </div>
               </SettingsSection>
             )}

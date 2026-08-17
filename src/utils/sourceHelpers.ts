@@ -8,9 +8,6 @@ export function getBestAvailableSource(
   const hubcap = available.find((s) => s.providerId === "hubcapdb");
   if (hubcap) return hubcap;
 
-  const sushi = available.find((s) => s.providerId === "sushi");
-  if (sushi) return sushi;
-
   const ryuu = available.find((s) => s.providerId === "ryuu");
   if (ryuu) return ryuu;
 
