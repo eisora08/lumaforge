@@ -6,6 +6,7 @@ import { getHydraSources, addHydraSource, removeHydraSource, toggleHydraSource, 
 import { refreshDebridGames } from "../../services/debridGameStore";
 import type { HydraSourceConfig, ImportedFeedSummary } from "../../types/hydraSource";
 import { showSuccess, showError } from "../toast/GameToast";
+import { openExternalUrl } from "../../services/externalLinks";
 
 const PROVIDERS = [
   { id: "torbox" as const, label: "TorBox", color: "text-blue-400", docUrl: "https://torbox.app/settings" },
@@ -282,15 +283,14 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
                 </p>
               )}
 
-              <a
-                href={provider.docUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
+                onClick={() => openExternalUrl(provider.docUrl)}
                 className="mt-1 inline-flex items-center gap-1 text-[10px] text-(--color-muted) underline transition hover:text-(--color-accent)"
               >
                 <ExternalLink className="h-3 w-3" />
                 Get API key
-              </a>
+              </button>
             </div>
           );
         })}
@@ -551,23 +551,13 @@ export default function DebridProvidersCard({ config, onChange }: DebridProvider
 
       <div className="mt-4 flex items-center gap-2 text-xs text-(--color-muted)">
         <ExternalLink className="h-3 w-3" />
-        <a
-          href="https://hydra.luffy.pp.ua"
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={() => openExternalUrl("https://library.hydra.wiki/sources/")}
           className="underline transition hover:text-(--color-accent)"
         >
-          Hydra Debrid Documentation
-        </a>
-        <span className="text-(--surface-active-border)">·</span>
-        <a
-          href="https://github.com/OpenByteDev/hydra"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline transition hover:text-(--color-accent)"
-        >
-          Hydra on GitHub
-        </a>
+          Get Hydra Source
+        </button>
       </div>
     </div>
   );

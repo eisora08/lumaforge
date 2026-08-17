@@ -139,6 +139,14 @@ export async function addHydraSource(
 
   await tauriAddSource(id, name, url);
   _cachedSources = null; // invalidate cache
+
+  // Import entries into SQLite immediately so games are visible right away
+  try {
+    await fetchAndImportHydraSource(id, url, name);
+    clearRepackCatalogCaches();
+  } catch {
+    // Source config saved even if import fails — user can retry via "Actualizar"
+  }
 }
 
 /**
