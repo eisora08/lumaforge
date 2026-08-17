@@ -12,9 +12,6 @@ import {
   SlidersHorizontal,
   RotateCcw,
   Crosshair,
-  Plus,
-  Trash2,
-  FolderSearch,
   Gamepad2,
   Cog,
   Database,
@@ -64,9 +61,7 @@ import { openExternalUrl } from "../services/externalLinks";
 type SettingsSectionId =
   | "general"
   | "appearance"
-  | "ambient"
   | "library"
-  | "detection"
   | "notifications"
   | "metadata"
   | "artwork"
@@ -83,9 +78,7 @@ const navSections: {
 }[] = [
   { key: "general", label: "General", icon: <Cog className="h-4 w-4" />, description: "Steam paths, account and auto-detection" },
   { key: "appearance", label: "Appearance", icon: <Palette className="h-4 w-4" />, description: "Theme, surface mode and accent color" },
-  { key: "ambient", label: "Ambient", icon: <Globe className="h-4 w-4" />, description: "Background ambient mode and intensity" },
   { key: "library", label: "Library", icon: <Library className="h-4 w-4" />, description: "Dashboard, card layout and display mode" },
-  { key: "detection", label: "Game Detection", icon: <FolderSearch className="h-4 w-4" />, description: "Local game scanning and folder management" },
   { key: "notifications", label: "Notifications", icon: <Gamepad2 className="h-4 w-4" />, description: "Achievement alerts and session overlay" },
   { key: "metadata", label: "Metadata Providers", icon: <Database className="h-4 w-4" />, description: "IGDB, RAWG, Google and Bing API keys" },
   { key: "artwork", label: "Artwork Providers", icon: <Image className="h-4 w-4" />, description: "SteamGridDB artwork configuration" },
@@ -134,7 +127,6 @@ export default function Settings({ onSectionChange }: SettingsProps) {
   const [showRawgKey, setShowRawgKey] = useState(false);
   const [showGoogleKey, setShowGoogleKey] = useState(false);
   const [showBingKey, setShowBingKey] = useState(false);
-  const [newScanFolder, setNewScanFolder] = useState("");
 
   const currentTheme = themes.find((theme) => theme.id === selectedTheme);
 
@@ -473,88 +465,86 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     />
                   </div>
                 </SettingsSection>
+
+                <SettingsSection
+                  title="Fondo ambiental"
+                  description="Muestra el arte del juego activo (difuminado) detras de la interfaz."
+                >
+                  <div className="space-y-4">
+                    <ToggleOption
+                      label="Fondo ambiental"
+                      description="Activa el fondo dinamico en todas las pantallas."
+                      enabled={ambientState.enabled}
+                      onChange={setAmbientEnabled}
+                    />
+
+                    {ambientState.enabled && (
+                      <>
+                        <div className="lf-surface rounded-2xl border p-4">
+                          <p className="text-sm font-medium text-(--color-text)">
+                            Modo del fondo ambiental
+                          </p>
+                          <p className="mt-1 text-xs text-(--color-muted)">
+                            Muestra el arte difuminado o el color dominante extraido de la foto.
+                          </p>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            {(
+                              [
+                                { id: "image", label: "Imagen (difuminado)" },
+                                { id: "color", label: "Color dominante" },
+                              ] as const
+                            ).map((opt) => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => setAmbientMode(opt.id)}
+                                className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                                  ambientState.mode === opt.id
+                                    ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
+                                    : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="lf-surface rounded-2xl border p-4">
+                          <p className="text-sm font-medium text-(--color-text)">
+                            Intensidad del fondo ambiental
+                          </p>
+                          <p className="mt-1 text-xs text-(--color-muted)">
+                            Controla cuanto se ve y se difumina el fondo ambiental.
+                          </p>
+                          <div className="mt-3 grid grid-cols-3 gap-2">
+                            {(
+                              [
+                                { id: "sutil", label: "Sutil" },
+                                { id: "equilibrado", label: "Equilibrado" },
+                                { id: "vivido", label: "Vivido" },
+                              ] as const
+                            ).map((opt) => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => setAmbientIntensity(opt.id)}
+                                className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                                  ambientState.intensity === opt.id
+                                    ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
+                                    : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </SettingsSection>
               </>
-            )}
-
-            {activeSection === "ambient" && (
-              <SettingsSection
-                title="Fondo ambiental"
-                description="Muestra el arte del juego activo (difuminado) detras de la interfaz."
-              >
-                <div className="space-y-4">
-                  <ToggleOption
-                    label="Fondo ambiental"
-                    description="Activa el fondo dinamico en todas las pantallas."
-                    enabled={ambientState.enabled}
-                    onChange={setAmbientEnabled}
-                  />
-
-                  {ambientState.enabled && (
-                    <>
-                      <div className="lf-surface rounded-2xl border p-4">
-                        <p className="text-sm font-medium text-(--color-text)">
-                          Modo del fondo ambiental
-                        </p>
-                        <p className="mt-1 text-xs text-(--color-muted)">
-                          Muestra el arte difuminado o el color dominante extraido de la foto.
-                        </p>
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          {(
-                            [
-                              { id: "image", label: "Imagen (difuminado)" },
-                              { id: "color", label: "Color dominante" },
-                            ] as const
-                          ).map((opt) => (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              onClick={() => setAmbientMode(opt.id)}
-                              className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                                ambientState.mode === opt.id
-                                  ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
-                                  : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="lf-surface rounded-2xl border p-4">
-                        <p className="text-sm font-medium text-(--color-text)">
-                          Intensidad del fondo ambiental
-                        </p>
-                        <p className="mt-1 text-xs text-(--color-muted)">
-                          Controla cuanto se ve y se difumina el fondo ambiental.
-                        </p>
-                        <div className="mt-3 grid grid-cols-3 gap-2">
-                          {(
-                            [
-                              { id: "sutil", label: "Sutil" },
-                              { id: "equilibrado", label: "Equilibrado" },
-                              { id: "vivido", label: "Vivido" },
-                            ] as const
-                          ).map((opt) => (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              onClick={() => setAmbientIntensity(opt.id)}
-                              className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                                ambientState.intensity === opt.id
-                                  ? "border-(--color-accent)/60 bg-(--color-accent)/15 text-(--color-accent)"
-                                  : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10"
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </SettingsSection>
             )}
 
             {activeSection === "library" && (
@@ -565,133 +555,8 @@ export default function Settings({ onSectionChange }: SettingsProps) {
               </>
             )}
 
-            {activeSection === "detection" && (
-              <SettingsSection
-                title="Game Detection"
-                description="Configura como LumaForge detecta juegos instalados y ejecutables locales."
-              >
-                  <div className="mb-4 flex items-center gap-2 text-sm text-(--color-accent)">
-                    <FolderSearch className="h-4 w-4" />
-                    Local EXE detection
-                  </div>
-
-                  <div className="mb-4">
-                    <ToggleOption
-                      label="Escanear juegos locales"
-                      description="Busca ejecutables .exe en las carpetas configuradas."
-                      enabled={settings.scanLocalGames}
-                      onChange={(enabled) => updateSetting("scanLocalGames", enabled)}
-                    />
-                  </div>
-
-                  {settings.scanLocalGames && (
-                    <>
-                      <div className="mb-4 space-y-2">
-                        {settings.gameScanFolders.length === 0 ? (
-                          <p className="text-sm text-(--color-muted)">
-                            No se configuraron carpetas de escaneo.
-                          </p>
-                        ) : (
-                          settings.gameScanFolders.map((folder, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center gap-3 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-3"
-                            >
-                              <span className="flex-1 truncate text-sm text-(--color-text)">
-                                {folder}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated = settings.gameScanFolders.filter((_, i) => i !== index);
-                                  updateSetting("gameScanFolders", updated);
-                                }}
-                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-(--color-muted) transition hover:bg-red-500/20 hover:text-red-400"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={newScanFolder}
-                          onChange={(e) => setNewScanFolder(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && newScanFolder.trim()) {
-                              const trimmed = newScanFolder.trim();
-                              if (!settings.gameScanFolders.includes(trimmed)) {
-                                updateSetting("gameScanFolders", [
-                                  ...settings.gameScanFolders,
-                                  trimmed,
-                                ]);
-                              }
-                              setNewScanFolder("");
-                            }
-                          }}
-                          placeholder="C:\\Ruta\\a\\carpeta\\de\\juegos"
-                          className="flex-1 rounded-xl border border-(--surface-active-border) bg-white/5 px-3 py-2 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted)"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const trimmed = newScanFolder.trim();
-                            if (trimmed && !settings.gameScanFolders.includes(trimmed)) {
-                              updateSetting("gameScanFolders", [
-                                ...settings.gameScanFolders,
-                                trimmed,
-                              ]);
-                            }
-                            setNewScanFolder("");
-                          }}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-(--color-accent) px-3 py-2 text-xs font-bold text-(--color-accent-text) transition hover:opacity-90"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          Add Folder
-                        </button>
-                      </div>
-
-                      <p className="mt-3 text-xs text-(--color-muted)">
-                        LumaForge escanea solo estas carpetas para encontrar juegos ejecutables locales.
-                        No escaneará todo tu PC automáticamente.
-                      </p>
-                    </>
-                  )}
-                </SettingsSection>
-            )}
-
             {activeSection === "notifications" && (
               <>
-                <SettingsSection
-                  title="Achievement Notifications"
-                  description="Control how achievement unlock notifications are delivered."
-                >
-                  <div className="space-y-4">
-                    <ToggleOption
-                      label="Show in-app toast"
-                      description="Show a premium toast card in the app when an achievement unlocks."
-                      enabled={settings.achievementToastEnabled}
-                      onChange={(enabled) => updateSetting("achievementToastEnabled", enabled)}
-                    />
-
-                    <ToggleOption
-                      label="Send native OS notification"
-                      description="Also send a system notification when an achievement unlocks. Requires notification permission."
-                      enabled={settings.achievementNativeNotificationsEnabled}
-                      onChange={(enabled) => updateSetting("achievementNativeNotificationsEnabled", enabled)}
-                    />
-
-                    <ToggleOption
-                      label="Overlay notification (experimental)"
-                      description="Use a transparent always-on-top overlay window for achievement notifications. Currently in development."
-                      enabled={settings.achievementOverlayNotificationsEnabled}
-                      onChange={(enabled) => updateSetting("achievementOverlayNotificationsEnabled", enabled)}
-                    />
-                  </div>
-                </SettingsSection>
-
                 <SettingsSection
                   title="Session Overlay"
                   description="Control how game session notifications (launch/stop) are delivered."
@@ -704,7 +569,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       onChange={(enabled) => updateSetting("gameSessionOverlayEnabled", enabled)}
                     />
 
-                    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-3">
+                    <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border p-4">
                       <div className="space-y-0.5">
                         <label className="text-sm font-medium text-(--color-text)">
                           Overlay position
@@ -742,30 +607,14 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       enabled={settings.gameSessionHudEnabled}
                       onChange={(enabled) => updateSetting("gameSessionHudEnabled", enabled)}
                     />
-                  </div>
-                </SettingsSection>
 
-                <SettingsSection
-                  title="Achievement Schema"
-                  description="Schema folder for achievement data fallback."
-                >
-                  <label className="block">
-                    <div className="mb-2">
-                      <p className="text-sm font-medium text-(--color-text)">
-                        Achievements App Schema Folder (optional)
-                      </p>
-                      <p className="mt-1 text-xs text-(--color-muted)">
-                        Path to a folder containing <code>achievements.json</code> and <code>achievementpercentages.json</code> from the Steam Achievement Schema app.
-                      </p>
-                    </div>
-                    <input
-                      type="text"
-                      value={settings.achievementSchemaPath}
-                      onChange={(e) => updateSetting("achievementSchemaPath", e.target.value)}
-                      className="h-11 w-full rounded-xl border border-(--surface-active-border) bg-white/5 px-4 text-sm text-(--color-text) outline-none placeholder:text-(--color-muted) focus:border-(--color-accent)"
-                      placeholder="C:\path\to\achievements-schema"
+                    <ToggleOption
+                      label="Send native OS notification"
+                      description="Send a system notification when an achievement unlocks. Requires notification permission."
+                      enabled={settings.achievementNativeNotificationsEnabled}
+                      onChange={(enabled) => updateSetting("achievementNativeNotificationsEnabled", enabled)}
                     />
-                  </label>
+                  </div>
                 </SettingsSection>
               </>
             )}

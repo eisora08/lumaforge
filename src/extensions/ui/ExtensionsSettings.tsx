@@ -724,7 +724,7 @@ function ExtensionCard({
   }, [confirm, fileLockedOperation, manifest.id, onOperation]);
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-colors hover:bg-white/[0.04]">
+    <div className="lf-surface rounded-xl border p-4 transition-colors hover:bg-white/[0.04]">
       <div className="flex items-start gap-3">
         {/* Icon placeholder */}
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-(--color-accent)/10">
@@ -1117,7 +1117,7 @@ function BrowseExtensionsModal({
         {/* Content */}
         <div className="mt-4 flex-1 overflow-y-auto -mr-2 pr-2">
           {extensions.length === 0 ? (
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-8 text-center">
+        <div className="lf-surface rounded-xl border p-8 text-center">
               <Store className="mx-auto mb-3 h-8 w-8 text-white/20" />
               <p className="text-sm text-(--color-muted)">
                 No extensions available in the repository.

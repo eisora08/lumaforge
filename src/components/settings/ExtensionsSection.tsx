@@ -148,7 +148,7 @@ function ExtensionRow({
     (record.status === "enabled" || record.status === "available" || record.status === "registered");
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 transition hover:bg-white/[0.04]">
+    <div className="lf-surface flex items-center gap-3 rounded-xl border px-4 py-3 transition hover:bg-white/[0.04]">
       {/* Icon / Status */}
       <div className="flex-shrink-0">
         {statusIcon(record.status)}

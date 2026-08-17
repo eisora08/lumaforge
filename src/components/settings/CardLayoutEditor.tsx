@@ -220,7 +220,7 @@ function Slider({
 }) {
   const u = unit ?? "px";
   return (
-    <div className="flex items-center justify-between rounded-xl border border-(--surface-active-border) bg-white/[0.02] px-4 py-2.5">
+    <div className="lf-surface flex items-center justify-between gap-4 rounded-2xl border px-4 py-3">
       <span className="text-sm text-(--color-text)">{label}</span>
       <div className="flex items-center gap-3">
         <span className="w-14 text-right font-mono text-xs text-(--color-muted)">
@@ -293,7 +293,7 @@ function LivePreview({
         : "Poster";
 
   return (
-    <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.03] p-4">
+    <div className="lf-surface rounded-xl border p-4">
       <SectionLabel>Live Preview</SectionLabel>
 
       {/* Preview area — constrained, no overflow */}
@@ -466,7 +466,7 @@ export default function CardLayoutEditor() {
   /* ============================================================= */
 
   return (
-    <div className="rounded-2xl border border-(--surface-active-border) bg-white/[0.02] p-5">
+    <div className="lf-surface rounded-2xl border p-5">
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="mb-5 flex items-center justify-between">
         <div>

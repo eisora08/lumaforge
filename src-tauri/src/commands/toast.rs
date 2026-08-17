@@ -116,6 +116,106 @@ pub fn show_achievement_overlay(
 }
 
 #[tauri::command]
+pub fn show_achievement_overlay_batch(
+    app_handle: tauri::AppHandle,
+    toasts: Vec<serde_json::Value>,
+    max_duration: u64,
+    theme_vars: Option<serde_json::Value>,
+    overlay_position: Option<String>,
+) -> Result<(), String> {
+    eprintln!("[ACH][OVERLAY_BATCH][RUST] command_start count={}", toasts.len());
+
+    let position = overlay_position.clone().unwrap_or_else(|| "top-right".to_string());
+    let batch_data = serde_json::json!({
+        "toasts": toasts,
+        "maxDuration": max_duration,
+    });
+    let mut data = batch_data;
+    if let Some(vars) = theme_vars {
+        data["themeVars"] = vars;
+    }
+    data["overlayPosition"] = serde_json::Value::String(position.clone());
+    let js = format!(
+        "window.__showAchievementBatchToast({})",
+        serde_json::to_string(&data).unwrap()
+    );
+
+    eprintln!("[ACH][OVERLAY_BATCH][RUST] dispatch_bg");
+
+    let app_clone = app_handle.clone();
+    let pos = position.clone();
+    let label = "toast-notification";
+    std::thread::spawn(move || {
+        eprintln!("[ACH][OVERLAY_BATCH][RUST] bg_start");
+
+        let window = match app_clone.get_webview_window(label) {
+            Some(w) => {
+                eprintln!("[ACH][OVERLAY_BATCH][RUST] window_exists=true");
+                w
+            }
+            None => {
+                eprintln!("[ACH][OVERLAY_BATCH][RUST] window_create_start");
+                let w = match tauri::WebviewWindowBuilder::new(
+                    &app_clone,
+                    label,
+                    tauri::WebviewUrl::App("/toast-notification.html".into()),
+                )
+                .always_on_top(true)
+                .decorations(false)
+                .transparent(true)
+                .resizable(false)
+                .inner_size(420.0, 140.0)
+                .skip_taskbar(true)
+                .shadow(false)
+                .visible(false)
+                .build()
+                {
+                    Ok(w) => w,
+                    Err(e) => {
+                        eprintln!("[ACH][OVERLAY_BATCH][RUST] window_create_failed error={}", e);
+                        return;
+                    }
+                };
+                eprintln!("[ACH][OVERLAY_BATCH][RUST] window_created");
+                w
+            }
+        };
+
+        // Resize window based on toast count: each toast ~95px + 20px padding top/bottom
+        let toast_count = toasts.len().max(1) as f64;
+        let window_height = (20.0 + toast_count * 95.0).min(600.0);
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(420.0, window_height)));
+
+        let _ = position_window(&app_clone, &window, &pos);
+
+        // Brief pause for page JS to initialize
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        eprintln!("[ACH][OVERLAY_BATCH][RUST] eval_js len={}", js.len());
+        let eval_result = window.eval(&js);
+        match &eval_result {
+            Ok(_) => eprintln!("[ACH][OVERLAY_BATCH][RUST] eval_ok"),
+            Err(e) => eprintln!("[ACH][OVERLAY_BATCH][RUST] eval_error={}", e),
+        }
+
+        let _ = window.set_focus();
+        let _ = window.set_always_on_top(true);
+        let _ = window.show();
+        eprintln!("[ACH][OVERLAY_BATCH][RUST] show_done");
+
+        // Auto-close after max duration of all toasts
+        std::thread::sleep(std::time::Duration::from_millis(max_duration + 500));
+        eprintln!("[ACH][OVERLAY_BATCH][RUST] hide_done");
+        if let Some(w) = app_clone.get_webview_window(label) {
+            let _ = w.close();
+        }
+    });
+
+    eprintln!("[ACH][OVERLAY_BATCH][RUST] command_return_ok");
+    Ok(())
+}
+
+#[tauri::command]
 pub fn show_session_overlay(
     app_handle: tauri::AppHandle,
     session_type: String,
@@ -172,7 +272,7 @@ pub fn show_session_overlay(
                 .decorations(false)
                 .transparent(true)
                 .resizable(false)
-                .inner_size(420.0, 250.0)
+                .inner_size(420.0, 320.0)
                 .skip_taskbar(true)
                 .shadow(false)
                 .visible(false)
