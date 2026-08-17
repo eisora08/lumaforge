@@ -294,6 +294,9 @@ export default function GameEditDialog({
 
   // Steam media adapter (created before early returns for hook safety)
   const mediaAdapter = useMemo(() => {
+    if (isDebridMode && appIdDraft) {
+      return createMediaAdapter("steam", appIdDraft);
+    }
     if (isManualMode && appIdDraft) {
       return createMediaAdapter("steam", appIdDraft);
     }
@@ -307,7 +310,7 @@ export default function GameEditDialog({
       return createMediaAdapter("steam", appId);
     }
     return null;
-  }, [appId, appIdDraft, manualGameId, epicProviderGameId, isManualMode, isEpicMode]);
+  }, [appId, appIdDraft, manualGameId, epicProviderGameId, isManualMode, isEpicMode, isDebridMode]);
 
   // ── Load drafts from userData ──
   function loadDraftsFromUserData(info: GameAppInfo | null) {
@@ -385,28 +388,26 @@ export default function GameEditDialog({
     setLinkedIgdbIdDraft(undefined);
 
     // Manual edit mode — load from manualGameStore
+    let resolvedAppId = appId || "";
     if (isManualMode && manualGameId) {
       const entry = getManualGame(manualGameId);
       if (entry) {
         setManualEntry(entry);
         loadDraftsFromManualEntry(entry);
-        // If manual game has an appId, resolve Steam metadata and fill form fields
-        if (entry.appId) {
-          const appIdNum = Number(entry.appId);
-          if (!isNaN(appIdNum)) {
-            resolveGameMetadata([appIdNum]).then((m) => {
-              const meta = m[appIdNum];
-              if (meta) {
-                fillDraftsFromMetadata(meta);
-                setMetadata(meta);
-              }
-            }).catch(() => {});
-          }
-        }
+        setAppIdDraft(entry.appId ?? "");
+        setExecutablePathDraft(entry.executablePath ?? "");
+        setWorkingDirectoryDraft(entry.workingDirectory ?? "");
+        setLaunchArgsDraft(entry.launchArguments ?? "");
+        setInstallDirDraft(entry.installDir ?? "");
+        resolvedAppId = entry.appId ?? "";
       }
-      setLoading(false);
-      loadRolePreviews();
-      return;
+      // Manual WITHOUT appId → standalone (no Steam data)
+      if (!resolvedAppId) {
+        setLoading(false);
+        loadRolePreviews();
+        return;
+      }
+      // Manual WITH appId → fall through to Steam path for appInfo + metadata
     }
 
     // Debrid edit mode — pre-fill install dir + appId + launch config from game data.
@@ -425,10 +426,16 @@ export default function GameEditDialog({
       if (exe) setExecutablePathDraft(exe);
       if (wd) setWorkingDirectoryDraft(wd);
       if (args) setLaunchArgsDraft(args);
-      setAppIdDraft(game?.appId ?? savedGame?.appId ?? "");
-      setLoading(false);
-      loadRolePreviews();
-      return;
+      resolvedAppId = game?.appId ?? savedGame?.appId ?? "";
+      setAppIdDraft(resolvedAppId);
+
+      // Debrid WITHOUT appId → standalone
+      if (!resolvedAppId) {
+        setLoading(false);
+        loadRolePreviews();
+        return;
+      }
+      // Debrid WITH appId → fall through to Steam path for appInfo + metadata
     }
 
     // Epic edit mode — load from Epic override store
@@ -464,24 +471,37 @@ export default function GameEditDialog({
       return;
     }
 
-    // Steam edit mode (existing)
-    setAppIdDraft(appId ?? "");
-    getGameAppInfo(appId!).then((info) => {
-      setAppInfo(info);
-      loadDraftsFromUserData(info);
-      setLoading(false);
-      loadRolePreviews();
-    });
-    const appIdNum = Number(appId);
-    if (!isNaN(appIdNum)) {
-      resolveGameMetadata([appIdNum]).then((m) => {
-        const meta = m[appIdNum];
-        setMetadata(meta ?? null);
-        if (meta) fillDraftsFromMetadata(meta);
+    // Steam edit mode (also handles Manual+appId and Debrid+appId that fell through)
+    if (!resolvedAppId) resolvedAppId = appId ?? "";
+    setAppIdDraft(resolvedAppId);
+    if (resolvedAppId) {
+      getGameAppInfo(resolvedAppId).then((info) => {
+        setAppInfo(info);
+        loadDraftsFromUserData(info);
         setLoading(false);
-      }).catch(() => {});
+        // loadRolePreviews() called by the useEffect below after mediaAdapter re-computes
+      });
+      const appIdNum = Number(resolvedAppId);
+      if (!isNaN(appIdNum) && appIdNum > 0) {
+        resolveGameMetadata([appIdNum]).then((m) => {
+          const meta = m[appIdNum];
+          setMetadata(meta ?? null);
+          if (meta) fillDraftsFromMetadata(meta);
+          setLoading(false);
+        }).catch(() => {});
+      }
     }
   }, [open, appId, manualGameId]);
+
+  // ── Load role previews after mediaAdapter + appInfo are ready ──
+  // This runs after the mount effect sets appIdDraft/appInfo, ensuring
+  // mediaAdapter has re-computed via useMemo before loadRolePreviews reads it.
+  useEffect(() => {
+    if (!open) return;
+    if (isCreateMode) return;
+    if (!mediaAdapter && !(isManualMode || isCreateMode)) return;
+    loadRolePreviews();
+  }, [open, appIdDraft, appInfo, mediaAdapter]);
 
   // ── Fill drafts from metadata on Download ──
   function fillDraftsFromMetadata(meta: SteamAppMetadata, mergeName?: string) {
@@ -927,6 +947,33 @@ export default function GameEditDialog({
           setManualEntry(updated);
           setCreatedManualId(targetId);
           showSuccess("Game details saved");
+
+          // If manual game has appId, also persist full userData to Steam appinfo (same as Steam save path)
+          if (appIdDraft) {
+            const media: import("../../services/tauri").GameMediaPaths = {
+              coverPath: freshMediaEntry?.coverPath ?? null,
+              landscapePath: freshMediaEntry?.landscapePath ?? null,
+              backgroundPath: freshMediaEntry?.backgroundPath ?? null,
+              logoPath: freshMediaEntry?.logoPath ?? null,
+              iconPath: freshMediaEntry?.iconPath ?? null,
+            };
+            const userData = buildUserData();
+            const updatedEntry: import("../../services/tauri").GameAppInfo = {
+              appId: appIdDraft,
+              provider: appInfo?.provider ?? "steam",
+              name: nameDraft || null,
+              updatedAt: Math.floor(Date.now() / 1000),
+              media,
+              mediaSources: appInfo?.mediaSources ?? null,
+              remote: appInfo?.remote ?? null,
+              userData: Object.keys(userData).length > 0 ? userData : null,
+            };
+            await persistGameAppInfo(appIdDraft, updatedEntry);
+            clearSessionAppInfoCache(appIdDraft);
+            notifyMediaUpdated(appIdDraft);
+            updateGame(appIdDraft, { title: nameDraft || undefined } as Partial<LibraryGame>);
+            setAppInfo(updatedEntry);
+          }
         } else {
           // Create new manual game
           const newId = crypto.randomUUID();
@@ -1022,8 +1069,36 @@ export default function GameEditDialog({
         if (nameDraft.trim()) {
           titleOk = updateDebridGameTitle(debridProviderGameId, nameDraft);
         }
+
+        // Persist full userData to Steam appinfo when Debrid has appId (same as Steam save path)
+        if (appIdDraft) {
+          const debridMedia: GameMediaPaths = {
+            coverPath: appInfo?.media?.coverPath ?? null,
+            landscapePath: appInfo?.media?.landscapePath ?? null,
+            backgroundPath: appInfo?.media?.backgroundPath ?? null,
+            logoPath: appInfo?.media?.logoPath ?? null,
+            iconPath: appInfo?.media?.iconPath ?? null,
+          };
+          const userData = buildUserData();
+          const updatedEntry: GameAppInfo = {
+            appId: appIdDraft,
+            provider: appInfo?.provider ?? "steam",
+            name: nameDraft || null,
+            updatedAt: Math.floor(Date.now() / 1000),
+            media: debridMedia,
+            mediaSources: appInfo?.mediaSources ?? null,
+            remote: appInfo?.remote ?? null,
+            userData: Object.keys(userData).length > 0 ? userData : null,
+          };
+          await persistGameAppInfo(appIdDraft, updatedEntry);
+          clearSessionAppInfoCache(appIdDraft);
+          notifyMediaUpdated(appIdDraft);
+          updateGame(appIdDraft, { title: nameDraft || undefined } as Partial<LibraryGame>);
+          setAppInfo(updatedEntry);
+        }
+
         if (ok && titleOk) {
-          showSuccess("Debrid install path saved");
+          showSuccess("Game details saved");
         } else if (ok) {
           showError("El título no se pudo guardar");
         } else {
@@ -1209,6 +1284,8 @@ export default function GameEditDialog({
 
   const commitMediaUpdate = useCallback(
     async (updatedMedia: GameMediaPaths) => {
+      const effectiveAppId = appId || appIdDraft;
+
       // ── Manual game — update ManualGameEntry ──
       if ((isManualMode || isCreateMode) && (manualGameId || createdManualId)) {
         const targetId = manualGameId ?? createdManualId!;
@@ -1221,6 +1298,17 @@ export default function GameEditDialog({
         };
         const updated = updateManualGame(targetId, patch);
         setManualEntry(updated);
+        // When manual has appId, also persist to Steam appinfo (same as Steam path)
+        if (effectiveAppId) {
+          await updateGameAppinfoMediaIfChanged(
+            effectiveAppId, appInfo?.name ?? null, updatedMedia,
+            appInfo?.remote ?? null, appInfo?.mediaSources ?? null, "gameEditDialog",
+          );
+          invalidateResolvedMediaCache(effectiveAppId);
+          notifyMediaUpdated(effectiveAppId);
+          setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
+          updateGame(effectiveAppId, {} as Partial<LibraryGame>);
+        }
         return;
       }
 
@@ -1238,23 +1326,22 @@ export default function GameEditDialog({
         return;
       }
 
-      // ── Steam game — existing path ──
-      if (!appId) return;
+      // ── Steam / Debrid+appId / Manual+appId — persist to appinfo ──
+      if (!effectiveAppId) return;
       await updateGameAppinfoMediaIfChanged(
-        appId,
+        effectiveAppId,
         appInfo?.name ?? null,
         updatedMedia,
         appInfo?.remote ?? null,
         appInfo?.mediaSources ?? null,
         "gameEditDialog",
       );
-      invalidateResolvedMediaCache(appId);
-      notifyMediaUpdated(appId);
+      invalidateResolvedMediaCache(effectiveAppId);
+      notifyMediaUpdated(effectiveAppId);
       setAppInfo((prev) => (prev ? { ...prev, media: updatedMedia } : prev));
-      // Trigger immediate React re-render across library/tiles
-      updateGame(appId, {} as Partial<LibraryGame>);
+      updateGame(effectiveAppId, {} as Partial<LibraryGame>);
     },
-    [appId, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId],
+    [appId, appIdDraft, appInfo, updateGame, isManualMode, isCreateMode, isEpicMode, epicProviderGameId, manualGameId, createdManualId],
   );
 
   // ── File pick handler ──
@@ -1462,7 +1549,7 @@ export default function GameEditDialog({
         }
         // Steam Official: requires linked Steam App ID
         if (sourceId === "steam") {
-          const steamAppId = manualEntry?.linkedSteamAppId;
+          const steamAppId = manualEntry?.linkedSteamAppId || manualEntry?.appId || appIdDraft;
           if (!steamAppId) {
             showError("Link a Steam App ID first to use Steam Official Assets");
             return;
@@ -1580,26 +1667,36 @@ export default function GameEditDialog({
         return;
       }
 
-      if (!appId) return;
+      const effectiveSteamAppId = appId || appIdDraft;
+      if (!effectiveSteamAppId) return;
 
       setSaving(true);
       setBrowsingRole(role);
       try {
         let downloadUrl: string | null = null;
 
-        if (sourceId === "steam" && metadata) {
+        if (sourceId === "steam") {
+          // Resolve metadata inline if not already loaded (same as Manual handler)
+          if (!metadata) {
+            const metaMap = await resolveGameMetadata([Number(effectiveSteamAppId)]);
+            const meta = metaMap[Number(effectiveSteamAppId)];
+            if (meta) {
+              setMetadata(meta);
+              fillDraftsFromMetadata(meta);
+            }
+          }
           const steamUrlMap: Record<MediaRole, string | null> = {
             icon: null,
-            cover: buildSteamOfficialUrl(appId, "cover"),
-            landscape: buildSteamOfficialUrl(appId, "landscape"),
-            background: buildSteamOfficialUrl(appId, "background"),
-            logo: buildSteamOfficialUrl(appId, "logo"),
+            cover: buildSteamOfficialUrl(effectiveSteamAppId, "cover"),
+            landscape: buildSteamOfficialUrl(effectiveSteamAppId, "landscape"),
+            background: buildSteamOfficialUrl(effectiveSteamAppId, "background"),
+            logo: buildSteamOfficialUrl(effectiveSteamAppId, "logo"),
           };
           downloadUrl = steamUrlMap[role] ?? null;
         } else if (sourceId === "sgdb" && settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled) {
           try {
-            const artworks = await resolveSteamGridDbArtwork([Number(appId)], settings.steamGridDbApiKey);
-            const artwork = artworks?.find((a) => a.appId === Number(appId));
+            const artworks = await resolveSteamGridDbArtwork([Number(effectiveSteamAppId)], settings.steamGridDbApiKey);
+            const artwork = artworks?.find((a) => a.appId === Number(effectiveSteamAppId));
             if (artwork) {
               if (role === "cover") downloadUrl = artwork.gridUrl ?? null;
               else if (role === "landscape") downloadUrl = artwork.gridHorizontalUrl ?? null;
@@ -1613,7 +1710,7 @@ export default function GameEditDialog({
             const igdbData = await fetchIgdbArtworkDeduped({
               clientId: settings.igdbClientId,
               clientSecret: settings.igdbClientSecret,
-              appId,
+              appId: effectiveSteamAppId,
             });
             if (igdbData?.igdbCoverUrl && (role === "cover" || role === "landscape")) {
               downloadUrl = igdbData.igdbCoverUrl;
@@ -1623,7 +1720,7 @@ export default function GameEditDialog({
           try {
             const rawgData = await fetchRawgArtworkDeduped({
               apiKey: settings.rawgApiKey,
-              appId,
+              appId: effectiveSteamAppId,
             });
             if (rawgData?.rawgBackgroundUrl && (role === "background" || role === "landscape")) {
               downloadUrl = rawgData.rawgBackgroundUrl;
@@ -1642,7 +1739,7 @@ export default function GameEditDialog({
       setSaving(false);
       setBrowsingRole(null);
     },
-    [appId, metadata, settings, handleUrlDownload, isManualMode, isCreateMode, isEpicMode, nameDraft, manualEntry?.linkedSteamAppId],
+    [appId, appIdDraft, metadata, settings, handleUrlDownload, isManualMode, isCreateMode, isEpicMode, nameDraft, manualEntry?.linkedSteamAppId],
   );
 
   const handleOpenImageSearch = useCallback((role: MediaRole) => {
@@ -1685,7 +1782,8 @@ export default function GameEditDialog({
 
   async function loadRolePreviews() {
     setRolePreviews({});
-    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
+    // Manual WITHOUT appId → read from manual store
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
       if (!freshEntry) return;
@@ -1703,6 +1801,7 @@ export default function GameEditDialog({
       setRolePreviews(previews);
       return;
     }
+    // All games with appId (Steam, Manual+appId, Debrid+appId, Epic) → use mediaAdapter
     if (!mediaAdapter) return;
     const states = await mediaAdapter.getAllRoleStates();
     const previews: Record<string, RolePreviewEntry> = {};
@@ -1720,7 +1819,7 @@ export default function GameEditDialog({
   }
 
   async function refreshRolePreview(role: MediaRole, overrideRelPath?: string | null) {
-    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId)) {
+    if ((isManualMode || isCreateMode) && (manualGameId ?? createdManualId) && !appIdDraft) {
       const targetId = manualGameId ?? createdManualId!;
       const freshEntry = getManualGame(targetId) ?? manualEntry;
       const key = ROLE_TO_PATH_KEY[role] as keyof ManualGameEntry;
@@ -1778,7 +1877,7 @@ export default function GameEditDialog({
   const capabilities = useMemo(() => {
     if (isManualMode || isCreateMode) {
       const hasSgdbKey = !!(settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled);
-      const hasLinkedSteam = !!(manualEntry?.linkedSteamAppId || manualEntry?.appId);
+      const hasLinkedSteam = !!(manualEntry?.linkedSteamAppId || manualEntry?.appId || appIdDraft);
       return {
         canUseMetadataProviders: true,
         canUseSteamMetadata: true,
@@ -1790,17 +1889,18 @@ export default function GameEditDialog({
         canUseRawgAssets: false,
       };
     }
+    const hasSteamAppId = !!(appId || appIdDraft);
     return {
       canUseMetadataProviders: true,
       canUseSteamMetadata: true,
       canUseIgdbMetadata: !!(settings?.igdbClientId && settings?.igdbClientSecret),
       canUseRawgMetadata: !!(settings?.rawgApiKey),
-      canUseSteamAssets: !!(metadata?.capsule_image || metadata?.header_image || metadata?.library_hero_image || metadata?.library_logo_image),
+      canUseSteamAssets: hasSteamAppId || !!(metadata?.capsule_image || metadata?.header_image || metadata?.library_hero_image || metadata?.library_logo_image),
       canUseIgdbAssets: !!(settings?.igdbClientId && settings?.igdbClientSecret),
       canUseSgdbAssets: !!(settings?.steamGridDbApiKey && settings?.steamGridDbArtworkEnabled),
       canUseRawgAssets: !!(settings?.rawgApiKey),
     };
-  }, [settings, metadata, isManualMode, isCreateMode, manualEntry?.linkedSteamAppId]);
+  }, [settings, metadata, isManualMode, isCreateMode, manualEntry?.linkedSteamAppId, manualEntry?.appId, appId, appIdDraft]);
 
   const sourceAvailability = useMemo(() => ({
     sgdb: capabilities.canUseSgdbAssets,
@@ -1813,9 +1913,11 @@ export default function GameEditDialog({
 
   const currentPath = (role: MediaRole): string | null => {
     const key = ROLE_TO_PATH_KEY[role];
-    if ((isManualMode || isCreateMode) && manualEntry) {
+    // Manual WITHOUT appId → read from manual store
+    if ((isManualMode || isCreateMode) && manualEntry && !appIdDraft) {
       return (manualEntry[key as keyof ManualGameEntry] as string) ?? null;
     }
+    // Steam, Manual+appId, Debrid+appId → read from appInfo (Steam appinfo)
     return appInfo?.media?.[key] ?? null;
   };
 
@@ -2594,8 +2696,8 @@ export default function GameEditDialog({
           />
         ))}
 
-        {/* ── Read-only: Screenshots (Steam only) ── */}
-        {!isManualMode && !isCreateMode && metadata && screenshotCount > 0 && (
+        {/* ── Read-only: Screenshots ── */}
+        {!isCreateMode && metadata && screenshotCount > 0 && (
           <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
             <div className="flex items-center gap-2">
               <Monitor className="h-4 w-4 text-(--color-muted)" />
@@ -2632,8 +2734,8 @@ export default function GameEditDialog({
           </div>
         )}
 
-        {/* ── Read-only: Trailers (Steam only) ── */}
-        {!isManualMode && !isCreateMode && metadata && movieCount > 0 && (
+        {/* ── Read-only: Trailers ── */}
+        {!isCreateMode && metadata && movieCount > 0 && (
           <div className="rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-4">
             <div className="flex items-center gap-2">
               <Video className="h-4 w-4 text-(--color-muted)" />
@@ -2707,7 +2809,7 @@ export default function GameEditDialog({
         <button
           type="button"
           onClick={handleOpenMediaFolder}
-          disabled={!appId && !manualGameId}
+          disabled={!appId && !manualGameId && !appIdDraft && !debridProviderGameId}
           className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm font-medium text-(--color-muted) transition hover:bg-white/10 hover:text-(--color-text) disabled:cursor-not-allowed disabled:opacity-40"
         >
           <FolderOpen className="h-4 w-4" />
