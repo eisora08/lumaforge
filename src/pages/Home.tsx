@@ -3,6 +3,8 @@ import { countRender } from "../services/perfCounters";
 
 import GameHero from "../components/dashboard/GameHero";
 import ContinuePlayingSection from "../components/dashboard/ContinuePlayingSection";
+import InProgressSection from "../components/dashboard/InProgressSection";
+import CompletedSection from "../components/dashboard/CompletedSection";
 import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
@@ -190,6 +192,24 @@ export default function Home({ onNavigate }: Props) {
               onNavigate={onNavigate}
               excludeAppId={runningAppId}
               maxItems={getSectionLimit("continue-playing", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("in-progress", sectionVisibility) && (
+          <SectionWrap>
+            <InProgressSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("in-progress", sectionLimits, 12)}
+            />
+          </SectionWrap>
+        )}
+
+        {isSectionVisible("completed", sectionVisibility) && (
+          <SectionWrap>
+            <CompletedSection
+              onNavigate={onNavigate}
+              maxItems={getSectionLimit("completed", sectionLimits, 12)}
             />
           </SectionWrap>
         )}

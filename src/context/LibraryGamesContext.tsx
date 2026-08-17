@@ -660,6 +660,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       sources: [],
       steamLastPlayedAt: sg.lastPlayed ?? undefined,
       steamPlaytimeMinutes: sg.playtime ?? undefined,
+      achievementUnlocked: sg.achievementSummary?.unlocked,
+      achievementTotal: sg.achievementSummary?.total,
+      completionStatus: sg.completionStatus ?? undefined,
       backgroundPath: sg.media?.backgroundPath ?? undefined,
       landscapePath: sg.media?.landscapePath ?? undefined,
       coverPath: sg.media?.coverPath ?? undefined,
@@ -754,8 +757,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
         // (those sources don't populate backgroundPath/landscapePath/coverPath).
         if (snapshot && snapshot.library.games.length > 0) {
           const snapshotMediaByAppId = new Map<string, SnapshotGame["media"]>();
+          const snapshotCompletionByAppId = new Map<string, string | null>();
           for (const sg of snapshot.library.games) {
             if (sg.appId) snapshotMediaByAppId.set(sg.appId, sg.media);
+            if (sg.appId) snapshotCompletionByAppId.set(sg.appId, sg.completionStatus ?? null);
           }
           let bridged = 0;
           for (const game of loadedGames) {
@@ -769,6 +774,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             if (!game.logoPath && sm.logoPath) { game.logoPath = sm.logoPath; changed = true; }
             if (!game.iconPath && sm.iconPath) { game.iconPath = sm.iconPath; changed = true; }
             if (changed) bridged++;
+            // Bridge completion status from snapshot for games from SQLite/reconciled
+            if (!game.completionStatus) {
+              const cs = snapshotCompletionByAppId.get(game.appId);
+              if (cs) game.completionStatus = cs;
+            }
           }
           if (bridged > 0) {
             console.log(`[LIBRARY_CONTEXT][SNAPSHOT_MEDIA_BRIDGE] bridged=${bridged} games=${loadedGames.length}`);
@@ -1197,6 +1207,14 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 libGame.sizeOnDisk = existing.sizeOnDisk;
                 libGame.executablePath = existing.executablePath;
                 libGame.installDir = existing.installDir;
+                // Preserve media paths — indexEntryToLibraryGame never populates these
+                libGame.landscapePath = existing.landscapePath;
+                libGame.coverPath = existing.coverPath;
+                libGame.backgroundPath = existing.backgroundPath;
+                libGame.logoPath = existing.logoPath;
+                libGame.iconPath = existing.iconPath;
+                // Preserve user-set completion status
+                libGame.completionStatus = existing.completionStatus;
               }
               return libGame;
             });

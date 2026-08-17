@@ -1132,9 +1132,10 @@ export default function GameEditDialog({
       };
       await persistGameAppInfo(appId!, updatedEntry);
       clearSessionAppInfoCache(appId!);
-      if (nameDraft) {
-        updateGame(appId!, { title: nameDraft });
-      }
+      updateGame(appId!, {
+        title: nameDraft || undefined,
+        completionStatus: completionStatusDraft || undefined,
+      } as Partial<LibraryGame>);
       notifyMediaUpdated(appId!);
       setAppInfo(updatedEntry);
       setHasEdits(false);
@@ -2095,12 +2096,33 @@ export default function GameEditDialog({
           <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-(--color-muted)">Game Information</h4>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-3">
-              <EditableField
-                label="Completion Status"
-                value={completionStatusDraft}
-                onChange={setCompletionStatusDraft}
-                placeholder="e.g. Complete, In Progress, Not Played"
-              />
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-(--color-muted)">Completion Status</label>
+                <div className="flex gap-1.5 rounded-xl border border-(--surface-active-border) bg-white/[0.02] p-1">
+                  {[
+                    { value: "", label: "Auto" },
+                    { value: "completed", label: "Completed" },
+                    { value: "in-progress", label: "In Progress" },
+                    { value: "not-played", label: "Not Played" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => { setCompletionStatusDraft(opt.value); setHasEdits(true); }}
+                      className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                        completionStatusDraft === opt.value
+                          ? "bg-(--color-accent)/20 text-(--color-accent)"
+                          : "text-(--color-muted) hover:bg-white/5 hover:text-(--color-text)"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11px] text-(--color-muted)/60">
+                  Auto derives from playtime &amp; achievements.
+                </p>
+              </div>
               {metadata?.platforms?.length ? (
                 <FieldRow label="Platforms" value={metadata.platforms.join(", ")} />
               ) : null}
@@ -2458,6 +2480,12 @@ export default function GameEditDialog({
                 Install Info
               </h4>
               <div className="space-y-3">
+                {/* Steam App ID */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-(--color-text)">Steam App ID</span>
+                  <span className="text-xs text-(--color-muted)">{appIdDraft || "—"}</span>
+                </div>
+
                 {/* Installed state */}
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-(--color-text)">Installed</span>

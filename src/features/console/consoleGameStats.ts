@@ -70,3 +70,32 @@ export function getGameCompletionStatus(game: LibraryGame, playtimeSeconds: numb
   }
   return "Played";
 }
+
+export type EffectiveCompletionStatus = "completed" | "in-progress" | "not-played" | "played";
+
+/**
+ * Get the effective completion status for a game.
+ * Checks for a user-set override first (from GameEditDialog dropdown),
+ * then falls back to auto-computation from playtime + achievements.
+ */
+export function getEffectiveCompletionStatus(
+  game: LibraryGame,
+  userOverride?: string,
+): EffectiveCompletionStatus | null {
+  // User-set manual overrides take priority
+  if (userOverride === "completed") return "completed";
+  if (userOverride === "in-progress") return "in-progress";
+  if (userOverride === "not-played") return "not-played";
+
+  // Auto-compute from playtime + achievements
+  const ptEntry = game.appId
+    ? getPlaytimeEntryByAppId(game.appId)
+    : getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+  const seconds = ptEntry?.totalPlaytimeSeconds ?? 0;
+  const raw = getGameCompletionStatus(game, seconds);
+  if (raw === "Completed") return "completed";
+  if (raw === "In Progress") return "in-progress";
+  if (raw === "Not Played") return "not-played";
+  if (raw === "Played") return "played";
+  return null;
+}

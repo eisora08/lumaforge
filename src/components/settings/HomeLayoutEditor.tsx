@@ -67,6 +67,8 @@ interface SectionMeta {
 
 const DASHBOARD_SECTIONS: SectionMeta[] = [
   { id: "continue-playing", label: "Continue Playing", icon: <Gamepad2 className="h-4 w-4" />, color: "text-emerald-400", description: "Recently played games with resume action", heroSourceId: "continuePlaying" },
+  { id: "in-progress", label: "In Progress", icon: <TrendingUp className="h-4 w-4" />, color: "text-amber-400", description: "Games you're currently playing" },
+  { id: "completed", label: "Completed", icon: <Check className="h-4 w-4" />, color: "text-emerald-400", description: "Games you've finished" },
   { id: "favorites", label: "Favorites", icon: <Heart className="h-4 w-4" />, color: "text-rose-400", description: "Your favorited games", heroSourceId: "favorites" },
   { id: "recommended", label: "Recommended", icon: <Star className="h-4 w-4" />, color: "text-amber-400", description: "Personalized suggestions from catalog", heroSourceId: "recommended" },
   { id: "top-played", label: "Top Played", icon: <TrendingUp className="h-4 w-4" />, color: "text-blue-400", description: "Most played games by time", heroSourceId: "topPlayed" },
@@ -78,6 +80,8 @@ const DASHBOARD_SECTIONS: SectionMeta[] = [
 
 const DEFAULT_LIMITS: Record<string, number> = {
   "continue-playing": 12,
+  "in-progress": 12,
+  "completed": 12,
   "favorites": 12,
   "recommended": 12,
   "top-played": 12,

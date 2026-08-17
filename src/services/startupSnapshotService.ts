@@ -615,6 +615,21 @@ async function _processDirtyAppIds(): Promise<void> {
           } catch {
             // achievementStore not available — skip
           }
+
+          // Bridge completionStatus from canonical appInfo userData
+          try {
+            const { getGameAppInfo } = await import("./tauri");
+            const appInfo = await getGameAppInfo(appId).catch(() => null);
+            if (appInfo?.userData && typeof appInfo.userData === "object") {
+              const cs = (appInfo.userData as Record<string, unknown>).completionStatus;
+              if (typeof cs === "string" && cs !== game.completionStatus) {
+                game.completionStatus = cs;
+                changed = true;
+              }
+            }
+          } catch {
+            // appInfo not available — skip
+          }
           break;
         }
       }
@@ -764,6 +779,7 @@ export type SnapshotGame = {
   mediaStatus: MediaStatus | null;
   missingMedia: string[];
   achievementSummary?: SnapshotAchievementSummary | null;
+  completionStatus?: string | null;
   lastMediaCheckAt: number | null;
   updatedAt?: number;
 };
@@ -930,6 +946,16 @@ export async function hydrateStartupSnapshotMedia(
       game.title = canonicalInfo.name!;
       gameChanged = true;
       debugAppLog(game.appId, `repaired title: ${game.title}`);
+    }
+
+    // Bridge completionStatus from canonical appInfo userData
+    if (hasCanonical && canonicalInfo?.userData && typeof canonicalInfo.userData === "object") {
+      const cs = (canonicalInfo.userData as Record<string, unknown>).completionStatus;
+      if (typeof cs === "string" && cs !== game.completionStatus) {
+        game.completionStatus = cs;
+        gameChanged = true;
+        debugAppLog(game.appId, `repaired completionStatus: ${cs}`);
+      }
     }
 
     if (gameChanged) {
@@ -1294,6 +1320,11 @@ export async function buildStartupSnapshotFromCurrentState(
       };
     }
 
+    // Read user-set completion status from canonical appInfo userData
+    const completionStatus = canonicalInfo?.userData && typeof canonicalInfo.userData === "object"
+      ? (canonicalInfo.userData as Record<string, unknown>).completionStatus as string | undefined
+      : undefined;
+
     snapshotGames.push({
       appId: game.appId,
       provider: "steam",
@@ -1311,6 +1342,7 @@ export async function buildStartupSnapshotFromCurrentState(
       mediaStatus,
       missingMedia,
       achievementSummary,
+      completionStatus: completionStatus || null,
       lastMediaCheckAt: now,
       updatedAt: now,
     });
