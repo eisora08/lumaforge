@@ -856,8 +856,11 @@ function GameLauncherTileInner({
               icon={<FolderOpen className="h-3.5 w-3.5" />}
               onClick={() => {
                 setMenuOpen(false);
-                if (game.installDir) {
-                  invoke("open_folder", { path: game.installDir }).catch((err) => {
+                const exe = game.executablePath || "";
+                const sep = Math.max(exe.lastIndexOf("\\"), exe.lastIndexOf("/"));
+                const folder = (sep > 0 ? exe.substring(0, sep) : null) || game.installDir || "";
+                if (folder) {
+                  invoke("open_folder", { path: folder }).catch((err) => {
                     showError(`Could not open folder: ${err}`);
                   });
                 }

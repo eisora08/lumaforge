@@ -800,8 +800,11 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
                 icon={<FolderOpen className="h-3.5 w-3.5" />}
                 onClick={() => {
                   handleMenuClose();
-                  if (menuGame.installDir) {
-                    invoke("open_folder", { path: menuGame.installDir }).catch((err) => {
+                  const exe = menuGame.executablePath || "";
+                  const sep = Math.max(exe.lastIndexOf("\\"), exe.lastIndexOf("/"));
+                  const folder = (sep > 0 ? exe.substring(0, sep) : null) || menuGame.installDir || "";
+                  if (folder) {
+                    invoke("open_folder", { path: folder }).catch((err) => {
                       showError(`Could not open folder: ${err}`);
                     });
                   }
