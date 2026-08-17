@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import type { AppPage } from "../../types/navigation";
 import type { LibraryGame } from "../../types/libraryGame";
+import type { SteamAppMetadata } from "../../types/gameMetadata";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useFavorites } from "../../context/FavoritesContext";
 import { useConsoleLibraryMedia } from "./consoleLibraryAdapter";
 import { isSidebarInstalledGame } from "../../services/gameCacheService";
 import { useConsoleSettings } from "./consoleSettings";
 import type { ConsoleLayoutMode } from "./consoleSettings";
+import { resolveGameMetadata } from "../../services/gameMetadataResolver";
 import ConsoleSwitchSpotlightLayout from "./ConsoleSwitchSpotlightLayout";
 import ConsoleGridLayout from "./ConsoleGridLayout";
 import ConsoleGameDetails from "./ConsoleGameDetails";
@@ -494,6 +496,58 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const layoutModeRef = useRef(consoleSettings.layoutMode);
   layoutModeRef.current = consoleSettings.layoutMode;
 
+  /* ── Metadata resolution for non-Steam games with appId ── */
+  const [metadataCache, setMetadataCache] = useState<Map<string, SteamAppMetadata>>(new Map());
+
+  // Resolve metadata for the settled focused game (grid panel + spotlight)
+  useEffect(() => {
+    const game = currentSettledFocusedGame;
+    if (!game?.appId) return;
+    if (game.metadata?.resolved) return;
+    if (metadataCache.has(game.appId)) return;
+    const appIdNum = Number(game.appId);
+    if (isNaN(appIdNum) || appIdNum <= 0) return;
+    resolveGameMetadata([appIdNum]).then((metaMap) => {
+      const meta = metaMap[appIdNum];
+      if (meta) {
+        setMetadataCache((prev) => {
+          const next = new Map(prev);
+          next.set(game.appId!, meta);
+          return next;
+        });
+      }
+    }).catch(() => {});
+  }, [currentSettledFocusedGame?.appId, currentSettledFocusedGame?.metadata]);
+
+  // Resolve metadata for the detail overlay game
+  useEffect(() => {
+    const game = detailGame;
+    if (!game?.appId) return;
+    if (game.metadata?.resolved) return;
+    if (metadataCache.has(game.appId)) return;
+    const appIdNum = Number(game.appId);
+    if (isNaN(appIdNum) || appIdNum <= 0) return;
+    resolveGameMetadata([appIdNum]).then((metaMap) => {
+      const meta = metaMap[appIdNum];
+      if (meta) {
+        setMetadataCache((prev) => {
+          const next = new Map(prev);
+          next.set(game.appId!, meta);
+          return next;
+        });
+      }
+    }).catch(() => {});
+  }, [detailGame?.appId, detailGame?.metadata]);
+
+  // Merge cached metadata into game object
+  const enrichWithMetadata = useCallback((game: LibraryGame | null): LibraryGame | null => {
+    if (!game?.appId) return game;
+    if (game.metadata?.resolved) return game;
+    const cached = metadataCache.get(game.appId);
+    if (!cached) return game;
+    return { ...game, metadata: cached };
+  }, [metadataCache]);
+
   /* ── Debounce settled focus for preview (avoids heavy work during held navigation) ── */
   useEffect(() => {
     if (focusedRail < 0 || focusedIndex < 0) {
@@ -620,9 +674,13 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     }
   }, [rails, focusedRail, focusedIndex, focusRail]);
 
+  const enrichedFocusedGame = useMemo(() => enrichWithMetadata(currentFocusedGame), [currentFocusedGame, enrichWithMetadata]);
+  const enrichedSettledGame = useMemo(() => enrichWithMetadata(currentSettledFocusedGame), [currentSettledFocusedGame, enrichWithMetadata]);
+  const enrichedDetailGame = useMemo(() => enrichWithMetadata(detailGame), [detailGame, enrichWithMetadata]);
+
   const sharedProps = useMemo(() => ({
-    focusedGame: currentFocusedGame,
-    settledFocusedGame: currentSettledFocusedGame,
+    focusedGame: enrichedFocusedGame,
+    settledFocusedGame: enrichedSettledGame,
     rails,
     focusedRail,
     focusedIndex,
@@ -640,7 +698,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     allGames: enrichedGames,
     gridColumnsRef,
     dockFocusedIndex,
-  }), [currentFocusedGame, currentSettledFocusedGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, gridColumnsRef, dockFocusedIndex]);
+  }), [enrichedFocusedGame, enrichedSettledGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, gridColumnsRef, dockFocusedIndex]);
 
   const layout = consoleSettings.layoutMode === "spotlight"
     ? <ConsoleSwitchSpotlightLayout {...sharedProps} />
@@ -654,9 +712,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       </div>
 
       {/* Details panel overlays on top of the layout */}
-      {detailGame && (
+      {enrichedDetailGame && (
         <ConsoleGameDetails
-          game={detailGame}
+          game={enrichedDetailGame}
           onClose={closeDetails}
           settings={consoleSettings}
           onSearchOpen={() => { setSearchOpen(true); }}
