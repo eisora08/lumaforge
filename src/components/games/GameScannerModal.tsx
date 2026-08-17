@@ -171,8 +171,8 @@ export default function GameScannerModal({ open, onClose, onAdd }: GameScannerMo
       onKeyDown={handleKeyDown}
     >
       <div
-        className="lf-modal-panel mx-4 flex w-full max-w-[680px] flex-col overflow-hidden rounded-2xl border border-(--color-border) lf-surface shadow-2xl shadow-black/30"
-        style={{ maxHeight: "80vh" }}
+        className="lf-modal-panel flex w-[min(680px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-(--color-border) lf-surface shadow-2xl shadow-black/30"
+        style={{ height: "min(520px, calc(100vh - 4rem))" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -221,7 +221,7 @@ export default function GameScannerModal({ open, onClose, onAdd }: GameScannerMo
         <div className="mx-5 border-t border-(--surface-active-border)/30" />
 
         {/* Program list */}
-        <div className="flex-1 overflow-y-auto px-5 py-2" style={{ minHeight: 200 }}>
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-2">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12 text-(--color-muted)">
               <RefreshCw className="mb-2 h-5 w-5 animate-spin" />
