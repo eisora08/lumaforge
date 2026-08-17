@@ -36,6 +36,7 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     ],
 
     supportedFileTypes: ["zip", "manifest"],
+    apiKeyUrl: "https://hubcapmanifest.com/api-keys/stats",
   },
   {
     id: "ryuu",
@@ -67,6 +68,7 @@ export const defaultApiProviders: ApiProviderDefinition[] = [
     ],
 
     supportedFileTypes: ["zip", "lua", "manifest"],
+    apiKeyUrl: "https://generator.ryuu.lol/api",
   },
   {
     id: "custom",

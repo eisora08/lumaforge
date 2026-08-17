@@ -66,6 +66,16 @@ export default function HubcapProviderBadges({ surface = "settings" }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-validate when API key changes (user types/pastes a key)
+  useEffect(() => {
+    if (!didInitRef.current) return;
+    if (!apiKey) return;
+    refreshHubcapStatus(baseUrl, apiKey).then((s) => {
+      if (mountedRef.current) setStatus(s);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey]);
+
   // Log badges render once per mount
   useEffect(() => {
     if (didLogBadges.current) return;

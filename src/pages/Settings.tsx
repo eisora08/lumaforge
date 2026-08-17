@@ -839,7 +839,13 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                           provider={provider}
                           settings={providerSettings}
                           onChange={handleProviderChange}
-                          badgeContent={provider.id === "hubcapdb" ? <HubcapProviderBadges surface="settings" /> : undefined}
+                          badgeContent={
+                            provider.id === "hubcapdb"
+                              ? <HubcapProviderBadges surface="settings" />
+                              : provider.id === "ryuu" && providerSettings.apiKey
+                                ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">Active</span>
+                                : undefined
+                          }
                         />
                       );
                     })}

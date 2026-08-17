@@ -38,6 +38,7 @@ export type ApiProviderDefinition = {
 
   capabilities: ProviderCapability[];
   supportedFileTypes: PackageFileType[];
+  apiKeyUrl?: string;
 };
 
 export type ApiProviderUserSettings = {
