@@ -234,6 +234,7 @@ pub fn run() {
             commands::desktop::open_game_media_folder,
             commands::desktop::create_shortcut,
             commands::toast::show_achievement_overlay,
+            commands::toast::show_achievement_overlay_batch,
             commands::toast::show_session_overlay,
             commands::toast::close_toast_window,
             commands::toast::show_toast_notification,
@@ -400,6 +401,7 @@ pub fn run() {
             commands::sqlite_cache::get_all_provider_statuses,
             commands::sqlite_cache::upsert_game_catalog_blob,
             commands::sqlite_cache::get_game_catalog_blob,
+            commands::installed_programs::scan_installed_programs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

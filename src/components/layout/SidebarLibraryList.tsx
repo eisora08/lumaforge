@@ -17,6 +17,8 @@ import {
   Image,
   Trash2,
   Wrench,
+  ChevronDown,
+  Scan,
 } from "lucide-react";
 import { countRender } from "../../services/perfCounters";
 
@@ -43,6 +45,8 @@ import type { GameAppInfo, ResolvedSidebarMedia, GameMediaPaths } from "../../se
 import { getBootSnapshot } from "../../services/appBootCoordinator";
 import CardActionMenu, { MenuItem } from "../games/CardActionMenu";
 import GameEditDialog from "../games/GameEditDialog";
+import GameScannerModal from "../games/GameScannerModal";
+import type { ScannedProgram } from "../games/GameScannerModal";
 import ToolsModal from "../tools/ToolsModal";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { showSuccess, showError, showInfo, showWarning } from "../toast/GameToast";
@@ -52,7 +56,8 @@ import { openExternalUrl } from "../../services/externalLinks";
 import { uninstallSteamApp, openSteamStoreApp, deleteLuaScript, scanInstalledLuaScripts } from "../../services/tauri";
 import { isPendingUninstall, markPendingUninstall, clearPendingUninstall, subscribePendingUninstall, getPendingUninstallVersion, getFavoriteKey, detectAndQueueMissingMedia } from "../../services/gameCacheService";
 import { getSteamStoreUrl } from "../../utils/steamLinks";
-import { removeManualGame, normalizeManualGameId } from "../../services/manualGameStore";
+import { removeManualGame, normalizeManualGameId, saveManualGame } from "../../services/manualGameStore";
+import type { ManualGameEntry } from "../../services/manualGameStore";
 import { removeDebridGameFromLibrary } from "../../services/debridGameStore";
 import { useConfirm } from "../../services/confirmService";
 
@@ -158,6 +163,8 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   const [editDialogGame, setEditDialogGame] = useState<LibraryGame | null>(null);
   const [toolsGame, setToolsGame] = useState<LibraryGame | null>(null);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites();
   const { settings: appSettings } = useSettings();
   const sidebarMenuAnchorRef = useRef<HTMLButtonElement>(null);
@@ -980,20 +987,57 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
   // (mounted in Sidebar.tsx below the scroll container, so scrolling never moves it).
   if (variant === "add-button") {
     if (isCompactMode || isCollapsedMode) return null;
+    const handleScanAdd = (programs: ScannedProgram[]) => {
+      for (const p of programs) {
+        const entry: ManualGameEntry = {
+          id: `manual:${crypto.randomUUID()}`,
+          name: p.name,
+          executablePath: p.exePath || undefined,
+          installDir: p.installPath || undefined,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        saveManualGame(entry);
+      }
+      setScannerOpen(false);
+    };
     return (
-      <div className="flex flex-col">
-        <button
-          type="button"
-          onClick={() => {
-            setEditDialogGame(null);
-            setEditDialogInitialTab("general");
-            setEditDialogOpen(true);
-          }}
-          className="flex w-full items-center gap-2 rounded-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
-        >
-          <Plus className="h-3 w-3" />
-          Add Manual Game
-        </button>
+      <div className="flex flex-col gap-1">
+        <div className="flex">
+          <button
+            type="button"
+            onClick={() => {
+              setEditDialogGame(null);
+              setEditDialogInitialTab("general");
+              setEditDialogOpen(true);
+            }}
+            className="flex flex-1 items-center gap-2 rounded-l-lg border border-dashed border-(--surface-active-border) px-3 py-1.5 text-[11px] text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
+          >
+            <Plus className="h-3 w-3" />
+            Add Game
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddMenuOpen((v) => !v)}
+            className="flex items-center rounded-r-lg border border-l-0 border-dashed border-(--surface-active-border) px-1.5 py-1.5 text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-text)"
+          >
+            <ChevronDown className={`h-3 w-3 transition-transform ${addMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+        {addMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setAddMenuOpen(false)} />
+            <div className="relative z-50 -mt-0.5 overflow-hidden rounded-lg border border-white/10 bg-[#1a1a2e] shadow-xl shadow-black/40">
+              <button
+                onClick={() => { setScannerOpen(true); setAddMenuOpen(false); }}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] text-white/70 transition hover:bg-white/[0.08] hover:text-white"
+              >
+                <Scan className="h-3 w-3" />
+                Scan Installed
+              </button>
+            </div>
+          </>
+        )}
         {editDialogOpen && (
           <GameEditDialog
             open={editDialogOpen}
@@ -1008,6 +1052,11 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
             }}
           />
         )}
+        <GameScannerModal
+          open={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onAdd={handleScanAdd}
+        />
       </div>
     );
   }

@@ -1041,6 +1041,22 @@ export async function discoverExecutables(dir: string): Promise<DiscoveredExecut
   }
 }
 
+export type InstalledProgram = {
+  name: string;
+  installPath: string;
+  exePath?: string;
+  displayIcon?: string;
+  estimatedSizeKb?: number;
+};
+
+export async function scanInstalledPrograms(): Promise<InstalledProgram[]> {
+  try {
+    return await invoke<InstalledProgram[]>("scan_installed_programs");
+  } catch {
+    return [];
+  }
+}
+
 // --- Store cache ---
 // All Store data lives under app_data/store/ to keep it separate from Library cache.
 
@@ -2649,8 +2665,8 @@ export type CrackSaveResult = {
   save_path: string;
 };
 
-export async function detectCrackSaveType(appId: string): Promise<CrackSaveResult | null> {
-  return await invoke<CrackSaveResult | null>("detect_crack_save_type", { appId });
+export async function detectCrackSaveType(appId: string, installDir?: string): Promise<CrackSaveResult | null> {
+  return await invoke<CrackSaveResult | null>("detect_crack_save_type", { appId, installDir });
 }
 
 // ── Dev console exposure ──
