@@ -104,6 +104,10 @@ export async function dispatchProviderLaunch(game: LibraryGame): Promise<LaunchD
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn("[DEBRID_LAUNCH] failed", msg);
+      // UAC cancelled by user — not a real error, don't show to user
+      if (msg.includes("cancelled by the user") || msg.includes("Elevation declined")) {
+        return { dispatched: false };
+      }
       return { dispatched: false, error: msg };
     }
   }

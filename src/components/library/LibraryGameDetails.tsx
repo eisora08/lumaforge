@@ -1308,6 +1308,13 @@ export default function LibraryGameDetails({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showActions]);
 
+  // Show launch errors as toast instead of inline
+  useEffect(() => {
+    if (launchInfo?.state === "error" && launchInfo.error) {
+      showError(launchInfo.error);
+    }
+  }, [launchInfo?.state, launchInfo?.error]);
+
   // PART 1: Sidebar sort — unlocked first, unlockTime desc, rarity asc, name
   const sortedSidebarAchievements = useMemo(() => {
     if (!achievementsSummary?.achievements) return null;
@@ -1440,7 +1447,7 @@ export default function LibraryGameDetails({
       )}
 
       {/* Hero banner — Steam-style header */}
-      <div className="relative w-full shrink-0 overflow-hidden bg-black" style={{ minHeight: "calc(70vh - 3.5rem)", maxHeight: "600px" }}>
+      <div className="relative -mt-14 aspect-[21/9] min-h-[340px] max-h-[520px] w-full shrink-0 overflow-hidden bg-black">
         {/* Layer 1 — Steam-style colorful blurred backdrop */}
         {/* brightness-0.65 keeps colors visible so blur visually connects to main image;
             object-position: center ensures the same crop region as the sharp image.
@@ -1490,7 +1497,7 @@ export default function LibraryGameDetails({
         {/* Bottom content: logo + title */}
         {canonicalLoaded && (
           <div className="absolute bottom-0 left-0 right-0 z-30 pointer-events-none">
-            <div className="mx-auto w-full max-w-[1440px] px-5 pb-4 lg:pb-5">
+            <div className="mx-auto w-full max-w-[1440px] px-5 pb-20 lg:pb-22">
               {logoUrl ? (
                 <img
                   src={logoUrl}
@@ -1511,11 +1518,6 @@ export default function LibraryGameDetails({
                 <h1 className="line-clamp-1 text-xl font-black text-white drop-shadow-sm lg:text-2xl">
                   {detailTitle}
                 </h1>
-              )}
-              {game.source === "debrid" && game.repacker && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-medium text-cyan-400 ring-1 ring-cyan-500/25">
-                  {game.repacker.toUpperCase()}
-                </span>
               )}
             </div>
           </div>
@@ -1552,6 +1554,11 @@ export default function LibraryGameDetails({
                     </span>
                   );
                 })()}
+                {game.source === "debrid" && game.repacker && (
+                  <span className="inline-flex items-center rounded-full bg-cyan-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-cyan-400 ring-1 ring-cyan-500/25">
+                    {game.repacker.toUpperCase()}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -1655,11 +1662,6 @@ export default function LibraryGameDetails({
                         </span>
                       </div>
                     </>
-                  )}
-                  {launchInfo?.state === "error" && launchInfo.error && (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-red-400">
-                      {launchInfo.error}
-                    </span>
                   )}
                 </>
               )}
