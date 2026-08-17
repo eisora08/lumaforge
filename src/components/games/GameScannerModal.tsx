@@ -8,6 +8,7 @@ import {
   Check,
   Monitor,
   RefreshCw,
+  EyeOff,
 } from "lucide-react";
 import {
   scanInstalledPrograms,
@@ -16,6 +17,7 @@ import {
   pickFolder,
 } from "../../services/tauri";
 import type { InstalledProgram } from "../../services/tauri";
+import type { LibraryGame } from "../../types/libraryGame";
 
 export type ScannedProgram = {
   name: string;
@@ -30,6 +32,7 @@ type GameScannerModalProps = {
   open: boolean;
   onClose: () => void;
   onAdd: (programs: ScannedProgram[]) => void;
+  games: LibraryGame[];
 };
 
 const ROW_HOVER = "hover:bg-white/5 transition-colors";
@@ -56,11 +59,24 @@ function programToScanned(
   };
 }
 
-export default function GameScannerModal({ open, onClose, onAdd }: GameScannerModalProps) {
+export default function GameScannerModal({ open, onClose, onAdd, games }: GameScannerModalProps) {
   const [programs, setPrograms] = useState<ScannedProgram[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [hideImported, setHideImported] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Build set of already-imported exe basenames
+  const importedExes = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of games) {
+      if (g.executablePath) {
+        const name = g.executablePath.split(/[\\/]/).pop()?.toLowerCase();
+        if (name) set.add(name);
+      }
+    }
+    return set;
+  }, [games]);
 
   // Load registry programs on mount
   useEffect(() => {
@@ -88,15 +104,22 @@ export default function GameScannerModal({ open, onClose, onAdd }: GameScannerMo
 
   // Live filter
   const filtered = useMemo(() => {
-    if (!query.trim()) return programs;
+    let result = programs;
+    if (hideImported && importedExes.size > 0) {
+      result = result.filter((p) => {
+        const exeName = p.exePath.split(/[\\/]/).pop()?.toLowerCase();
+        return !exeName || !importedExes.has(exeName);
+      });
+    }
+    if (!query.trim()) return result;
     const q = query.toLowerCase();
-    return programs.filter(
+    return result.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.exePath.toLowerCase().includes(q) ||
         p.installPath.toLowerCase().includes(q)
     );
-  }, [programs, query]);
+  }, [programs, query, hideImported, importedExes]);
 
   const selectedCount = programs.filter((p) => p.selected).length;
 
@@ -215,6 +238,19 @@ export default function GameScannerModal({ open, onClose, onAdd }: GameScannerMo
             <FolderOpen className="h-3.5 w-3.5" />
             Select Folder
           </button>
+          {importedExes.size > 0 && (
+            <button
+              onClick={() => setHideImported((v) => !v)}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs transition ${
+                hideImported
+                  ? "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent)"
+                  : "border-(--surface-active-border) bg-white/5 text-(--color-muted) hover:bg-white/10 hover:text-(--color-text)"
+              }`}
+            >
+              <EyeOff className="h-3.5 w-3.5" />
+              {hideImported ? "Hidden" : "Hide imported"}
+            </button>
+          )}
         </div>
 
         {/* Divider */}
@@ -299,9 +335,8 @@ export default function GameScannerModal({ open, onClose, onAdd }: GameScannerMo
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3">
           <span className="text-xs text-(--color-muted)">
-            {selectedCount > 0
-              ? `${selectedCount} selected`
-              : "Select programs to add"}
+            {filtered.length} of {programs.length} programs
+            {selectedCount > 0 ? ` · ${selectedCount} selected` : ""}
           </span>
           <div className="flex items-center gap-2">
             <button

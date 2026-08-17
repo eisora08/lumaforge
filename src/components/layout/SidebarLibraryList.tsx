@@ -1056,6 +1056,7 @@ export default function SidebarLibraryList({ onOpenGame, activePage, compact = f
           open={scannerOpen}
           onClose={() => setScannerOpen(false)}
           onAdd={handleScanAdd}
+          games={games}
         />
       </div>
     );

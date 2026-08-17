@@ -892,6 +892,7 @@ export default function LibraryPage({ onNavigate }: Props) {
         open={scannerOpen}
         onClose={() => setScannerOpen(false)}
         onAdd={handleScanAdd}
+        games={games}
       />
       {hoveredGame && gamePosition && !tileOverlayOpen && !sourceSelectorGame && !addGameOpen && !scannerOpen && (
         <GameHoverPreview
