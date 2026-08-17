@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef, useEffect, useSyncExternalStore } from "react";
 import {
   Trophy, Star,
 } from "lucide-react";
@@ -9,6 +9,7 @@ import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytim
 import { getConsoleHeroBackground } from "./consoleMedia";
 import { formatBytes, formatRelativeTime, formatPlaytime, getGameCompletionStatus, getGameLastPlayedTimestamp } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
+import { resolvePanelWidth } from "./consoleSettings";
 import { useConsoleAchievements, useConsoleReviews } from "./useConsoleGameDetailsData";
 import ConsoleGameCard from "./ConsoleGameCard";
 import ConsoleTopHud from "./ConsoleTopHud";
@@ -19,7 +20,7 @@ import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
 import { setScrollTarget } from "./useConsoleGamepadInput";
 import { deduplicateByStableId, getFavoriteKey, localPathToUrl, isLocalPath } from "../../services/gameCacheService";
-import { setAmbientSource, clearAmbientSource, getAmbientMode } from "../../services/ambientBackgroundStore";
+import { setAmbientSource, clearAmbientSource, subscribeAmbient, getAmbientSnapshot } from "../../services/ambientBackgroundStore";
 import { useDynamicPalette } from "../../hooks/useDynamicPalette";
 
 const DEBUG_CONSOLE_GRID_NAV = false;
@@ -80,7 +81,9 @@ export default function ConsoleGridLayout({
   const [hoverGame, setHoverGame] = useState<LibraryGame | null>(null);
   const backdropGame = hoverGame ?? previewGame;
   const backdropSrc = getConsoleHeroBackground(backdropGame);
-  const ambientMode = getAmbientMode();
+  const ambientSnapshot = useSyncExternalStore(subscribeAmbient, getAmbientSnapshot, getAmbientSnapshot);
+  const ambientOn = ambientSnapshot.enabled;
+  const ambientMode = ambientSnapshot.mode;
   const panelPalette = useDynamicPalette(ambientMode === "color" ? backdropSrc : null);
 
   useEffect(() => {
@@ -95,6 +98,17 @@ export default function ConsoleGridLayout({
   }, [backdropSrc]);
 
   useEffect(() => () => clearAmbientSource("console-grid-focus"), []);
+
+  /* ── Resolved panel width (auto-detect by screen resolution) ── */
+  const [resolvedPanelWidth, setResolvedPanelWidth] = useState(() => resolvePanelWidth(settings.sidePanelPreset ?? "auto"));
+  useEffect(() => {
+    const preset = settings.sidePanelPreset ?? "auto";
+    setResolvedPanelWidth(resolvePanelWidth(preset));
+    if (preset !== "auto") return;
+    const onResize = () => setResolvedPanelWidth(resolvePanelWidth("auto"));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [settings.sidePanelPreset]);
 
   const [showArtworkFirst, setShowArtworkFirst] = useState(true);
   const [thumbnailAutoplaySrc, setThumbnailAutoplaySrc] = useState<string | null>(null);
@@ -350,9 +364,9 @@ export default function ConsoleGridLayout({
 
         {/* Right preview panel — settings-driven width */}
         <div className="lf-surface hidden relative shrink-0 overflow-hidden border-l border-(--color-border) lg:block"
-             style={{ width: `${settings.sidePanelWidth}px`, minWidth: `${settings.sidePanelWidth}px`, maxWidth: `${settings.sidePanelWidth}px` }}>
+             style={{ width: `${resolvedPanelWidth}px`, minWidth: `${resolvedPanelWidth}px`, maxWidth: `${resolvedPanelWidth}px` }}>
           {/* Instant hover/focus backdrop layer */}
-          {backdropSrc && (
+          {ambientOn && backdropSrc && (
             <div className="pointer-events-none absolute inset-0" aria-hidden="true">
               {ambientMode === "color" ? (
                 <div className="absolute inset-0 opacity-40">

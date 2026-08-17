@@ -31,6 +31,7 @@ import {
   CONSOLE_THEME_INFOS,
   WIDTH_PRESETS,
   RADIUS_PRESETS,
+  PANEL_WIDTH_PRESETS,
   GRID_CARD_DEFAULTS,
   SPOTLIGHT_CARD_DEFAULTS,
   SPOTLIGHT_CONTENT_DEFAULTS,
@@ -319,6 +320,19 @@ const SETTING_ROWS_VISUALS: SettingRowDef[] = [
   },
   { id: "focusShine", type: "toggle", label: "Focus Shine Animation", description: "Glow sweep on focused cards", getValue: (s) => s.focusShine, onAction: (s) => ({ focusShine: !s.focusShine }) },
   { id: "heroMotion", type: "toggle", label: "Hero Motion", description: "Slow Ken Burns effect on hero background", getValue: (s) => s.heroMotion, onAction: (s) => ({ heroMotion: !s.heroMotion }) },
+  {
+    id: "sidePanelPreset", type: "segmented", label: "Panel Size",
+    segOptions: PANEL_WIDTH_PRESETS.map(p => ({ label: p.label, value: p.value })),
+    description: "Auto adapts to 1080p/1440p/4K",
+    getValue: (s) => s.sidePanelPreset,
+    onAction: (s, k) => {
+      const idx = PANEL_WIDTH_PRESETS.findIndex(o => o.value === s.sidePanelPreset);
+      const next = PANEL_WIDTH_PRESETS[Math.min(PANEL_WIDTH_PRESETS.length - 1, idx + 1)];
+      const prev = PANEL_WIDTH_PRESETS[Math.max(0, idx - 1)];
+      if (k === "left") return prev ? { sidePanelPreset: prev.value } : {};
+      return next ? { sidePanelPreset: next.value } : {};
+    },
+  },
   { id: "showTrailerPreview", type: "toggle", label: "Show Trailer Preview", description: "Show mini trailer/artwork preview in Spotlight", getValue: (s) => s.spotlightCardStyle.showTrailerPreview, onAction: (s) => patchSpotlightCardStyle(s, { showTrailerPreview: !s.spotlightCardStyle.showTrailerPreview }) },
   { id: "spotlightCardWidth", type: "slider", label: "Spotlight Card Width", sliderMin: 200, sliderMax: 420, sliderStep: 10, sliderUnit: "px", getValue: (s) => s.spotlightCardStyle.widthPreset, onAction: (s, k) => patchSpotlightCardStyle(s, { widthPreset: k === "left" ? Math.max(200, s.spotlightCardStyle.widthPreset - 10) : Math.min(420, s.spotlightCardStyle.widthPreset + 10) }) },
   { id: "spotlightCardGap", type: "slider", label: "Spotlight Card Gap", sliderMin: 8, sliderMax: 48, sliderStep: 2, sliderUnit: "px", getValue: (s) => s.spotlightCardGap, onAction: (s, k) => k === "left" ? { spotlightCardGap: Math.max(8, s.spotlightCardGap - 2) } : { spotlightCardGap: Math.min(48, s.spotlightCardGap + 2) } },
