@@ -570,7 +570,7 @@ pub struct CrackSaveResult {
 }
 
 #[tauri::command]
-pub fn detect_crack_save_type(app_id: String) -> Result<Option<CrackSaveResult>, String> {
+pub fn detect_crack_save_type(app_id: String, install_dir: Option<String>) -> Result<Option<CrackSaveResult>, String> {
     let bases: Vec<(&str, Vec<&str>, &str)> = vec![
         ("PUBLIC", vec!["Documents", "Steam", "RUNE"], "rune"),
         ("PUBLIC", vec!["Documents", "Steam", "CODEX"], "codex"),
@@ -600,6 +600,44 @@ pub fn detect_crack_save_type(app_id: String) -> Result<Option<CrackSaveResult>,
             }
         }
     }
+
+    // Tenoke: look for tenoke.ini in the game's install directory.
+    // Tenoke puts tenoke.ini next to steam_api64.dll in various locations:
+    //   <install_dir>/tenoke.ini
+    //   <install_dir>/Binaries/Win64/tenoke.ini
+    //   <install_dir>/Engine/Binaries/ThirdParty/Steamworks/Steamv157/Win64/tenoke.ini
+    // Do a bounded recursive scan (max depth 6) instead of hardcoded paths.
+    if let Some(ref dir) = install_dir {
+        let install_path = std::path::PathBuf::from(dir);
+        // Fast path: direct child
+        if install_path.join("tenoke.ini").exists() {
+            return Ok(Some(CrackSaveResult {
+                crack_type: "tenoke".to_string(),
+                save_path: install_path.to_string_lossy().to_string(),
+            }));
+        }
+        // Bounded recursive scan for tenoke.ini (depth 6 covers deep UE structures)
+        for entry in walkdir::WalkDir::new(&install_path)
+            .max_depth(6)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                !name.starts_with('.') && name != "node_modules" && name != "steamapps"
+            })
+        {
+            if let Ok(entry) = entry {
+                if entry.file_type().is_file() && entry.file_name().to_string_lossy().eq_ignore_ascii_case("tenoke.ini") {
+                    let parent = entry.path().parent().unwrap_or(&install_path);
+                    return Ok(Some(CrackSaveResult {
+                        crack_type: "tenoke".to_string(),
+                        save_path: parent.to_string_lossy().to_string(),
+                    }));
+                }
+            }
+        }
+    }
+
     Ok(None)
 }
 

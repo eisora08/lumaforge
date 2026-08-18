@@ -35,7 +35,7 @@ export type AchievementGameConfig = {
 // Types
 // ---------------------------------------------------------------------------
 
-export type CrackType = "gse" | "rune" | "onlinefix" | "codex" | "empress" | "goldberg" | "unknown";
+export type CrackType = "gse" | "rune" | "onlinefix" | "codex" | "empress" | "goldberg" | "tenoke" | "unknown";
 
 export interface AutoDetectResult {
   config: AchievementGameConfig;
@@ -128,10 +128,10 @@ export async function resolveSteamPath(): Promise<string> {
 // Auto-detect crack type for a game
 // ---------------------------------------------------------------------------
 
-export async function detectCrackType(appId: string): Promise<{ crackType: CrackType; savePath: string } | null> {
+export async function detectCrackType(appId: string, installDir?: string): Promise<{ crackType: CrackType; savePath: string } | null> {
   try {
     const { detectCrackSaveType } = await import("./tauri");
-    const result = await detectCrackSaveType(appId);
+    const result = await detectCrackSaveType(appId, installDir);
     if (result) {
       return { crackType: result.crack_type as CrackType, savePath: result.save_path };
     }
@@ -260,6 +260,7 @@ export async function autoDetectAndCreateConfig(
   appId: string,
   gameName?: string,
   gameSource?: string, // "steam" | "lua" | "debrid" | "manual" | "epic"
+  installDir?: string,
 ): Promise<AutoDetectResult | null> {
   const steamPath = await resolveSteamPath();
   if (!steamPath) {
@@ -274,7 +275,7 @@ export async function autoDetectAndCreateConfig(
 
   if (isCracked) {
     // Cracked game (debrid/manual) — find crack save directory
-    const crackResult = await detectCrackType(appId);
+    const crackResult = await detectCrackType(appId, installDir);
 
     const savePath = crackResult?.savePath ?? `${steamPath}\\appcache\\stats`;
     const configPath = `${appDataDir}\\achievements\\schema\\steam\\${appId}`;
@@ -322,13 +323,27 @@ export async function getOrCreateConfig(
   appId: string,
   gameName?: string,
   gameSource?: string,
+  installDir?: string,
 ): Promise<AchievementGameConfig | null> {
   // 1. Try existing config
   const existing = await readConfig(appId);
+
+  // Stale config fix: if existing config points to appcache/stats but the game
+  // is debrid/manual (cracked), re-detect to find the actual crack save path.
+  // This handles configs created before the tenoke/recursive-search fix.
+  if (existing && existing.save_path?.includes("appcache\\stats") && (gameSource === "debrid" || gameSource === "manual")) {
+    console.log(`[ACH][CONFIG] stale save_path for cracked game appId=${appId} old=${existing.save_path} re-detecting...`);
+    const result = await autoDetectAndCreateConfig(appId, gameName ?? existing.name, gameSource, installDir);
+    if (result?.config?.save_path && !result.config.save_path.includes("appcache\\stats")) {
+      return result.config;
+    }
+    // If re-detection still can't find crack, keep existing config
+  }
+
   if (existing) return existing;
 
   // 2. Auto-detect and create
-  const result = await autoDetectAndCreateConfig(appId, gameName, gameSource);
+  const result = await autoDetectAndCreateConfig(appId, gameName, gameSource, installDir);
   return result?.config ?? null;
 }
 
