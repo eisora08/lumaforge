@@ -2231,8 +2231,8 @@ export default function LibraryGameDetails({
                         </div>
                       )}
 
-                      {/* Source selector + refresh — only shown when crack save exists */}
-                      {hasCrackSave && (
+                      {/* Source selector + refresh — only shown when crack save exists AND not Debrid/Manual (always cracked) */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
                         <div className="flex items-center gap-2">
                           <select
                             value={achSource}
@@ -2384,8 +2384,8 @@ export default function LibraryGameDetails({
                     </div>
                   ) : achievementsSummary && !effectiveProgressAvailable && achievementsSummary.achievements.length > 0 ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — only shown when crack save exists */}
-                      {hasCrackSave && (
+                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
                         <div className="flex items-center gap-2">
                           <select
                             value={achSource}
@@ -2516,8 +2516,8 @@ export default function LibraryGameDetails({
                     </div>
                   ) : achievementsSummary && achievementsSummary.source === "unavailable" && (game.achievementsSupported || localAchSupportFound) ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — only shown when crack save exists */}
-                      {hasCrackSave && (
+                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
                         <div className="flex items-center gap-2">
                           <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
                           <select
@@ -2600,8 +2600,8 @@ export default function LibraryGameDetails({
                     </div>
                   ) : (game.achievementsSupported || localAchSupportFound) ? (
                     <div className="mt-3 space-y-3">
-                      {/* Source selector — only shown when crack save exists */}
-                      {hasCrackSave && (
+                      {/* Source selector — only shown when crack save exists AND not Debrid/Manual */}
+                      {hasCrackSave && game?.source !== "debrid" && game?.source !== "manual" && (
                         <div className="flex items-center gap-2">
                           <label className="text-[10px] font-medium text-(--color-muted) uppercase tracking-wider">Source:</label>
                           <select
