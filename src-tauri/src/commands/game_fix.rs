@@ -2770,30 +2770,10 @@ fn find_goldberg_bak_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
 /// Generates achievements.json for GSE in steam_settings/ using Steam Web API.
 /// Returns the number of achievements written, or an error.
 async fn generate_goldberg_achievements_json(
-    app_handle: &tauri::AppHandle,
     app_id: u64,
     game_path: &Path,
+    api_key: &str,
 ) -> Result<usize, String> {
-    // Read settings to get Steam Web API key
-    let api_key = {
-        let settings_path = app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("App data dir: {e}"))?
-            .join("settings.json");
-        if !settings_path.exists() {
-            return Err("No settings.json found".to_string());
-        }
-        let settings_content = std::fs::read_to_string(&settings_path)
-            .map_err(|e| format!("Read settings: {e}"))?;
-        let settings: serde_json::Value = serde_json::from_str(&settings_content)
-            .map_err(|e| format!("Parse settings: {e}"))?;
-        settings["providers"]["steamWebApiKey"]
-            .as_str()
-            .unwrap_or("")
-            .to_string()
-    };
-
     if api_key.is_empty() {
         return Err("No Steam Web API key configured".to_string());
     }
@@ -2975,6 +2955,7 @@ pub async fn library_apply_goldberg(
     name: String,
     install_dir: String,
     app_handle: tauri::AppHandle,
+    steam_web_api_key: Option<String>,
 ) -> Result<GameFixResult, String> {
     #[cfg(not(target_os = "windows"))]
     {
@@ -3055,10 +3036,13 @@ pub async fn library_apply_goldberg(
         .filter_map(|dll| find_file_recursive_bounded(&game_path, dll, FIND_DLL_DEPTH))
         .next();
 
+    eprintln!("[GOLDBERG] Step 1: generate_interfaces_file.exe={:?} original_dll={:?}", generate_interfaces_path, original_dll_path);
+
     let mut steam_interfaces_content: Option<String> = None;
     if let (Some(tool_path), Some(dll_path)) = (&generate_interfaces_path, &original_dll_path) {
         let temp_dir = std::env::temp_dir().join(format!("lf_goldberg_{app_id}"));
         let _ = std::fs::create_dir_all(&temp_dir);
+        eprintln!("[GOLDBERG] Step 1: running {:?} with arg {:?}", tool_path, dll_path);
         match std::process::Command::new(tool_path)
             .arg(dll_path)
             .current_dir(&temp_dir)
@@ -3068,18 +3052,19 @@ pub async fn library_apply_goldberg(
                 let interfaces_path = temp_dir.join("steam_interfaces.txt");
                 if interfaces_path.exists() {
                     steam_interfaces_content = std::fs::read_to_string(&interfaces_path).ok();
-                    println!("[GOLDBERG] Generated steam_interfaces.txt for appid={app_id}");
+                    eprintln!("[GOLDBERG] Step 1: OK — steam_interfaces.txt generated ({})", steam_interfaces_content.as_ref().map_or(0, |s| s.len()));
                     on_progress(10, "steam_interfaces.txt generated.");
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("[GOLDBERG] generate_interfaces_file.exe did not produce output: {stderr}");
-                    errors.push(format!("generate_interfaces_file.exe: {stderr}"));
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    eprintln!("[GOLDBERG] Step 1: FAILED — no output file. stdout={stdout} stderr={stderr}");
+                    errors.push(format!("generate_interfaces_file.exe did not produce steam_interfaces.txt: {stderr}"));
                 }
                 let _ = std::fs::remove_dir_all(&temp_dir);
             }
             Err(e) => {
-                eprintln!("[GOLDBERG] Failed to run generate_interfaces_file.exe: {e}");
-                errors.push(format!("generate_interfaces_file.exe: {e}"));
+                eprintln!("[GOLDBERG] Step 1: FAILED — could not run exe: {e}");
+                errors.push(format!("generate_interfaces_file.exe failed to run: {e}"));
             }
         }
     } else {
@@ -3088,8 +3073,8 @@ pub async fn library_apply_goldberg(
             generate_interfaces_path.is_some(),
             original_dll_path.is_some()
         );
-        eprintln!("[GOLDBERG] Missing tools: {msg}");
-        errors.push(format!("Missing Goldberg tools: {msg}"));
+        eprintln!("[GOLDBERG] Step 1: SKIPPED — {msg}");
+        errors.push(format!("Missing Goldberg tools for interfaces: {msg}"));
     }
 
     // ── Step 2: Back up original DLLs + copy Goldberg DLLs ──
@@ -3106,6 +3091,7 @@ pub async fn library_apply_goldberg(
     total_errors.extend(dll_errors);
 
     if total_installed.is_empty() {
+        total_errors.extend(errors);
         return Ok(GameFixResult {
             ok: false,
             tool: "goldberg".to_string(),
@@ -3123,87 +3109,119 @@ pub async fn library_apply_goldberg(
     let generate_config_path = find_file_recursive_bounded(&emu_dir, "generate_emu_config.exe", 4);
     let app_id_str = app_id.to_string();
 
+    eprintln!("[GOLDBERG] Step 3: generate_emu_config.exe={:?} emu_dir={:?}", generate_config_path, emu_dir);
+
     if let Some(tool_path) = &generate_config_path {
+        eprintln!("[GOLDBERG] Step 3: running {:?} -anon -skip_ach -name {}", tool_path, app_id_str);
         match std::process::Command::new(tool_path)
             .args(["-anon", "-skip_ach", "-name", &app_id_str])
             .current_dir(&emu_dir)
             .output()
         {
             Ok(output) => {
-                let output_dir = emu_dir.join("output").join(&app_id_str).join("steam_settings");
-                if output_dir.exists() {
-                    // Copy steam_settings/ to game directory
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("[GOLDBERG] Step 3: stdout={stdout}");
+                if !stderr.is_empty() { eprintln!("[GOLDBERG] Step 3: stderr={stderr}"); }
+
+                // Check multiple possible output locations
+                let output_candidates = [
+                    emu_dir.join("output").join(&app_id_str).join("steam_settings"),
+                    emu_dir.join("steam_settings"),
+                    emu_dir.join("output").join("steam_settings"),
+                ];
+                let mut output_dir = None;
+                for candidate in &output_candidates {
+                    if candidate.exists() {
+                        eprintln!("[GOLDBERG] Step 3: found output at {:?}", candidate);
+                        output_dir = Some(candidate.clone());
+                        break;
+                    }
+                }
+                if let Some(dir) = output_dir {
                     let game_steam_settings = game_path.join("steam_settings");
-                    match copy_dir_recursive_simple(&output_dir, &game_steam_settings) {
+                    match copy_dir_recursive_simple(&dir, &game_steam_settings) {
                         Ok(files) => {
-                            total_installed.extend(files.iter().map(|f| format!("steam_settings/{f}")));
-                            println!("[GOLDBERG] steam_settings copied: {} files", files.len());
+                            for f in &files {
+                                total_installed.push(format!("steam_settings/{f}"));
+                            }
+                            eprintln!("[GOLDBERG] Step 3: OK — copied {} files to {:?}", files.len(), game_steam_settings);
                         }
                         Err(e) => {
-                            eprintln!("[GOLDBERG] Failed to copy steam_settings: {e}");
+                            eprintln!("[GOLDBERG] Step 3: copy FAILED: {e}");
                             total_errors.push(format!("steam_settings copy: {e}"));
                         }
                     }
                 } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    eprintln!("[GOLDBERG] generate_emu_config output dir not found. stdout={stdout} stderr={stderr}");
-                    // Still continue — steam_settings is nice-to-have, not critical
+                    eprintln!("[GOLDBERG] Step 3: FAILED — no output dir found. Tried: {:?}", output_candidates.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>());
+                    total_errors.push(format!("generate_emu_config.exe ran but output dir not found (checked 3 locations)"));
                 }
                 on_progress(60, "steam_settings generated.");
             }
             Err(e) => {
-                eprintln!("[GOLDBERG] Failed to run generate_emu_config.exe: {e}");
-                total_errors.push(format!("generate_emu_config.exe: {e}"));
+                eprintln!("[GOLDBERG] Step 3: FAILED — could not run exe: {e}");
+                total_errors.push(format!("generate_emu_config.exe failed to run: {e}"));
             }
         }
     } else {
-        eprintln!("[GOLDBERG] generate_emu_config.exe not found in Goldberg dir");
-        total_errors.push("generate_emu_config.exe not found".to_string());
+        eprintln!("[GOLDBERG] Step 3: SKIPPED — generate_emu_config.exe not found in {:?}", emu_dir);
+        total_errors.push("generate_emu_config.exe not found in Goldberg directory".to_string());
     }
 
-    // ── Step 4: Copy steam_interfaces.txt to steam_settings/ ──
+    // ── Step 4: Write steam_interfaces.txt to game's steam_settings/ ──
     on_progress(70, "Copying steam_interfaces.txt...");
     if let Some(content) = &steam_interfaces_content {
         let game_steam_settings = game_path.join("steam_settings");
         let _ = std::fs::create_dir_all(&game_steam_settings);
         let interfaces_path = game_steam_settings.join("steam_interfaces.txt");
-        if let Err(e) = std::fs::write(&interfaces_path, content) {
-            eprintln!("[GOLDBERG] Failed to write steam_interfaces.txt: {e}");
-            total_errors.push(format!("steam_interfaces.txt write: {e}"));
-        } else {
-            total_installed.push("steam_settings/steam_interfaces.txt".to_string());
-            println!("[GOLDBERG] steam_interfaces.txt written to game dir");
+        match std::fs::write(&interfaces_path, content) {
+            Ok(()) => {
+                total_installed.push("steam_settings/steam_interfaces.txt".to_string());
+                eprintln!("[GOLDBERG] Step 4: OK — steam_interfaces.txt written ({} bytes)", content.len());
+            }
+            Err(e) => {
+                eprintln!("[GOLDBERG] Step 4: FAILED — {e}");
+                total_errors.push(format!("steam_interfaces.txt write: {e}"));
+            }
         }
+    } else {
+        eprintln!("[GOLDBERG] Step 4: SKIPPED — no steam_interfaces.txt from Step 1");
+        total_errors.push("steam_interfaces.txt not generated (Step 1 failed)".to_string());
     }
 
-    // ── Step 5: Generate achievements.json for GSE if Steam Web API key available ──
+    // ── Step 5: Generate achievements.json for GSE ──
     on_progress(80, "Generating achievements.json for GSE...");
-    match generate_goldberg_achievements_json(&app_handle, app_id, &game_path).await {
+    let api_key_str = steam_web_api_key.as_deref().unwrap_or("");
+    eprintln!("[GOLDBERG] Step 5: api_key_provided={}", !api_key_str.is_empty());
+    match generate_goldberg_achievements_json(app_id, &game_path, api_key_str).await {
         Ok(count) => {
             if count > 0 {
                 total_installed.push(format!("steam_settings/achievements.json ({count} achievements)"));
-                println!("[GOLDBERG] achievements.json written with {count} entries");
+                eprintln!("[GOLDBERG] Step 5: OK — achievements.json written with {count} entries");
             }
         }
         Err(e) => {
-            eprintln!("[GOLDBERG] achievements.json generation failed: {e}");
-            // Non-critical — log but don't fail
+            eprintln!("[GOLDBERG] Step 5: FAILED — {e}");
+            total_errors.push(format!("achievements.json: {e}"));
         }
     }
 
     // ── Step 6: Write fix log ──
     let _ = write_fix_log(&game_path, app_id, &name, "Goldberg", &total_installed);
+    eprintln!("[GOLDBERG] Step 6: fix log written with {} files", total_installed.len());
 
     on_progress(100, "Goldberg applied successfully.");
 
     let applied = total_installed.join(", ");
+    eprintln!("[GOLDBERG] DONE: installed={} errors={}", total_installed.len(), total_errors.len());
     Ok(GameFixResult {
-        ok: true,
+        ok: !total_installed.is_empty(),
         tool: "goldberg".to_string(),
-        message: format!(
-            "Goldberg emulator applied ({applied}). Originals backed up as .bak."
-        ),
+        message: if total_installed.is_empty() {
+            "Goldberg emulator applied but no files were installed.".to_string()
+        } else {
+            format!("Goldberg emulator applied ({applied}). Originals backed up as .bak.")
+        },
         files_installed: total_installed,
         errors: total_errors,
         requires_manual_selection: false,

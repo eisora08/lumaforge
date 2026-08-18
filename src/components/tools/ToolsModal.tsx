@@ -29,6 +29,7 @@ import {
   libraryOpenSteamLaunchOptions,
 } from "../../services/tauri";
 import { setFixModalOpen } from "../fixes/FixProgressListener";
+import { useSettings } from "../../context/SettingsContext";
 
 // =============================================================================
 // Types
@@ -87,6 +88,7 @@ export interface ToolsModalProps {
 }
 
 export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
+  const { settings } = useSettings();
   const transition = useSyncExternalStore(
     subscribeHeroTransition,
     getHeroTransitionSnapshot,
@@ -304,7 +306,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
       let result: GameFixResult | null = null;
       if (kind === "smokeApi") result = await libraryApplySmokeApi({ appId, name: game.title, installDir });
       else if (kind === "steamless") result = await libraryApplySteamless({ appId, name: game.title, installDir });
-      else if (kind === "goldberg") result = await libraryApplyGoldberg({ appId, name: game.title, installDir });
+      else if (kind === "goldberg") result = await libraryApplyGoldberg({ appId, name: game.title, installDir, steamWebApiKey: settings.steamWebApiKey || "" });
       else result = await libraryApplyOnlineFix({ appId, name: game.title, installDir });
       markCompleted(kind, result);
     } catch (err) {
@@ -313,7 +315,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
       busyRef.current.delete(kind);
       await refreshNativeState();
     }
-  }, [game, nativeAppId, markBusy, markCompleted, refreshNativeState]);
+  }, [game, nativeAppId, markBusy, markCompleted, refreshNativeState, settings.steamWebApiKey]);
 
   // ── Unfix handler ──────────────────────────────────────────────────────────
   const handleUnfix = useCallback(async (kind: FixKind, _label: string) => {

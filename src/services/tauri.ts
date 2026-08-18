@@ -3689,6 +3689,7 @@ export async function libraryApplyGoldberg(params: {
   appId: number;
   name: string;
   installDir: string;
+  steamWebApiKey?: string;
 }): Promise<GameFixResult> {
   return await invoke<GameFixResult>("library_apply_goldberg", params);
 }
