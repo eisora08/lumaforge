@@ -88,9 +88,11 @@ export function getEffectiveCompletionStatus(
   if (userOverride === "not-played") return "not-played";
 
   // Auto-compute from playtime + achievements
-  const ptEntry = game.appId
-    ? getPlaytimeEntryByAppId(game.appId)
-    : getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+  // Dual-tier: try appId first, then fall back to source-specific gameKey
+  let ptEntry = game.appId ? getPlaytimeEntryByAppId(game.appId) : null;
+  if (!ptEntry) {
+    ptEntry = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+  }
   const seconds = ptEntry?.totalPlaytimeSeconds ?? 0;
   const raw = getGameCompletionStatus(game, seconds);
   if (raw === "Completed") return "completed";

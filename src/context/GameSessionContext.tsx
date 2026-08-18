@@ -241,6 +241,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     const raw = loadSessions();
     const cleaned: Record<string, RunningGameSession> = {};
     let changed = false;
+    const expiredKeys: string[] = [];
 
     for (const [key, s] of Object.entries(raw)) {
       if (s.state === "launching") {
@@ -262,6 +263,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             cleaned[key] = s;
           } else {
             console.debug("[GameSession] hydrate: soft session expired", { gameKey: key, age });
+            expiredKeys.push(key);
             changed = true;
           }
         } else if (s.source === "steam" || s.source === "epic" || s.source === "debrid") {
@@ -271,6 +273,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             cleaned[key] = { ...s, softSession: true };
           } else {
             console.debug("[GameSession] hydrate: soft session expired", { gameKey: key, age });
+            expiredKeys.push(key);
             changed = true;
           }
         } else {
@@ -279,6 +282,25 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       } else if (s.state === "stopping" || s.state === "error") {
         changed = true;
       }
+    }
+
+    // Force lastPlayedAt to last session end for expired sessions
+    // so the dashboard shows the correct time instead of "just now"
+    if (expiredKeys.length > 0) {
+      import("../services/playtimeService").then(({ getCachedPlaytimeStore }) => {
+        const cached = getCachedPlaytimeStore();
+        if (!cached) return;
+        for (const key of expiredKeys) {
+          const entry = cached.games[key];
+          if (entry) {
+            // Set lastPlayedAt to the session's updatedAt (last known activity)
+            const s = raw[key];
+            const lastActivity = s ? Math.floor(s.updatedAt / 1000) : Math.floor(Date.now() / 1000);
+            entry.lastPlayedAt = lastActivity;
+          }
+        }
+        window.dispatchEvent(new CustomEvent("lumaforge-data-changed", { detail: { key: "lumaforge-playtime-v1" } }));
+      });
     }
 
     if (changed || Object.keys(cleaned).length !== Object.keys(raw).length) {

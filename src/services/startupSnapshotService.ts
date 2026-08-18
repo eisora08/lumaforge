@@ -1336,7 +1336,13 @@ export async function buildStartupSnapshotFromCurrentState(
       source: game.source,
       installPath: game.installDir || null,
       media,
-      lastPlayed: game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null,
+      lastPlayed: (() => {
+        // Prefer playtime store (authoritative lastPlayedAt from sessions)
+        const ptEntry = game.appId ? getPlaytimeEntryByAppId(game.appId) : null;
+        if (ptEntry?.lastPlayedAt) return ptEntry.lastPlayedAt;
+        // Fallback: from game fields (seconds from snapshot)
+        return game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null;
+      })(),
       playtime: (getPlaytimeSecondsForAppId(game.appId) > 0 ? Math.round(getPlaytimeSecondsForAppId(game.appId) / 60) : null) ?? game.steamPlaytimeMinutes ?? null,
       cloudStatus: game.steamCloudStatus ?? null,
       mediaStatus,

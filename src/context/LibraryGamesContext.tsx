@@ -1215,6 +1215,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 libGame.iconPath = existing.iconPath;
                 // Preserve user-set completion status
                 libGame.completionStatus = existing.completionStatus;
+                // Preserve playtime fields — indexEntryToLibraryGame reads lastPlayed=0 from SQLite
+                libGame.steamLastPlayedAt = existing.steamLastPlayedAt;
+                libGame.steamPlaytimeMinutes = existing.steamPlaytimeMinutes;
+                libGame.localLastPlayedAt = existing.localLastPlayedAt;
+                libGame.localPlaytimeMinutes = existing.localPlaytimeMinutes;
               }
               return libGame;
             });

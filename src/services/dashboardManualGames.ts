@@ -216,7 +216,7 @@ export function getEpicGamesForDashboard(libraryGames: LibraryGame[]): LibraryGa
  * Single source of truth for dashboard sections — replaces separate manual/epic filters.
  */
 export function getNonSnapshotGamesForDashboard(libraryGames: LibraryGame[]): LibraryGame[] {
-  return libraryGames.filter((g) => (g.source === "manual" || g.source === "epic") && g.title);
+  return libraryGames.filter((g) => (g.source === "manual" || g.source === "epic" || g.source === "debrid") && g.title);
 }
 
 /**

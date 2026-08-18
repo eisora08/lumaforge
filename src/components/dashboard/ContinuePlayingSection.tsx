@@ -55,7 +55,7 @@ function getContinueDisplayGames(
   // which uses correct playtime keys and live media paths from LibraryGame.
   for (const sg of snapshotGames) {
     if (!sg.appId || seen.has(sg.appId)) continue;
-    if (sg.source && sg.source !== "steam") continue;
+    if (sg.source && sg.source !== "steam" && sg.source !== "debrid") continue;
     seen.add(sg.appId);
     const dg = snapshotToDisplayGame(sg as any, runningAppIds);
     result.push(dg);

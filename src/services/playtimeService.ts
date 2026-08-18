@@ -190,9 +190,12 @@ export function resolvePlaytimeKey(game: {
   source?: string;
 }): string | null {
   if (!game) return null;
-  // Manual games: use libraryId (e.g. "manual:<uuid>")
+  // Source-specific keys MUST come before appId — these games write
+  // playtime under their source-specific key, not "app-{appId}"
   if (game.source === "manual" && game.libraryId) return game.libraryId;
-  // Steam games: canonical "app-{appId}" if available
+  if (game.source === "debrid" && game.libraryId) return game.libraryId;
+  if (game.source === "epic" && game.id) return game.id;
+  // Steam/Lua games: canonical "app-{appId}" if available
   if (game.appId) return `app-${game.appId}`;
   // Fallback: game.id
   if (game.id) return game.id;
