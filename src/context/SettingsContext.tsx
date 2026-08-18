@@ -54,7 +54,7 @@ export const defaultSettings: AppSettings = {
   achievementSchemaPath: "",
   achievementToastEnabled: true,
   achievementNativeNotificationsEnabled: false,
-  achievementOverlayNotificationsEnabled: false,
+  achievementOverlayNotificationsEnabled: true,
   gameSessionOverlayEnabled: true,
   gameSessionHudEnabled: true,
   overlayNotificationPosition: "top-center",

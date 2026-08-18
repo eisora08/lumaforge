@@ -609,6 +609,13 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       enabled={settings.achievementNativeNotificationsEnabled}
                       onChange={(enabled) => updateSetting("achievementNativeNotificationsEnabled", enabled)}
                     />
+
+                    <ToggleOption
+                      label="Achievement overlay window"
+                      description="Show achievement unlocks in a transparent overlay window on top of the game."
+                      enabled={settings.achievementOverlayNotificationsEnabled}
+                      onChange={(enabled) => updateSetting("achievementOverlayNotificationsEnabled", enabled)}
+                    />
                   </div>
                 </SettingsSection>
               </>
