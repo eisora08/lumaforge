@@ -2669,6 +2669,28 @@ export async function detectCrackSaveType(appId: string, installDir?: string): P
   return await invoke<CrackSaveResult | null>("detect_crack_save_type", { appId, installDir });
 }
 
+export interface CrackAchievementEntry {
+  api_name: string;
+  earned: boolean;
+  earned_time: number;
+  progress?: number;
+  max_progress?: number;
+}
+
+export interface CrackAchievementsResult {
+  entries: CrackAchievementEntry[];
+  format: string;
+  file_path: string;
+}
+
+export async function parseTenokeUserStats(path: string): Promise<CrackAchievementsResult | null> {
+  return await invoke<CrackAchievementsResult | null>("parse_tenoke_user_stats", { path });
+}
+
+export async function parseOnlinefixAchievementsIni(path: string): Promise<CrackAchievementsResult | null> {
+  return await invoke<CrackAchievementsResult | null>("parse_onlinefix_achievements_ini", { path });
+}
+
 // ── Dev console exposure ──
 
 if (typeof window !== "undefined") {

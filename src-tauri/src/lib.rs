@@ -403,6 +403,8 @@ pub fn run() {
             commands::sqlite_cache::upsert_game_catalog_blob,
             commands::sqlite_cache::get_game_catalog_blob,
             commands::installed_programs::scan_installed_programs,
+            commands::crack_achievements::parse_tenoke_user_stats,
+            commands::crack_achievements::parse_onlinefix_achievements_ini,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -110,7 +110,13 @@ impl AchievementWatcher {
       if let Ok(entries) = std::fs::read_dir(base) {
         for entry in entries.flatten() {
           let p = entry.path();
-          if p.is_dir() && (p.join("achievements.ini").exists() || p.join("achievements.json").exists()) {
+          if p.is_dir() && (
+            p.join("achievements.ini").exists()
+            || p.join("achievements.json").exists()
+            || p.join("user_stats.ini").exists()
+            || p.join("SteamData").join("user_stats.ini").exists()
+            || p.join("Stats").join("achievements.ini").exists()
+          ) {
             if let Err(e) = watcher.watch(&p, RecursiveMode::NonRecursive) {
               eprintln!("[ACH][WATCHER] failed to watch crack dir {}: {}", p.display(), e);
             } else {
@@ -304,6 +310,71 @@ fn crack_json_from_path(path: &Path) -> Option<(u32, PathBuf)> {
   crack_save_dir_from_path(path)
 }
 
+/// Given a file path, check if it's user_stats.ini (Tenoke) inside a crack save dir.
+/// Returns Some((appid, save_dir)) if so.
+fn tenoke_stats_from_path(path: &Path) -> Option<(u32, PathBuf)> {
+  let fname = path.file_name()?.to_string_lossy();
+  if fname != "user_stats.ini" {
+    return None;
+  }
+  // Could be at <base>/<appId>/user_stats.ini or <base>/<appId>/SteamData/user_stats.ini
+  let save_dir = path.parent()?;
+  let parent_name = save_dir.file_name()?.to_string_lossy();
+  if parent_name.eq_ignore_ascii_case("SteamData") {
+    // Nested: save_dir is <base>/<appId>/SteamData — walk up to <base>/<appId>
+    let game_dir = save_dir.parent()?;
+    let appid_str = game_dir.file_name()?.to_string_lossy();
+    if let Ok(appid) = appid_str.parse::<u32>() {
+      let parent_of_game = game_dir.parent()?;
+      let bases = resolve_crack_save_bases();
+      for base in &bases {
+        if parent_of_game == base.as_path() {
+          return Some((appid, game_dir.to_path_buf()));
+        }
+      }
+    }
+  } else {
+    // Direct: save_dir is <base>/<appId>
+    let appid_str = parent_name;
+    if let Ok(appid) = appid_str.parse::<u32>() {
+      let parent_of_save = save_dir.parent()?;
+      let bases = resolve_crack_save_bases();
+      for base in &bases {
+        if parent_of_save == base.as_path() {
+          return Some((appid, save_dir.to_path_buf()));
+        }
+      }
+    }
+  }
+  None
+}
+
+/// Given a file path, check if it's Stats/achievements.ini (OnlineFix) inside a crack save dir.
+/// Returns Some((appid, save_dir)) if so.
+fn onlinefix_stats_from_path(path: &Path) -> Option<(u32, PathBuf)> {
+  let fname = path.file_name()?.to_string_lossy();
+  if fname != "achievements.ini" {
+    return None;
+  }
+  // Must be at <base>/<appId>/Stats/achievements.ini
+  let stats_dir = path.parent()?;
+  let stats_name = stats_dir.file_name()?.to_string_lossy();
+  if !stats_name.eq_ignore_ascii_case("Stats") {
+    return None;
+  }
+  let game_dir = stats_dir.parent()?;
+  let appid_str = game_dir.file_name()?.to_string_lossy();
+  let appid = appid_str.parse::<u32>().ok()?;
+  let parent_of_game = game_dir.parent()?;
+  let bases = resolve_crack_save_bases();
+  for base in &bases {
+    if parent_of_game == base.as_path() {
+      return Some((appid, game_dir.to_path_buf()));
+    }
+  }
+  None
+}
+
 /// Shared helper: extract (appid, save_dir) from a crack achievement file path.
 /// Validates that the parent directory name is a numeric appId and that
 /// the grandparent is a known crack save base.
@@ -429,6 +500,52 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<
     });
   }
 
+  // Handle Tenoke user_stats.ini (direct or SteamData/ nested)
+  if let Some((appid, save_dir)) = tenoke_stats_from_path(path) {
+    eprintln!(
+      "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=crack-ini savePath={}",
+      raw_path, fname, appid, save_dir.display()
+    );
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta
+      .modified()
+      .ok()?
+      .duration_since(std::time::UNIX_EPOCH)
+      .ok()
+      .map(|d| d.as_secs())
+      .unwrap_or(0);
+    return Some(FileInfo {
+      appid,
+      source: "crack-ini".to_string(),
+      modified_at: modified,
+      size: meta.len(),
+      save_path: Some(save_dir.to_string_lossy().to_string()),
+    });
+  }
+
+  // Handle OnlineFix Stats/achievements.ini
+  if let Some((appid, save_dir)) = onlinefix_stats_from_path(path) {
+    eprintln!(
+      "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=crack-ini savePath={}",
+      raw_path, fname, appid, save_dir.display()
+    );
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta
+      .modified()
+      .ok()?
+      .duration_since(std::time::UNIX_EPOCH)
+      .ok()
+      .map(|d| d.as_secs())
+      .unwrap_or(0);
+    return Some(FileInfo {
+      appid,
+      source: "crack-ini".to_string(),
+      modified_at: modified,
+      size: meta.len(),
+      save_path: Some(save_dir.to_string_lossy().to_string()),
+    });
+  }
+
   // Handle crack save achievements.json (GSE / Goldberg newer format)
   if let Some((appid, save_dir)) = crack_json_from_path(path) {
     eprintln!(
@@ -474,7 +591,12 @@ fn collect_crack_app_ids(bases: &[PathBuf]) -> Vec<(u32, PathBuf)> {
             if let Ok(appid) = name.parse::<u32>() {
               // Only include dirs that have actual achievement data
               let p = entry.path();
-              if p.join("achievements.ini").exists() || p.join("achievements.json").exists() {
+              if p.join("achievements.ini").exists()
+                || p.join("achievements.json").exists()
+                || p.join("user_stats.ini").exists()
+                || p.join("SteamData").join("user_stats.ini").exists()
+                || p.join("Stats").join("achievements.ini").exists()
+              {
                 result.push((appid, p));
               }
             }

@@ -638,6 +638,85 @@ pub fn detect_crack_save_type(app_id: String, install_dir: Option<String>) -> Re
         }
     }
 
+    // Tenoke user_stats.ini: check common locations directly before recursive scan
+    if let Some(ref dir) = install_dir {
+        let install_path = std::path::PathBuf::from(dir);
+        // Direct: <install_dir>/user_stats.ini
+        let direct = install_path.join("user_stats.ini");
+        if direct.exists() {
+            return Ok(Some(CrackSaveResult {
+                crack_type: "tenoke-stats".to_string(),
+                save_path: install_path.to_string_lossy().to_string(),
+            }));
+        }
+        // Nested: <install_dir>/SteamData/user_stats.ini
+        let nested = install_path.join("SteamData").join("user_stats.ini");
+        if nested.exists() {
+            return Ok(Some(CrackSaveResult {
+                crack_type: "tenoke-stats".to_string(),
+                save_path: nested.parent().unwrap_or(&install_path).to_string_lossy().to_string(),
+            }));
+        }
+        // OnlineFix: <install_dir>/Stats/achievements.ini
+        let ofx = install_path.join("Stats").join("achievements.ini");
+        if ofx.exists() {
+            return Ok(Some(CrackSaveResult {
+                crack_type: "onlinefix".to_string(),
+                save_path: install_path.to_string_lossy().to_string(),
+            }));
+        }
+        // Recursive scan for user_stats.ini or Stats/achievements.ini (depth 6)
+        for entry in walkdir::WalkDir::new(&install_path)
+            .max_depth(6)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                !name.starts_with('.') && name != "node_modules" && name != "steamapps"
+            })
+        {
+            if let Ok(entry) = entry {
+                if entry.file_type().is_file() {
+                    let fname = entry.file_name().to_string_lossy();
+                    if fname.eq_ignore_ascii_case("user_stats.ini") {
+                        let parent = entry.path().parent().unwrap_or(&install_path);
+                        return Ok(Some(CrackSaveResult {
+                            crack_type: "tenoke-stats".to_string(),
+                            save_path: parent.to_string_lossy().to_string(),
+                        }));
+                    }
+                    // Stats/achievements.ini (OnlineFix pattern)
+                    if fname.eq_ignore_ascii_case("achievements.ini") {
+                        if let Some(parent) = entry.path().parent() {
+                            if parent.file_name().map_or(false, |n| n.eq_ignore_ascii_case("Stats")) {
+                                let game_dir = parent.parent().unwrap_or(&install_path);
+                                return Ok(Some(CrackSaveResult {
+                                    crack_type: "onlinefix".to_string(),
+                                    save_path: game_dir.to_string_lossy().to_string(),
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Global OnlineFix check: %PUBLIC%/Documents/OnlineFix/<appId>/
+    if let Ok(pub_dir) = std::env::var("PUBLIC") {
+        let ofx_base = std::path::PathBuf::from(&pub_dir)
+            .join("Documents")
+            .join("OnlineFix")
+            .join(&app_id);
+        let ofx_ini = ofx_base.join("Stats").join("achievements.ini");
+        if ofx_ini.exists() {
+            return Ok(Some(CrackSaveResult {
+                crack_type: "onlinefix".to_string(),
+                save_path: ofx_base.to_string_lossy().to_string(),
+            }));
+        }
+    }
+
     Ok(None)
 }
 

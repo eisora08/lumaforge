@@ -41,11 +41,23 @@ export async function readCrackAchievements(
   const jsonData = await readAchievementsJson(savePath, appId);
   if (jsonData) return jsonData;
 
-  // 2. achievements.ini (OnlineFix)
+  // 2. Tenoke user_stats.ini — Rust parser (UTF-8, custom INI format)
+  const tenokeStats = await readTenokeUserStats(savePath, appId);
+  if (tenokeStats) return tenokeStats;
+
+  // 3. OnlineFix Stats/achievements.ini — Rust parser (UTF-16 aware)
+  const ofxStats = await readOnlinefixStatsIni(savePath, appId);
+  if (ofxStats) return ofxStats;
+
+  // 4. achievements.ini (classic — CODEX/OnlineFix at root level)
   const iniData = await readAchievementsIni(savePath, appId);
   if (iniData) return iniData;
 
-  // 3. stats.bin (Goldberg)
+  // 5. tenoke.ini (Tenoke — legacy, next to steam_api64.dll)
+  const tenokeData = await readTenokeIni(savePath, appId);
+  if (tenokeData) return tenokeData;
+
+  // 6. stats.bin (Goldberg)
   const binData = await readStatsBin(savePath, appId);
   if (binData) return binData;
 
@@ -257,6 +269,123 @@ function parseAchievementsIni(
     console.warn(`[ACH][CRACK] Failed to parse achievements.ini for ${appId}:`, err);
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// tenoke.ini reader (Tenoke — same INI format as OnlineFix, different filename)
+// tenoke.ini lives next to steam_api64.dll in the game's install directory
+// ---------------------------------------------------------------------------
+
+async function readTenokeIni(
+  savePath: string,
+  appId: string,
+): Promise<CrackAchievementData | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const iniPath = `${savePath}\\tenoke.ini`;
+
+    try {
+      const content = await invoke<string>("read_text_file", { path: iniPath });
+      const result = parseAchievementsIni(content, appId);
+      if (result) {
+        result.source = "tenoke-ini";
+        console.log(`[ACH][CRACK] Parsed tenoke.ini for ${appId}: ${result.unlocked}/${result.total}`);
+      }
+      return result;
+    } catch {
+      return null;
+    }
+  } catch (err) {
+    console.warn(`[ACH][CRACK] Failed to invoke read_text_file for tenoke.ini ${appId}:`, err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tenoke user_stats.ini reader — uses Rust parser
+// ---------------------------------------------------------------------------
+
+async function readTenokeUserStats(
+  savePath: string,
+  appId: string,
+): Promise<CrackAchievementData | null> {
+  try {
+    const { parseTenokeUserStats } = await import("./tauri");
+
+    // Try direct: savePath/user_stats.ini
+    const directPath = `${savePath}\\user_stats.ini`;
+    let result = await parseTenokeUserStats(directPath);
+    if (result) return convertRustResult(result, "tenoke-user-stats", appId);
+
+    // Try nested: savePath/SteamData/user_stats.ini
+    const nestedPath = `${savePath}\\SteamData\\user_stats.ini`;
+    result = await parseTenokeUserStats(nestedPath);
+    if (result) return convertRustResult(result, "tenoke-user-stats", appId);
+
+    return null;
+  } catch (err) {
+    console.warn(`[ACH][CRACK] Failed to parse tenoke user_stats.ini for ${appId}:`, err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OnlineFix Stats/achievements.ini reader — uses Rust parser (UTF-16 aware)
+// ---------------------------------------------------------------------------
+
+async function readOnlinefixStatsIni(
+  savePath: string,
+  appId: string,
+): Promise<CrackAchievementData | null> {
+  try {
+    const { parseOnlinefixAchievementsIni } = await import("./tauri");
+
+    // Try: savePath/Stats/achievements.ini
+    const statsPath = `${savePath}\\Stats\\achievements.ini`;
+    const result = await parseOnlinefixAchievementsIni(statsPath);
+    if (result) return convertRustResult(result, "onlinefix-stats-ini", appId);
+
+    return null;
+  } catch (err) {
+    console.warn(`[ACH][CRACK] Failed to parse OnlineFix achievements.ini for ${appId}:`, err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Convert Rust CrackAchievementsResult to CrackAchievementData
+// ---------------------------------------------------------------------------
+
+function convertRustResult(
+  result: { entries: Array<{ api_name: string; earned: boolean; earned_time: number; progress?: number; max_progress?: number }>; format: string; file_path: string },
+  source: string,
+  appId: string,
+): CrackAchievementData | null {
+  if (!result.entries || result.entries.length === 0) return null;
+
+  const achievements: CrackAchievement[] = [];
+  let unlocked = 0;
+
+  for (const entry of result.entries) {
+    achievements.push({
+      id: entry.api_name,
+      apiName: entry.api_name,
+      name: entry.api_name,
+      unlocked: entry.earned,
+      unlockTime: entry.earned_time > 0 ? entry.earned_time : undefined,
+      progress: entry.progress,
+      maxProgress: entry.max_progress,
+    });
+    if (entry.earned) unlocked++;
+  }
+
+  console.log(`[ACH][CRACK] Parsed ${result.format} for ${appId}: ${unlocked}/${achievements.length} source=${source} file=${result.file_path}`);
+  return {
+    achievements,
+    total: achievements.length,
+    unlocked,
+    source,
+  };
 }
 
 // ---------------------------------------------------------------------------

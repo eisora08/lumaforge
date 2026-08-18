@@ -54,3 +54,4 @@ pub mod thirdparty;
 pub mod game_fix;
 pub mod file_utils;
 pub mod installed_programs;
+pub mod crack_achievements;
