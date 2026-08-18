@@ -414,6 +414,7 @@ export default function LibraryGameDetails({
           achievementSchemaPath: settings.achievementSchemaPath || undefined,
           gameSource,
           platform: achSource,
+          installDir: game.installDir,
         });
         if (appIdStr && s && s.achievements?.length > 0) {
           setAchievementsSummary(s);
@@ -952,6 +953,7 @@ export default function LibraryGameDetails({
                   achievementSchemaPath: settings.achievementSchemaPath || undefined,
                   gameSource: game.source,
                   platform: achSource,
+                  installDir: game.installDir,
                 }).then((resolved) => {
                   if (cancelled || !resolved.progressAvailable) {
                     if (!cancelled && appIdStr === "1167630" && !resolved.progressAvailable) console.log(`[ACH][UI_UNAVAILABLE_REASON] appid=1167630 reason=resolver-also-schema-only source=${resolved.source}`);
@@ -1000,6 +1002,7 @@ export default function LibraryGameDetails({
       achievementSchemaPath: settings.achievementSchemaPath || undefined,
       gameSource: game.source,
       platform: achSource,
+      installDir: game.installDir,
     })
       .then((summary) => {
         if (!cancelled) {
@@ -2262,11 +2265,14 @@ export default function LibraryGameDetails({
                                   forceRefresh: true,
                                   steamAchievementsEnabled: settings.steamAchievementsEnabled,
                                   achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                                  gameSource,
+                                                                    gameSource,
                                   platform: achSource,
+                                  installDir: game.installDir,
                                 });
                                 if (appIdStr) {
                                   setAchievementsSummary(s);
+
+
                                   achievementStore.setSummary(appIdStr, s, achSource);
                                   const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
                                   notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
@@ -2412,11 +2418,14 @@ export default function LibraryGameDetails({
                                   forceRefresh: true,
                                   steamAchievementsEnabled: settings.steamAchievementsEnabled,
                                   achievementSchemaPath: settings.achievementSchemaPath || undefined,
-                                  gameSource,
+                                                                    gameSource,
                                   platform: achSource,
+                                  installDir: game.installDir,
                                 });
                                 if (appIdStr) {
                                   setAchievementsSummary(s);
+
+
                                   achievementStore.setSummary(appIdStr, s, achSource);
                                   const { notifyMediaUpdated } = await import("../../services/startupSnapshotService");
                                   notifyMediaUpdated(appIdStr, { source: "achievement-refresh" }).catch(() => { });
@@ -2557,6 +2566,7 @@ export default function LibraryGameDetails({
                                 achievementSchemaPath: settings.achievementSchemaPath || undefined,
                                 gameSource,
                                 platform: achSource,
+                                installDir: game.installDir,
                               });
                               if (appIdStr) {
                                 setAchievementsSummary(s);
@@ -2650,6 +2660,7 @@ export default function LibraryGameDetails({
                               achievementSchemaPath: settings.achievementSchemaPath || undefined,
                               gameSource,
                               platform: achSource,
+                              installDir: game.installDir,
                             });
                             if (appIdStr) {
                               setAchievementsSummary(s);
@@ -2825,6 +2836,8 @@ export default function LibraryGameDetails({
               steamAchievementsEnabled: settings.steamAchievementsEnabled,
               achievementSchemaPath: settings.achievementSchemaPath || undefined,
               platform: achSource,
+              gameSource: game.source,
+              installDir: game.installDir,
             }).then(handleResult).catch(handleError);
           }}
           refreshing={achievementsRefreshing}
