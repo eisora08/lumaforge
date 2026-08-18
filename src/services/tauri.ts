@@ -3110,6 +3110,10 @@ export async function pickFolder(
   return await invoke<string | null>("pick_folder", { title, startDir });
 }
 
+export async function calculateDirectorySize(path: string): Promise<number> {
+  return await invoke<number>("calculate_directory_size", { path });
+}
+
 // --- Provider Status Cache (sidecar JSON) ---
 
 export interface ProviderStatusLocal {

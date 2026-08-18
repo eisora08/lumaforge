@@ -4,6 +4,23 @@ use std::process::{Command, Stdio};
 use sysinfo::{PidExt, ProcessExt, System, SystemExt};
 use tauri::{AppHandle, Manager};
 
+/// Calculate total size of all files in a directory recursively using walkdir.
+#[tauri::command]
+pub fn calculate_directory_size(path: String) -> Result<u64, String> {
+    let dir = Path::new(&path);
+    if !dir.exists() || !dir.is_dir() {
+        return Err(format!("Directory not found: {}", path));
+    }
+    let total: u64 = walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum();
+    Ok(total)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SpawnResult {
   pub pid: Option<u32>,

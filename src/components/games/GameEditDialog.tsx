@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import type { GameMediaPaths, GameAppInfo } from "../../services/tauri";
 import type { LibraryGame } from "../../types/libraryGame";
-import { getGameAppInfo, resolveSteamGridDbArtwork, searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId, openGameMetadataFolder, openGameMediaFolder, openFolder, resolveSteamStoreSearch, openProviderMediaFolder, pickFile, pickFolder } from "../../services/tauri";
+import { getGameAppInfo, resolveSteamGridDbArtwork, searchSteamGridDbGames, resolveSteamGridDbArtworkByGameId, openGameMetadataFolder, openGameMediaFolder, openFolder, resolveSteamStoreSearch, openProviderMediaFolder, pickFile, pickFolder, calculateDirectorySize } from "../../services/tauri";
 import { updateGameAppinfoMediaIfChanged, saveGameMediaFile, persistGameAppInfo, clearSessionAppInfoCache, resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
 import { createMediaAdapter } from "../../services/mediaAdapter";
 import { invalidateResolvedMediaCache, refreshGameDetailsArtwork } from "../../services/gameCacheService";
@@ -950,6 +950,17 @@ export default function GameEditDialog({
           setCreatedManualId(targetId);
           showSuccess("Game details saved");
 
+          // Calculate sizeOnDisk if installDir exists
+          const installDirForSize = installDirDraft.trim().replace(/^["']|["']$/g, "");
+          if (installDirForSize) {
+            calculateDirectorySize(installDirForSize).then((bytes) => {
+              if (bytes > 0) {
+                updateManualGame(targetId, { sizeOnDisk: bytes });
+                updateGame(game?.appId ?? targetId, { sizeOnDisk: bytes } as Partial<LibraryGame>);
+              }
+            }).catch(() => { });
+          }
+
           // If manual game has appId, also persist full userData to Steam appinfo (same as Steam save path)
           if (appIdDraft) {
             const media: import("../../services/tauri").GameMediaPaths = {
@@ -1021,6 +1032,16 @@ export default function GameEditDialog({
           setCreatedManualId(newId);
           setManualEntry(newEntry);
           showSuccess("Manual game created");
+
+          // Calculate sizeOnDisk if installDir exists
+          const installDirForSize = installDirDraft.trim().replace(/^["']|["']$/g, "");
+          if (installDirForSize) {
+            calculateDirectorySize(installDirForSize).then((bytes) => {
+              if (bytes > 0) {
+                updateManualGame(newId, { sizeOnDisk: bytes });
+              }
+            }).catch(() => { });
+          }
         }
         setHasEdits(false);
         setSaving(false);
@@ -1101,6 +1122,14 @@ export default function GameEditDialog({
 
         if (ok && titleOk) {
           showSuccess("Game details saved");
+          // Calculate sizeOnDisk if installDir exists
+          if (dir) {
+            calculateDirectorySize(dir).then((bytes) => {
+              if (bytes > 0) {
+                updateGame(game?.appId ?? debridProviderGameId, { sizeOnDisk: bytes } as Partial<LibraryGame>);
+              }
+            }).catch(() => { });
+          }
         } else if (ok) {
           showError("El título no se pudo guardar");
         } else {

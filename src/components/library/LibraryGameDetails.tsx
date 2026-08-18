@@ -356,7 +356,10 @@ export default function LibraryGameDetails({
   const [achSource, setAchSource] = useState<"steam-official" | "steam">(() => {
     if (!appIdStr) return "steam-official";
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
-    return saved ?? "steam-official";
+    if (saved) return saved;
+    // Debrid/Manual games are cracked by definition → always use crack path
+    if (game?.source === "debrid" || game?.source === "manual") return "steam";
+    return "steam-official";
   });
   const [hasCrackSave, setHasCrackSave] = useState(false);
 
@@ -375,9 +378,9 @@ export default function LibraryGameDetails({
         if (saved) {
           // achSource is already correct from the lazy initializer — no setAchSource needed
           console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} loaded from localStorage=${saved} hasCrack=${hasCrack}`);
-        } else if (hasCrack) {
+        } else if (hasCrack || game?.source === "debrid" || game?.source === "manual") {
           setAchSource("steam");
-          console.log(`[ACH][SOURCE_DETECT] appid=${appIdStr} detected crack save=${result.savePath} type=${result.crackType}`);
+          console.log(`[ACH][SOURCE_DETECT] appid=${appIdStr} source=${game?.source} detected crack=${hasCrack} save=${result?.savePath} type=${result?.crackType}`);
         } else {
           setAchSource("steam-official");
         }

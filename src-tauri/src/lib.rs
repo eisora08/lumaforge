@@ -221,6 +221,7 @@ pub fn run() {
             commands::process::get_file_metadata,
             commands::process::pick_file,
             commands::process::pick_folder,
+            commands::process::calculate_directory_size,
             commands::desktop::open_folder,
             commands::desktop::open_app_data,
             commands::desktop::open_logs,
