@@ -23,6 +23,13 @@ const APP_USER_AGENT: &str = concat!(
 // Tool definitions (static metadata)
 // ---------------------------------------------------------------------------
 
+struct ExtraRepo {
+    owner: &'static str,
+    repo: &'static str,
+    /// Exact asset filename to prefer. When `None`, selects `.zip` then `.7z`.
+    preferred_asset: Option<&'static str>,
+}
+
 struct ToolDef {
     id: &'static str,
     name: &'static str,
@@ -33,6 +40,9 @@ struct ToolDef {
     /// (e.g. Detanup01/gbe_fork publishes `emu-win-release.7z` next to the
     /// emulator). When `None`, the selection falls back to `.zip` → `.7z`.
     preferred_asset: Option<&'static str>,
+    /// Additional repos to download and extract into the same tool directory.
+    /// Used by goldberg_fork which needs gbe_fork_tools for generate_emu_config.exe.
+    extra_repos: Option<&'static [ExtraRepo]>,
 }
 
 const TOOL_DEFS: &[ToolDef] = &[
@@ -43,6 +53,7 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_owner: "acidicoala",
         github_repo: "SmokeAPI",
         preferred_asset: None,
+        extra_repos: None,
     },
     ToolDef {
         id: "steamless",
@@ -51,14 +62,20 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_owner: "atom0s",
         github_repo: "Steamless",
         preferred_asset: None,
+        extra_repos: None,
     },
     ToolDef {
         id: "goldberg_fork",
         name: "Goldberg (fork)",
-        description: "Goldberg Steam Emu fork by Detanup01",
+        description: "Goldberg Steam Emu fork by Detanup01 + config tools",
         github_owner: "Detanup01",
         github_repo: "gbe_fork",
         preferred_asset: Some("emu-win-release.7z"),
+        extra_repos: Some(&[ExtraRepo {
+            owner: "Detanup01",
+            repo: "gbe_fork_tools",
+            preferred_asset: None, // selects .zip, excludes linux
+        }]),
     },
 ];
 
@@ -256,12 +273,23 @@ async fn get_latest_github_release(
         .ok_or_else(|| "No assets in release".to_string())?;
 
     // Asset selection priority: exact `preferred_asset` name match (for repos
-    // that publish several archives, e.g. Detanup01/gbe_fork) → `.zip` → `.7z`.
+    // that publish several archives, e.g. Detanup01/gbe_fork) → Windows .zip
+    // (prefer non-linux) → any .zip → .7z.
     let zip_asset = assets
         .iter()
         .find(|a| {
             preferred_asset.is_some()
                 && a["name"].as_str().is_some_and(|n| n == preferred_asset.unwrap())
+        })
+        .or_else(|| {
+            // Prefer Windows/non-linux .zip when multiple .zip files exist
+            assets
+                .iter()
+                .find(|a| {
+                    a["name"].as_str().is_some_and(|n| {
+                        n.ends_with(".zip") && !n.to_lowercase().contains("linux")
+                    })
+                })
         })
         .or_else(|| {
             assets
@@ -644,6 +672,80 @@ pub async fn install_thirdparty_tool(
     let installed = copy_dir_recursive(&effective_src, &target_dir)
         .map_err(|e| format!("Failed to copy files: {e}"))?;
 
+    // Download extra repos (e.g. gbe_fork_tools for goldberg_fork)
+    let mut all_installed = installed;
+    if let Some(extra_repos) = def.extra_repos {
+        for extra in extra_repos {
+            let extra_cache_key = format!("{}/{}", extra.owner, extra.repo);
+            let _ = app_handle.emit(
+                "thirdparty://progress",
+                serde_json::json!({
+                    "toolId": tool_id,
+                    "progress": 70,
+                    "message": format!("Downloading {}...", extra.repo),
+                }),
+            );
+
+            match get_latest_github_release(&client, extra.owner, extra.repo, extra.preferred_asset).await {
+                Ok(extra_release) => {
+                    let extra_zip_path = temp_dir.path().join(&extra_release.zip_name);
+                    if let Err(e) = download_file(&client, &extra_release.zip_url, &extra_zip_path).await {
+                        eprintln!("[THIRDPARTY] Failed to download {}/{}: {e}", extra.owner, extra.repo);
+                        continue;
+                    }
+
+                    let extra_extract_dir = temp_dir.path().join(format!("extract_{}", extra.repo));
+                    let _ = std::fs::create_dir_all(&extra_extract_dir);
+
+                    if extra_release.archive_ext == "7z" {
+                        if let Err(e) = crate::commands::debrid_installer::extract_7z_native(&extra_zip_path, &extra_extract_dir) {
+                            eprintln!("[THIRDPARTY] Failed to extract {}/{}: {e}", extra.owner, extra.repo);
+                            continue;
+                        }
+                    } else {
+                        match std::fs::File::open(&extra_zip_path) {
+                            Ok(f) => {
+                                match zip::ZipArchive::new(f) {
+                                    Ok(mut archive) => {
+                                        if let Err(e) = archive.extract(&extra_extract_dir) {
+                                            eprintln!("[THIRDPARTY] Failed to extract {}/{}: {e}", extra.owner, extra.repo);
+                                            continue;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[THIRDPARTY] Failed to read ZIP {}/{}: {e}", extra.owner, extra.repo);
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[THIRDPARTY] Failed to open ZIP {}/{}: {e}", extra.owner, extra.repo);
+                                continue;
+                            }
+                        }
+                    }
+
+                    let extra_effective = flatten_extracted_dir(&extra_extract_dir).unwrap_or(extra_extract_dir.clone());
+                    match copy_dir_recursive(&extra_effective, &target_dir) {
+                        Ok(files) => {
+                            all_installed.extend(files);
+                            println!("[THIRDPARTY] {} extracted {} files", extra.repo, all_installed.len());
+                        }
+                        Err(e) => {
+                            eprintln!("[THIRDPARTY] Failed to copy {}/{}: {e}", extra.owner, extra.repo);
+                        }
+                    }
+
+                    // Cleanup extra extract dir
+                    let _ = std::fs::remove_dir_all(&extra_extract_dir);
+                }
+                Err(e) => {
+                    eprintln!("[THIRDPARTY] Failed to fetch release for {}/{}: {e}", extra.owner, extra.repo);
+                }
+            }
+        }
+    }
+
     // Persist version
     let mut state = load_state(&app_handle);
     state.tools.insert(
@@ -671,9 +773,9 @@ pub async fn install_thirdparty_tool(
             "{} v{} installed. {} file(s) extracted.",
             def.name,
             release.tag_name,
-            installed.len()
+            all_installed.len()
         ),
-        files_installed: installed,
+        files_installed: all_installed,
         errors: Vec::new(),
     })
 }

@@ -2767,6 +2767,168 @@ fn find_goldberg_bak_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
     }
 }
 
+/// Generates achievements.json for GSE in steam_settings/ using Steam Web API.
+/// Returns the number of achievements written, or an error.
+async fn generate_goldberg_achievements_json(
+    app_handle: &tauri::AppHandle,
+    app_id: u64,
+    game_path: &Path,
+) -> Result<usize, String> {
+    // Read settings to get Steam Web API key
+    let api_key = {
+        let settings_path = app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("App data dir: {e}"))?
+            .join("settings.json");
+        if !settings_path.exists() {
+            return Err("No settings.json found".to_string());
+        }
+        let settings_content = std::fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Read settings: {e}"))?;
+        let settings: serde_json::Value = serde_json::from_str(&settings_content)
+            .map_err(|e| format!("Parse settings: {e}"))?;
+        settings["providers"]["steamWebApiKey"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    };
+
+    if api_key.is_empty() {
+        return Err("No Steam Web API key configured".to_string());
+    }
+
+    // Fetch achievement schema from Steam Web API
+    let url = format!(
+        "https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={api_key}&appid={app_id}&l=english"
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent("LumaForge/1.0")
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+
+    let resp = client.get(&url).send().await.map_err(|e| format!("Request: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Steam API HTTP {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("Parse response: {e}"))?;
+
+    let achievements = body["game"]["availableGameStats"]["achievements"]
+        .as_array()
+        .ok_or_else(|| "No achievements in schema".to_string())?;
+
+    if achievements.is_empty() {
+        return Err("Schema has 0 achievements".to_string());
+    }
+
+    // Build GSE-format achievements.json
+    let mut gse_achievements = serde_json::Map::new();
+
+    for ach in achievements {
+        let api_name = ach["name"].as_str().unwrap_or("");
+        if api_name.is_empty() {
+            continue;
+        }
+
+        let display_name = ach["displayName"].as_str().unwrap_or(api_name);
+        let description = ach["description"].as_str().unwrap_or("");
+        let hidden = ach["hidden"].as_u64().unwrap_or(0);
+
+        // Icon URLs from Steam CDN
+        let icon_hash = ach["icon"].as_str().unwrap_or("");
+        let icon_gray_hash = ach["icongray"].as_str().unwrap_or("");
+
+        let icon = if !icon_hash.is_empty() {
+            format!("img/{icon_hash}.jpg")
+        } else {
+            String::new()
+        };
+        let icon_gray = if !icon_gray_hash.is_empty() {
+            format!("img/{icon_gray_hash}.jpg")
+        } else {
+            String::new()
+        };
+
+        // Download icons to steam_settings/img/
+        let img_dir = game_path.join("steam_settings").join("img");
+        let _ = std::fs::create_dir_all(&img_dir);
+
+        if !icon_hash.is_empty() {
+            let icon_url = format!("https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{app_id}/{icon_hash}.jpg");
+            let icon_path = img_dir.join(format!("{icon_hash}.jpg"));
+            if !icon_path.exists() {
+                let _ = download_icon_file(&client, &icon_url, &icon_path).await;
+            }
+        }
+        if !icon_gray_hash.is_empty() {
+            let gray_url = format!("https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{app_id}/{icon_gray_hash}.jpg");
+            let gray_path = img_dir.join(format!("{icon_gray_hash}.jpg"));
+            if !gray_path.exists() {
+                let _ = download_icon_file(&client, &gray_url, &gray_path).await;
+            }
+        }
+
+        let entry = serde_json::json!({
+            "hidden": hidden,
+            "displayName": { "english": display_name },
+            "description": { "english": description },
+            "icon": icon,
+            "icon_gray": icon_gray,
+            "name": api_name
+        });
+        gse_achievements.insert(api_name.to_string(), entry);
+    }
+
+    if gse_achievements.is_empty() {
+        return Err("No valid achievements to write".to_string());
+    }
+
+    // Write to steam_settings/achievements.json
+    let steam_settings = game_path.join("steam_settings");
+    let _ = std::fs::create_dir_all(&steam_settings);
+    let achievements_path = steam_settings.join("achievements.json");
+    let json = serde_json::to_string_pretty(&gse_achievements)
+        .map_err(|e| format!("Serialize: {e}"))?;
+    std::fs::write(&achievements_path, json)
+        .map_err(|e| format!("Write achievements.json: {e}"))?;
+
+    Ok(gse_achievements.len())
+}
+
+/// Download a single icon file (best-effort, ignores errors).
+async fn download_icon_file(client: &reqwest::Client, url: &str, dest: &Path) -> Result<(), String> {
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    std::fs::write(dest, &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Simple recursive directory copy (used for steam_settings/).
+fn copy_dir_recursive_simple(src: &Path, dst: &Path) -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
+    let _ = std::fs::create_dir_all(dst);
+    for entry in std::fs::read_dir(src).map_err(|e| format!("Read dir: {e}"))? {
+        let entry = entry.map_err(|e| format!("Read entry: {e}"))?;
+        let file_type = entry.file_type().map_err(|e| format!("Type: {e}"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            let sub = copy_dir_recursive_simple(&src_path, &dst_path)?;
+            files.extend(sub);
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| format!("Copy {}: {e}", src_path.display()))?;
+            files.push(entry.file_name().to_string_lossy().to_string());
+        }
+    }
+    Ok(files)
+}
+
 /// Applies the Goldberg emulator to every present Steam API DLL (x64 + x86).
 /// Each present DLL is backed up (`.bak`) and replaced with the Goldberg fork
 /// copy. A missing fork copy or a missing real target only skips that DLL — the
@@ -2846,7 +3008,8 @@ pub async fn library_apply_goldberg(
         });
     }
 
-    let (_, has_64, has_32) = detect_architecture(&game_path);
+    let (app_id_str, has_64, has_32) = detect_architecture(&game_path);
+    let _ = app_id_str; // we use the parameter app_id
     if !has_64 && !has_32 {
         return Ok(GameFixResult {
             ok: false,
@@ -2882,47 +3045,167 @@ pub async fn library_apply_goldberg(
         );
     };
 
-    let (installed, errors) = apply_goldberg_to_present_dlls(
+    let mut installed: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    // ── Step 1: Generate steam_interfaces.txt from ORIGINAL DLL ──
+    on_progress(5, "Generating steam_interfaces.txt from original DLL...");
+    let generate_interfaces_path = find_file_recursive_bounded(&emu_dir, "generate_interfaces_file.exe", 4);
+    let original_dll_path = present_dlls.iter()
+        .filter_map(|dll| find_file_recursive_bounded(&game_path, dll, FIND_DLL_DEPTH))
+        .next();
+
+    let mut steam_interfaces_content: Option<String> = None;
+    if let (Some(tool_path), Some(dll_path)) = (&generate_interfaces_path, &original_dll_path) {
+        let temp_dir = std::env::temp_dir().join(format!("lf_goldberg_{app_id}"));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        match std::process::Command::new(tool_path)
+            .arg(dll_path)
+            .current_dir(&temp_dir)
+            .output()
+        {
+            Ok(output) => {
+                let interfaces_path = temp_dir.join("steam_interfaces.txt");
+                if interfaces_path.exists() {
+                    steam_interfaces_content = std::fs::read_to_string(&interfaces_path).ok();
+                    println!("[GOLDBERG] Generated steam_interfaces.txt for appid={app_id}");
+                    on_progress(10, "steam_interfaces.txt generated.");
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("[GOLDBERG] generate_interfaces_file.exe did not produce output: {stderr}");
+                    errors.push(format!("generate_interfaces_file.exe: {stderr}"));
+                }
+                let _ = std::fs::remove_dir_all(&temp_dir);
+            }
+            Err(e) => {
+                eprintln!("[GOLDBERG] Failed to run generate_interfaces_file.exe: {e}");
+                errors.push(format!("generate_interfaces_file.exe: {e}"));
+            }
+        }
+    } else {
+        let msg = format!(
+            "generate_interfaces_file.exe={} original_dll={}",
+            generate_interfaces_path.is_some(),
+            original_dll_path.is_some()
+        );
+        eprintln!("[GOLDBERG] Missing tools: {msg}");
+        errors.push(format!("Missing Goldberg tools: {msg}"));
+    }
+
+    // ── Step 2: Back up original DLLs + copy Goldberg DLLs ──
+    on_progress(20, "Backing up originals and copying Goldberg emulator...");
+    let mut total_installed = Vec::new();
+    let mut total_errors = Vec::new();
+    let (dll_installed, dll_errors) = apply_goldberg_to_present_dlls(
         &game_path,
         &emu_dir,
         &present_dlls,
         &mut on_progress,
     );
+    total_installed.extend(dll_installed);
+    total_errors.extend(dll_errors);
 
-    if installed.is_empty() {
+    if total_installed.is_empty() {
         return Ok(GameFixResult {
             ok: false,
             tool: "goldberg".to_string(),
             message: "Goldberg could not be applied — no steam_api dll could be replaced."
                 .to_string(),
             files_installed: Vec::new(),
-            errors,
+            errors: total_errors,
             requires_manual_selection: false,
             available_files: Vec::new(),
         });
     }
 
-    let _ = write_fix_log(&game_path, app_id, &name, "Goldberg", &installed);
+    // ── Step 3: Run generate_emu_config.exe -anon -skip_ach ──
+    on_progress(50, "Generating steam_settings with generate_emu_config...");
+    let generate_config_path = find_file_recursive_bounded(&emu_dir, "generate_emu_config.exe", 4);
+    let app_id_str = app_id.to_string();
 
-    let _ = app_handle.emit(
-        "library://fix-progress",
-        serde_json::json!({
-            "appId": app_id,
-            "tool": "goldberg",
-            "progress": 100,
-            "message": "Goldberg applied successfully"
-        }),
-    );
+    if let Some(tool_path) = &generate_config_path {
+        match std::process::Command::new(tool_path)
+            .args(["-anon", "-skip_ach", "-name", &app_id_str])
+            .current_dir(&emu_dir)
+            .output()
+        {
+            Ok(output) => {
+                let output_dir = emu_dir.join("output").join(&app_id_str).join("steam_settings");
+                if output_dir.exists() {
+                    // Copy steam_settings/ to game directory
+                    let game_steam_settings = game_path.join("steam_settings");
+                    match copy_dir_recursive_simple(&output_dir, &game_steam_settings) {
+                        Ok(files) => {
+                            total_installed.extend(files.iter().map(|f| format!("steam_settings/{f}")));
+                            println!("[GOLDBERG] steam_settings copied: {} files", files.len());
+                        }
+                        Err(e) => {
+                            eprintln!("[GOLDBERG] Failed to copy steam_settings: {e}");
+                            total_errors.push(format!("steam_settings copy: {e}"));
+                        }
+                    }
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    eprintln!("[GOLDBERG] generate_emu_config output dir not found. stdout={stdout} stderr={stderr}");
+                    // Still continue — steam_settings is nice-to-have, not critical
+                }
+                on_progress(60, "steam_settings generated.");
+            }
+            Err(e) => {
+                eprintln!("[GOLDBERG] Failed to run generate_emu_config.exe: {e}");
+                total_errors.push(format!("generate_emu_config.exe: {e}"));
+            }
+        }
+    } else {
+        eprintln!("[GOLDBERG] generate_emu_config.exe not found in Goldberg dir");
+        total_errors.push("generate_emu_config.exe not found".to_string());
+    }
 
-    let applied = installed.join(", ");
+    // ── Step 4: Copy steam_interfaces.txt to steam_settings/ ──
+    on_progress(70, "Copying steam_interfaces.txt...");
+    if let Some(content) = &steam_interfaces_content {
+        let game_steam_settings = game_path.join("steam_settings");
+        let _ = std::fs::create_dir_all(&game_steam_settings);
+        let interfaces_path = game_steam_settings.join("steam_interfaces.txt");
+        if let Err(e) = std::fs::write(&interfaces_path, content) {
+            eprintln!("[GOLDBERG] Failed to write steam_interfaces.txt: {e}");
+            total_errors.push(format!("steam_interfaces.txt write: {e}"));
+        } else {
+            total_installed.push("steam_settings/steam_interfaces.txt".to_string());
+            println!("[GOLDBERG] steam_interfaces.txt written to game dir");
+        }
+    }
+
+    // ── Step 5: Generate achievements.json for GSE if Steam Web API key available ──
+    on_progress(80, "Generating achievements.json for GSE...");
+    match generate_goldberg_achievements_json(&app_handle, app_id, &game_path).await {
+        Ok(count) => {
+            if count > 0 {
+                total_installed.push(format!("steam_settings/achievements.json ({count} achievements)"));
+                println!("[GOLDBERG] achievements.json written with {count} entries");
+            }
+        }
+        Err(e) => {
+            eprintln!("[GOLDBERG] achievements.json generation failed: {e}");
+            // Non-critical — log but don't fail
+        }
+    }
+
+    // ── Step 6: Write fix log ──
+    let _ = write_fix_log(&game_path, app_id, &name, "Goldberg", &total_installed);
+
+    on_progress(100, "Goldberg applied successfully.");
+
+    let applied = total_installed.join(", ");
     Ok(GameFixResult {
         ok: true,
         tool: "goldberg".to_string(),
         message: format!(
             "Goldberg emulator applied ({applied}). Originals backed up as .bak."
         ),
-        files_installed: installed,
-        errors,
+        files_installed: total_installed,
+        errors: total_errors,
         requires_manual_selection: false,
         available_files: Vec::new(),
     })
