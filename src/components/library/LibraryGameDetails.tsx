@@ -371,7 +371,7 @@ export default function LibraryGameDetails({
     let cancelled = false;
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
     import("../../services/achievementConfigService").then(({ detectCrackType }) => {
-      detectCrackType(appIdStr).then((result: any) => {
+      detectCrackType(appIdStr, game?.installDir).then((result: any) => {
         if (cancelled) return;
         const hasCrack = !!result?.savePath;
         setHasCrackSave(hasCrack);
@@ -387,7 +387,7 @@ export default function LibraryGameDetails({
       }).catch(() => { });
     }).catch(() => { });
     return () => { cancelled = true; };
-  }, [appIdStr]);
+  }, [appIdStr, game?.installDir]);
 
   // Re-resolve achievements when source changes — always re-resolve, even without summary
   const achSourceRef = useRef<string | null>(achSource); // initialized with achSource → only fires on actual platform switch

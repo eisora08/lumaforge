@@ -957,9 +957,15 @@ export async function resolveSteamAchievements(params: {
       if (crackData && crackData.achievements.length > 0) {
         console.log(`[ACH][CRACK_READ] appid=${appIdStr} found ${crackData.achievements.length} achievements, ${crackData.unlocked}/${crackData.total} unlocked, schemaMap.size=${schemaMap.size}`);
         // Enrich crack achievements with schema metadata (names, descriptions, icons)
+        // Use normalized matching for Tenoke/OnlineFix name mismatches
+        const enrichNormalize = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
+        const schemaNormalizedMap = new Map<string, SchemaAchievement>();
+        for (const [key, val] of schemaMap.entries()) {
+          schemaNormalizedMap.set(enrichNormalize(key), val);
+        }
         let enrichedCount = 0;
         for (const ach of crackData.achievements) {
-          const schema = schemaMap.get(ach.apiName);
+          const schema = schemaMap.get(ach.apiName) ?? schemaNormalizedMap.get(enrichNormalize(ach.apiName));
           if (schema) {
             ach.name = schema.displayName || ach.name;
             ach.description = schema.description || ach.description;
@@ -976,9 +982,24 @@ export async function resolveSteamAchievements(params: {
         // Rebuild the full achievement list from schemaMap, overlaying crack unlock status.
         if (schemaMap.size > crackData.achievements.length) {
           const crackUnlockMap = new Map(crackData.achievements.map(a => [a.apiName, { unlocked: a.unlocked, unlockTime: a.unlockTime }]));
+          // Normalized lookup: lowercase + strip underscores/dashes/spaces for Tenoke/OnlineFix name mismatches
+          const normalizeKey = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
+          const crackNormalizedMap = new Map<string, string>();
+          for (const name of crackUnlockMap.keys()) {
+            crackNormalizedMap.set(normalizeKey(name), name);
+          }
           const fullAchievements: GameAchievement[] = [];
+          let normalizedMatches = 0;
           for (const [apiName, schema] of schemaMap.entries()) {
-            const crackState = crackUnlockMap.get(apiName);
+            // Try exact match first, then normalized match
+            let crackState = crackUnlockMap.get(apiName);
+            if (!crackState) {
+              const normalizedKey = crackNormalizedMap.get(normalizeKey(apiName));
+              if (normalizedKey) {
+                crackState = crackUnlockMap.get(normalizedKey);
+                if (crackState) normalizedMatches++;
+              }
+            }
             fullAchievements.push({
               id: apiName,
               apiName,
@@ -994,7 +1015,7 @@ export async function resolveSteamAchievements(params: {
           crackData.achievements = fullAchievements;
           crackData.total = schemaMap.size;
           crackData.unlocked = fullAchievements.filter(a => a.unlocked).length;
-          console.log(`[ACH][CRACK_READ] appid=${appIdStr} REBUILT from schema: total=${crackData.total} unlocked=${crackData.unlocked} (crack had ${oldCount} entries, schemaMap.size=${schemaMap.size})`);
+          console.log(`[ACH][CRACK_READ] appid=${appIdStr} REBUILT from schema: total=${crackData.total} unlocked=${crackData.unlocked} exact=${crackUnlockMap.size} normalized=${normalizedMatches} (crack had ${oldCount} entries, schemaMap.size=${schemaMap.size})`);
         }
 
         // Crack reader found real data — force platform to "steam"
