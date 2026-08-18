@@ -12,6 +12,7 @@ import { localPathToUrl, isLocalPath } from "../../services/gameCacheService";
 import { setAmbientSource, clearAmbientSource } from "../../services/ambientBackgroundStore";
 import { subscribeHeroTransition, getHeroTransitionSnapshot } from "../../services/heroTransitionStore";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
+import { focusGameWindow } from "../../services/tauri";
 import { showInfo, showWarning } from "../toast/GameToast";
 import { useDownloadQueueContext } from "../../context/DownloadQueueContext";
 import { useSettings } from "../../context/SettingsContext";
@@ -351,7 +352,7 @@ function pickNonRunningHero(
 
 function EmptyHero({ onNavigate }: GameHeroProps) {
   return (
-    <section className="relative overflow-hidden rounded-2xl ring-1 ring-(--surface-active-border)/40 bg-gradient-to-br from-(--color-accent)/10 via-purple-900/20 to-black">
+    <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-(--color-accent)/10 via-purple-900/20 to-black">
       <div className="relative z-10 flex flex-col items-center justify-center px-8 py-20 text-center">
         <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-(--color-accent)/20 bg-(--color-accent)/10 px-4 py-1.5 text-xs text-(--color-accent)">
           <Sparkles className="h-3.5 w-3.5" />
@@ -780,9 +781,13 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   }, [runningLibGame?.appId, heroAppId]);
 
   const handlePrimaryAction = useCallback(() => {
-    if (isRunning && libGame) {
-      setSelectedGame(libGame);
-      onNavigate?.("library-game-detail");
+    if (isRunning && heroSession?.pid) {
+      focusGameWindow(heroSession.pid).catch(() => {
+        if (libGame) {
+          setSelectedGame(libGame);
+          onNavigate?.("library-game-detail");
+        }
+      });
       return;
     }
 
@@ -795,7 +800,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (heroGame?.appId) {
       onNavigate?.("store");
     }
-  }, [heroGame, isRunning, libGame, setSelectedGame, onNavigate]);
+  }, [heroGame, isRunning, heroSession, libGame, setSelectedGame, onNavigate]);
 
   const handleOpenStopModal = useCallback(() => {
     if (!sessionKey) return;
@@ -843,7 +848,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
   }
 
   return (
-    <section ref={heroSectionRef} className="relative min-h-[300px] overflow-hidden rounded-2xl ring-1 ring-(--surface-active-border)/40 sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px]">
+    <section ref={heroSectionRef} className="relative -mt-14 min-h-[300px] overflow-hidden rounded-2xl sm:min-h-[380px] lg:min-h-[440px] xl:min-h-[480px]">
       {/* Layer 1 — Blurred backdrop (full-bleed color field) */}
       {bgUrl ? (
         <div className="absolute inset-0 overflow-hidden brightness-[0.65] saturate-[1.1]">

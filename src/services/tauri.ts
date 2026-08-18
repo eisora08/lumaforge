@@ -275,8 +275,8 @@ export async function scanLocalGameFolders(
   });
 }
 
-export async function launchSteamApp(appId: number): Promise<void> {
-  return await invoke("launch_steam_app", { appId });
+export async function launchSteamApp(appId: number, steamPath?: string): Promise<void> {
+  return await invoke("launch_steam_app", { appId, steamPath });
 }
 
 export async function installSteamApp(appId: number): Promise<void> {

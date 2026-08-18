@@ -576,9 +576,45 @@ pub fn scan_steam_login_users(steam_root: String) -> Result<Vec<crate::models::s
 }
 
 #[tauri::command]
-pub fn launch_steam_app(app_id: u32) -> Result<(), String> {
+pub fn launch_steam_app(app_id: u32, steam_path: Option<String>) -> Result<(), String> {
+    // Try to find steam.exe for silent launch
+    let steam_exe = resolve_steam_exe_from_path(steam_path.as_deref())
+        .or_else(|| resolve_steam_exe_detected());
+
+    if let Some(exe) = steam_exe {
+        // Premium: steam.exe -silent -applaunch keeps Steam in tray
+        eprintln!("[LAUNCH] steam.exe -silent -applaunch {app_id} ({exe})");
+        std::process::Command::new(&exe)
+            .args(["-silent", "-applaunch", &app_id.to_string()])
+            .spawn()
+            .map_err(|e| format!("Could not launch Steam game via {exe}: {e}"))?;
+        return Ok(());
+    }
+
+    // Fallback: protocol URL (opens Steam window)
+    eprintln!("[LAUNCH] fallback steam://run/{app_id} (steam.exe not found)");
     let url = format!("steam://run/{}", app_id);
     open::that_detached(&url).map_err(|e| format!("Could not launch Steam game: {}", e))
+}
+
+fn resolve_steam_exe_from_path(steam_path: Option<&str>) -> Option<String> {
+    let root = PathBuf::from(steam_path?);
+    let exe = root.join("steam.exe");
+    if exe.exists() {
+        Some(exe.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
+
+fn resolve_steam_exe_detected() -> Option<String> {
+    let paths = path_utils::detect_steam_paths()?;
+    let exe = PathBuf::from(&paths.steam_exe);
+    if exe.exists() {
+        Some(paths.steam_exe)
+    } else {
+        None
+    }
 }
 
 #[tauri::command]

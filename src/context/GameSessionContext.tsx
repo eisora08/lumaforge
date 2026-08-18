@@ -6,6 +6,7 @@ import { setActivePlayedSession, clearActivePlayedSession } from "../services/ac
 import { createSessionRecord, addSession } from "../services/gameSessionHistory";
 import { pushActivityEvent } from "./GameActivityContext";
 import { dispatchProviderLaunch } from "../utils/providerLaunchAdapter";
+import { loadSettings } from "../context/SettingsContext";
 import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDetection";
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
@@ -1101,7 +1102,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
           try {
             if (game.source === "steam" && game.appId) {
-              await launchSteamApp(Number(game.appId));
+              await launchSteamApp(Number(game.appId), loadSettings().steamRoot || undefined);
               if (ls.cancelled || ls.token !== token) {
                 ls.inFlight = false;
                 return;
