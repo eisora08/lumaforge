@@ -161,6 +161,9 @@ if (typeof window !== "undefined") {
         if (/^\d+$/.test(s.appId)) {
           s.appId = `app-${s.appId}`;
           changed = true;
+        } else if (s.appId.startsWith("steam-")) {
+          s.appId = `app-${s.appId.slice(6)}`;
+          changed = true;
         }
       }
       if (changed) {

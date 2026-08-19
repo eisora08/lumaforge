@@ -12,6 +12,7 @@ import { Diamond, Trophy, Medal, Circle, Award } from "lucide-react";
 // Stats functions compare against ptKey, so normalize bare numbers to "app-{id}".
 function normalizeSessionAppId(appId: string): string {
   if (/^\d+$/.test(appId)) return `app-${appId}`;
+  if (appId.startsWith("steam-")) return `app-${appId.slice(6)}`;
   return appId;
 }
 
