@@ -969,12 +969,10 @@ class AchievementWatcherService {
 
     console.log(`[ACH][CRACK_INI] appid=${appId} savePath=${savePath} traceId=${traceId}`);
 
-    // Wait for file to stabilize
-    const stable = await waitStableFile(appId, this._steamPath, this._steamAccountId, traceId);
-    if (!stable) {
-      console.log(`[ACH][CRACK_INI] appid=${appId} skip reason=file-not-stable traceId=${traceId}`);
-      return false;
-    }
+    // Crack save files (user_stats.ini, achievements.ini) are the files we're
+    // watching directly — no librarycache stability check needed.  The Rust
+    // watcher already debounces events with a 200ms window.  waitStableFile
+    // checks librarycache/<appId>.json which doesn't exist for crack games.
 
     try {
       const { readCrackAchievements } = await import("./crackAchievementReader");
