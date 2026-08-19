@@ -40,6 +40,8 @@ const DEBUG_MEDIA_CACHE = false;
 const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = DEBUG_MEDIA_CACHE;
 const DEBUG_ACTIVITY = false;
 const DEBUG_LUA_DELETE = false;
+const DEBUG_META_TRACE = false;
+if (DEBUG_META_TRACE) (window as any).__DEBUG_META_TRACE = true;
 import DebridSourceSelectorModal from "../components/debrid/DebridSourceSelectorModal";
 import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
 import type { RepackQueryResult } from "../services/tauri";
@@ -66,7 +68,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const { selectedGame, setSelectedGame, appInfoMap, refresh } = useLibraryGames();
   const downloadQueue = useDownloadQueueContext();
   const { settings } = useSettings();
-  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataLoading, setMetadataLoading] = useState(true);
   const [resolvedGame, setResolvedGame] = useState<LibraryGame | null>(null);
   const [artwork, setArtwork] = useState<SgdbArtworkData | null>(null);
   const [mediaEntry, setMediaEntry] = useState<GameMediaCacheEntry | null>(null);
@@ -81,6 +83,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   const _prevAppIdRef = useRef<string | null>(null);
   const _refreshInitiatorRef = useRef<string | null>(null);
   const _detailKeyRef = useRef<string | null>(null);
+  const [resetGeneration, setResetGeneration] = useState(0);
+  const _latestGameRef = useRef<LibraryGame | null>(null);
+  _latestGameRef.current = selectedGame;
 
   // Reset stale per-game state at render time (React's "adjusting state when a prop
   // changes" pattern) so the first render of a new game never receives the previous
@@ -89,7 +94,9 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   // layer no longer waits on canonicalLoaded. The ref guard keeps this idempotent.
   const detailKey = selectedGame ? computeGameKey(selectedGame) : "";
   if (_detailKeyRef.current !== detailKey) {
+    if (DEBUG_META_TRACE) console.log(`[META_TRACE][RESET] prevKey=${_detailKeyRef.current} newKey=${detailKey} appId=${selectedGame?.appId} source=${selectedGame?.source} hasResolvedMeta=${!!resolvedGame?.metadata} resetGen=${resetGeneration}`);
     _detailKeyRef.current = detailKey;
+    setMetadataLoading(true);
     setMediaEntry(null);
     setCanonicalAppInfo(null);
     setCanonicalDiskFallback(null);
@@ -98,6 +105,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     setArtwork(null);
     setResolvedGame(null);
     setCanonicalLoaded(false);
+    setResetGeneration((g) => g + 1);
   }
 
   const gameKey = selectedGame ? computeGameKey(selectedGame) : "";
@@ -209,6 +217,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   // Load local cache (media cache + canonical appinfo + media manifest + details/{appid}.json) immediately
   // Clear ALL state on any appId change to prevent stale cross-appId data during async fetch.
   useEffect(() => {
+    if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_EFFECT] appId=${selectedGame?.appId} source=${selectedGame?.source} resetGen=${resetGeneration} metaHas=${!!selectedGame?.metadata} metaResolved=${selectedGame?.metadata?.resolved}`);
     // Reset scroll to top on game entry/switch
     document.querySelector('main')?.scrollTo(0, 0);
 
@@ -259,6 +268,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
             },
           } as any);
           setCanonicalLoaded(true);
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_MANUAL] appId=${selectedGame?.appId} canonicalLoaded=true localDetailsSet=true`);
 
           // localDetailsData: all manual fields including linkedSteamAppId
           setLocalDetailsData({
@@ -449,6 +459,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
       }
       setCanonicalAppInfo(mergedInfo);
       setCanonicalLoaded(true);
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_CANONICAL] appId=${appId} canonicalLoaded=true hasInfo=${!!mergedInfo} hasName=${!!mergedInfo?.name} hasMedia=${!!mergedInfo?.media}`);
       if (!mergedInfo?.media?.landscapePath && !mergedInfo?.media?.coverPath) {
         resolveGameMediaImageSrc(appId).then((src) => {
           if (!cancelled && src) setCanonicalDiskFallback(src);
@@ -502,18 +513,22 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
           }
         }).catch(() => {});
       }
-    }).catch(() => { if (!cancelled) { setCanonicalAppInfo(null); setCanonicalLoaded(true); } });
+    }).catch(() => { if (!cancelled) { setCanonicalAppInfo(null); setCanonicalLoaded(true); if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_ERROR] appId=${appId} canonicalLoaded=true (error path)`); } });
 
     getLibraryGameDetails(appId).then((entry) => {
       if (cancelled) return;
       if (entry?.data) setLocalDetailsData(entry.data);
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][MAIN_DETAILS] appId=${appId} hasData=${!!entry?.data} keys=${entry?.data ? Object.keys(entry.data as any).join(",") : "none"}`);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [selectedGame?.appId]);
+  }, [selectedGame?.appId, resetGeneration]);
 
   // Resolve metadata when a game with an appId is selected but has no/incomplete metadata
   useEffect(() => {
+    const appIdLog = selectedGame?.appId ?? "?";
+    const srcLog = selectedGame?.source ?? "?";
     if (!selectedGame) {
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → no selectedGame, clearing`);
       setResolvedGame(null);
       setMetadataLoading(false);
       return;
@@ -521,6 +536,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
 
     const appIdNum = selectedGame.appId ? Number(selectedGame.appId) : null;
     if (!appIdNum) {
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → no appIdNum, setting raw game (no metadata needed)`);
       setResolvedGame(selectedGame);
       setMetadataLoading(false);
       return;
@@ -530,6 +546,7 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const hasDescription = !!meta?.about_the_game || !!meta?.detailed_description;
     const hasResolvedMetadata = meta && meta.resolved === true && !!meta.name && meta.name !== `Steam App ${appIdNum}` && hasDescription;
     if (hasResolvedMetadata) {
+      if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → hasResolvedMetadata=true, using selectedGame directly`);
       setResolvedGame(selectedGame);
       setMetadataLoading(false);
       return;
@@ -538,35 +555,47 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
     const requestId = Date.now();
     currentRequest.current = requestId;
 
-    setMetadataLoading(true);
     const alreadyResolved = resolvedGame?.metadata?.resolved === true && resolvedGame?.appId === selectedGame.appId;
-    if (!alreadyResolved) {
-      setResolvedGame(selectedGame);
-    }
+    if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_EFFECT] appId=${appIdLog} src=${srcLog} → resolving from network/cache. alreadyResolved=${alreadyResolved} resetGen=${resetGeneration} requestId=${requestId}`);
+
+    setMetadataLoading(true);
+    // Do NOT set resolvedGame to raw selectedGame here — CTX_SYNC keeps replacing
+    // selectedGame with new references, and setResolvedGame(selectedGame) overwrites
+    // the enriched metadata from a previous .then() that hasn't been committed yet.
+    // Only the .then() handler sets resolvedGame with enriched metadata.
     resolveGameMetadata([appIdNum])
       .then((result) => {
-        if (currentRequest.current !== requestId) return;
+        if (currentRequest.current !== requestId) {
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_THEN] appId=${appIdLog} → CANCELLED (requestId=${requestId} current=${currentRequest.current})`);
+          return;
+        }
         const resolvedMeta = result[appIdNum];
+        if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_THEN] appId=${appIdLog} → resolvedMeta exists=${!!resolvedMeta} resolved=${resolvedMeta?.resolved} hasShortDesc=${!!resolvedMeta?.short_description} hasAbout=${!!resolvedMeta?.about_the_game} hasName=${!!resolvedMeta?.name} name="${resolvedMeta?.name ?? ""}"`);
         if (resolvedMeta) {
+          // Use _latestGameRef to always reference the current selectedGame, not the stale closure
+          const currentGame = _latestGameRef.current ?? selectedGame;
           if ((window as any).__DEBUG_MANUAL_META) {
-            console.log(`[MANUAL][META_RESOLVED] appId=${appIdNum} source=${selectedGame?.source} resolved=${resolvedMeta.resolved} name=${resolvedMeta.name} hasDescription=${!!resolvedMeta.short_description} hasAbout=${!!resolvedMeta.about_the_game}`);
+            console.log(`[MANUAL][META_RESOLVED] appId=${appIdNum} source=${currentGame?.source} resolved=${resolvedMeta.resolved} name=${resolvedMeta.name} hasDescription=${!!resolvedMeta.short_description} hasAbout=${!!resolvedMeta.about_the_game}`);
           }
           setResolvedGame({
-            ...selectedGame,
+            ...currentGame,
             metadata: resolvedMeta,
-            imageUrl: selectedGame.imageUrl || resolvedMeta.header_image || resolvedMeta.capsule_image || resolvedMeta.capsule_image_v5 || undefined,
+            imageUrl: currentGame.imageUrl || resolvedMeta.header_image || resolvedMeta.capsule_image || resolvedMeta.capsule_image_v5 || undefined,
           });
+        } else {
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_THEN] appId=${appIdLog} → resolvedMeta is UNDEFINED! result keys=${Object.keys(result).join(",")}`);
         }
       })
-      .catch(() => {
-        // keep original game if resolution fails
+      .catch((err) => {
+        if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_CATCH] appId=${appIdLog} → error: ${String(err)}`);
       })
       .finally(() => {
         if (currentRequest.current === requestId) {
+          if (DEBUG_META_TRACE) console.log(`[META_TRACE][META_FINALLY] appId=${appIdLog} → setting metadataLoading=false`);
           setMetadataLoading(false);
         }
       });
-  }, [selectedGame]);
+  }, [selectedGame, resetGeneration]);
 
   // ── Re-run fallback resolver when enriched metadata becomes available ──
   // The main effect runs with selectedGame?.metadata (may not be enriched yet).
@@ -1219,6 +1248,20 @@ export default function LibraryGameDetailPage({ onBack, onNavigate }: Props) {
   }
 
   const displayGame = resolvedGame || selectedGame;
+  if (DEBUG_META_TRACE) {
+    const _src = displayGame.source;
+    const _id = displayGame.appId || displayGame.id;
+    const _hasMeta = !!displayGame.metadata;
+    const _resolved = displayGame.metadata?.resolved;
+    const _hasShortDesc = !!displayGame.metadata?.short_description;
+    const _hasAbout = !!displayGame.metadata?.about_the_game;
+    const _hasLocalDetails = !!localDetailsData;
+    const _canonLoaded = canonicalLoaded;
+    const _metaLoading = metadataLoading;
+    const _hasCanonInfo = !!canonicalAppInfo;
+    const _useResolved = !!resolvedGame;
+    console.log(`[META_TRACE][RENDER] appId=${_id} src=${_src} useResolved=${_useResolved} hasMeta=${_hasMeta} resolved=${_resolved} hasShortDesc=${_hasShortDesc} hasAbout=${_hasAbout} localDetails=${_hasLocalDetails} canonLoaded=${_canonLoaded} metaLoading=${_metaLoading} hasCanonInfo=${_hasCanonInfo}`);
+  }
   const currentSession = session.getSession(gameKey);
   const appInfoEntry = displayGame.appId ? (appInfoMap[displayGame.appId] ?? null) : null;
   const detailTitle = resolveCanonicalDisplayTitle(

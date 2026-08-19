@@ -306,6 +306,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const setSelectedGame = useCallback((game: LibraryGame | null) => {
+    if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][CTX_SET] id=${game?.id} appId=${game?.appId} src=${game?.source} hasMeta=${!!game?.metadata}`);
     setSelectedGameState(game);
     setSelectedIdState(game?.id ?? null);
     storeSelectedId(game?.id ?? null);
@@ -316,9 +317,11 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
     const match = games.find((g) => g.id === selectedId);
     if (match) {
       if (selectedGame !== match) {
+        if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][CTX_SYNC] selectedId=${selectedId} replacing selectedGame (old hasMeta=${!!selectedGame?.metadata} new hasMeta=${!!match?.metadata} sameRef=${selectedGame === match})`);
         setSelectedGameState(match);
       }
     } else {
+      if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][CTX_SYNC] selectedId=${selectedId} NOT FOUND in games, clearing`);
       setSelectedIdState(null);
       storeSelectedId(null);
     }

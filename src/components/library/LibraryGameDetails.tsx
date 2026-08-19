@@ -699,6 +699,11 @@ export default function LibraryGameDetails({
   const rawAbout = game.metadata?.about_the_game || (localDetailsData as any)?.description;
   const rawDetailed = game.metadata?.detailed_description || (localDetailsData as any)?.description;
 
+  if ((window as any).__DEBUG_META_TRACE) {
+    const _id = game.appId || game.id;
+    console.log(`[META_TRACE][DETAILS] appId=${_id} src=${game.source} game.meta=${!!game.metadata} resolved=${game.metadata?.resolved} rawShort=${!!rawShort} rawAbout=${!!rawAbout} rawDetailed=${!!rawDetailed} localDetails=${!!localDetailsData} canonicalLoaded=${canonicalLoaded}`);
+  }
+
   const aboutText = rawAbout ? stripHtml(rawAbout) : "";
   const detailedText = rawDetailed ? stripHtml(rawDetailed) : "";
 

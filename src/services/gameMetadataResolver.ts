@@ -101,15 +101,18 @@ export async function resolveGameMetadata(
     const cached = inMemoryCache.get(appId);
     if (cached) {
       result[appId] = cached;
+      if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] appId=${appId} → cache HIT resolved=${cached.resolved} hasShortDesc=${!!cached.short_description} name="${cached.name}"`);
     } else {
       missingAppIds.push(appId);
     }
   }
 
   if (missingAppIds.length === 0) {
+    if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] all ${uniqueAppIds.length} appIds from inMemoryCache`);
     return result;
   }
 
+  if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] ${missingAppIds.length} missing from cache, reading disk: [${missingAppIds.join(",")}]`);
   const toFetch: number[] = [];
 
   // Phase 9: Parallel disk reads instead of sequential for..await.
@@ -120,12 +123,15 @@ export async function resolveGameMetadata(
     if (meta) {
       inMemoryCache.set(appId, meta);
       result[appId] = meta;
+      if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] appId=${appId} → disk HIT resolved=${meta.resolved} hasShortDesc=${!!meta.short_description}`);
     } else {
       toFetch.push(appId);
+      if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] appId=${appId} → disk MISS, will fetch`);
     }
   }
 
   if (toFetch.length === 0) {
+    if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] all found from disk, returning`);
     return result;
   }
 
@@ -179,6 +185,8 @@ export async function resolveGameMetadata(
   }
 
   const resolvedMap = await fetchPromise;
+
+  if ((window as any).__DEBUG_META_TRACE) console.log(`[META_TRACE][RESOLVER] network fetch returned ${Object.keys(resolvedMap).length} entries`);
 
   for (const [appId, meta] of Object.entries(resolvedMap)) {
     const moviesCount = meta.movies?.length ?? 0;
