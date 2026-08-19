@@ -98,7 +98,9 @@ pub fn show_achievement_overlay(
         eprintln!("[ACH][OVERLAY][RUST] emit_done");
 
         // Show window only after content is rendered
-        let _ = window.set_focus();
+        // Do NOT call set_focus() — it steals focus from the game and pauses it.
+        // Click-through so the overlay doesn't intercept mouse events.
+        let _ = window.set_ignore_cursor_events(true);
         let _ = window.set_always_on_top(true);
         let _ = window.show();
         eprintln!("[ACH][OVERLAY][RUST] show_done");
@@ -198,7 +200,7 @@ pub fn show_achievement_overlay_batch(
             Err(e) => eprintln!("[ACH][OVERLAY_BATCH][RUST] eval_error={}", e),
         }
 
-        let _ = window.set_focus();
+        let _ = window.set_ignore_cursor_events(true);
         let _ = window.set_always_on_top(true);
         let _ = window.show();
         eprintln!("[ACH][OVERLAY_BATCH][RUST] show_done");
