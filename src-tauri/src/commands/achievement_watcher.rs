@@ -54,7 +54,7 @@ impl AchievementWatcher {
     app_handle: AppHandle,
     librarycache_path: PathBuf,
     appcache_stats_path: PathBuf,
-    extra_watch_dirs: Vec<PathBuf>,
+    extra_watch_dir_map: HashMap<PathBuf, u32>,
   ) -> Result<(), String> {
     self.stop();
     // Reset the shutdown flag so the new thread doesn't see the previous
@@ -141,14 +141,14 @@ impl AchievementWatcher {
     // are watched unconditionally — the file may not exist yet (Tenoke creates
     // user_stats.ini only after the first achievement unlock).
     let mut extra_dirs_watched = 0;
-    for dir in &extra_watch_dirs {
+    for dir in extra_watch_dir_map.keys() {
       if dir.is_dir() {
         if let Err(e) = watcher.watch(dir, RecursiveMode::NonRecursive) {
           eprintln!("[ACH][WATCHER] failed to watch extra dir {}: {}", dir.display(), e);
         } else {
           extra_dirs_watched += 1;
           if DEBUG_ACH_WATCHER {
-            eprintln!("[ACH][WATCHER] watching extraDir={}", dir.display());
+            eprintln!("[ACH][WATCHER] watching extraDir={} appId={}", dir.display(), extra_watch_dir_map[dir]);
           }
         }
       } else if DEBUG_ACH_WATCHER {
@@ -170,6 +170,7 @@ impl AchievementWatcher {
     let libcache_path = librarycache_path;
     let debounce = Duration::from_millis(200);
     let poll_interval = Duration::from_millis(200);
+    let dir_map = extra_watch_dir_map;
 
     std::thread::spawn(move || {
       let mut pending: HashMap<(u32, String), (PathBuf, Instant, u64, u64, Option<String>)> = HashMap::new();
@@ -182,7 +183,7 @@ impl AchievementWatcher {
         match rx.recv_timeout(poll_interval) {
           Ok(Ok(event)) => {
             for path in &event.paths {
-              if let Some(info) = extract_info(path, &stats_path, &libcache_path) {
+              if let Some(info) = extract_info(path, &stats_path, &libcache_path, &dir_map) {
                 let trace_id = next_trace_id();
                 pending.insert(
                   (info.appid, info.source.clone()),
@@ -419,7 +420,7 @@ fn crack_save_dir_from_path(path: &Path) -> Option<(u32, PathBuf)> {
   None
 }
 
-fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<FileInfo> {
+fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path, dir_map: &HashMap<PathBuf, u32>) -> Option<FileInfo> {
   let parent = path.parent()?;
   let raw_path = path.to_string_lossy().to_string();
   let fname = path.file_name()?.to_string_lossy().to_string();
@@ -596,6 +597,34 @@ fn extract_info(path: &Path, stats_path: &Path, libcache_path: &Path) -> Option<
     });
   }
 
+  // Fallback: match against extra_watch_dir_map (Tenoke and other games whose
+  // user_stats.ini lives in game install dirs, not under CRACK_SAVE_BASES).
+  // The dir_map maps save_path → appId, built from achievement configs.
+  for (save_path, &appid) in dir_map.iter() {
+    if path.starts_with(save_path) && (fname == "user_stats.ini" || fname == "achievements.ini" || fname == "achievements.json") {
+      eprintln!(
+        "[ACH][WATCHER] rawPath={} fileName={} extractedAppId={} source=crack-ini savePath={} (dirMap fallback)",
+        raw_path, fname, appid, save_path.display()
+      );
+      let meta = std::fs::metadata(path).ok()?;
+      let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+      let source = if fname == "achievements.json" { "crack-json" } else { "crack-ini" };
+      return Some(FileInfo {
+        appid,
+        source: source.to_string(),
+        modified_at: modified,
+        size: meta.len(),
+        save_path: Some(save_path.to_string_lossy().to_string()),
+      });
+    }
+  }
+
   eprintln!(
     "[ACH][WATCHER] rawPath={} fileName={} extractedAppId=null source=unknown (unrecognized parent)",
     raw_path, fname
@@ -651,7 +680,7 @@ pub fn start_achievement_watcher(
   state: tauri::State<'_, AchievementWatcherState>,
   steam_path: Option<String>,
   steam_account_id: String,
-  extra_watch_dirs: Option<Vec<String>>,
+  extra_watch_dir_map: Option<Vec<(String, u32)>>,
 ) -> Result<(), String> {
   let steam_root = resolve_steam_root(steam_path.as_deref())?;
 
@@ -663,11 +692,11 @@ pub fn start_achievement_watcher(
 
   let appcache_stats_path = steam_root.join("appcache").join("stats");
 
-  // Convert extra_watch_dirs strings to PathBufs
-  let extra: Vec<PathBuf> = extra_watch_dirs
+  // Convert extra_watch_dir_map to HashMap<PathBuf, u32>
+  let dir_map: HashMap<PathBuf, u32> = extra_watch_dir_map
     .unwrap_or_default()
     .into_iter()
-    .map(PathBuf::from)
+    .map(|(path, appid)| (PathBuf::from(path), appid))
     .collect();
 
   eprintln!("[ACH][WATCHER] starting watcher");
@@ -682,11 +711,13 @@ pub fn start_achievement_watcher(
       "[ACH][WATCHER] watchingAppcacheStats={}",
       appcache_stats_path.display()
     );
-    if !extra.is_empty() {
-      eprintln!(
-        "[ACH][WATCHER] extraWatchDirs={:?}",
-        extra.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()
-      );
+    if !dir_map.is_empty() {
+      for (path, appid) in &dir_map {
+        eprintln!(
+          "[ACH][WATCHER] extraWatchDir={} appId={}",
+          path.display(), appid
+        );
+      }
     }
   }
 
@@ -708,7 +739,7 @@ pub fn start_achievement_watcher(
     .lock()
     .map_err(|e| format!("Failed to lock watcher state: {}", e))?;
 
-  watcher.start(app_handle, librarycache_path, appcache_stats_path, extra)
+  watcher.start(app_handle, librarycache_path, appcache_stats_path, dir_map)
 }
 
 #[tauri::command]

@@ -357,10 +357,10 @@ class AchievementWatcherService {
     console.debug(`[ACH][WATCHER] watchingAppcacheStats=${appcacheStatsPath}`);
 
     // Start Rust-side watcher
-    // Collect save_path directories from achievement configs so the watcher
+    // Collect save_path → appId mappings from achievement configs so the watcher
     // knows about Tenoke game install dirs (where user_stats.ini will appear
     // after the first achievement unlock).
-    let extraWatchDirs: string[] = [];
+    let extraWatchDirMap: [string, number][] = [];
     try {
       const { listConfigs } = await import("./achievementConfigService");
       const allConfigs = await listConfigs();
@@ -368,11 +368,14 @@ class AchievementWatcherService {
       for (const cfg of allConfigs) {
         if (cfg.platform === "steam" && cfg.save_path && !seen.has(cfg.save_path)) {
           seen.add(cfg.save_path);
-          extraWatchDirs.push(cfg.save_path);
+          const numId = Number(cfg.app_id);
+          if (Number.isFinite(numId) && numId > 0) {
+            extraWatchDirMap.push([cfg.save_path, numId]);
+          }
         }
       }
-      if (extraWatchDirs.length > 0) {
-        console.debug(`[ACH][WATCHER] extraWatchDirs=${extraWatchDirs.length} (from configs)`);
+      if (extraWatchDirMap.length > 0) {
+        console.debug(`[ACH][WATCHER] extraWatchDirMap=${extraWatchDirMap.length} entries (from configs)`);
       }
     } catch (err) {
       console.warn(`[ACH][WATCHER] failed to load configs for extra watch dirs: ${err}`);
@@ -382,7 +385,7 @@ class AchievementWatcherService {
       await invoke("start_achievement_watcher", {
         steamPath: steamPath ?? null,
         steamAccountId,
-        extraWatchDirs: extraWatchDirs.length > 0 ? extraWatchDirs : null,
+        extraWatchDirMap: extraWatchDirMap.length > 0 ? extraWatchDirMap : null,
       });
     } catch (err) {
       console.warn(`[ACH][WATCHER] failed to start: ${err}`);
