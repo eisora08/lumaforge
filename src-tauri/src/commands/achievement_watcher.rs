@@ -54,6 +54,7 @@ impl AchievementWatcher {
     app_handle: AppHandle,
     librarycache_path: PathBuf,
     appcache_stats_path: PathBuf,
+    extra_watch_dirs: Vec<PathBuf>,
   ) -> Result<(), String> {
     self.stop();
     // Reset the shutdown flag so the new thread doesn't see the previous
@@ -134,6 +135,32 @@ impl AchievementWatcher {
       crack_bases.len(),
       crack_dirs_watched
     );
+
+    // Watch extra directories from achievement configs (e.g. Tenoke user_stats.ini
+    // lives in game install dirs, not under CRACK_SAVE_BASES).  These directories
+    // are watched unconditionally — the file may not exist yet (Tenoke creates
+    // user_stats.ini only after the first achievement unlock).
+    let mut extra_dirs_watched = 0;
+    for dir in &extra_watch_dirs {
+      if dir.is_dir() {
+        if let Err(e) = watcher.watch(dir, RecursiveMode::NonRecursive) {
+          eprintln!("[ACH][WATCHER] failed to watch extra dir {}: {}", dir.display(), e);
+        } else {
+          extra_dirs_watched += 1;
+          if DEBUG_ACH_WATCHER {
+            eprintln!("[ACH][WATCHER] watching extraDir={}", dir.display());
+          }
+        }
+      } else if DEBUG_ACH_WATCHER {
+        eprintln!("[ACH][WATCHER] extra dir not found: {}", dir.display());
+      }
+    }
+    if extra_dirs_watched > 0 {
+      eprintln!(
+        "[ACH][WATCHER] watching extraDirs={}",
+        extra_dirs_watched
+      );
+    }
 
     // Schema generation happens on-demand when GameDetails opens (via resolver).
     // Watcher only watches for achievements.ini changes.
@@ -624,6 +651,7 @@ pub fn start_achievement_watcher(
   state: tauri::State<'_, AchievementWatcherState>,
   steam_path: Option<String>,
   steam_account_id: String,
+  extra_watch_dirs: Option<Vec<String>>,
 ) -> Result<(), String> {
   let steam_root = resolve_steam_root(steam_path.as_deref())?;
 
@@ -634,6 +662,13 @@ pub fn start_achievement_watcher(
     .join("librarycache");
 
   let appcache_stats_path = steam_root.join("appcache").join("stats");
+
+  // Convert extra_watch_dirs strings to PathBufs
+  let extra: Vec<PathBuf> = extra_watch_dirs
+    .unwrap_or_default()
+    .into_iter()
+    .map(PathBuf::from)
+    .collect();
 
   eprintln!("[ACH][WATCHER] starting watcher");
   if DEBUG_ACH_WATCHER {
@@ -647,6 +682,12 @@ pub fn start_achievement_watcher(
       "[ACH][WATCHER] watchingAppcacheStats={}",
       appcache_stats_path.display()
     );
+    if !extra.is_empty() {
+      eprintln!(
+        "[ACH][WATCHER] extraWatchDirs={:?}",
+        extra.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()
+      );
+    }
   }
 
   if !librarycache_path.exists() {
@@ -667,7 +708,7 @@ pub fn start_achievement_watcher(
     .lock()
     .map_err(|e| format!("Failed to lock watcher state: {}", e))?;
 
-  watcher.start(app_handle, librarycache_path, appcache_stats_path)
+  watcher.start(app_handle, librarycache_path, appcache_stats_path, extra)
 }
 
 #[tauri::command]

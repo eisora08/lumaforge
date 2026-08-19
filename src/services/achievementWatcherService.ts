@@ -357,10 +357,32 @@ class AchievementWatcherService {
     console.debug(`[ACH][WATCHER] watchingAppcacheStats=${appcacheStatsPath}`);
 
     // Start Rust-side watcher
+    // Collect save_path directories from achievement configs so the watcher
+    // knows about Tenoke game install dirs (where user_stats.ini will appear
+    // after the first achievement unlock).
+    let extraWatchDirs: string[] = [];
+    try {
+      const { listConfigs } = await import("./achievementConfigService");
+      const allConfigs = await listConfigs();
+      const seen = new Set<string>();
+      for (const cfg of allConfigs) {
+        if (cfg.platform === "steam" && cfg.save_path && !seen.has(cfg.save_path)) {
+          seen.add(cfg.save_path);
+          extraWatchDirs.push(cfg.save_path);
+        }
+      }
+      if (extraWatchDirs.length > 0) {
+        console.debug(`[ACH][WATCHER] extraWatchDirs=${extraWatchDirs.length} (from configs)`);
+      }
+    } catch (err) {
+      console.warn(`[ACH][WATCHER] failed to load configs for extra watch dirs: ${err}`);
+    }
+
     try {
       await invoke("start_achievement_watcher", {
         steamPath: steamPath ?? null,
         steamAccountId,
+        extraWatchDirs: extraWatchDirs.length > 0 ? extraWatchDirs : null,
       });
     } catch (err) {
       console.warn(`[ACH][WATCHER] failed to start: ${err}`);
