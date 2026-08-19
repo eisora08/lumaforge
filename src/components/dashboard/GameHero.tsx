@@ -780,7 +780,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     }
   }, [runningLibGame?.appId, heroAppId]);
 
-  const handlePrimaryAction = useCallback(() => {
+  const handlePrimaryAction = useCallback(async () => {
     if (isRunning && heroSession?.pid) {
       focusGameWindow(heroSession.pid).catch(() => {
         if (libGame) {
@@ -789,6 +789,17 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         }
       });
       return;
+    }
+
+    // Soft session — no PID stored, but game is running. Try to find PID now.
+    if (isRunning && sessionKey) {
+      try {
+        const candidate = await findGameProcessForSession(sessionKey);
+        if (candidate) {
+          focusGameWindow(candidate.pid).catch(() => {});
+          return;
+        }
+      } catch { /* fall through to navigate */ }
     }
 
     if (libGame) {
@@ -800,7 +811,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
     if (heroGame?.appId) {
       onNavigate?.("store");
     }
-  }, [heroGame, isRunning, heroSession, libGame, setSelectedGame, onNavigate]);
+  }, [heroGame, isRunning, heroSession, sessionKey, libGame, setSelectedGame, onNavigate, findGameProcessForSession]);
 
   const handleOpenStopModal = useCallback(() => {
     if (!sessionKey) return;
