@@ -985,8 +985,55 @@ class AchievementWatcherService {
 
       console.log(`[ACH][CRACK_INI] appid=${appId} parsed ${crackData.unlocked}/${crackData.total} source=${crackData.source} traceId=${traceId}`);
 
+      // Tenoke user_stats.ini only lists unlocked achievements with raw API names.
+      // Enrich with cached schema (names, icons) so the summary shows display names.
+      if (crackData.source === "tenoke-user-stats") {
+        try {
+          const cached = await readAchievementCacheWithFallback(Number(appId));
+          if (cached?.achievements?.length) {
+            const schemaMap = new Map(cached.achievements.map((a) => [a.api_name, a]));
+            const enrichNorm = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
+            const schemaNormMap = new Map([...schemaMap.entries()].map(([k, v]) => [enrichNorm(k), v]));
+            for (const ach of crackData.achievements) {
+              const schema = schemaMap.get(ach.apiName) ?? schemaNormMap.get(enrichNorm(ach.apiName));
+              if (schema) {
+                ach.name = schema.name || ach.name;
+                ach.iconUrl = schema.icon || ach.iconUrl;
+                ach.iconGrayUrl = schema.icon_gray || ach.iconGrayUrl;
+              }
+            }
+            // Rebuild from schema when it has more entries than crack data
+            if (schemaMap.size > crackData.achievements.length) {
+              const crackUnlockMap = new Map(crackData.achievements.map((a) => [a.apiName, { unlocked: a.unlocked, unlockTime: a.unlockTime }]));
+              const crackNormMap = new Map<string, string>();
+              for (const name of crackUnlockMap.keys()) { crackNormMap.set(enrichNorm(name), name); }
+              const fullAchievements: typeof crackData.achievements = [];
+              for (const [apiName, schema] of schemaMap.entries()) {
+                let crackState = crackUnlockMap.get(apiName);
+                if (!crackState) { const nk = crackNormMap.get(enrichNorm(apiName)); if (nk) crackState = crackUnlockMap.get(nk); }
+                fullAchievements.push({
+                  id: apiName, apiName,
+                  name: schema.name || apiName,
+                  description: schema.description,
+                  iconUrl: schema.icon, iconGrayUrl: schema.icon_gray,
+                  unlocked: crackState?.unlocked ?? false,
+                  unlockTime: crackState?.unlockTime,
+                });
+              }
+              crackData.achievements = fullAchievements;
+              crackData.total = schemaMap.size;
+              crackData.unlocked = fullAchievements.filter((a) => a.unlocked).length;
+              console.log(`[ACH][CRACK_INI] appid=${appId} enriched from schema: total=${crackData.total} unlocked=${crackData.unlocked} traceId=${traceId}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[ACH][CRACK_INI] appid=${appId} schema enrich failed: ${e} traceId=${traceId}`);
+        }
+      }
+
       // Build ProgressPatch from crack data
       const progressMap = new Map<string, { unlocked: boolean; unlockTime?: number; progress?: number; maxProgress?: number }>();
+      const nameMap = new Map<string, string>();
       for (const ach of crackData.achievements) {
         progressMap.set(ach.apiName, {
           unlocked: ach.unlocked,
@@ -994,6 +1041,9 @@ class AchievementWatcherService {
           progress: ach.progress,
           maxProgress: ach.maxProgress,
         });
+        if (ach.name && ach.name !== ach.apiName) {
+          nameMap.set(ach.apiName, ach.name);
+        }
       }
 
       const patch: ProgressPatch = {
@@ -1002,6 +1052,7 @@ class AchievementWatcherService {
         unlocked: crackData.unlocked,
         progressMap,
         authoritative: true,
+        ...(nameMap.size > 0 ? { nameMap } : {}),
       };
 
       const result = achievementStore.applyProgressPatch(appId, patch, traceId, this._platformByAppId.get(appId) ?? "steam");

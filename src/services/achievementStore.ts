@@ -82,6 +82,8 @@ export type ProgressPatch = {
   rarityMap?: Map<string, number>;
   /** Per-apiName raw icon path from librarycache (str_image), e.g. "img/hash.jpg" */
   iconMap?: Map<string, { icon?: string; iconGray?: string }>;
+  /** Per-apiName display name override (from schema enrichment, e.g. Tenoke watcher) */
+  nameMap?: Map<string, string>;
   /** When true, patch comes from binary-stats (authoritative). Replace per-achievement states directly — no OR merge. */
   authoritative?: boolean;
 };
@@ -407,7 +409,7 @@ class AchievementStoreImpl {
         minimalAchievements.push({
           id: apiName,
           apiName,
-          name: apiName,
+          name: patch.nameMap?.get(apiName) ?? apiName,
           unlocked: progress.unlocked,
           unlockTime: progress.unlockTime,
           rarityPercent: patch.rarityMap?.get(apiName),
