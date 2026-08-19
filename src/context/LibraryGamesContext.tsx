@@ -405,9 +405,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
 
     // Phase 6: Merge Activity playtime into LibraryGame runtime objects
     for (const game of deduped) {
-      const ptEntry = game.appId
-        ? getPlaytimeEntryByAppId(game.appId)
-        : getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+      // Use provider-aware resolvePlaytimeKey FIRST (handles debrid/manual/epic keys),
+      // then fall back to appId-based lookup for Steam games
+      const ptEntry = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game))
+        ?? (game.appId ? getPlaytimeEntryByAppId(game.appId) : null);
       if (ptEntry) {
         const totalMinutes = Math.round(ptEntry.totalPlaytimeSeconds / 60);
         if (totalMinutes > 0) {
@@ -418,7 +419,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
             ? Math.max(...ptEntry.sessions.map(s => s.endedAt ?? s.startedAt))
             : null);
         if (sessionEnd) {
-          game.localLastPlayedAt = Math.max(game.localLastPlayedAt ?? 0, sessionEnd);
+          // playtime store stores Unix SECONDS; localLastPlayedAt consumers expect MILLISECONDS
+          game.localLastPlayedAt = Math.max(game.localLastPlayedAt ?? 0, sessionEnd * 1000);
         }
       }
     }
@@ -594,7 +596,9 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           const batch = playtimeGames.slice(i, i + BATCH_SIZE);
           await Promise.allSettled(
             batch.map((game) => {
-              const gameKey = game.id || `app-${game.appId}`;
+              // Always use app-{appId} as the playtime store key — matches what
+              // snapshotToDisplayGame / getPlaytimeEntryByGameKey reads via resolvePlaytimeKey
+              const gameKey = `app-${game.appId}`;
               return importExternalPlaytime({
                 gameKey,
                 appId: game.appId!,
@@ -661,7 +665,8 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       hasLuaSource: false,
       luaScripts: [],
       sources: [],
-      steamLastPlayedAt: sg.lastPlayed ?? undefined,
+      // sg.lastPlayed is in SECONDS (snapshot builder); steamLastPlayedAt on LibraryGame is MS
+      steamLastPlayedAt: sg.lastPlayed != null && sg.lastPlayed > 0 ? sg.lastPlayed * 1000 : undefined,
       steamPlaytimeMinutes: sg.playtime ?? undefined,
       achievementUnlocked: sg.achievementSummary?.unlocked,
       achievementTotal: sg.achievementSummary?.total,

@@ -741,20 +741,23 @@ export default function LibraryGameDetails({
     return unsub;
   }, []);
 
-  // Phase 1: Audit Activity playtime (try appId first, then gameKey for manual games)
-  const ptEntry = getPlaytimeEntryByAppId(game.appId) ?? getPlaytimeEntryByGameKey(resolvePlaytimeKey(game));
+  // Phase 1: Audit Activity playtime — use provider-aware key FIRST, then appId fallback
+  const ptEntry = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game))
+    ?? (game.appId ? getPlaytimeEntryByAppId(game.appId) : null);
   const totalSeconds = ptEntry ? computeTotalPlaytime(ptEntry) : 0;
   const sourceLabel = ptEntry ? (ptEntry.playtimeSource ?? ptEntry.provider ?? "unknown") : "unknown";
   const lastPlayedFromActivity = (() => {
-    // Try appId first, then gameKey
+    // Try provider-aware key first (debrid/manual/epic), then appId fallback
+    if (ptEntry) {
+      if (ptEntry.lastPlayedAt) return ptEntry.lastPlayedAt;
+      if (ptEntry.sessions.length > 0) {
+        const sorted = [...ptEntry.sessions].sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
+        return sorted[0].endedAt ?? sorted[0].startedAt;
+      }
+    }
+    // Fallback: try appId-specific lookup (for cases where ptEntry was found via a different key)
     const byAppId = getLastSessionEndForAppId(game.appId);
     if (byAppId) return byAppId;
-    if (!ptEntry) return null;
-    if (ptEntry.lastPlayedAt) return ptEntry.lastPlayedAt;
-    if (ptEntry.sessions.length > 0) {
-      const sorted = [...ptEntry.sessions].sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
-      return sorted[0].endedAt ?? sorted[0].startedAt;
-    }
     return null;
   })();
   if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][PLAYTIME_AUDIT] appid=${game.appId} activityFound=${!!ptEntry} key=${ptEntry?.gameKey ?? null} totalSeconds=${totalSeconds} lastPlayedAt=${ptEntry?.lastPlayedAt ?? null} uiPlaytime=${formatPlaytimeSeconds(totalSeconds || 0)} uiLastPlayed=${lastPlayedFromActivity ?? "Never"}`);
@@ -778,7 +781,9 @@ export default function LibraryGameDetails({
   }
 
   // Phase 4: Last played — prefer Activity (updated on launch), fallback to Steam/local
-  const lastPlayedSource = lastPlayedFromActivity ?? game.localLastPlayedAt ?? game.steamLastPlayedAt ?? 0;
+  // playtime store stores Unix SECONDS; formatTimestamp expects MILLISECONDS → multiply by 1000
+  const lastPlayedFromActivityMs = lastPlayedFromActivity ? lastPlayedFromActivity * 1000 : 0;
+  const lastPlayedSource = lastPlayedFromActivityMs || game.localLastPlayedAt || game.steamLastPlayedAt || 0;
   const lastPlayed = lastPlayedSource > 0
     ? (() => {
       if (ENABLE_VERBOSE_LIBRARY_DETAILS_LOGS) console.log(`[ACTIVITY][LAST_PLAYED_DISPLAY] appid=${game.appId} value=${lastPlayedSource} source=${lastPlayedFromActivity ? "activity" : (game.localLastPlayedAt ? "local" : "steam")}`);
@@ -2953,7 +2958,10 @@ export default function LibraryGameDetails({
 }
 
 function formatTimestamp(ts: number) {
-  if (!ts || ts <= 0 || ts < 1000000000000) return "Recently";
+  if (!ts || ts <= 0) return "Recently";
+  // Normalize seconds to milliseconds if needed (timestamps < 10^12 are seconds)
+  if (ts < 1000000000000) ts *= 1000;
+  if (ts < 1000000000000) return "Recently";
 
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);

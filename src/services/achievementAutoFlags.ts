@@ -26,7 +26,7 @@ export const ACHIEVEMENT_STATS_SCAN_AUTO = false;
 export const ACHIEVEMENT_AUTO_LOAD_GAME_DETAILS = true;
 
 /** Scan steam user game stats automatically during boot/library load */
-export const STEAM_USER_STATS_AUTO_SCAN = false;
+export const STEAM_USER_STATS_AUTO_SCAN = true;
 
 /** Migrate icon URLs during achievement cache write */
 export const ACHIEVEMENT_SCHEMA_MIGRATION_AUTO = false;

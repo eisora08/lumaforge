@@ -1632,16 +1632,13 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
             startedAt: Math.floor(Date.now() / 1000),
           }).then((activeSession) => {
             activePlaySessionsRef.current[key] = activeSession.sessionId;
-            // Phase 5: Update lastPlayedAt in cached store immediately so UI shows "just now"
+            // startPlaySession already patched app-{appId} atomically.
+            // Create canonical entry if it doesn't exist yet (first launch of a game with no prior import).
             const cached = getCachedPlaytimeStore();
             if (cached) {
               const now = Math.floor(Date.now() / 1000);
-              // Always update via canonical app-<appId> key for consistent lookup
               const canonicalKey = curSession.appId ? `app-${curSession.appId}` : key;
-              if (cached.games[canonicalKey]) {
-                cached.games[canonicalKey].lastPlayedAt = now;
-              } else {
-                // Create entry if it doesn't exist yet
+              if (!cached.games[canonicalKey] && curSession.appId) {
                 cached.games[canonicalKey] = {
                   gameKey: canonicalKey,
                   appId: curSession.appId ?? null,
@@ -1659,12 +1656,8 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
                 };
               }
               // Also update legacy key if different
-              if (key !== canonicalKey) {
-                if (cached.games[key]) {
-                  cached.games[key].lastPlayedAt = now;
-                } else {
-                  cached.games[key] = { ...cached.games[canonicalKey], gameKey: key };
-                }
+              if (key !== canonicalKey && cached.games[key]) {
+                cached.games[key].lastPlayedAt = now;
               }
               cached.updatedAt = Date.now();
               console.log(`[ACTIVITY][LAUNCH_TRACKED] appid=${curSession.appId} lastPlayedAt=${now}`);

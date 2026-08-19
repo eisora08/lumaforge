@@ -58,6 +58,8 @@ export type ExternalPlaytimeImport = {
   title?: string;
   externalPlaytimeSeconds: number;
   externalSource: "steam" | "epic" | "gog" | "manual" | "unknown";
+  /** Optional last-played timestamp (Unix seconds) to seed when entry has none. */
+  lastPlayedAtSeconds?: number;
 };
 
 let cachedStore: PlaytimeStore | null = null;
@@ -126,10 +128,35 @@ export async function importExternalPlaytime(input: ExternalPlaytimeImport): Pro
   return entry;
 }
 
+/** Batch import external playtime for multiple games in a single SQLite transaction. */
+export async function batchImportExternalPlaytime(inputs: ExternalPlaytimeImport[]): Promise<number> {
+  const count = await invoke<number>("batch_import_external_playtime", { inputs });
+  // Refresh cache after batch write
+  await loadPlaytimeStore(true);
+  notifyPlaytimeStored();
+  return count;
+}
+
 export async function startPlaySession(input: PlaySessionStart): Promise<ActivePlaySession> {
   const result = await invoke<ActivePlaySession>("record_play_session_start", { input });
-  // Refresh cache
+  // Refresh cache from SQLite
   await loadPlaytimeStore(true);
+  // Persist app-{appId} canonical key to SQLite + in-memory so next loadPlaytimeStore(true)
+  // picks up the correct lastPlayedAt instead of the stale boot-import value.
+  if (input.appId && input.gameKey !== `app-${input.appId}`) {
+    const canonicalKey = `app-${input.appId}`;
+    if (cachedStore?.games[canonicalKey]) {
+      cachedStore.games[canonicalKey].lastPlayedAt = input.startedAt;
+    }
+    // Persist to SQLite so reloads don't wipe the patch
+    invoke("import_external_playtime", { input: {
+      gameKey: canonicalKey,
+      appId: input.appId,
+      provider: input.provider ?? "steam",
+      title: input.title ?? "",
+      lastPlayedAtSeconds: input.startedAt,
+    }}).catch(() => {});
+  }
   notifyPlaytimeStored();
   markPlaytimeDirty(input.appId);
   return result;
@@ -139,6 +166,24 @@ export async function endPlaySession(input: PlaySessionEnd): Promise<PlaytimeEnt
   const entry = await invoke<PlaytimeEntry>("record_play_session_end", { input });
   if (cachedStore) {
     cachedStore.games[input.gameKey] = entry;
+    // Persist app-{appId} canonical key to SQLite + in-memory
+    if (entry.appId && input.gameKey !== `app-${entry.appId}`) {
+      const canonicalKey = `app-${entry.appId}`;
+      if (cachedStore.games[canonicalKey]) {
+        cachedStore.games[canonicalKey].lastPlayedAt = entry.lastPlayedAt;
+        cachedStore.games[canonicalKey].totalPlaytimeSeconds = entry.totalPlaytimeSeconds;
+        cachedStore.games[canonicalKey].lastSessionSeconds = entry.lastSessionSeconds;
+      }
+      invoke("import_external_playtime", { input: {
+        gameKey: canonicalKey,
+        appId: entry.appId,
+        provider: cachedStore.games[canonicalKey]?.provider ?? "steam",
+        title: cachedStore.games[canonicalKey]?.title ?? entry.title ?? "",
+        externalPlaytimeSeconds: entry.totalPlaytimeSeconds,
+        externalSource: "steam",
+        lastPlayedAtSeconds: entry.lastPlayedAt,
+      }}).catch(() => {});
+    }
     cachedStore.updatedAt = Date.now();
   }
   notifyPlaytimeStored();
@@ -207,6 +252,22 @@ export function getPlaytimeEntryByGameKey(gameKey: string | null | undefined): P
   if (!gameKey) return null;
   if (!cachedStore) return null;
   return cachedStore.games[gameKey] ?? null;
+}
+
+/**
+ * Look up a playtime entry by appId across ALL keys.
+ * Tries `app-${appId}` first, then scans all entries for matching `appId` field.
+ * Used by snapshot enrichment where the entry may be under `debrid:<id>` or `manual:<uuid>`.
+ */
+export function findPlaytimeEntryByAppId(appId: string): PlaytimeEntry | null {
+  if (!appId || !cachedStore) return null;
+  const direct = cachedStore.games[`app-${appId}`];
+  if (direct) return direct;
+  // Scan for debrid/manual/epic entries that carry this appId
+  for (const entry of Object.values(cachedStore.games)) {
+    if (entry.appId === appId) return entry;
+  }
+  return null;
 }
 
 /** Get total playtime seconds for a game by arbitrary key */
@@ -278,26 +339,34 @@ export function formatPlaytimeMinutes(minutes: number): string {
 let snapshotImportDone = false;
 
 export async function importSnapshotPlaytime(
-  snapshotGames: Array<{ appId: string; playtime: number | null }>,
+  snapshotGames: Array<{ appId: string; playtime: number | null; lastPlayed?: number | null; lastPlayedAt?: number | null }>,
 ): Promise<void> {
   if (snapshotImportDone) return;
   snapshotImportDone = true;
 
   await loadPlaytimeStore();
 
+  const imports: ExternalPlaytimeImport[] = [];
   for (const game of snapshotGames) {
     if (!game.appId || !game.playtime || game.playtime <= 0) continue;
     const existing = cachedStore?.games[`app-${game.appId}`];
     if (existing?.externalPlaytimeSeconds && existing.externalPlaytimeSeconds >= game.playtime * 60) continue;
+    // SnapshotGame has `lastPlayed` (seconds); parameter type may also have `lastPlayedAt` — accept both
+    const lpSeconds = game.lastPlayedAt ?? game.lastPlayed ?? undefined;
+    imports.push({
+      gameKey: `app-${game.appId}`,
+      appId: game.appId,
+      provider: "steam",
+      title: "",
+      externalPlaytimeSeconds: game.playtime * 60,
+      externalSource: "steam",
+      lastPlayedAtSeconds: lpSeconds && lpSeconds > 0 ? lpSeconds : undefined,
+    });
+  }
+
+  if (imports.length > 0) {
     try {
-      await importExternalPlaytime({
-        gameKey: `app-${game.appId}`,
-        appId: game.appId,
-        provider: "steam",
-        title: "",
-        externalPlaytimeSeconds: game.playtime * 60,
-        externalSource: "steam",
-      });
+      await batchImportExternalPlaytime(imports);
     } catch {
       // non-critical
     }

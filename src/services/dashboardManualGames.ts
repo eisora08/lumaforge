@@ -107,13 +107,38 @@ export type DashboardDisplayGame = {
 /**
  * Convert a SnapshotGame to DashboardDisplayGame.
  * Resolves playtime from the playtime store (authoritative) with snapshot fallback.
+ * @param libraryGame - Optional matching LibraryGame for provider-aware playtime key resolution.
+ *                     When provided, uses resolvePlaytimeKey (handles debrid/manual/epic keys).
  */
 export function snapshotToDisplayGame(
   game: SnapshotGame,
   runningAppIds: Set<string>,
+  libraryGame?: LibraryGame,
 ): DashboardDisplayGame {
-  const ptKey = game.appId ? `app-${game.appId}` : null;
-  const ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+  // Provider-aware: use resolvePlaytimeKey when a LibraryGame is available,
+  // fall back to hardcoded `app-${appId}` for pure-SnapshotGame callers
+  const ptKey = libraryGame
+    ? resolvePlaytimeKey(libraryGame)
+    : (game.appId ? `app-${game.appId}` : null);
+  let ptEntry = ptKey ? getPlaytimeEntryByGameKey(ptKey) : null;
+  // Fallback: entries may be under app-${appId} regardless of source (e.g. startPlaySession
+  // uses computeGameKey which returns app-${appId} for any game with appId)
+  if (!ptEntry && game.appId && ptKey !== `app-${game.appId}`) {
+    ptEntry = getPlaytimeEntryByGameKey(`app-${game.appId}`);
+  }
+  // Defense: also check steam-{appId} key and pick the entry with the most recent lastPlayedAt.
+  // enrichWithStats used to write under game.id ("steam-{appId}") while dashboard reads "app-{appId}".
+  if (game.appId) {
+    const altKey = `steam-${game.appId}`;
+    const altEntry = getPlaytimeEntryByGameKey(altKey);
+    if (altEntry && altEntry !== ptEntry) {
+      const altLast = altEntry.lastPlayedAt ?? 0;
+      const curLast = ptEntry?.lastPlayedAt ?? 0;
+      if (altLast > curLast) ptEntry = altEntry;
+      // Also merge: if primary has playtime but no lastPlayed, take from alt
+      if (ptEntry && !ptEntry.lastPlayedAt && altEntry.lastPlayedAt) ptEntry = altEntry;
+    }
+  }
   const totalSeconds = ptEntry?.totalPlaytimeSeconds ?? (game.playtime ? game.playtime * 60 : 0);
   const lastPlayed = ptEntry?.lastPlayedAt ?? game.lastPlayed ?? null;
 
