@@ -75,10 +75,19 @@ export default function GameSessionHUD({ onNavigate: _onNavigate }: Props) {
 
     const appId = activeSession?.appId;
 
-    // Manual / non-Steam games: use sessionMediaRef (resolved at launch time)
+    // Manual games: ALWAYS use sessionMediaRef (resolved at launch time).
+    // When a manual game has an appId, artwork lives at the manual provider path,
+    // NOT at games/steam/<appId>/media/ — so getMediaPaths would fail.
+    if (activeSession?.source === "manual") {
+      const media = getSessionMedia(sessionKey);
+      setImageUrl(media?.iconUrl ?? media?.imageUrl ?? null);
+      fetchRef.current = undefined;
+      return;
+    }
+
+    // Non-Steam games without appId: use sessionMediaRef
     if (!appId) {
       const media = getSessionMedia(sessionKey);
-      // HUD priority: iconUrl first (compact chip), then imageUrl
       setImageUrl(media?.iconUrl ?? media?.imageUrl ?? null);
       fetchRef.current = undefined;
       return;

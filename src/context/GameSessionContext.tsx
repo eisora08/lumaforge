@@ -1005,6 +1005,19 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       if (!imageUrl) imageUrl = game.imageUrl;
       if (!heroUrl) heroUrl = game.backgroundPath || game.imageUrl;
       if (!iconUrl) iconUrl = game.iconPath;
+
+      // Fallback: manual game with appId — artwork saved to Steam appinfo namespace
+      if (game.appId && (!imageUrl || !heroUrl)) {
+        try {
+          const { loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
+          const appInfo = await loadGameAppInfoWithMediaFallback(String(game.appId));
+          if (appInfo?.media) {
+            if (!imageUrl) imageUrl = appInfo.media.coverPath || appInfo.media.landscapePath || appInfo.media.backgroundPath || undefined;
+            if (!heroUrl) heroUrl = appInfo.media.backgroundPath || appInfo.media.landscapePath || undefined;
+            if (!iconUrl) iconUrl = appInfo.media.iconPath || undefined;
+          }
+        } catch { /* non-critical */ }
+      }
     } else if (game.source === "epic" && game.providerGameId) {
       // Epic games: resolve each role from override store
       const { readEpicOverrides } = await import("../services/epicOverrideStore");
