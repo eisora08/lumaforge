@@ -149,4 +149,26 @@ if (typeof window !== "undefined") {
       notifyListeners();
     }
   });
+
+  // One-time migration: normalize bare-number appIds to "app-{id}" format
+  // so statsService comparisons against resolvePlaytimeKey work correctly
+  const MIGRATION_KEY = "lumaforge-session-history-migrated-v2";
+  if (!localStorage.getItem(MIGRATION_KEY)) {
+    try {
+      const store = loadStore();
+      let changed = false;
+      for (const s of store.sessions) {
+        if (/^\d+$/.test(s.appId)) {
+          s.appId = `app-${s.appId}`;
+          changed = true;
+        }
+      }
+      if (changed) {
+        saveStore(store);
+      }
+      localStorage.setItem(MIGRATION_KEY, "1");
+    } catch {
+      // non-critical
+    }
+  }
 }

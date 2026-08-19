@@ -1706,8 +1706,11 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
             // Persist session record to local history
             const activitySource = prevSession.source === "steam" ? "steam" : prevSession.source === "epic" ? "epic" : prevSession.source === "debrid" ? "debrid" : prevSession.source === "local" ? "local" : prevSession.source === "manual" ? "manual" : "system";
+            // Normalize appId to match resolvePlaytimeKey format (app-{appId} for Steam)
+            // so statsService/computeFilteredPlaytime can match sessions against playtime entries
+            const sessionAppId = prevSession.appId ? `app-${prevSession.appId}` : key;
             const sessionRecord = createSessionRecord({
-              appId: prevSession.appId || key,
+              appId: sessionAppId,
               title: prevSession.title || "Unknown Game",
               source: activitySource,
               startedAt: prevSession.launchedAt,

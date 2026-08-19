@@ -7,6 +7,14 @@ import type { StatsTimeFilter, PlayActivityDay, SessionHistoryEntry } from "../t
 import type React from "react";
 import { Diamond, Trophy, Medal, Circle, Award } from "lucide-react";
 
+// ─── Session appId normalization ──────────────────────────────────────
+// Session records may store appId as bare number ("268910") or as ptKey ("app-268910").
+// Stats functions compare against ptKey, so normalize bare numbers to "app-{id}".
+function normalizeSessionAppId(appId: string): string {
+  if (/^\d+$/.test(appId)) return `app-${appId}`;
+  return appId;
+}
+
 // ─── Aggregate stats ──────────────────────────────────────────────────
 
 export type LibraryStats = {
@@ -34,7 +42,8 @@ export function computeLibraryStats(games: LibraryGame[]): LibraryStats {
   const allSessions = getAllSessions();
   const sessionCountByKey = new Map<string, number>();
   for (const s of allSessions) {
-    sessionCountByKey.set(s.appId, (sessionCountByKey.get(s.appId) ?? 0) + 1);
+    const normId = normalizeSessionAppId(s.appId);
+    sessionCountByKey.set(normId, (sessionCountByKey.get(normId) ?? 0) + 1);
   }
 
   for (const game of games) {
@@ -110,7 +119,7 @@ export function computeFilteredPlaytime(games: LibraryGame[], filter: StatsTimeF
 
     // Real sessions from history
     for (const s of allSessions) {
-      if (s.appId !== ptKey) continue;
+      if (normalizeSessionAppId(s.appId) !== ptKey) continue;
       if (s.endedAt >= cutoff) {
         gameTotal += s.durationMs / 1000;
         sessions.push({
@@ -176,7 +185,7 @@ export function computePlayActivityByDay(
   const gameKeys = new Set(games.map(g => resolvePlaytimeKey(g)).filter(Boolean) as string[]);
 
   for (const s of allSessions) {
-    if (!gameKeys.has(s.appId)) continue;
+    if (!gameKeys.has(normalizeSessionAppId(s.appId))) continue;
     if (s.durationMs <= 0) continue;
     const sessionDate = new Date(s.startedAt).toISOString().slice(0, 10);
     const bucket = result.find((r) => r.date === sessionDate);
@@ -303,7 +312,8 @@ export function computeTopGames(games: LibraryGame[], limit = 10): TopGame[] {
   const allSessions = getAllSessions();
   const sessionCountByKey = new Map<string, number>();
   for (const s of allSessions) {
-    sessionCountByKey.set(s.appId, (sessionCountByKey.get(s.appId) ?? 0) + 1);
+    const normId = normalizeSessionAppId(s.appId);
+    sessionCountByKey.set(normId, (sessionCountByKey.get(normId) ?? 0) + 1);
   }
 
   for (const game of games) {
@@ -340,7 +350,7 @@ export function computeSessionHistory(games: LibraryGame[], limit = 20): Session
   const result: SessionHistoryEntry[] = [];
 
   for (const s of allSessions) {
-    if (!gameKeys.has(s.appId)) continue;
+    if (!gameKeys.has(normalizeSessionAppId(s.appId))) continue;
     if (s.durationMs <= 0) continue;
     result.push({
       gameTitle: s.title,
@@ -485,10 +495,11 @@ export function buildEvalContext(games: LibraryGame[]): EvaluationContextInput {
   // Count sessions per game from history
   const sessionsByKey = new Map<string, GameSessionRecord[]>();
   for (const s of allSessions) {
-    if (!gameKeys.has(s.appId)) continue;
-    const arr = sessionsByKey.get(s.appId) ?? [];
+    const normId = normalizeSessionAppId(s.appId);
+    if (!gameKeys.has(normId)) continue;
+    const arr = sessionsByKey.get(normId) ?? [];
     arr.push(s);
-    sessionsByKey.set(s.appId, arr);
+    sessionsByKey.set(normId, arr);
   }
 
   if (store) {
