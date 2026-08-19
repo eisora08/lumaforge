@@ -1000,6 +1000,11 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       heroUrl = resolvedBackground ?? resolvedLandscape ?? resolvedCover;
       // Summary cover / backward compat: cover first
       imageUrl = resolvedCover ?? resolvedLandscape ?? resolvedBackground;
+
+      // Fallback to LibraryGame fields (mapper already resolved these)
+      if (!imageUrl) imageUrl = game.imageUrl;
+      if (!heroUrl) heroUrl = game.backgroundPath || game.imageUrl;
+      if (!iconUrl) iconUrl = game.iconPath;
     } else if (game.source === "epic" && game.providerGameId) {
       // Epic games: resolve each role from override store
       const { readEpicOverrides } = await import("../services/epicOverrideStore");

@@ -959,7 +959,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
                   className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-3 text-sm font-bold text-(--color-accent-text) transition hover:bg-(--color-accent)/80 active:scale-[0.97]"
                 >
                   <Play className="h-4 w-4" />
-                  Focus Game
+                  {heroSession?.pid ? "Focus Game" : "Ver detalles"}
                 </button>
                 <button
                   onClick={handleOpenStopModal}
