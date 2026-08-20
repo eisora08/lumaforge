@@ -43,7 +43,16 @@ function formatElapsed(startedAt: number): string {
 }
 
 function formatLastPlayed(timestamp?: number | null): string | null {
-  if (timestamp == null) return null;
+  if (timestamp == null || timestamp <= 0) return null;
+  const diff = Date.now() - timestamp * 1000;
+  if (diff < 0) return null;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins} min`;
+  if (hours < 24) return `${hours}h`;
+  if (days < 7) return `${days}d`;
   return new Date(timestamp * 1000).toLocaleDateString();
 }
 
@@ -563,15 +572,20 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
 
         try {
           let url: string | null = null;
-          if (runningLibGame.appId) {
+          const isNonSteamRunning = runningLibGame.source && runningLibGame.source !== "steam" && runningLibGame.source !== "lua";
+          if (isNonSteamRunning) {
+            // Manual/debrid/Epic — media lives at appData/media/ (flat), NOT under games/steam/<appId>/
+            const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+            url = await resolveProviderMediaPreviewUrl(bgPath);
+          } else if (runningLibGame.appId) {
             // Steam game — resolve via appId
             url = await resolveGameMediaUrl(runningLibGame.appId, bgPath);
           } else {
-            // Epic/manual — resolve provider media path
             const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
             url = await resolveProviderMediaPreviewUrl(bgPath);
           }
-          console.log(`[RUNNING_HERO_MEDIA] resolvedUrl=${url}`);
+          console.log(`[RUNNING_HERO_MEDIA] resolvedUrl=${url} src=${runningLibGame.source} isNonSteam=${isNonSteamRunning}`);
+          console.log(`[DASH][HERO] branch=running title="${runningLibGame.title}" appId=${runningLibGame.appId} src=${runningLibGame.source} bgPath=${bgPath} role=${role} resolved=${url ?? "NULL"}`);
           if (!cancelled && generation === bgUrlGenerationRef.current) {
             setBgUrl(url);
             setAmbientSource("dashboard", url);
@@ -597,27 +611,47 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         const selected = candidates.find((c) => c.value) ?? null;
         const rawPath = selected?.value ?? null;
 
-        if (!rawPath) {
-          if (!cancelled) {
-            setBgUrl(null);
-            clearAmbientSource("dashboard");
+        if (rawPath) {
+          try {
+            const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
+            const url = await resolveProviderMediaPreviewUrl(rawPath);
+            console.log(`[DASH][HERO] branch=nonRunning title="${nonSnapshot.title}" appId=${nonSnapshot.appId} src=${nonSnapshot.source} rawPath=${rawPath} selectedRole=${selected?.role} resolved=${url ?? "NULL"}`);
+            if (!cancelled && generation === bgUrlGenerationRef.current) {
+              setBgUrl(url);
+              setAmbientSource("dashboard", url);
+            }
+          } catch {
+            if (!cancelled && generation === bgUrlGenerationRef.current) {
+              setBgUrl(null);
+              clearAmbientSource("dashboard");
+            }
           }
           return;
         }
-        try {
-          const { resolveProviderMediaPreviewUrl } = await import("../../services/gameCacheService");
-          const url = await resolveProviderMediaPreviewUrl(rawPath);
-          if (!cancelled && generation === bgUrlGenerationRef.current) {
-            setBgUrl(url);
-            setAmbientSource("dashboard", url);
-          }
-        } catch {
-          if (!cancelled && generation === bgUrlGenerationRef.current) {
-            setBgUrl(null);
-            clearAmbientSource("dashboard");
+        // No media on manual/Epic game → find snapshot by appId
+        // pickNonRunningHero returns {game:null} for manual games so heroGame is null,
+        // but snapshotGames HAS the game with media.backgroundPath = "media/background.jpg".
+        if (nonSnapshot.appId) {
+          const snapGame = snapshotGames.find((s) => s.appId === nonSnapshot.appId);
+          const imgPath = snapGame?.media?.backgroundPath ?? snapGame?.media?.landscapePath ?? snapGame?.media?.coverPath ?? null;
+          if (imgPath) {
+            try {
+              const url = await resolveGameMediaUrl(nonSnapshot.appId, imgPath);
+              console.log(`[DASH][HERO] branch=nonRunning→snapshot title="${nonSnapshot.title}" appId=${nonSnapshot.appId} imgPath=${imgPath} resolved=${url ?? "NULL"}`);
+              if (!cancelled && generation === bgUrlGenerationRef.current) {
+                setBgUrl(url);
+                setAmbientSource("dashboard", url);
+              }
+            } catch {
+              if (!cancelled && generation === bgUrlGenerationRef.current) {
+                setBgUrl(null);
+                clearAmbientSource("dashboard");
+              }
+            }
+            return;
           }
         }
-        return;
+        console.log(`[DASH][HERO] branch=nonRunning title="${nonSnapshot.title}" appId=${nonSnapshot.appId} src=${nonSnapshot.source} rawPath=NULL noSnapshotMedia either`);
       }
 
       // Snapshot game — resolve via appId
@@ -625,6 +659,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         const m = heroGame.media;
         const imgPath = m?.backgroundPath ?? m?.landscapePath ?? m?.coverPath ?? null;
         if (!imgPath) {
+          console.log(`[DASH][HERO] branch=snapshot title="${heroGame.title}" appId=${heroAppId} src=${heroGame.source} imgPath=NULL (no media)`);
           if (!cancelled) {
             setBgUrl(null);
             clearAmbientSource("dashboard");
@@ -633,6 +668,7 @@ export default function GameHero({ onNavigate }: GameHeroProps) {
         }
         try {
           const url = await resolveGameMediaUrl(heroAppId, imgPath);
+          console.log(`[DASH][HERO] branch=snapshot title="${heroGame.title}" appId=${heroAppId} imgPath=${imgPath} resolved=${url ?? "NULL"}`);
           if (!cancelled && generation === bgUrlGenerationRef.current) {
             setBgUrl(url);
             setAmbientSource("dashboard", url);

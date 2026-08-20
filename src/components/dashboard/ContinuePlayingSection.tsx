@@ -21,7 +21,7 @@ import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
 import type { LibraryGame } from "../../types/libraryGame";
 
-const DEBUG_CONTINUE_PLAY = true;
+const DEBUG_CONTINUE_PLAY = false;
 
 type Props = {
   snapshot: StartupSnapshot | null;
@@ -191,8 +191,6 @@ export default function ContinuePlayingSection({ snapshot, onNavigate, excludeAp
             const appInfo = await getCachedGameAppInfo(game.appId);
             const mediaPath = appInfo?.media?.landscapePath || appInfo?.media?.coverPath || appInfo?.media?.backgroundPath;
             if (mediaPath && mediaPath !== imgPath) {
-              // Steam/lua: resolveGameMediaUrl resolves relative paths under games/steam/<appId>/
-              // Manual/debrid: files live under appData/media/ (flat), use provider resolver
               urls[game.stableId] = isNonSteam
                 ? await resolveProviderMediaPreviewUrl(mediaPath)
                 : await resolveGameMediaUrl(game.appId, mediaPath);
