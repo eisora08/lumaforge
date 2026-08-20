@@ -156,6 +156,7 @@ export function snapshotToDisplayGame(
     playable: game.playable,
     updatedAt: game.updatedAt ?? 0,
     _snapshotGame: game,
+    _libraryGame: libraryGame,
     _rolePaths: game.media ? {
       backgroundPath: game.media.backgroundPath ?? null,
       landscapePath: game.media.landscapePath ?? null,
@@ -196,6 +197,7 @@ export function manualToDisplayGame(
 
   return {
     stableId: game.libraryId || game.id,
+    appId: (game as any).appId ?? undefined,
     libraryId: game.libraryId,
     source: sourceOverride ?? game.source ?? "manual",
     title: game.title,
