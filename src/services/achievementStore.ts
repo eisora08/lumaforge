@@ -675,6 +675,12 @@ class AchievementStoreImpl {
       newAppSnap[ach.apiName] = ach.unlocked;
     }
     snapshots[patchSnapshotKey] = newAppSnap;
+    // Dual-save: also write bare appId key so callers without platform
+    // (e.g. attemptAchievementRefresh on game close) don't find a stale
+    // boot-era snapshot and incorrectly detect all unlocks as "new".
+    if (patchSnapshotKey !== appId) {
+      snapshots[appId] = newAppSnap;
+    }
     saveSnapshots(snapshots);
     if (RT) console.log(`[ACH][RT_SNAPSHOT] appid=${appId} entries=${Object.keys(newAppSnap).length}`);
 
