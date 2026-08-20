@@ -986,26 +986,30 @@ export async function runBootTasks(): Promise<void> {
           backgroundJobQueue.setBootCompleted(true);
           logBoot("phase=idle-ready");
 
-          // Evaluate launcher achievements after boot
+          // Evaluate launcher achievements after boot (initialize from SQLite first)
           setTimeout(() => {
-            import("../features/activity/achievements/achievementEngine").then(({ evaluateAchievements }) => {
-              import("../features/activity/stats/statsService").then(({ buildEvalContext }) => {
-                import("./gameStore").then(({ getReconciledGames }) => {
-                  import("./manualGameStore").then(({ getAllManualGames }) => {
-                    import("./manualGameLibraryMapper").then(({ manualGameToLibraryGame }) => {
-                      const steamGames = getReconciledGames();
-                      const manualGames = getAllManualGames().map(manualGameToLibraryGame);
-                      const games = [...steamGames, ...manualGames];
-                      if (games.length > 0) {
-                        const ctx = buildEvalContext(games);
-                        const result = evaluateAchievements(ctx);
-                        if (result.newlyUnlocked.length > 0) {
-                          console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
-                          import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
-                            showAchievementToasts(result.newlyUnlocked);
-                          });
-                        }
-                      }
+            import("../features/activity/achievements/achievementStore").then(({ initLauncherAchievementStore }) => {
+              initLauncherAchievementStore().then(() => {
+                import("../features/activity/achievements/achievementEngine").then(({ evaluateAchievements }) => {
+                  import("../features/activity/stats/statsService").then(({ buildEvalContext }) => {
+                    import("./gameStore").then(({ getReconciledGames }) => {
+                      import("./manualGameStore").then(({ getAllManualGames }) => {
+                        import("./manualGameLibraryMapper").then(({ manualGameToLibraryGame }) => {
+                          const steamGames = getReconciledGames();
+                          const manualGames = getAllManualGames().map(manualGameToLibraryGame);
+                          const games = [...steamGames, ...manualGames];
+                          if (games.length > 0) {
+                            const ctx = buildEvalContext(games);
+                            const result = evaluateAchievements(ctx);
+                            if (result.newlyUnlocked.length > 0) {
+                              console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
+                              import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
+                                showAchievementToasts(result.newlyUnlocked);
+                              });
+                            }
+                          }
+                        });
+                      });
                     });
                   });
                 });

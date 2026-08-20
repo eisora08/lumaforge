@@ -11,6 +11,7 @@ import {
 } from "../features/activity/achievements/achievementStore";
 import { evaluateAchievements } from "../features/activity/achievements/achievementEngine";
 import { buildEvalContext } from "../features/activity/stats/statsService";
+import { scanAchievementFolders, type FolderAchievementSummary } from "../services/tauri";
 import type {
   AchievementCategory,
   AchievementRarity,
@@ -86,10 +87,21 @@ function getAchievementProgress(id: string, ctx: EvaluationContextInput): Progre
     // Exploration
     case "genre-hopper":        return { current: ctx.genreCount, target: 5, label: "Genres played" };
     case "renaissance-gamer":   return { current: ctx.genreCount, target: 10, label: "Genres played" };
-    case "hidden-gem-hunter":   return null;
+    case "hidden-gem-hunter":   return { current: ctx.gamesPlayed, target: 10, label: "Games played" };
     // Session
     case "session-centurion":   return { current: ctx.totalSessions, target: 100, label: "Play sessions" };
     case "weekend-warrior":     return { current: ctx.weekendStreak, target: 4, label: "Consecutive weekends played" };
+    // Fase 2 — Play
+    case "century-club":        return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 100, label: "Hours played" };
+    case "no-lifer":            return { current: Math.floor(ctx.totalPlaytimeSeconds / 3600), target: 500, label: "Hours played" };
+    // Fase 2 — Streak
+    case "daily-grinder":       return { current: ctx.currentStreak, target: 3, label: "Day play streak" };
+    // Fase 2 — Exploration
+    case "multi-platform":      return { current: ctx.providerCount, target: 3, label: "Different sources played" };
+    case "lua-enthusiast":      return { current: ctx.luaGames, target: 5, label: "Lua games played" };
+    // Fase 2 — Session
+    case "speedrunner":         return { current: ctx.shortSessions, target: 10, label: "Sessions under 15 min" };
+    case "marathon-master":     return { current: ctx.marathonSessions, target: 20, label: "Marathon sessions (4h+)" };
     default: return null;
   }
 }
@@ -121,6 +133,24 @@ export default function LauncherAchievements() {
   const [search, setSearch] = useState("");
   const [selectedAch, setSelectedAch] = useState<AchievementWithState | null>(null);
 
+  // Real-time achievement data from disk (same source as ActivityStats)
+  const [folderData, setFolderData] = useState<FolderAchievementSummary[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    scanAchievementFolders().then((rows) => {
+      if (!cancelled) setFolderData(rows);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const folderMap = useMemo(() => {
+    const m = new Map<string, { unlocked: number; total: number }>();
+    for (const r of folderData) {
+      if (r.total > 0) m.set(r.appId, { unlocked: r.unlocked, total: r.total });
+    }
+    return m;
+  }, [folderData]);
+
   useEffect(() => {
     return subscribeAchievementStore(() => {
       setProfile(getPlayerProfile());
@@ -130,9 +160,9 @@ export default function LauncherAchievements() {
 
   useEffect(() => {
     if (games.length === 0) return;
-    const ctx = buildEvalContext(games);
+    const ctx = buildEvalContext(games, folderMap);
     evaluateAchievements(ctx);
-  }, [games]);
+  }, [games, folderMap]);
 
   const achievements = useMemo<AchievementWithState[]>(() => {
     const unlocks = getUnlocks();
@@ -171,8 +201,8 @@ export default function LauncherAchievements() {
 
   const evalCtx = useMemo(() => {
     if (games.length === 0) return null;
-    return buildEvalContext(games);
-  }, [games]);
+    return buildEvalContext(games, folderMap);
+  }, [games, folderMap]);
 
   const selectedProgress = useMemo<ProgressInfo>(() => {
     if (!selectedAch || !evalCtx) return null;
@@ -353,6 +383,13 @@ function AchievementCard({ achievement, onClick }: { achievement: AchievementWit
   const AchIcon = achievement.icon;
   const RarityIcon = RARITY_ICONS[achievement.rarity];
 
+  // Rarity glow for epic/legendary unlocked cards
+  const glowClass = !isLocked && achievement.rarity === "legendary"
+    ? "lf-ach-card-glow-legendary"
+    : !isLocked && achievement.rarity === "epic"
+      ? "lf-ach-card-glow-epic"
+      : "";
+
   return (
     <button
       type="button"
@@ -361,7 +398,7 @@ function AchievementCard({ achievement, onClick }: { achievement: AchievementWit
         isLocked
           ? "border-(--color-border)/10 lf-surface/80 hover:bg-(--color-surface) hover:border-(--color-border)/20"
           : `lf-surface hover:brightness-110 ${rarity.border}`
-      } ${rarity.glow ? `shadow-md ${rarity.glow}` : "shadow-sm"} hover:shadow-lg hover:scale-[1.01]`}
+      } ${rarity.glow ? `shadow-md ${rarity.glow}` : "shadow-sm"} ${glowClass} hover:shadow-lg hover:scale-[1.01]`}
     >
       {/* Rarity accent bar at top for unlocked */}
       {!isLocked && (

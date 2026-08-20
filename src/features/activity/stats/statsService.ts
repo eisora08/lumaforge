@@ -303,6 +303,7 @@ export type TopGame = {
   appId: string;
   totalSeconds: number;
   sessions: number;
+  game?: LibraryGame;
 };
 
 export function computeTopGames(games: LibraryGame[], limit = 10): TopGame[] {
@@ -333,6 +334,7 @@ export function computeTopGames(games: LibraryGame[], limit = 10): TopGame[] {
       appId: ptKey,
       totalSeconds: entry.totalPlaytimeSeconds,
       sessions: effectiveSessions,
+      game,
     });
   }
 
@@ -379,6 +381,7 @@ export function computeSessionHistory(games: LibraryGame[], limit = 20): Session
           result.push({
             gameTitle: entry.title || game.title,
             appId: ptKey,
+            source: entry.provider as SessionHistoryEntry["source"],
             startedAt: s.startedAt,
             endedAt: s.endedAt ?? s.startedAt,
             durationSeconds: s.durationSeconds,
@@ -477,9 +480,13 @@ export type EvaluationContextInput = {
   gamesPlayed: number;
   currentStreak: number;
   longestStreak: number;
+  // Fase 2
+  providerCount: number;
+  luaGames: number;
+  shortSessions: number;
 };
 
-export function buildEvalContext(games: LibraryGame[]): EvaluationContextInput {
+export function buildEvalContext(games: LibraryGame[], folderAchievements?: Map<string, { unlocked: number; total: number }>): EvaluationContextInput {
   const store = getCachedPlaytimeStore();
   let totalSeconds = 0;
   let totalSessions = 0;
@@ -575,14 +582,41 @@ export function buildEvalContext(games: LibraryGame[]): EvaluationContextInput {
     }
   }
 
-  // Completed games — games with 100% Steam achievements
+  // Completed games — folder scan (authoritative) → completionStatus override → snapshot fallback
   let completedGames = 0;
   for (const game of games) {
-    if (game.appId && game.achievementUnlocked && game.achievementTotal && game.achievementUnlocked > 0) {
+    if (game.completionStatus === "completed") {
+      completedGames++;
+    } else if (game.appId && folderAchievements?.has(game.appId)) {
+      const fa = folderAchievements.get(game.appId)!;
+      if (fa.total > 0 && fa.unlocked >= fa.total) completedGames++;
+    } else if (game.appId && game.achievementUnlocked && game.achievementTotal && game.achievementUnlocked > 0) {
       if (game.achievementUnlocked >= game.achievementTotal) {
         completedGames++;
       }
     }
+  }
+
+  // Provider count — distinct source values across played games
+  const providersSeen = new Set<string>();
+  const playedGameKeys = new Set(Object.keys(sessionsByKey));
+  for (const game of games) {
+    const ptKey = resolvePlaytimeKey(game);
+    if (ptKey && playedGameKeys.has(ptKey) && game.source) {
+      providersSeen.add(game.source);
+    }
+  }
+
+  // Lua games — games with active Lua scripts
+  let luaGames = 0;
+  for (const game of games) {
+    if (game.hasLua && game.isLuaActive) luaGames++;
+  }
+
+  // Short sessions — sessions under 15 minutes
+  let shortSessions = 0;
+  for (const s of allSessions) {
+    if (s.durationMs > 0 && s.durationMs < 15 * 60 * 1000) shortSessions++;
   }
 
   const streaks = computeStreaks(games);
@@ -600,5 +634,169 @@ export function buildEvalContext(games: LibraryGame[]): EvaluationContextInput {
     gamesPlayed,
     currentStreak: streaks.currentStreak,
     longestStreak: streaks.longestStreak,
+    providerCount: providersSeen.size,
+    luaGames,
+    shortSessions,
   };
+}
+
+// ─── Weekly comparison ─────────────────────────────────────────────
+
+export type WeeklyComparison = {
+  thisWeekSeconds: number;
+  lastWeekSeconds: number;
+  percentChange: number | null;
+};
+
+export function computeWeeklyComparison(games: LibraryGame[]): WeeklyComparison {
+  const now = Date.now();
+  const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+  const thisWeekStart = now - MS_PER_WEEK;
+  const lastWeekStart = now - 2 * MS_PER_WEEK;
+
+  const allSessions = getAllSessions();
+  const gameKeys = new Set(games.map(g => resolvePlaytimeKey(g)).filter(Boolean) as string[]);
+
+  let thisWeekSeconds = 0;
+  let lastWeekSeconds = 0;
+
+  for (const s of allSessions) {
+    if (!gameKeys.has(normalizeSessionAppId(s.appId))) continue;
+    if (s.durationMs <= 0) continue;
+    if (s.startedAt >= thisWeekStart) {
+      thisWeekSeconds += s.durationMs / 1000;
+    } else if (s.startedAt >= lastWeekStart) {
+      lastWeekSeconds += s.durationMs / 1000;
+    }
+  }
+
+  // Fallback: playtime store sessions
+  if (thisWeekSeconds === 0 && lastWeekSeconds === 0) {
+    const store = getCachedPlaytimeStore();
+    if (store) {
+      for (const game of games) {
+        const ptKey = resolvePlaytimeKey(game);
+        if (!ptKey) continue;
+        const entry = store.games[ptKey];
+        if (!entry) continue;
+        for (const s of entry.sessions) {
+          const end = s.endedAt ?? s.startedAt;
+          if (end >= thisWeekStart) {
+            thisWeekSeconds += s.durationSeconds ?? 0;
+          } else if (end >= lastWeekStart) {
+            lastWeekSeconds += s.durationSeconds ?? 0;
+          }
+        }
+      }
+    }
+  }
+
+  const percentChange = lastWeekSeconds > 0
+    ? ((thisWeekSeconds - lastWeekSeconds) / lastWeekSeconds) * 100
+    : thisWeekSeconds > 0 ? 100 : null;
+
+  return { thisWeekSeconds, lastWeekSeconds, percentChange };
+}
+
+// ─── Avg session length ───────────────────────────────────────────
+
+export function computeAvgSessionLength(games: LibraryGame[]): number | null {
+  const allSessions = getAllSessions();
+  const gameKeys = new Set(games.map(g => resolvePlaytimeKey(g)).filter(Boolean) as string[]);
+
+  let totalSeconds = 0;
+  let count = 0;
+
+  for (const s of allSessions) {
+    if (!gameKeys.has(normalizeSessionAppId(s.appId))) continue;
+    if (s.durationMs <= 0) continue;
+    totalSeconds += s.durationMs / 1000;
+    count++;
+  }
+
+  // Fallback: playtime store sessions
+  if (count === 0) {
+    const store = getCachedPlaytimeStore();
+    if (store) {
+      for (const game of games) {
+        const ptKey = resolvePlaytimeKey(game);
+        if (!ptKey) continue;
+        const entry = store.games[ptKey];
+        if (!entry) continue;
+        for (const s of entry.sessions) {
+          if (!s.durationSeconds || s.durationSeconds < 10) continue;
+          totalSeconds += s.durationSeconds;
+          count++;
+        }
+      }
+    }
+  }
+
+  return count > 0 ? totalSeconds / count : null;
+}
+
+// ─── Time of day distribution ─────────────────────────────────────
+
+export type TimeOfDayBucket = {
+  label: string;
+  hours: string;
+  seconds: number;
+  percent: number;
+};
+
+export function computeTimeOfDay(games: LibraryGame[]): TimeOfDayBucket[] {
+  const allSessions = getAllSessions();
+  const gameKeys = new Set(games.map(g => resolvePlaytimeKey(g)).filter(Boolean) as string[]);
+
+  const buckets = [
+    { label: "Morning", hours: "6am–12pm", start: 6, end: 12, seconds: 0 },
+    { label: "Afternoon", hours: "12pm–6pm", start: 12, end: 18, seconds: 0 },
+    { label: "Evening", hours: "6pm–12am", start: 18, end: 24, seconds: 0 },
+    { label: "Night", hours: "12am–6am", start: 0, end: 6, seconds: 0 },
+  ];
+
+  let totalSeconds = 0;
+
+  for (const s of allSessions) {
+    if (!gameKeys.has(normalizeSessionAppId(s.appId))) continue;
+    if (s.durationMs <= 0) continue;
+    const hour = new Date(s.startedAt).getHours();
+    const durSec = s.durationMs / 1000;
+    totalSeconds += durSec;
+    for (const b of buckets) {
+      if (b.start <= b.end) {
+        if (hour >= b.start && hour < b.end) { b.seconds += durSec; break; }
+      }
+    }
+  }
+
+  // Fallback: playtime store sessions
+  if (totalSeconds === 0) {
+    const store = getCachedPlaytimeStore();
+    if (store) {
+      for (const game of games) {
+        const ptKey = resolvePlaytimeKey(game);
+        if (!ptKey) continue;
+        const entry = store.games[ptKey];
+        if (!entry) continue;
+        for (const s of entry.sessions) {
+          if (!s.durationSeconds || s.durationSeconds < 10) continue;
+          const hour = new Date(s.startedAt).getHours();
+          totalSeconds += s.durationSeconds;
+          for (const b of buckets) {
+            if (b.start <= b.end) {
+              if (hour >= b.start && hour < b.end) { b.seconds += s.durationSeconds; break; }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return buckets.map(b => ({
+    label: b.label,
+    hours: b.hours,
+    seconds: b.seconds,
+    percent: totalSeconds > 0 ? Math.round((b.seconds / totalSeconds) * 100) : 0,
+  }));
 }

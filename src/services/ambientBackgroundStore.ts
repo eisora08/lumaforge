@@ -6,6 +6,7 @@ type AmbientSnapshot = {
   enabled: boolean;
   intensity: AmbientIntensity;
   mode: AmbientMode;
+  pulseColor: string | null;
 };
 
 const AMBIENT_STORAGE_KEY = "lumaforge-ambient-background";
@@ -66,7 +67,35 @@ let _snapshot: AmbientSnapshot = {
   enabled: _enabled,
   intensity: _intensity,
   mode: _mode,
+  pulseColor: null,
 };
+
+// ── Achievement unlock ambient pulse ──────────────────────────────────────
+let _pulseColor: string | null = null;
+let _pulseTimer: ReturnType<typeof setTimeout> | null = null;
+
+const PULSE_DURATION_MS = 2500;
+
+const RARITY_PULSE_COLORS: Record<string, string> = {
+  common: "#94a3b8",
+  uncommon: "#34d399",
+  rare: "#22d3ee",
+  epic: "#a855f7",
+  legendary: "#fbbf24",
+};
+
+export function pulseAmbientRarity(rarity: string): void {
+  const color = RARITY_PULSE_COLORS[rarity];
+  if (!color) return;
+  _pulseColor = color;
+  emit();
+  if (_pulseTimer) clearTimeout(_pulseTimer);
+  _pulseTimer = setTimeout(() => {
+    _pulseColor = null;
+    _pulseTimer = null;
+    emit();
+  }, PULSE_DURATION_MS);
+}
 
 if (typeof document !== "undefined") {
   document.documentElement.dataset.ambient = _enabled ? "on" : "off";
@@ -82,6 +111,7 @@ function emit() {
     enabled: _enabled,
     intensity: _intensity,
     mode: _mode,
+    pulseColor: _pulseColor,
   };
   _listeners.forEach((cb) => cb());
   document.documentElement.dataset.ambient = _enabled ? "on" : "off";

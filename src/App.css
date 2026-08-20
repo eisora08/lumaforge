@@ -1377,6 +1377,49 @@ html {
 }
 
 /* =========================
+   RARITY GLOW ON GRID CARDS
+   Animated border glow for epic/legendary unlocked cards
+======================== */
+
+.lf-ach-card-glow-epic {
+  animation: lfAchGlowEpic 3s ease-in-out infinite alternate;
+}
+
+@keyframes lfAchGlowEpic {
+  from { box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.15), 0 0 12px 0 rgba(168, 85, 247, 0.08); }
+  to   { box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.3),  0 0 20px 2px rgba(168, 85, 247, 0.15); }
+}
+
+.lf-ach-card-glow-legendary {
+  animation: lfAchGlowLegendary 2.5s ease-in-out infinite alternate;
+}
+
+@keyframes lfAchGlowLegendary {
+  from { box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2), 0 0 14px 0 rgba(251, 191, 36, 0.1); }
+  to   { box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.4), 0 0 24px 3px rgba(251, 191, 36, 0.2); }
+}
+
+/* =========================
+   AMBIENT PULSE ON ACHIEVEMENT UNLOCK
+   Radial glow that fades in and out over 2.5s
+======================== */
+
+.animate-ambient-pulse-in {
+  animation: ambientPulseIn 2.5s ease-in-out forwards;
+}
+
+@keyframes ambientPulseIn {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  70%  { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ambient-pulse-in { animation: none !important; }
+}
+
+/* =========================
    LAUNCHING SHIMMER
 ========================= */
 

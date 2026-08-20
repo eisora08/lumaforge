@@ -15,7 +15,7 @@ type XpStoreData = {
   events: PlayerXpEvent[];
 };
 
-// ─── Persistence ──────────────────────────────────────────────────────
+// ─── Persistence (localStorage fallback) ────────────────────────────
 
 function loadAchievementStore(): AchievementStoreData {
   try {
@@ -28,7 +28,7 @@ function loadAchievementStore(): AchievementStoreData {
   return { version: 1, unlocks: [] };
 }
 
-function saveAchievementStore(data: AchievementStoreData): void {
+function saveAchievementStoreLocal(data: AchievementStoreData): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch { /* storage full */ }
@@ -45,10 +45,96 @@ function loadXpStore(): XpStoreData {
   return { version: 1, events: [] };
 }
 
-function saveXpStore(data: XpStoreData): void {
+function saveXpStoreLocal(data: XpStoreData): void {
   try {
     localStorage.setItem(XP_STORAGE_KEY, JSON.stringify(data));
   } catch { /* storage full */ }
+}
+
+// ─── SQLite persistence (async, fire-and-forget) ───────────────────
+
+let _sqliteReady = false;
+
+async function saveToSqlite(): Promise<void> {
+  if (!_sqliteReady) return;
+  try {
+    const { writeLauncherAchievements, writeLauncherXpEvents } = await import("../../../services/tauri");
+    await writeLauncherAchievements(
+      _store.unlocks.map((u) => ({
+        achievementId: u.achievementId,
+        unlockedAt: u.unlockedAt,
+        xpAwarded: u.xpAwarded,
+      }))
+    );
+    await writeLauncherXpEvents(
+      _xpStore.events.map((e) => ({
+        id: e.id,
+        source: e.source,
+        amount: e.amount,
+        timestamp: e.timestamp,
+        label: e.label,
+        refId: e.refId,
+      }))
+    );
+  } catch { /* SQLite unavailable, localStorage is sufficient */ }
+}
+
+/**
+ * Initialize from SQLite on boot. Migrates localStorage data if SQLite is empty.
+ * Must be called once during boot (before evaluateAchievements runs).
+ */
+export async function initLauncherAchievementStore(): Promise<void> {
+  try {
+    const { readLauncherAchievements, readLauncherXpEvents } = await import("../../../services/tauri");
+    const [sqlUnlocks, sqlEvents] = await Promise.all([
+      readLauncherAchievements(),
+      readLauncherXpEvents(),
+    ]);
+
+    if (sqlUnlocks.length > 0 || sqlEvents.length > 0) {
+      // SQLite has data — use it
+      _store = {
+        version: 1,
+        unlocks: sqlUnlocks.map((u) => ({
+          achievementId: u.achievementId,
+          unlockedAt: u.unlockedAt,
+          xpAwarded: u.xpAwarded,
+        })),
+      };
+      _xpStore = {
+        version: 1,
+        events: sqlEvents.map((e) => ({
+          id: e.id,
+          source: e.source as PlayerXpEvent["source"],
+          amount: e.amount,
+          timestamp: e.timestamp,
+          label: e.label,
+          refId: e.refId,
+        })),
+      };
+      _unlockedIds = new Set(_store.unlocks.map((u) => u.achievementId));
+      _sqliteReady = true;
+      if (DEBUG_ACH_STORE) console.log(`[LF_XP][SQLITE_LOADED] unlocks=${_store.unlocks.length} events=${_xpStore.events.length}`);
+    } else {
+      // SQLite empty — migrate from localStorage if present
+      const localStore = loadAchievementStore();
+      const localXp = loadXpStore();
+      if (localStore.unlocks.length > 0 || localXp.events.length > 0) {
+        _store = localStore;
+        _xpStore = localXp;
+        _unlockedIds = new Set(_store.unlocks.map((u) => u.achievementId));
+        _sqliteReady = true;
+        await saveToSqlite();
+        if (DEBUG_ACH_STORE) console.log(`[LF_XP][SQLITE_MIGRATE] from localStorage unlocks=${_store.unlocks.length} events=${_xpStore.events.length}`);
+      } else {
+        // Both empty — start fresh, enable SQLite for future writes
+        _sqliteReady = true;
+      }
+    }
+  } catch {
+    // SQLite unavailable — continue with localStorage only
+    if (DEBUG_ACH_STORE) console.log("[LF_XP][SQLITE_UNAVAILABLE] using localStorage");
+  }
 }
 
 // ─── Module state ─────────────────────────────────────────────────────
@@ -121,7 +207,8 @@ export function unlockAchievement(achievementId: string): boolean {
 
   _store.unlocks.push(unlock);
   _unlockedIds.add(achievementId);
-  saveAchievementStore(_store);
+  saveAchievementStoreLocal(_store);
+  saveToSqlite(); // fire-and-forget
 
   if (DEBUG_ACH_STORE) console.log(`[LF_XP][UNLOCK] id=${achievementId} title="${def.title}" xp=${def.xp} rarity=${def.rarity}`);
 
@@ -166,7 +253,8 @@ export function unlockAchievements(ids: string[]): string[] {
 
 function addXpEvent(event: PlayerXpEvent): void {
   _xpStore.events.push(event);
-  saveXpStore(_xpStore);
+  saveXpStoreLocal(_xpStore);
+  saveToSqlite(); // fire-and-forget
   if (DEBUG_ACH_STORE) console.log(`[LF_XP][ADD_EVENT] source=${event.source} amount=${event.amount} label="${event.label}"`);
 }
 
@@ -185,10 +273,11 @@ export function getRecentXpEvents(limit = 10): PlayerXpEvent[] {
 }
 
 // ─── Level calculation ────────────────────────────────────────────────
-// Formula: level = floor(sqrt(totalXp / 100)) + 1
-// Threshold: level N requires (N-1)^2 * 100 XP
+// Formula: level = floor(sqrt(totalXp / 80)) + 1
+// Threshold: level N requires (N-1)^2 * 80 XP
+// Level 7 = 3360 XP (reachable with current 3560 max)
 
-const XP_PER_LEVEL_BASE = 100;
+const XP_PER_LEVEL_BASE = 80;
 
 export function computeLevel(totalXp: number): {
   level: number;

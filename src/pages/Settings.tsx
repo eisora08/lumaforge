@@ -616,6 +616,13 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       enabled={settings.achievementOverlayNotificationsEnabled}
                       onChange={(enabled) => updateSetting("achievementOverlayNotificationsEnabled", enabled)}
                     />
+
+                    <ToggleOption
+                      label="Launcher achievement overlay"
+                      description="Show launcher meta-achievements (streaks, playtime milestones) in the overlay window."
+                      enabled={settings.launcherAchievementOverlayEnabled}
+                      onChange={(enabled) => updateSetting("launcherAchievementOverlayEnabled", enabled)}
+                    />
                   </div>
                 </SettingsSection>
               </>

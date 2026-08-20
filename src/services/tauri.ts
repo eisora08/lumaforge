@@ -1565,6 +1565,39 @@ export async function backupDebridGames(): Promise<string> {
   return await invoke<string>("backup_debrid_games");
 }
 
+// --- Launcher achievements (meta-achievement system) ---
+
+export type LauncherAchievementUnlockJson = {
+  achievementId: string;
+  unlockedAt: number;
+  xpAwarded: number;
+};
+
+export type LauncherXpEventJson = {
+  id: string;
+  source: string;
+  amount: number;
+  timestamp: number;
+  label: string;
+  refId?: string;
+};
+
+export async function readLauncherAchievements(): Promise<LauncherAchievementUnlockJson[]> {
+  return await invoke<LauncherAchievementUnlockJson[]>("read_launcher_achievements");
+}
+
+export async function writeLauncherAchievements(unlocks: LauncherAchievementUnlockJson[]): Promise<void> {
+  return await invoke<void>("write_launcher_achievements", { unlocks });
+}
+
+export async function readLauncherXpEvents(): Promise<LauncherXpEventJson[]> {
+  return await invoke<LauncherXpEventJson[]>("read_launcher_xp_events");
+}
+
+export async function writeLauncherXpEvents(events: LauncherXpEventJson[]): Promise<void> {
+  return await invoke<void>("write_launcher_xp_events", { events });
+}
+
 // --- Library cache ---
 
 export type LibraryAppInfoEntry = {
@@ -3733,6 +3766,10 @@ export async function libraryUnfixOnlineFix(appId: number, installDir: string): 
 
 export async function libraryOpenSteamLaunchOptions(appId: number): Promise<void> {
   await invoke<void>("library_open_steam_launch_options", { appId });
+}
+
+export async function seedGseSavesFolder(appId: string): Promise<string> {
+  return await invoke<string>("seed_gse_saves_folder", { appId });
 }
 
 // ---------------------------------------------------------------------------

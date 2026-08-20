@@ -388,6 +388,7 @@ pub fn run() {
             commands::game_fix::library_unfix_goldberg,
             commands::game_fix::library_get_applied_fix_ids,
             commands::game_fix::library_open_steam_launch_options,
+            commands::game_fix::seed_gse_saves_folder,
             commands::sqlite_cache::upsert_achievement_summary,
             commands::sqlite_cache::get_achievement_summary,
             commands::sqlite_cache::batch_get_achievement_summaries,
@@ -408,6 +409,10 @@ pub fn run() {
             commands::installed_programs::scan_installed_programs,
             commands::crack_achievements::parse_tenoke_user_stats,
             commands::crack_achievements::parse_onlinefix_achievements_ini,
+            commands::launcher_achievements::read_launcher_achievements,
+            commands::launcher_achievements::write_launcher_achievements,
+            commands::launcher_achievements::read_launcher_xp_events,
+            commands::launcher_achievements::write_launcher_xp_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

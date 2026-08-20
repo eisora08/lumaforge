@@ -42,7 +42,7 @@ function ColorField({ palette, className }: { palette: DynamicPalette; className
 }
 
 export default function AmbientBackground() {
-  const { url, enabled, intensity, mode } = useSyncExternalStore(
+  const { url, enabled, intensity, mode, pulseColor } = useSyncExternalStore(
     subscribeAmbient,
     getAmbientSnapshot,
     getAmbientSnapshot,
@@ -112,6 +112,17 @@ export default function AmbientBackground() {
       </div>
       <div className={`absolute inset-0 ${style.dim}`} />
       <div className="absolute inset-0 bg-linear-to-t from-(--color-bg)/75 via-transparent to-(--color-bg)/40" />
+
+      {/* Achievement unlock pulse — rarity-colored radial glow that fades out */}
+      {pulseColor && (
+        <div
+          key={pulseColor}
+          className="absolute inset-0 animate-ambient-pulse-in"
+          style={{
+            background: `radial-gradient(ellipse at center, ${pulseColor}30 0%, transparent 70%)`,
+          }}
+        />
+      )}
     </div>
   );
 }

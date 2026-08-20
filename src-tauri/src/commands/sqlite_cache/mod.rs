@@ -11,6 +11,7 @@ pub mod catalog_blobs;
 pub mod debrid_games_cache;
 pub mod game_appinfo;
 pub mod games;
+pub mod launcher_achievements_cache;
 pub mod library_cache;
 pub mod manual_games_cache;
 pub mod media;
@@ -409,6 +410,11 @@ fn init_core_tables(conn: &Connection) -> Result<(), String> {
     // Debrid games cache — singleton blob for debrid game entries (uses SqliteCoreDb)
     if let Err(e) = debrid_games_cache::create_tables(conn) {
         eprintln!("[SqliteCache] debrid_games table init failed (non-fatal): {}", e);
+    }
+
+    // Launcher achievements — singleton blobs for launcher meta-achievement data
+    if let Err(e) = launcher_achievements_cache::create_tables(conn) {
+        eprintln!("[SqliteCache] launcher_achievements table init failed (non-fatal): {}", e);
     }
 
     // Store details + library game details — per-game detail page cache (uses SqliteCoreDb)
