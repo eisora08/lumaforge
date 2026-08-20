@@ -1110,6 +1110,25 @@ export default function LibraryGameDetails({
     return unsub;
   }, [appIdStr, achSource]);
 
+  // Re-read store on visibility change — Chromium throttles requestAnimationFrame
+  // in background windows so React may not paint state updates from watcher events.
+  // The store already has fresh data; this just forces a paint when the user returns.
+  useEffect(() => {
+    if (!appIdStr) return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const latest = achievementStore.getSummary(appIdStr, achSource);
+      if (latest) {
+        setAchievementsSummary((prev) => {
+          if (prev?.unlocked === latest.unlocked && prev?.total === latest.total) return prev;
+          return latest;
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [appIdStr, achSource]);
+
   // Auto-sync: start/stop watching based on appId + settings
   // Gate: don't start until crack detection completes to prevent writing to steam-official/
   useEffect(() => {
