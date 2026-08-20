@@ -737,9 +737,11 @@ export async function resolveSteamAchievements(params: {
   }
 
   // 2b. Binary-stats — read directly from .bin files (more reliable than librarycache)
-  // Uses appSchemaAchievements (from step 1) for icons/names + parseUserGameStatsRaw for bitmask.
+  // Uses appSchemaAchievements (step 1) for icons/names + parseUserGameStatsRaw for bitmask.
   // Falls through to librarycache (step 3) when .bin is empty or schema unavailable.
-  if (!localProgressSummary && effectiveSteamPath && effectiveAccountId) {
+  // SKIP for readPlatform === "steam": user chose crack saves — Steam binary stats are
+  // irrelevant and would overwrite the crack reader result with stale Steam data.
+  if (!localProgressSummary && readPlatform !== "steam" && effectiveSteamPath && effectiveAccountId) {
     try {
       const { parseUserGameStatsRaw } = await import("./tauri");
 
@@ -824,7 +826,8 @@ export async function resolveSteamAchievements(params: {
   }
 
   // 3. Librarycache — FALLBACK source when binary-stats not available
-  if (!localProgressSummary && effectiveAccountId && effectiveSteamPath) {
+  // SKIP for readPlatform === "steam": crack games should not read Steam librarycache data.
+  if (!localProgressSummary && readPlatform !== "steam" && effectiveAccountId && effectiveSteamPath) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const libcacheResult = await invoke<{
