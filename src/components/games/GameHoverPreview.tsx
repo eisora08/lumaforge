@@ -8,6 +8,9 @@ const POPUP_IMAGE_HEIGHT = 170;
 const CYCLE_MS = 2000;
 const CROSSFADE_MS = 400;
 
+// Module-level screenshot cache (session-only, bounded by hovers)
+const _screenshotCache = new Map<string, string[]>();
+
 function formatRelativeTime(unixSeconds: number | null): string {
   if (!unixSeconds) return "";
   const now = Math.floor(Date.now() / 1000);
@@ -27,8 +30,36 @@ type GameHoverPreviewProps = {
 export default function GameHoverPreview({ game, position }: GameHoverPreviewProps) {
   const popupRef = useRef<HTMLDivElement>(null);
 
-  // Screenshot carousel
-  const screenshots = game.metadata?.screenshots ?? [];
+  // Screenshot carousel — lazy-fetch when metadata.screenshots is empty but appId exists
+  const [resolvedScreenshots, setResolvedScreenshots] = useState<string[]>(
+    game.metadata?.screenshots ?? [],
+  );
+
+  useEffect(() => {
+    if (resolvedScreenshots.length > 0 || !game?.appId) return;
+
+    // Check session cache
+    const cached = _screenshotCache.get(game.appId);
+    if (cached) {
+      setResolvedScreenshots(cached);
+      return;
+    }
+
+    let cancelled = false;
+    import("../../services/gameMetadataResolver")
+      .then(({ resolveGameMetadata }) => resolveGameMetadata([Number(game.appId)]))
+      .then((results) => {
+        if (cancelled) return;
+        const meta = results?.[Number(game.appId)];
+        const ss = meta?.screenshots ?? [];
+        if (ss.length > 0) _screenshotCache.set(game.appId!, ss);
+        setResolvedScreenshots(ss);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [game?.appId]);
+
+  const screenshots = resolvedScreenshots;
   const hasScreenshots = screenshots.length > 0;
   const [currentIndex, setCurrentIndex] = useState(0);
   const pausedRef = useRef(false);
