@@ -1,8 +1,8 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import {
   BarChart3, Clock, Gamepad2, Trophy, Flame, CalendarDays,
   TrendingUp, Zap, Swords, Timer, Award, Archive,
-  BookOpen,
+  BookOpen, Sun, Sunrise, Moon, Sunset,
 } from "lucide-react";
 import { useLibraryGames } from "../context/LibraryGamesContext";
 import {
@@ -15,9 +15,18 @@ import {
   computeFilteredPlaytime,
   getTotalLaunchCount,
   computeMasteryTiers,
+  computeWeeklyComparison,
+  computeAvgSessionLength,
+  computeTimeOfDay,
 } from "../features/activity/stats/statsService";
+import type { TimeOfDayBucket } from "../features/activity/stats/statsService";
 import { getPlayerProfile, subscribeAchievementStore } from "../features/activity/achievements/achievementStore";
+import { subscribePlaytimeStore } from "../services/playtimeService";
+import { subscribeSessionHistory } from "../services/gameSessionHistory";
+import { resolveGameMediaUrl } from "../services/gameCacheService";
+import { scanAchievementFolders, type FolderAchievementSummary } from "../services/tauri";
 import type { PlayerProfile, StatsTimeFilter } from "../features/activity/types";
+import type { LibraryGame } from "../types/libraryGame";
 import ActivityFeed from "../components/activity/ActivityFeed";
 import ActivityEmptyState from "../components/activity/ActivityEmptyState";
 import LevelRing from "../components/activity/LevelRing";
@@ -46,6 +55,8 @@ const SOURCE_BADGE_COLORS: Record<string, string> = {
   lua: "border-purple-500/20 bg-purple-500/10 text-purple-300",
   system: "border-zinc-500/20 bg-zinc-500/10 text-zinc-300",
   manual: "border-teal-500/20 bg-teal-500/10 text-teal-300",
+  debrid: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
+  epic: "border-indigo-500/20 bg-indigo-500/10 text-indigo-300",
 };
 
 const EXIT_REASON_LABELS: Record<string, string> = {
@@ -62,10 +73,11 @@ function formatDateShort(dateStr: string): string {
 }
 
 function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
@@ -95,10 +107,19 @@ export default function ActivityStats() {
   const { games } = useLibraryGames();
   const [timeFilter, setTimeFilter] = useState<StatsTimeFilter>("all");
   const [profile, setProfile] = useState<PlayerProfile>(getPlayerProfile);
+  const [, forceRender] = useState(0);
 
   useEffect(() => {
     return subscribeAchievementStore(() => setProfile(getPlayerProfile()));
   }, []);
+
+  // Live refresh: recompute when playtime or session history changes
+  const bump = useCallback(() => forceRender(n => n + 1), []);
+  useEffect(() => {
+    const unsub1 = subscribePlaytimeStore(bump);
+    const unsub2 = subscribeSessionHistory(bump);
+    return () => { unsub1(); unsub2(); };
+  }, [bump]);
 
   const stats = useMemo(() => computeLibraryStats(games), [games]);
   const filteredPlaytime = useMemo(() => computeFilteredPlaytime(games, timeFilter), [games, timeFilter]);
@@ -109,6 +130,9 @@ export default function ActivityStats() {
   const sessionHistory = useMemo(() => computeSessionHistory(games, 20), [games]);
   const totalLaunches = useMemo(() => getTotalLaunchCount(games), [games]);
   const masteryTiers = useMemo(() => computeMasteryTiers(games), [games]);
+  const weeklyComparison = useMemo(() => computeWeeklyComparison(games), [games]);
+  const avgSessionLength = useMemo(() => computeAvgSessionLength(games), [games]);
+  const timeOfDay = useMemo(() => computeTimeOfDay(games), [games]);
 
   const maxDaySeconds = useMemo(() => Math.max(1, ...activityByDay.map((d) => d.seconds)), [activityByDay]);
   const hasAnyPlaytime = stats.totalHours > 0;
@@ -144,8 +168,8 @@ export default function ActivityStats() {
         </div>
       </div>
 
-      {/* Top Stats — full width 6-col grid */}
-      <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* Top Stats — full width grid */}
+      <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
         <StatCard icon={<Clock className="h-4 w-4" />} label="Total Hours" value={formatDuration(stats.totalHours * 3600)} accent />
         <StatCard icon={<Gamepad2 className="h-4 w-4" />} label="Games Played" value={`${stats.gamesPlayed}`} />
         <StatCard icon={<Archive className="h-4 w-4 text-(--color-muted)/40" />} label="Unplayed" value={`${stats.gamesUnplayed}`} />
@@ -154,9 +178,17 @@ export default function ActivityStats() {
         {stats.mostPlayedTitle && (
           <StatCard icon={<Trophy className="h-4 w-4 text-amber-400" />} label="Most Played" value={stats.mostPlayedTitle} truncate />
         )}
+        {weeklyComparison.percentChange !== null && (
+          <StatCard
+            icon={weeklyComparison.percentChange >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingUp className="h-4 w-4 rotate-180" />}
+            label="vs Last Week"
+            value={`${weeklyComparison.percentChange >= 0 ? "+" : ""}${Math.round(weeklyComparison.percentChange)}%`}
+            accent={weeklyComparison.percentChange >= 0}
+          />
+        )}
       </div>
 
-      {/* Filtered playtime + Most Played — full width 2-col */}
+      {/* Filtered playtime + Avg Session — 2-col */}
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
         <PanelCard>
           <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">
@@ -165,13 +197,13 @@ export default function ActivityStats() {
           <div className="mt-1 text-xl font-bold text-(--color-text)">{formatDuration(filteredPlaytime.totalSeconds)}</div>
           <div className="mt-1 text-[10px] text-(--color-muted)/50">{filteredPlaytime.gamesPlayed} games active in period</div>
         </PanelCard>
-        {stats.mostPlayedTitle && (
-          <PanelCard>
-            <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">Most Played</div>
-            <div className="mt-1 text-xl font-bold text-(--color-text) truncate">{stats.mostPlayedTitle}</div>
-            <div className="mt-1 text-[10px] text-(--color-muted)/50">{formatDuration(stats.mostPlayedHours * 3600)} total</div>
-          </PanelCard>
-        )}
+        <PanelCard>
+          <div className="text-[10px] uppercase tracking-wider text-(--color-muted)/60">Avg Session</div>
+          <div className="mt-1 text-xl font-bold text-(--color-text)">
+            {avgSessionLength !== null ? formatDuration(avgSessionLength) : "—"}
+          </div>
+          <div className="mt-1 text-[10px] text-(--color-muted)/50">per play session</div>
+        </PanelCard>
       </div>
 
       {/* Play Activity Chart — full width */}
@@ -262,13 +294,26 @@ export default function ActivityStats() {
                   {profile.unlockedCount}/{profile.totalCount}
                 </span>
               </div>
+              {/* Achievement progress bar */}
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-[10px] text-(--color-muted)/60 mb-1">
+                  <span>Launcher Achievements</span>
+                  <span>{Math.round(profile.totalCount > 0 ? (profile.unlockedCount / profile.totalCount) * 100 : 0)}%</span>
+                </div>
+                <GrowBar
+                  percent={profile.totalCount > 0 ? (profile.unlockedCount / profile.totalCount) * 100 : 0}
+                  minPercent={profile.unlockedCount > 0 ? 3 : 0}
+                  trackClassName="h-2 rounded-full bg-white/[0.06]"
+                  fillClassName="bg-linear-to-r from-violet-500 to-violet-400"
+                />
+              </div>
             </div>
           </div>
         </PanelCard>
       </div>
 
-      {/* 2-column: Heatmap + Top Games */}
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* 3-column: Heatmap + Time of Day + Top Games */}
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Activity Heatmap */}
         <PanelCard>
           <SectionTitle icon={CalendarDays}>Activity Heatmap (90 Days)</SectionTitle>
@@ -301,6 +346,21 @@ export default function ActivityStats() {
           )}
         </PanelCard>
 
+        {/* Time of Day */}
+        <PanelCard>
+          <SectionTitle icon={Sun}>Time of Day</SectionTitle>
+          {!hasAnyPlaytime ? (
+            <ActivityEmptyState
+              icon={Clock}
+              title="No session data yet"
+              description="Your preferred gaming hours will appear here."
+              compact
+            />
+          ) : (
+            <TimeOfDayChart buckets={timeOfDay} />
+          )}
+        </PanelCard>
+
         {/* Top Games */}
         <PanelCard>
           <SectionTitle icon={Trophy}>Top 10 Games</SectionTitle>
@@ -312,16 +372,9 @@ export default function ActivityStats() {
               compact
             />
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 max-h-[360px] overflow-y-auto">
               {topGames.map((game, i) => (
-                <div key={game.appId} className="flex items-center gap-3 py-1.5">
-                  <span className={`w-5 text-xs text-right font-medium ${i < 3 ? "text-amber-400/70" : "text-(--color-muted)/30"}`}>{i + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-(--color-text) truncate">{game.title}</div>
-                  </div>
-                  <span className="text-xs text-(--color-muted)">{game.sessions} sessions</span>
-                  <span className="text-xs font-medium text-(--color-text)">{formatDuration(game.totalSeconds)}</span>
-                </div>
+                <TopGameRow key={game.appId} game={game} index={i} />
               ))}
             </div>
           )}
@@ -349,6 +402,9 @@ export default function ActivityStats() {
         </div>
       </PanelCard>
 
+      {/* Game Achievements — split by source */}
+      <GameAchievementsCards games={games} />
+
       {/* 2-column: Session History + Activity Feed */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Session History */}
@@ -372,7 +428,7 @@ export default function ActivityStats() {
                       <span className="text-[10px] text-(--color-muted)/50">{formatTimestamp(s.startedAt)}</span>
                       {s.source && (
                         <span className={`inline-flex rounded-full border px-1.5 py-px text-[9px] font-medium ${SOURCE_BADGE_COLORS[s.source] || "border-white/10 bg-white/[0.04] text-(--color-muted)"}`}>
-                          {s.source === "steam" ? "Steam" : s.source === "local" ? "Local" : s.source === "lua" ? "Lua" : s.source === "manual" ? "Manual" : s.source}
+                          {s.source === "steam" ? "Steam" : s.source === "local" ? "Local" : s.source === "lua" ? "Lua" : s.source === "manual" ? "Manual" : s.source === "debrid" ? "Debrid" : s.source === "epic" ? "Epic" : s.source}
                         </span>
                       )}
                       {s.exitReason && s.exitReason !== "normal" && (
@@ -435,6 +491,221 @@ function PlayActivityBars({
         );
       })}
     </div>
+  );
+}
+
+function TopGameRow({ game, index }: { game: { title: string; appId: string; totalSeconds: number; sessions: number; game?: LibraryGame }; index: number }) {
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const libGame = game.game;
+
+  useEffect(() => {
+    if (!libGame) return;
+    let cancelled = false;
+    const resolve = async () => {
+      const bg = libGame.backgroundPath ?? libGame.landscapePath ?? libGame.coverPath;
+      if (!bg) return;
+      try {
+        const url = await resolveGameMediaUrl(libGame.appId ?? "", bg, "steam");
+        if (!cancelled && url) setImgSrc(url);
+      } catch { /* ignore */ }
+    };
+    resolve();
+    return () => { cancelled = true; };
+  }, [libGame]);
+
+  return (
+    <div className="flex items-center gap-2.5 py-1.5">
+      <span className={`w-4 text-[10px] text-right font-medium shrink-0 ${index < 3 ? "text-amber-400/70" : "text-(--color-muted)/30"}`}>{index + 1}</span>
+      {imgSrc ? (
+        <img src={imgSrc} alt="" className="h-8 w-8 rounded-md object-cover shrink-0" />
+      ) : (
+        <div className="h-8 w-8 rounded-md bg-white/[0.04] shrink-0" />
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="text-sm text-(--color-text) truncate">{game.title}</div>
+      </div>
+      <span className="text-[10px] text-(--color-muted) shrink-0">{game.sessions}s</span>
+      <span className="text-xs font-medium text-(--color-text) shrink-0">{formatDuration(game.totalSeconds)}</span>
+    </div>
+  );
+}
+
+const TIME_ICONS = [Sunrise, Sun, Sunset, Moon] as const;
+const TIME_COLORS = ["text-amber-400", "text-yellow-300", "text-orange-400", "text-indigo-400"] as const;
+
+function TimeOfDayChart({ buckets }: { buckets: TimeOfDayBucket[] }) {
+  const grow = useGrowOnMount();
+  const maxPercent = Math.max(1, ...buckets.map(b => b.percent));
+
+  return (
+    <div className="space-y-3">
+      {buckets.map((b, i) => {
+        const Icon = TIME_ICONS[i];
+        const barWidth = maxPercent > 0 ? (b.percent / maxPercent) * 100 : 0;
+        return (
+          <div key={b.label}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-1.5">
+                <Icon className={`h-3 w-3 ${TIME_COLORS[i]}`} />
+                <span className="text-xs text-(--color-text)">{b.label}</span>
+              </div>
+              <span className="text-[10px] text-(--color-muted)">{b.percent}%</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out ${TIME_COLORS[i].replace("text-", "bg-")}`}
+                style={{ width: grow ? `${barWidth}%` : "0%" }}
+              />
+            </div>
+            <div className="text-[9px] text-(--color-muted)/40 mt-0.5">{b.hours} · {formatDuration(b.seconds)}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GameAchievementsCards({ games }: { games: LibraryGame[] }) {
+  const grow = useGrowOnMount();
+  const [folderData, setFolderData] = useState<FolderAchievementSummary[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    scanAchievementFolders().then((rows) => {
+      if (!cancelled) setFolderData(rows);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const { steamGames, crackGames } = useMemo(() => {
+    const steam: Array<{ game: LibraryGame; total: number; unlocked: number; percent: number; appId: string }> = [];
+    const crack: Array<{ game: LibraryGame; total: number; unlocked: number; percent: number; appId: string }> = [];
+
+    const gameByAppId = new Map<string, LibraryGame>();
+    for (const game of games) {
+      if (game.appId) gameByAppId.set(game.appId, game);
+    }
+
+    for (const row of folderData) {
+      if (row.total <= 0 || row.unlocked <= 0) continue;
+      const game = gameByAppId.get(row.appId);
+      if (!game) continue;
+
+      const entry = { game, total: row.total, unlocked: row.unlocked, percent: Math.round(row.percent), appId: row.appId };
+
+      if (row.source === "crack") {
+        crack.push(entry);
+      } else {
+        steam.push(entry);
+      }
+    }
+
+    steam.sort((a, b) => b.percent - a.percent);
+    crack.sort((a, b) => b.percent - a.percent);
+    return { steamGames: steam, crackGames: crack };
+  }, [games, folderData]);
+
+  if (steamGames.length === 0 && crackGames.length === 0) return null;
+
+  return (
+    <>
+      {steamGames.length > 0 && (
+        <GameAchievementSection
+          title="Steam Achievements"
+          icon={<Trophy className="h-4 w-4 text-sky-400" />}
+          entries={steamGames}
+          grow={grow}
+        />
+      )}
+      {crackGames.length > 0 && (
+        <GameAchievementSection
+          title="Crack Achievements"
+          icon={<Zap className="h-4 w-4 text-purple-400" />}
+          entries={crackGames}
+          grow={grow}
+        />
+      )}
+    </>
+  );
+}
+
+function GameAchievementSection({
+  title,
+  icon,
+  entries,
+  grow,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  entries: Array<{ game: LibraryGame; total: number; unlocked: number; percent: number; appId: string }>;
+  grow: boolean;
+}) {
+  const [imgSrcs, setImgSrcs] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (entries.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const next = new Map<string, string>();
+      for (const { game } of entries.slice(0, 30)) {
+        if (cancelled) break;
+        const bg = game.coverPath ?? game.landscapePath ?? game.backgroundPath;
+        if (!bg || !game.appId) continue;
+        try {
+          const url = await resolveGameMediaUrl(game.appId, bg, "steam");
+          if (!cancelled && url) next.set(game.appId, url);
+        } catch { /* ignore */ }
+      }
+      if (!cancelled) setImgSrcs(next);
+    })();
+    return () => { cancelled = true; };
+  }, [entries]);
+
+  return (
+    <PanelCard className="mt-6">
+      <div className="flex items-center gap-2 mb-3">
+        {icon}
+        <h3 className="text-sm font-semibold text-(--color-text)">{title}</h3>
+        <span className="text-[10px] text-(--color-muted)">{entries.length} games</span>
+      </div>
+      <div className="space-y-1 max-h-[400px] overflow-y-auto">
+        {entries.map(({ game, total, unlocked, percent, appId }) => {
+          const img = imgSrcs.get(appId);
+          return (
+            <div key={appId} className="flex items-center gap-2.5 py-1.5">
+              {img ? (
+                <img src={img} alt="" className="h-7 w-7 rounded-md object-cover shrink-0" />
+              ) : (
+                <div className="h-7 w-7 rounded-md bg-white/[0.04] shrink-0" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-xs text-(--color-text) truncate">{game.title}</span>
+                  <span className="text-[10px] text-(--color-muted) ml-2 shrink-0">{unlocked}/{total}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ease-out ${
+                      percent >= 100
+                        ? "bg-linear-to-r from-amber-400 to-amber-300"
+                        : percent >= 75
+                        ? "bg-linear-to-r from-emerald-500 to-emerald-400"
+                        : percent >= 50
+                        ? "bg-linear-to-r from-sky-500 to-sky-400"
+                        : "bg-linear-to-r from-(--color-accent) to-(--color-accent)/70"
+                    }`}
+                    style={{ width: grow ? `${percent}%` : "0%" }}
+                  />
+                </div>
+              </div>
+              <span className={`text-[10px] font-medium shrink-0 ${
+                percent >= 100 ? "text-amber-400" : percent >= 75 ? "text-emerald-400" : "text-(--color-muted)"
+              }`}>{percent}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </PanelCard>
   );
 }
 

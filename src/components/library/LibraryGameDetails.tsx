@@ -353,26 +353,37 @@ export default function LibraryGameDetails({
   const [localAchSupportFound, setLocalAchSupportFound] = useState(false);
   // Lazy initializer: read persisted choice synchronously so the FIRST resolve uses the correct
   // platform (avoids writing to steam-official/ before async detectCrackType completes).
+  // Also checks installDir for known crack folder patterns to avoid the race.
   const [achSource, setAchSource] = useState<"steam-official" | "steam">(() => {
     if (!appIdStr) return "steam-official";
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
     if (saved) return saved;
-    // Debrid/Manual games are cracked by definition → always use crack path
     if (game?.source === "debrid" || game?.source === "manual") return "steam";
+    // Sync heuristic: if installDir contains a known crack folder name, treat as crack
+    const dir = (game?.installDir ?? "").toLowerCase();
+    if (dir && (dir.includes("tenoke") || dir.includes("rune") || dir.includes("codex")
+      || dir.includes("goldberg") || dir.includes("onlinefix") || dir.includes("empress")
+      || dir.includes("gse_") || dir.includes("goldberg_emu"))) return "steam";
     return "steam-official";
   });
   const [hasCrackSave, setHasCrackSave] = useState(false);
+
+  // Gate auto-sync watcher: don't start until crack detection completes.
+  // Prevents writing to steam-official/ before async detectCrackType sets the correct platform.
+  const [crackDetectDone, setCrackDetectDone] = useState(false);
 
   // Auto-detect crack source on mount — only auto-select when user has no persisted choice.
   // The cancelled flag prevents the async callback from overwriting a manual user switch.
   useEffect(() => {
     if (!appIdStr) return;
     userSwitchedSourceRef.current = false;
+    setCrackDetectDone(false);
     let cancelled = false;
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
     import("../../services/achievementConfigService").then(({ detectCrackType }) => {
       detectCrackType(appIdStr, game?.installDir).then((result: any) => {
         if (cancelled) return;
+        setCrackDetectDone(true);
         const hasCrack = !!result?.savePath;
         setHasCrackSave(hasCrack);
         if (saved) {
@@ -384,8 +395,8 @@ export default function LibraryGameDetails({
         } else {
           setAchSource("steam-official");
         }
-      }).catch(() => { });
-    }).catch(() => { });
+      }).catch(() => { setCrackDetectDone(true); });
+    }).catch(() => { setCrackDetectDone(true); });
     return () => { cancelled = true; };
   }, [appIdStr, game?.installDir]);
 
@@ -1096,11 +1107,13 @@ export default function LibraryGameDetails({
   }, [appIdStr, achSource]);
 
   // Auto-sync: start/stop watching based on appId + settings
+  // Gate: don't start until crack detection completes to prevent writing to steam-official/
   useEffect(() => {
     if (!appIdStr || !settings.achievementAutoSyncEnabled) {
       if (appIdStr) achievementAutoSyncService.stopWatching(appIdStr);
       return;
     }
+    if (!crackDetectDone) return;
     achievementAutoSyncService.setEnabled(settings.achievementAutoSyncEnabled);
     achievementAutoSyncService.setIntervalSeconds(settings.achievementAutoSyncIntervalSeconds);
     achievementAutoSyncService.startWatching({
@@ -1116,7 +1129,7 @@ export default function LibraryGameDetails({
     return () => {
       achievementAutoSyncService.stopWatching(appIdStr);
     };
-  }, [appIdStr, achSource, settings.achievementAutoSyncEnabled, settings.achievementAutoSyncIntervalSeconds,
+  }, [appIdStr, achSource, crackDetectDone, settings.achievementAutoSyncEnabled, settings.achievementAutoSyncIntervalSeconds,
     settings.steamWebApiKey, settings.steamId64, settings.steamAccountId, settings.steamRoot,
     settings.steamAchievementsEnabled, settings.achievementSchemaPath]);
 

@@ -1052,6 +1052,7 @@ class AchievementWatcherService {
         unlocked: crackData.unlocked,
         progressMap,
         authoritative: true,
+        source: "crack",
         ...(nameMap.size > 0 ? { nameMap } : {}),
       };
 
@@ -1296,7 +1297,7 @@ class AchievementWatcherService {
       }
 
       const previousUnlocked = currentSummary?.unlocked ?? 0;
-      const result = achievementStore.applyProgressPatch(appId, effectivePatch, traceId, this._platformByAppId.get(appId));
+      const result = achievementStore.applyProgressPatch(appId, effectivePatch, traceId, this._platformByAppId.get(appId) ?? "steam");
       if (DEBUG_ACH_WATCHER) console.log(`[ACH][SYNC_TRACE] appid=${appId} stage=apply-result result=${!!result}`);
       console.log(`[ACH][PIPELINE] apply_result appid=${appId} result=${!!result}`);
       if (!result) {

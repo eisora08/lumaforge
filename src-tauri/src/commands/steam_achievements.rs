@@ -4516,3 +4516,77 @@ mod tests {
     assert_eq!(entry5.1, 16383);
   }
 }
+
+// ===================================================================
+// Scan both achievement schema folders and return summaries with
+// source derived from the folder name: "steam" = crack, "steam-official"
+// = official Steam. Used by ActivityStats GameAchievementsCards.
+// ===================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderAchievementSummary {
+    pub app_id: String,
+    pub source: String,
+    pub total: u32,
+    pub unlocked: u32,
+    pub percent: f64,
+}
+
+#[tauri::command]
+pub fn scan_achievement_folders(app_handle: AppHandle) -> Result<Vec<FolderAchievementSummary>, String> {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let schema_dir = app_dir.join("achievements").join("schema");
+    let mut results: Vec<FolderAchievementSummary> = Vec::new();
+
+    for (platform, source_label) in [("steam", "crack"), ("steam-official", "steam")] {
+        let platform_dir = schema_dir.join(platform);
+        if !platform_dir.exists() {
+            continue;
+        }
+
+        let entries = match fs::read_dir(&platform_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let app_id = entry.file_name().to_string_lossy().to_string();
+            let summary_path = entry.path().join("summary.json");
+            if !summary_path.exists() {
+                continue;
+            }
+
+            let content = match fs::read_to_string(&summary_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let summary: AppAchievementSummary = match serde_json::from_str(&content) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if summary.total == 0 {
+                continue;
+            }
+
+            results.push(FolderAchievementSummary {
+                app_id,
+                source: source_label.to_string(),
+                total: summary.total,
+                unlocked: summary.unlocked,
+                percent: summary.percent,
+            });
+        }
+    }
+
+    Ok(results)
+}

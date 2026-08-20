@@ -33,8 +33,8 @@ pub mod store_reviews;
 pub use achievements::{
     AchievementEntryRow, AchievementPercentageRow, AchievementSummaryRow,
     batch_get_achievement_summaries, batch_upsert_achievement_entries, get_achievement_entries,
-    get_achievement_percentages, get_achievement_summary, upsert_achievement_entry,
-    upsert_achievement_percentages, upsert_achievement_summary,
+    get_achievement_percentages, get_achievement_summary, get_all_achievement_summaries,
+    upsert_achievement_entry, upsert_achievement_percentages, upsert_achievement_summary,
 };
 pub use catalog_blobs::{get_game_catalog_blob, upsert_game_catalog_blob};
 pub use game_appinfo::{
@@ -84,6 +84,7 @@ pub use games::__cmd__update_game_metadata_json;
 pub use achievements::__cmd__upsert_achievement_summary;
 pub use achievements::__cmd__get_achievement_summary;
 pub use achievements::__cmd__batch_get_achievement_summaries;
+pub use achievements::__cmd__get_all_achievement_summaries;
 pub use achievements::__cmd__upsert_achievement_entry;
 pub use achievements::__cmd__batch_upsert_achievement_entries;
 pub use achievements::__cmd__get_achievement_entries;
@@ -119,6 +120,7 @@ pub use games::__tauri_command_name_update_game_metadata_json;
 pub use achievements::__tauri_command_name_upsert_achievement_summary;
 pub use achievements::__tauri_command_name_get_achievement_summary;
 pub use achievements::__tauri_command_name_batch_get_achievement_summaries;
+pub use achievements::__tauri_command_name_get_all_achievement_summaries;
 pub use achievements::__tauri_command_name_upsert_achievement_entry;
 pub use achievements::__tauri_command_name_batch_upsert_achievement_entries;
 pub use achievements::__tauri_command_name_get_achievement_entries;
@@ -869,13 +871,16 @@ fn init_achievement_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS achievement_summaries (
-            app_id          TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            source          TEXT NOT NULL DEFAULT 'steam-official',
+            platform        TEXT NOT NULL DEFAULT 'steam-official',
             unlocked        INTEGER NOT NULL DEFAULT 0,
             total           INTEGER NOT NULL DEFAULT 0,
             in_progress     INTEGER NOT NULL DEFAULT 0,
             completion_time INTEGER,
             last_unlock_at  INTEGER,
-            updated_at      INTEGER NOT NULL DEFAULT 0
+            updated_at      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (app_id, platform)
         );
 
         CREATE TABLE IF NOT EXISTS achievement_entries (
@@ -902,6 +907,41 @@ fn init_achievement_tables(conn: &Connection) -> Result<(), String> {
         ",
     )
     .map_err(|e| format!("Failed to create achievement tables: {}", e))?;
+
+    // Migration: achievement_summaries needs composite PK (app_id, platform) + source columns.
+    // SQLite cannot alter a PRIMARY KEY, so recreate the table if old schema detected.
+    let has_old_schema: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('achievement_summaries') WHERE name = 'platform'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    if !has_old_schema {
+        // Old schema: no `platform` or `source` column. Recreate with new schema, preserving data.
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS achievement_summaries_new (
+                app_id          TEXT NOT NULL,
+                source          TEXT NOT NULL DEFAULT 'steam-official',
+                platform        TEXT NOT NULL DEFAULT 'steam-official',
+                unlocked        INTEGER NOT NULL DEFAULT 0,
+                total           INTEGER NOT NULL DEFAULT 0,
+                in_progress     INTEGER NOT NULL DEFAULT 0,
+                completion_time INTEGER,
+                last_unlock_at  INTEGER,
+                updated_at      INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (app_id, platform)
+            );
+            INSERT INTO achievement_summaries_new (app_id, source, platform, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at)
+                SELECT app_id, 'steam-official', 'steam-official', unlocked, total, in_progress, completion_time, last_unlock_at, updated_at
+                FROM achievement_summaries;
+            DROP TABLE achievement_summaries;
+            ALTER TABLE achievement_summaries_new RENAME TO achievement_summaries;
+            ",
+        )
+        .map_err(|e| format!("Failed to migrate achievement_summaries: {}", e))?;
+    }
 
     Ok(())
 }

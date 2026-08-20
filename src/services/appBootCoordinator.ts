@@ -728,7 +728,7 @@ export async function runBootTasks(): Promise<void> {
             logBoot("reconcile lua games end");
           });
 
-          // Stage 5: Load cached achievement summaries into store (only if auto-enabled)
+          // Stage 5: Load ALL cached achievement summaries into store from SQLite
           await track("load-achievement-summaries", async () => {
             logBoot("load achievement summaries start");
             try {
@@ -736,53 +736,30 @@ export async function runBootTasks(): Promise<void> {
               if (!ACHIEVEMENT_READ_CACHE_ON_BOOT) {
                 logCacheReadBootSkipOnce();
               } else {
-                  const { achievementStore } = await import("./achievementStore");
-                   const { readAchievementCacheWithFallback } = await import("./tauri");
-                  if (_snapshotLoaded) {
-                    const appIds = _snapshotLoaded.library.games.map((g) => g.appId).filter(Boolean);
-                    let loaded = 0;
-                    // Load up to 20 summaries during splash — enough for instant UI
-                    // Batch with Promise.all for concurrent Tauri invokes
-                    const batch = appIds.slice(0, 20);
-                    const results = await Promise.allSettled(
-                       batch.map((appId) => readAchievementCacheWithFallback(Number(appId)))
-                    );
-                    for (let i = 0; i < batch.length; i++) {
-                      const appId = batch[i];
-                      const result = results[i];
-                      if (result.status === "fulfilled") {
-                        const cache = result.value;
-                        if (cache) {
-                        const summary = {
-                          appId,
-                          total: cache.summary.total,
-                          unlocked: cache.summary.unlocked,
-                          progressAvailable: cache.summary.progress_available,
-                          achievements: cache.achievements.map((a: { api_name: string; name: string; description?: string; icon?: string | null; icon_url?: string | null; icon_gray?: string | null; icon_gray_url?: string | null; unlocked: boolean; unlock_time?: number | null; rarity_percent?: number | null; stat_id?: number | null; bit?: number | null; progress_stat_id?: number | null; progress_min?: number | null; progress_max?: number | null }) => ({
-                            apiName: a.api_name,
-                            name: a.name,
-                            description: a.description ?? "",
-                            iconUrl: a.icon ?? a.icon_url ?? null,
-                            iconGrayUrl: a.icon_gray ?? a.icon_gray_url ?? null,
-                            unlocked: a.unlocked,
-                            unlockTime: a.unlock_time ?? null,
-                            rarityPercent: a.rarity_percent ?? null,
-                            statId: a.stat_id ?? null,
-                            bit: a.bit ?? null,
-                            progressStatId: a.progress_stat_id ?? null,
-                            progressMin: a.progress_min ?? null,
-                            progressMax: a.progress_max ?? null,
-                          })),
-                          newlyUnlocked: [],
-                        };
-                        achievementStore.setSummary(appId, summary as any);
-                        loaded++;
-                      }
-                    }
-                  }
-                  if (loaded > 0) {
-                    logBoot(`loaded ${loaded} achievement summaries into store`);
-                  }
+                const { achievementStore } = await import("./achievementStore");
+                const { getAllAchievementSummaries } = await import("./tauri");
+                // Load ALL summaries from SQLite in a single query — no limit
+                const rows = await getAllAchievementSummaries();
+                let loaded = 0;
+                for (const row of rows) {
+                  if (!row.appId) continue;
+                  const summary = {
+                    appId: row.appId,
+                    total: row.total,
+                    unlocked: row.unlocked,
+                    progressAvailable: row.progressAvailable ?? (row.total > 0),
+                    achievements: [],
+                    newlyUnlocked: [],
+                    source: row.source || "steam-official",
+                    updatedAt: row.updatedAt,
+                  };
+                  // Use platform from SQLite; infer from source when missing
+                  const platform = row.platform || (row.source === "crack" ? "steam" : "steam-official");
+                  achievementStore.setSummary(row.appId, summary as any, platform, { skipUnlockDetection: true });
+                  loaded++;
+                }
+                if (loaded > 0) {
+                  logBoot(`loaded ${loaded} achievement summaries into store (all from SQLite)`);
                 }
               }
             } catch (err) {

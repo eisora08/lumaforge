@@ -217,7 +217,7 @@ class AchievementAutoSyncService {
         achievements,
         updatedAt: diskUpdatedAt,
       } as GameAchievementsSummary;
-      achievementStore.setSummary(appId, summary, this.watchers.get(appId)?.params.platform);
+      achievementStore.setSummary(appId, summary, this.watchers.get(appId)?.params.platform ?? (cached.summary.source === "crack" ? "steam" : "steam-official"));
       console.log(`[ACH][SUMMARY_APPLY] appid=${appId} unlocked=${newUnlocked}/${newTotal} reason=session-stop-local-cache`);
       // Phase 4: Persist to disk cache immediately — pass platform to avoid cross-directory write
       const watchPlatform = this.watchers.get(appId)?.params.platform;

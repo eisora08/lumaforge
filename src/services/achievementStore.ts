@@ -86,6 +86,8 @@ export type ProgressPatch = {
   nameMap?: Map<string, string>;
   /** When true, patch comes from binary-stats (authoritative). Replace per-achievement states directly — no OR merge. */
   authoritative?: boolean;
+  /** Explicit source override (e.g. "crack" from processCrackIniChange). When set, used instead of inferring from authoritative. */
+  source?: GameAchievementsSummary["source"];
 };
 
 export type ProgressChangeEvent = {
@@ -537,12 +539,12 @@ class AchievementStoreImpl {
       unlocked: newUnlockedCount,
       percent,
       progressAvailable: true,
-      source: patch.authoritative ? "binary-stats" : "librarycache",
+      source: patch.source ?? (patch.authoritative ? "binary-stats" : "librarycache"),
       achievements: mergedAchievements,
       updatedAt: Date.now(),
     };
 
-    const patchSource = patch.authoritative ? "binary-stats" : "librarycache";
+    const patchSource = patch.source ?? (patch.authoritative ? "binary-stats" : "librarycache");
     const oldUnlocked = `${prevUnlocked}/${current.total}`;
     const newUnlocked = `${newUnlockedCount}/${total}`;
     let accepted = isSourceNewerOrEqual(patchSource, Date.now(), current.source, current.updatedAt);
@@ -794,6 +796,8 @@ class AchievementStoreImpl {
         await Promise.all([
           upsertAchievementSummary({
             appId,
+            source: summary.source || "librarycache",
+            platform: effectivePlatform,
             unlocked: finalUnlocked,
             total: summary.total,
             inProgress: finalUnlocked,

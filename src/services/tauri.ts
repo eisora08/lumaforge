@@ -2776,6 +2776,7 @@ export type AchievementSummaryRow = {
   percent?: number;
   progressAvailable?: boolean;
   source?: string;
+  platform?: string;
   inProgress?: number;
   completionTime?: number | null;
   lastUnlockAt?: number | null;
@@ -2801,6 +2802,30 @@ export async function getAchievementSummaryFromDb(appId: string): Promise<Achiev
 export async function batchGetAchievementSummaries(appIds: string[]): Promise<AchievementSummaryRow[]> {
   try {
     return await invoke<AchievementSummaryRow[]>("batch_get_achievement_summaries", { appIds });
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllAchievementSummaries(): Promise<AchievementSummaryRow[]> {
+  try {
+    return await invoke<AchievementSummaryRow[]>("get_all_achievement_summaries");
+  } catch {
+    return [];
+  }
+}
+
+export type FolderAchievementSummary = {
+  appId: string;
+  source: string;
+  total: number;
+  unlocked: number;
+  percent: number;
+};
+
+export async function scanAchievementFolders(): Promise<FolderAchievementSummary[]> {
+  try {
+    return await invoke<FolderAchievementSummary[]>("scan_achievement_folders");
   } catch {
     return [];
   }

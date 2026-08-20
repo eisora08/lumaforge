@@ -18,6 +18,17 @@ pub struct AchievementSummaryRow {
     pub completion_time: Option<i64>,
     pub last_unlock_at: Option<i64>,
     pub updated_at: i64,
+    #[serde(default = "default_source")]
+    pub source: String,
+    #[serde(default = "default_platform")]
+    pub platform: String,
+}
+
+fn default_source() -> String {
+    "steam-official".to_string()
+}
+fn default_platform() -> String {
+    "steam-official".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,9 +53,10 @@ pub fn upsert_achievement_summary_inner(
 ) -> Result<(), String> {
     let conn = db.lock().unwrap();
     conn.execute(
-        "INSERT INTO achievement_summaries (app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(app_id) DO UPDATE SET
+        "INSERT INTO achievement_summaries (app_id, source, platform, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(app_id, platform) DO UPDATE SET
+            source = excluded.source,
             unlocked = excluded.unlocked,
             total = excluded.total,
             in_progress = excluded.in_progress,
@@ -53,6 +65,8 @@ pub fn upsert_achievement_summary_inner(
             updated_at = excluded.updated_at",
         rusqlite::params![
             row.app_id,
+            row.source,
+            row.platform,
             row.unlocked,
             row.total,
             row.in_progress,
@@ -71,7 +85,7 @@ pub fn get_achievement_summary_inner(
 ) -> Result<Option<AchievementSummaryRow>, String> {
     let conn = db.lock().unwrap();
     conn.query_row(
-        "SELECT app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at
+        "SELECT app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at, source, platform
          FROM achievement_summaries WHERE app_id = ?1",
         [app_id],
         |row| {
@@ -83,6 +97,8 @@ pub fn get_achievement_summary_inner(
                 completion_time: row.get(4)?,
                 last_unlock_at: row.get(5)?,
                 updated_at: row.get(6)?,
+                source: row.get::<_, Option<String>>(7)?.unwrap_or_else(default_source),
+                platform: row.get::<_, Option<String>>(8)?.unwrap_or_else(default_platform),
             })
         },
     )
@@ -112,7 +128,7 @@ fn get_achievement_summary_unlocked(
     app_id: &str,
 ) -> Result<Option<AchievementSummaryRow>, String> {
     conn.query_row(
-        "SELECT app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at
+        "SELECT app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at, source, platform
          FROM achievement_summaries WHERE app_id = ?1",
         [app_id],
         |row| {
@@ -124,11 +140,45 @@ fn get_achievement_summary_unlocked(
                 completion_time: row.get(4)?,
                 last_unlock_at: row.get(5)?,
                 updated_at: row.get(6)?,
+                source: row.get::<_, Option<String>>(7)?.unwrap_or_else(default_source),
+                platform: row.get::<_, Option<String>>(8)?.unwrap_or_else(default_platform),
             })
         },
     )
     .optional()
     .map_err(|e| format!("Failed to read achievement summary: {}", e))
+}
+
+pub fn get_all_achievement_summaries_inner(
+    db: &Mutex<Connection>,
+) -> Result<Vec<AchievementSummaryRow>, String> {
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT app_id, unlocked, total, in_progress, completion_time, last_unlock_at, updated_at, source, platform
+             FROM achievement_summaries ORDER BY app_id ASC",
+        )
+        .map_err(|e| format!("Failed to prepare get_all_achievement_summaries: {}", e))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(AchievementSummaryRow {
+                app_id: row.get(0)?,
+                unlocked: row.get(1)?,
+                total: row.get(2)?,
+                in_progress: row.get(3)?,
+                completion_time: row.get(4)?,
+                last_unlock_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                source: row.get::<_, Option<String>>(7)?.unwrap_or_else(default_source),
+                platform: row.get::<_, Option<String>>(8)?.unwrap_or_else(default_platform),
+            })
+        })
+        .map_err(|e| format!("Failed to query all achievement summaries: {}", e))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("Failed to map achievement row: {}", e))?);
+    }
+    Ok(out)
 }
 
 pub fn upsert_achievement_entry_inner(
@@ -394,4 +444,15 @@ pub fn get_achievement_percentages(
         return Ok(None);
     };
     get_achievement_percentages_inner(db, &app_id)
+}
+
+#[tauri::command]
+pub fn get_all_achievement_summaries(
+    state: tauri::State<'_, SqliteAchievementsDb>,
+) -> Result<Vec<AchievementSummaryRow>, String> {
+    let db = state.0.as_ref();
+    let Some(db) = db else {
+        return Ok(Vec::new());
+    };
+    get_all_achievement_summaries_inner(db)
 }
