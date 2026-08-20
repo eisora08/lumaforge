@@ -26,6 +26,7 @@ import {
   scheduleSnapshotWrite,
 } from "../services/startupSnapshotService";
 import type { SnapshotGame } from "../services/startupSnapshotService";
+import { isStandalone as isStandaloneById } from "../services/standaloneStore";
 import {
   refreshSingleGameSteamStatus,
 } from "../services/providerStatusReconciliation";
@@ -440,6 +441,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           existing.installDir === game.installDir &&
           !!existing.isPlayable === !!game.isPlayable &&
           !!existing.isFavorite === !!game.isFavorite &&
+          !!existing.isStandalone === !!game.isStandalone &&
           !!existing.hasLua === !!game.hasLua &&
           existing.luaScripts.length === game.luaScripts.length
         ) {
@@ -535,6 +537,10 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 continue;
               }
             }
+            // Propagate standalone flag from incoming — incoming reads from
+            // standaloneStore (localStorage), existing may be from the detection
+            // cache which doesn't persist this field.
+            if (game.isStandalone && !existing.isStandalone) existing.isStandalone = true;
           } else {
             // New game not in current list
             byAppId.set(game.appId, game);
@@ -565,6 +571,20 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
           game.steamInstalled = true;
           game.isInstallable = false;
         }
+      }
+    }
+    // Phase 10.5: Preserve standalone flag from current games
+    const currentMap = new Map<string, LibraryGame>();
+    for (const g of current) {
+      if (g.appId) currentMap.set(g.appId, g);
+    }
+    for (const game of deduped) {
+      if (game.appId) {
+        const existing = currentMap.get(game.appId);
+        if (existing?.isStandalone) game.isStandalone = true;
+        // Preserve user-set executable path — SQLite/scan never populates this
+        if (existing?.executablePath && !game.executablePath) game.executablePath = existing.executablePath;
+        if (existing?.installDir && !game.installDir) game.installDir = existing.installDir;
       }
     }
     return deduped;
@@ -659,6 +679,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
       isInstallable: !sg.playable,
       isInstalled: sg.installed ?? false,
       steamInstalled: sg.installed ?? false,
+      isStandalone: isStandaloneById(sg.appId),
       hasLua: sg.source === "lua",
       isLuaActive: sg.source === "lua",
       isLuaDisabled: false,
@@ -728,6 +749,16 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
               a.title.localeCompare(b.title)
             );
             console.debug(`[GAME_STORE] gamesUpdated count=${loadedGames.length} source=config-lua-reconcile added=${added.length}`);
+          }
+        }
+
+        // Hydrate isStandalone from localStorage — the SQLite cache serializes
+        // LibraryGame objects without this runtime-only flag, so cached/reconciled
+        // games lose standalone status across restarts until the next background
+        // scan rebuilds via isStandaloneById().
+        for (const game of loadedGames) {
+          if (game.appId && isStandaloneById(game.appId)) {
+            game.isStandalone = true;
           }
         }
 
@@ -1212,6 +1243,7 @@ export function LibraryGamesProvider({ children }: { children: React.ReactNode }
                 libGame.metadata = existing.metadata ?? libGame.metadata;
                 libGame.imageUrl = existing.imageUrl ?? libGame.imageUrl;
                 libGame.isFavorite = existing.isFavorite;
+                if (existing.isStandalone) libGame.isStandalone = true;
                 libGame.sizeOnDisk = existing.sizeOnDisk;
                 libGame.executablePath = existing.executablePath;
                 libGame.installDir = existing.installDir;

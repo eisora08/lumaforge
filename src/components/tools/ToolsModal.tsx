@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import {
   Wrench, Disc3, Package, Zap, CheckCircle2, Gamepad2, X, Loader2, AlertTriangle,
-  Copy, Check, ExternalLink,
+  Copy, Check, ExternalLink, Power,
 } from "lucide-react";
 
 import type { LibraryGame } from "../../types/libraryGame";
@@ -27,9 +27,15 @@ import {
   libraryUnfixGoldberg,
   libraryUnfixOnlineFix,
   libraryOpenSteamLaunchOptions,
+  seedGseSavesFolder,
 } from "../../services/tauri";
 import { setFixModalOpen } from "../fixes/FixProgressListener";
 import { useSettings } from "../../context/SettingsContext";
+import { useLibraryGames } from "../../context/LibraryGamesContext";
+import { showSuccess, showError } from "../toast/GameToast";
+import { setStandalone as persistStandalone } from "../../services/standaloneStore";
+import { updateConfigForCrack } from "../../services/achievementConfigService";
+import { achievementWatcherService } from "../../services/achievementWatcherService";
 
 // =============================================================================
 // Types
@@ -89,6 +95,7 @@ export interface ToolsModalProps {
 
 export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
   const { settings } = useSettings();
+  const { updateGame } = useLibraryGames();
   const transition = useSyncExternalStore(
     subscribeHeroTransition,
     getHeroTransitionSnapshot,
@@ -116,6 +123,7 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
   const busyRef = useRef(new Set<FixKind>());
   const [showOnlineFixModal, setShowOnlineFixModal] = useState(false);
   const [onlineFixCopied, setOnlineFixCopied] = useState(false);
+  const [standaloneBusy, setStandaloneBusy] = useState(false);
 
   // ── Escape closes ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -306,7 +314,12 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
       let result: GameFixResult | null = null;
       if (kind === "smokeApi") result = await libraryApplySmokeApi({ appId, name: game.title, installDir });
       else if (kind === "steamless") result = await libraryApplySteamless({ appId, name: game.title, installDir });
-      else if (kind === "goldberg") result = await libraryApplyGoldberg({ appId, name: game.title, installDir, steamWebApiKey: settings.steamWebApiKey || "" });
+      else if (kind === "goldberg") {
+        result = await libraryApplyGoldberg({ appId, name: game.title, installDir, steamWebApiKey: settings.steamWebApiKey || "" });
+        if (result?.ok) {
+          try { await seedGseSavesFolder(String(appId)); } catch { /* non-critical */ }
+        }
+      }
       else result = await libraryApplyOnlineFix({ appId, name: game.title, installDir });
       markCompleted(kind, result);
     } catch (err) {
@@ -339,6 +352,64 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
       await refreshNativeState();
     }
   }, [game, nativeAppId, markBusy, markCompleted, refreshNativeState]);
+
+  // ── Standalone mode toggle ──────────────────────────────────────────────────
+  const canToggleStandalone = !!nativeInstallStatus?.goldbergInstalled && !!nativeInstallStatus?.steamlessInstalled;
+  const isStandalone = !!game?.isStandalone;
+
+  const handleToggleStandalone = useCallback(async () => {
+    if (!game?.appId || !game?.installDir || standaloneBusy) return;
+    setStandaloneBusy(true);
+    try {
+      if (isStandalone) {
+        // Deactivate: remove fixes + clear persistence
+        if (applied.goldberg) await libraryUnfixGoldberg(nativeAppId!, game.installDir);
+        if (applied.steamless) await libraryUnfixSteamless(nativeAppId!, game.installDir);
+        persistStandalone(game.appId, false);
+        localStorage.removeItem(`lumaforge-ach-platform-${game.appId}`);
+        updateGame(game.appId, { isStandalone: false, executablePath: undefined });
+        showSuccess(`${game.title} — Modo standalone desactivado`);
+      } else {
+        // Activate: apply Goldberg + Steamless + seed GSE Saves
+        if (!applied.goldberg) {
+          await libraryApplyGoldberg({ appId: nativeAppId!, name: game.title, installDir: game.installDir, steamWebApiKey: settings.steamWebApiKey || "" });
+        }
+        // Seed GSE Saves folder so Goldberg has a place to write achievements.json
+        let gseSavesPath = "";
+        try { gseSavesPath = await seedGseSavesFolder(game.appId); } catch { /* non-critical */ }
+        if (!applied.steamless && nativeInfo?.hasSteamStubDrm) {
+          await libraryApplySteamless({ appId: nativeAppId!, name: game.title, installDir: game.installDir });
+        }
+        // 1. Persist standalone to localStorage (survives restart)
+        persistStandalone(game.appId, true);
+        // 2. Switch achievement dropdown to "Crack Saves" immediately
+        localStorage.setItem(`lumaforge-ach-platform-${game.appId}`, "steam");
+        // 3. Write achievement config pointing to GSE Saves (for watcher on next restart)
+        if (gseSavesPath) {
+          try { await updateConfigForCrack(game.appId, gseSavesPath, game.title); } catch { /* non-critical */ }
+        }
+        // 4. Set watcher platform for current session
+        achievementWatcherService.setPlatform(game.appId, "steam");
+        // 5. Trigger schema creation (names/icons/descriptions) immediately
+        achievementWatcherService.triggerSchemaCreation(game.appId).catch(() => {});
+        // 6. Restart Rust watcher so it picks up the new GSE Saves/<appId>/ dir
+        achievementWatcherService.restartWatching().catch(() => {});
+        // 5. Update React state
+        updateGame(game.appId, {
+          isStandalone: true,
+          isPlayable: true,
+          executablePath: nativeInfo?.exeName ?? game.executablePath,
+          installDir: nativeInfo?.installPath ?? game.installDir,
+        });
+        showSuccess(`${game.title} — Modo standalone activado`);
+      }
+    } catch (err) {
+      showError(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setStandaloneBusy(false);
+      await refreshNativeState();
+    }
+  }, [game, nativeAppId, isStandalone, standaloneBusy, applied, nativeInfo, updateGame, refreshNativeState, settings.steamWebApiKey]);
 
   if (!open) return null;
 
@@ -628,6 +699,47 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
           ) : (
             <div className="space-y-5">
               {buildRows()}
+
+              {/* Standalone Mode toggle */}
+              <div className={`${GLASS_ROW} ${isStandalone ? "border-emerald-500/30" : "border-white/10"}`}>
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-colors duration-300 ${
+                  isStandalone ? "bg-emerald-500/15 text-emerald-400" : "bg-(--color-accent)/15 text-(--color-accent)"
+                }`}>
+                  <Power className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-white">Modo Standalone</span>
+                    {isStandalone && !standaloneBusy && (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 lf-fix-check-pop" />
+                    )}
+                    {standaloneBusy && (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-(--color-accent)" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-white/40 mt-0.5">
+                    Juega sin Steam — crea esquema de logros con Goldberg + Steamless
+                  </p>
+                  {!canToggleStandalone && !isStandalone && (
+                    <p className="mt-0.5 text-xs text-amber-400/80">
+                      Instalá Goldberg y Steamless en Configuración &gt; Third Party Tools
+                    </p>
+                  )}
+                </div>
+                {!standaloneBusy && (
+                  <button
+                    type="button"
+                    disabled={!canToggleStandalone}
+                    onClick={handleToggleStandalone}
+                    className={`${isStandalone
+                      ? `${GLASS_BUTTON} border-red-500/40 text-red-400 hover:bg-red-500/20`
+                      : `${GLASS_BUTTON} border-(--color-accent)/50 bg-(--color-accent)/20 text-(--color-accent-text) hover:bg-(--color-accent)/30`
+                    }`}
+                  >
+                    {isStandalone ? "Desactivar" : "Activar"}
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

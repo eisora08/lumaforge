@@ -358,6 +358,7 @@ export default function LibraryGameDetails({
     if (!appIdStr) return "steam-official";
     const saved = localStorage.getItem(`lumaforge-ach-platform-${appIdStr}`) as "steam-official" | "steam" | null;
     if (saved) return saved;
+    if (game?.isStandalone) return "steam";
     if (game?.source === "debrid" || game?.source === "manual") return "steam";
     // Sync heuristic: if installDir contains a known crack folder name, treat as crack
     const dir = (game?.installDir ?? "").toLowerCase();
@@ -387,9 +388,12 @@ export default function LibraryGameDetails({
         const hasCrack = !!result?.savePath;
         setHasCrackSave(hasCrack);
         if (saved) {
-          // achSource is already correct from the lazy initializer — no setAchSource needed
+          // Always apply from localStorage — the lazy initializer may have run before
+          // standalone was activated, leaving achSource as "steam-official" while
+          // handleToggleStandalone already wrote "steam" to localStorage.
+          setAchSource(saved);
           console.log(`[ACH][PLATFORM_SELECT] appid=${appIdStr} loaded from localStorage=${saved} hasCrack=${hasCrack}`);
-        } else if (hasCrack || game?.source === "debrid" || game?.source === "manual") {
+        } else if (game?.isStandalone || hasCrack || game?.source === "debrid" || game?.source === "manual") {
           setAchSource("steam");
           console.log(`[ACH][SOURCE_DETECT] appid=${appIdStr} source=${game?.source} detected crack=${hasCrack} save=${result?.savePath} type=${result?.crackType}`);
         } else {
@@ -398,7 +402,7 @@ export default function LibraryGameDetails({
       }).catch(() => { setCrackDetectDone(true); });
     }).catch(() => { setCrackDetectDone(true); });
     return () => { cancelled = true; };
-  }, [appIdStr, game?.installDir]);
+  }, [appIdStr, game?.installDir, game?.isStandalone]);
 
   // Re-resolve achievements when source changes — always re-resolve, even without summary
   const achSourceRef = useRef<string | null>(achSource); // initialized with achSource → only fires on actual platform switch

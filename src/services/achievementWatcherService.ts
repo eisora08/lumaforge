@@ -302,6 +302,32 @@ class AchievementWatcherService {
     this._platformByAppId.delete(appId);
   }
 
+  /**
+   * Trigger schema creation + resolver refresh for a single appId.
+   * Used by Standalone Mode activation to create the achievement schema
+   * immediately instead of waiting for a watcher file-change event.
+   */
+  async triggerSchemaCreation(appId: string): Promise<void> {
+    const traceId = nextTraceId();
+    console.log(`[ACH][STANDALONE] triggerSchemaCreation appid=${appId} traceId=${traceId}`);
+    // Force-clear any pending flag so _scheduleResolverRefresh doesn't skip us
+    this._pendingResolverAppIds.delete(appId);
+    await this._scheduleResolverRefresh(appId, traceId);
+  }
+
+  /**
+   * Restart the Rust file watcher to pick up newly-created crack save directories.
+   * Called after standalone activation when seedGseSavesFolder creates
+   * GSE Saves/<appId>/ which didn't exist at the original boot-time scan.
+   */
+  async restartWatching(): Promise<void> {
+    if (!this._steamPath || !this._steamAccountId) return;
+    console.log("[ACH][WATCHER] restartWatching — re-scanning crack save dirs");
+    this._alreadyStartedOnce = false;
+    this._startingInProgress = false;
+    await this.start(this._steamPath, this._steamAccountId, this._steamWebApiKey || undefined);
+  }
+
   get started(): boolean {
     return this._started;
   }
@@ -446,9 +472,16 @@ class AchievementWatcherService {
           if (source === "crack-ini" || source === "crack-json") {
             const savePath = save_path || undefined;
             console.log(`[ACH][PIPELINE] ${source}_detected appid=${appIdStr} savePath=${savePath ?? "unknown"}`);
-            this.processCrackIniChange(appIdStr, savePath, traceId).catch((err) => {
-              console.warn(`[ACH][PIPELINE] ${source}_error appid=${appIdStr} reason=${err}`);
-            });
+            this.processCrackIniChange(appIdStr, savePath, traceId)
+              .then(() => {
+                // Ensure achievement schema exists — creates achievements/schema/steam/<appId>/
+                // via Steam Web API when missing. This is the first time Goldberg/GSE/RUNE
+                // achievements are detected, so the schema likely doesn't exist yet.
+                this._scheduleResolverRefresh(appIdStr, traceId);
+              })
+              .catch((err) => {
+                console.warn(`[ACH][PIPELINE] ${source}_error appid=${appIdStr} reason=${err}`);
+              });
             if (lastFingerprints.has(path)) {
               lastFingerprints.set(path, { fingerprint: fp, processed: true });
             }
@@ -985,50 +1018,49 @@ class AchievementWatcherService {
 
       console.log(`[ACH][CRACK_INI] appid=${appId} parsed ${crackData.unlocked}/${crackData.total} source=${crackData.source} traceId=${traceId}`);
 
-      // Tenoke user_stats.ini only lists unlocked achievements with raw API names.
-      // Enrich with cached schema (names, icons) so the summary shows display names.
-      if (crackData.source === "tenoke-user-stats") {
-        try {
-          const cached = await readAchievementCacheWithFallback(Number(appId));
-          if (cached?.achievements?.length) {
-            const schemaMap = new Map(cached.achievements.map((a) => [a.api_name, a]));
-            const enrichNorm = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
-            const schemaNormMap = new Map([...schemaMap.entries()].map(([k, v]) => [enrichNorm(k), v]));
-            for (const ach of crackData.achievements) {
-              const schema = schemaMap.get(ach.apiName) ?? schemaNormMap.get(enrichNorm(ach.apiName));
-              if (schema) {
-                ach.name = schema.name || ach.name;
-                ach.iconUrl = schema.icon || ach.iconUrl;
-                ach.iconGrayUrl = schema.icon_gray || ach.iconGrayUrl;
-              }
-            }
-            // Rebuild from schema when it has more entries than crack data
-            if (schemaMap.size > crackData.achievements.length) {
-              const crackUnlockMap = new Map(crackData.achievements.map((a) => [a.apiName, { unlocked: a.unlocked, unlockTime: a.unlockTime }]));
-              const crackNormMap = new Map<string, string>();
-              for (const name of crackUnlockMap.keys()) { crackNormMap.set(enrichNorm(name), name); }
-              const fullAchievements: typeof crackData.achievements = [];
-              for (const [apiName, schema] of schemaMap.entries()) {
-                let crackState = crackUnlockMap.get(apiName);
-                if (!crackState) { const nk = crackNormMap.get(enrichNorm(apiName)); if (nk) crackState = crackUnlockMap.get(nk); }
-                fullAchievements.push({
-                  id: apiName, apiName,
-                  name: schema.name || apiName,
-                  description: schema.description,
-                  iconUrl: schema.icon, iconGrayUrl: schema.icon_gray,
-                  unlocked: crackState?.unlocked ?? false,
-                  unlockTime: crackState?.unlockTime,
-                });
-              }
-              crackData.achievements = fullAchievements;
-              crackData.total = schemaMap.size;
-              crackData.unlocked = fullAchievements.filter((a) => a.unlocked).length;
-              console.log(`[ACH][CRACK_INI] appid=${appId} enriched from schema: total=${crackData.total} unlocked=${crackData.unlocked} traceId=${traceId}`);
+      // Enrich all crack sources with cached schema (names, icons, descriptions).
+      // Previously only Tenoke was enriched — GSE/RUNE/CODEX/OnlineFix achievements
+      // showed raw API names because the schema wasn't applied to their data.
+      try {
+        const cached = await readAchievementCacheWithFallback(Number(appId));
+        if (cached?.achievements?.length) {
+          const schemaMap = new Map(cached.achievements.map((a) => [a.api_name, a]));
+          const enrichNorm = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, "");
+          const schemaNormMap = new Map([...schemaMap.entries()].map(([k, v]) => [enrichNorm(k), v]));
+          for (const ach of crackData.achievements) {
+            const schema = schemaMap.get(ach.apiName) ?? schemaNormMap.get(enrichNorm(ach.apiName));
+            if (schema) {
+              ach.name = schema.name || ach.name;
+              ach.iconUrl = schema.icon || ach.iconUrl;
+              ach.iconGrayUrl = schema.icon_gray || ach.iconGrayUrl;
             }
           }
-        } catch (e) {
-          console.warn(`[ACH][CRACK_INI] appid=${appId} schema enrich failed: ${e} traceId=${traceId}`);
+          // Rebuild from schema when it has more entries than crack data
+          if (schemaMap.size > crackData.achievements.length) {
+            const crackUnlockMap = new Map(crackData.achievements.map((a) => [a.apiName, { unlocked: a.unlocked, unlockTime: a.unlockTime }]));
+            const crackNormMap = new Map<string, string>();
+            for (const name of crackUnlockMap.keys()) { crackNormMap.set(enrichNorm(name), name); }
+            const fullAchievements: typeof crackData.achievements = [];
+            for (const [apiName, schema] of schemaMap.entries()) {
+              let crackState = crackUnlockMap.get(apiName);
+              if (!crackState) { const nk = crackNormMap.get(enrichNorm(apiName)); if (nk) crackState = crackUnlockMap.get(nk); }
+              fullAchievements.push({
+                id: apiName, apiName,
+                name: schema.name || apiName,
+                description: schema.description,
+                iconUrl: schema.icon, iconGrayUrl: schema.icon_gray,
+                unlocked: crackState?.unlocked ?? false,
+                unlockTime: crackState?.unlockTime,
+              });
+            }
+            crackData.achievements = fullAchievements;
+            crackData.total = schemaMap.size;
+            crackData.unlocked = fullAchievements.filter((a) => a.unlocked).length;
+            console.log(`[ACH][CRACK_INI] appid=${appId} enriched from schema: total=${crackData.total} unlocked=${crackData.unlocked} traceId=${traceId}`);
+          }
         }
+      } catch (e) {
+        console.warn(`[ACH][CRACK_INI] appid=${appId} schema enrich failed: ${e} traceId=${traceId}`);
       }
 
       // Build ProgressPatch from crack data
