@@ -52,6 +52,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const { favoriteIds } = useFavorites();
   const [consoleSettings, patchConsoleSettings] = useConsoleSettings();
   const [detailGame, setDetailGame] = useState<LibraryGame | null>(null);
+  const [railContext, setRailContext] = useState<{ games: LibraryGame[]; currentIndex: number } | null>(null);
   const [optionsGame, setOptionsGame] = useState<LibraryGame | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -143,14 +144,35 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     onNavigate?.("home");
   }, [onNavigate]);
 
+  const findRailContext = useCallback((game: LibraryGame): { games: LibraryGame[]; currentIndex: number } | null => {
+    const id = game.appId || game.id;
+    for (const rail of rails) {
+      const idx = rail.findIndex((g) => (g.appId || g.id) === id);
+      if (idx >= 0) return { games: rail, currentIndex: idx };
+    }
+    return null;
+  }, [rails]);
+
+  const handleNavigateRail = useCallback((direction: "next" | "prev") => {
+    setRailContext((prev) => {
+      if (!prev) return prev;
+      const idx = direction === "next" ? prev.currentIndex + 1 : prev.currentIndex - 1;
+      if (idx < 0 || idx >= prev.games.length) return prev;
+      const nextGame = prev.games[idx];
+      setDetailGame(nextGame);
+      return { ...prev, currentIndex: idx };
+    });
+  }, []);
+
   const handleSelectGame = useCallback((game: LibraryGame) => {
     if (game) {
       if (DEBUG_CONSOLE_MODE) {
         console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId ?? "manual"} title=${game.title}`);
       }
+      setRailContext(findRailContext(game));
       setDetailGame(game);
     }
-  }, []);
+  }, [findRailContext]);
 
   const handleOptionsGame = useCallback((game: LibraryGame) => {
     if (DEBUG_CONSOLE_MODE) {
@@ -164,24 +186,27 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (DEBUG_CONSOLE_MODE) {
         console.log(`[CONSOLE][OPTIONS_VIEW_DETAILS] appid=${optionsGame.appId}`);
       }
+      setRailContext(findRailContext(optionsGame));
       setDetailGame(optionsGame);
       setOptionsGame(null);
     }
-  }, [optionsGame]);
+  }, [optionsGame, findRailContext]);
 
   const handleSearchGame = useCallback((game: LibraryGame) => {
     if (DEBUG_CONSOLE_MODE) {
       console.log(`[CONSOLE][SEARCH_SELECT] appid=${game.appId} title=${game.title}`);
     }
+    setRailContext(findRailContext(game));
     setDetailGame(game);
     setSearchOpen(false);
-  }, []);
+  }, [findRailContext]);
 
   const closeDetails = useCallback(() => {
     if (DEBUG_CONSOLE_MODE) {
       console.log(`[CONSOLE][DETAILS_CLOSE]`);
     }
     setDetailGame(null);
+    setRailContext(null);
   }, []);
 
   const handleConsolePlay = useCallback(async (game: LibraryGame) => {
@@ -250,6 +275,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
       if (DEBUG_CONSOLE_MODE) {
         console.log(`[CONSOLE][SELECT_GAME] appid=${game.appId} title=${game.title}`);
       }
+      setRailContext({ games: rails[railIndex], currentIndex: cardIndex });
       setDetailGame(game);
     }
   }, [rails]);
@@ -722,6 +748,9 @@ export default function ConsoleModePage({ onNavigate }: Props) {
           onProfileOpen={() => { setProfileOpen(true); }}
           gamepadDisabled={searchOpen}
           quickMenuOpen={profileOpen}
+          railGames={railContext?.games}
+          railIndex={railContext?.currentIndex}
+          onNavigateRail={handleNavigateRail}
         />
       )}
 

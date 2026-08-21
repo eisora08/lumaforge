@@ -560,14 +560,18 @@ html {
 /* Ken Burns mode for single-image heroes: continuous slow zoom + mount fade-in */
 .animate-hero-kenburns-in {
   animation:
-    heroKenburns 25s ease-in-out infinite alternate,
+    heroKenburns 14s ease-in-out infinite alternate,
     heroCrossfadeIn 600ms ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-hero-crossfade-in,
   .animate-hero-media-out,
-  .animate-hero-kenburns-in {
+  .animate-hero-kenburns-in,
+  .animate-hero-focus-in,
+  .animate-hero-blur-in,
+  .animate-hero-sharp-in,
+  .animate-hero-entrance {
     animation: none !important;
   }
 }
@@ -698,12 +702,12 @@ html {
     transform-origin: center;
   }
   100% {
-    transform: scale(1.06) translate(-1%, 0.5%);
+    transform: scale(1.09) translate(-1.5%, 0.8%);
     transform-origin: center;
   }
 }
 .animate-hero-kenburns {
-  animation: heroKenburns 25s ease-in-out infinite alternate;
+  animation: heroKenburns 14s ease-in-out infinite alternate;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1756,13 +1760,13 @@ html[data-compact="true"] .lf-launch-bar {
     transform-origin: center;
   }
   100% {
-    transform: scale(1.06) translate(-1%, 0.5%);
+    transform: scale(1.09) translate(-1.5%, 0.8%);
     transform-origin: center;
   }
 }
 
 .spotlight-hero-motion {
-  animation: spotlight-hero-kenburns 25s ease-in-out infinite alternate;
+  animation: spotlight-hero-kenburns 14s ease-in-out infinite alternate;
 }
 
 @media (prefers-reduced-motion: reduce) {
