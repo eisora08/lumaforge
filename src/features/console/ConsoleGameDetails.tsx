@@ -1073,7 +1073,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             <div className="flex items-start gap-3 lg:gap-5">
               <div className="relative h-[clamp(80px,10vw,160px)] w-[clamp(70px,8vw,120px)] shrink-0 overflow-hidden rounded-2xl bg-black/10 ring-1 ring-white/10">
                 {coverSrc ? (
-                  <img src={coverSrc} alt="" className="h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  <img src={coverSrc} alt="" className="absolute inset-0 h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                 ) : (
                   <div className="flex h-full w-[100px] items-center justify-center bg-white/5">
                     <Gamepad2 className="h-8 w-8 text-white/20 lg:h-10 lg:w-10" />

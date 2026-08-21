@@ -604,14 +604,16 @@ export default function ConsoleSelectedPreview({
     if (mediaKey === prevMediaKey.current) return;
     prevMediaKey.current = mediaKey;
 
-    if (detailsMode && autoplay && !screenshotActive && playType === "direct" && videoSrc && videoRef.current && !videoError) {
-      const v = videoRef.current;
-      v.currentTime = 0;
-      // If video already has data, play immediately; otherwise queue for handleLoadedMetadata
-      if (v.readyState >= 2) {
-        v.play().catch(() => {});
-      } else {
-        autoplayQueuedRef.current = true;
+    if (detailsMode && autoplay && !screenshotActive && playType === "direct" && videoSrc && !videoError) {
+      // Always queue — handleLoadedMetadata picks it up when the <video> mounts
+      autoplayQueuedRef.current = true;
+      if (videoRef.current) {
+        const v = videoRef.current;
+        v.currentTime = 0;
+        if (v.readyState >= 2) {
+          v.play().catch(() => {});
+          autoplayQueuedRef.current = false;
+        }
       }
     }
   }, [mediaKey, detailsMode, autoplay, screenshotActive, playType, videoSrc, videoError]);
@@ -710,7 +712,6 @@ export default function ConsoleSelectedPreview({
           ref={videoRef}
           data-console-preview-video={game.appId}
           key={`${game.appId}-${mediaIdentityKey ?? trailerData?.playableUrl ?? "none"}`}
-          muted
           playsInline
           preload="metadata"
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${
