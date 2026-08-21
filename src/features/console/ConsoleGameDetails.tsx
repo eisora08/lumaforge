@@ -185,6 +185,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   const [installModalOpen, setInstallModalOpen] = useState(false);
   const [playHovered, setPlayHovered] = useState(false);
   const [playPulse, setPlayPulse] = useState(false);
+  const [previewHovered, setPreviewHovered] = useState(false);
   const playPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const installModalClosedAtRef = useRef(0);
   const BOUNCE_GUARD_MS = 400;
@@ -199,7 +200,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   }, []);
 
   /* ── Video mute state (controlled from actions zone secondary buttons) ── */
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(true);
   const toggleVideoMute = useCallback(() => {
     const video = document.querySelector<HTMLVideoElement>(
       `[data-console-preview-video="${game?.appId}"]`
@@ -1058,7 +1059,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
               className="max-h-[clamp(100px,10vw,160px)] w-auto object-contain drop-shadow-[0_8px_30px_rgba(0,0,0,0.8)]"
             />
           ) : (
-            <h1 className="text-4xl font-black leading-tight text-white drop-shadow-2xl lg:text-5xl">{game.title}</h1>
+            <h1 className="flex h-[clamp(80px,10vw,140px)] items-center text-4xl font-black leading-tight text-white drop-shadow-2xl lg:text-5xl">{game.title}</h1>
           )}
         </div>
 
@@ -1302,6 +1303,8 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
               className={`relative aspect-video w-full overflow-hidden rounded-2xl ${surfaceBg} ring-1 ring-white/[0.08] shadow-2xl shadow-black/50 outline-none ${zoneFocusClass("media-preview")}`}
               data-focus-zone="media-preview"
               onClick={() => setFocusZone("media-preview")}
+              onMouseEnter={() => setPreviewHovered(true)}
+              onMouseLeave={() => setPreviewHovered(false)}
               tabIndex={-1}
               onFocus={() => setFocusZone("media-preview")}
             >
@@ -1313,6 +1316,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 screenshotOverrideUrl={screenshotOverrideUrl}
                 mode={playerMode}
                 autoplay
+                showVideo={previewHovered || actionsBrowsingMedia || isRunning}
                 mediaIdentityKey={mediaIdentityKey}
               />
             </div>

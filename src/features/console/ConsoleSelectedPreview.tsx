@@ -20,6 +20,9 @@ type Props = {
   /** Autoplay trailer when entering details mode (default false).
    *  Only applies to direct mp4/webm — HLS/DASH always require user click. */
   autoplay?: boolean;
+  /** When false, video layer + play button + controls are hidden — shows static artwork only.
+   *  Set true on hover or when actively playing. */
+  showVideo?: boolean;
   /** Forces display to fallback artwork (hero/landscape) regardless of
    *  trailer availability. Used by ConsoleGridLayout's delayed trailer
    *  behavior: show artwork first, switch to trailer after 3s. */
@@ -76,7 +79,7 @@ function formatTime(seconds: number): string {
  */
 export default function ConsoleSelectedPreview({
   game, showTrailerPreview = true, trailerData, screenshotOverrideUrl,
-  mode = "thumbnail", autoplay = false, mediaIdentityKey,
+  mode = "thumbnail", autoplay = false, showVideo = true, mediaIdentityKey,
   showArtworkFirst = false, thumbnailAutoplaySrc,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -480,6 +483,17 @@ export default function ConsoleSelectedPreview({
     };
   }, [detailsMode, videoSrc, playType, game?.appId]);
 
+  // Re-setup HLS when video element mounts (showVideo flip or deferred mount)
+  useEffect(() => {
+    if (!showVideo || !detailsMode || playType !== "hls" || !videoSrc) return;
+    const video = videoRef.current;
+    if (!video) return;
+    setVideoError(false);
+    setIsLoading(true);
+    initHls(video, videoSrc);
+    return () => { destroyHls(); };
+  }, [showVideo, detailsMode, playType, videoSrc, game?.appId]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -541,7 +555,11 @@ export default function ConsoleSelectedPreview({
     if (video) setDuration(video.duration);
     if (autoplayQueuedRef.current && videoRef.current) {
       autoplayQueuedRef.current = false;
-      videoRef.current.play().catch(() => {});
+      const v = videoRef.current;
+      v.muted = true;
+      v.play().then(() => {
+        v.addEventListener("playing", () => { v.muted = false; }, { once: true });
+      }).catch(() => {});
     }
   }, []);
 
@@ -609,9 +627,12 @@ export default function ConsoleSelectedPreview({
       autoplayQueuedRef.current = true;
       if (videoRef.current) {
         const v = videoRef.current;
+        v.muted = true;
         v.currentTime = 0;
         if (v.readyState >= 2) {
-          v.play().catch(() => {});
+          v.play().then(() => {
+            v.addEventListener("playing", () => { v.muted = false; }, { once: true });
+          }).catch(() => {});
           autoplayQueuedRef.current = false;
         }
       }
@@ -651,8 +672,8 @@ export default function ConsoleSelectedPreview({
 
   const playBtnSize = "h-14 w-14";
   const playIconSize = "h-6 w-6";
-  const showControlsBar = detailsMode && hasVideo && !videoError && !screenshotActive && (showControls || isPlaying);
-  const showCenterPlay = isTrailer && displaySrc && !imgError && !screenshotActive;
+  const showControlsBar = showVideo && detailsMode && hasVideo && !videoError && !screenshotActive && (showControls || isPlaying);
+  const showCenterPlay = showVideo && isTrailer && displaySrc && !imgError && !screenshotActive;
 
   return (
     <div
@@ -706,12 +727,14 @@ export default function ConsoleSelectedPreview({
         />
       )}
 
-      {/* ── Video layer ── */}
-      {detailsMode && hasVideo && !videoError && !screenshotActive && (
+      {/* ── Video layer (hidden unless showVideo) ── */}
+      {showVideo && detailsMode && hasVideo && !videoError && !screenshotActive && (
         <video
           ref={videoRef}
           data-console-preview-video={game.appId}
           key={`${game.appId}-${mediaIdentityKey ?? trailerData?.playableUrl ?? "none"}`}
+          src={playType === "direct" && videoSrc ? videoSrc : undefined}
+          muted
           playsInline
           preload="metadata"
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${
