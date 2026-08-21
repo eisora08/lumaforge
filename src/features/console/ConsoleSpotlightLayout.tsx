@@ -6,7 +6,7 @@ import { useFavorites } from "../../context/FavoritesContext";
 import { getConsoleHeroBackground } from "./consoleMedia";
 import { getFavoriteKey } from "../../services/gameCacheService";
 import { getPlaytimeSecondsForAppId, getPlaytimeSecondsByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
-import { getGameAchievementSummary } from "./consoleGameStats";
+import { getGameAchievementSummary, getGameLastPlayedTimestamp } from "./consoleGameStats";
 import type { ConsoleSettings } from "./consoleSettings";
 import ConsoleHomeRail from "./ConsoleHomeRail";
 import ConsoleTopHud from "./ConsoleTopHud";
@@ -102,7 +102,7 @@ export default function ConsoleSpotlightLayout({
 
   const lastPlayedStr = useMemo(() => {
     if (!focusedGame) return null;
-    const ts = focusedGame.localLastPlayedAt ?? focusedGame.steamLastPlayedAt;
+    const ts = getGameLastPlayedTimestamp(focusedGame);
     return ts ? formatRelativeTime(ts) : null;
   }, [focusedGame]);
 
