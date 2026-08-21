@@ -984,236 +984,230 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
         {/* ── Content ── */}
-        <div className="relative z-10 flex h-full w-full gap-5 p-6">
+        <div className="relative z-10 flex h-full flex-col">
           {/* ════════════════════════════════════════
-             LEFT COLUMN — Mini card + actions + scrollable info
+             HERO — Full-width cover art with logo overlay
              ════════════════════════════════════════ */}
-          <div className="relative w-[35%] shrink-0 flex flex-col">
-            {/* ── Compact identity + actions + stats (zone: left-actions) ── */}
-            <div
-              tabIndex={-1}
-              onFocus={() => { setFocusZone("left-actions"); setLeftActionSubIndex(0); }}
-              className={`shrink-0 space-y-2.5 rounded-2xl px-3 pt-3 pb-2 outline-none ${zoneFocusClass("left-actions")}`}
-            >
-              {/* Mini card row: 120px cover + inline title/dev/badges */}
-              <div className="flex gap-3">
-                <div className="w-[120px] shrink-0 overflow-hidden rounded-2xl bg-(--color-surface)/60 shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
-                  {coverSrc ? (
-                    <img
-                      key={game.appId || game.id}
-                      src={coverSrc}
-                      alt={game.title}
-                      className="w-full object-cover"
-                      style={{ aspectRatio: "2/3" }}
-                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                    />
-                  ) : (
-                    <div
-                      className="flex w-full items-center justify-center bg-(--color-surface)/40"
-                      style={{ aspectRatio: "2/3" }}
-                    >
-                      <Gamepad2 className="h-8 w-8 text-(--color-muted)/30" />
-                    </div>
-                  )}
-                </div>
+          <div
+            className="relative shrink-0 overflow-hidden"
+            style={{ height: "clamp(220px, 36vh, 400px)" }}
+          >
+            {(heroSrc || coverSrc) ? (
+              <img
+                key={`hero-${game.appId || game.id}`}
+                src={heroSrc || coverSrc!}
+                alt=""
+                className={`h-full w-full object-cover ${consoleHeroClass}`}
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-(--color-surface)/20">
+                <Gamepad2 className="h-16 w-16 text-(--color-muted)/20" />
+              </div>
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
 
-                <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5">
-                  {logoSrc ? (
-                    <img
-                      src={logoSrc}
-                      alt={game.title}
-                      className="max-h-[28px] max-w-[180px] object-contain"
-                    />
-                  ) : (
-                    <h2 className="text-sm font-bold leading-tight text-(--color-text)">
-                      {game.title}
-                    </h2>
+            {/* Logo or Title overlay */}
+            <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-6 pb-5">
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                {logoSrc ? (
+                  <img
+                    src={logoSrc}
+                    alt={game.title}
+                    className="max-h-[64px] max-w-[320px] object-contain drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)]"
+                  />
+                ) : (
+                  <h2 className="text-2xl font-bold leading-tight text-white drop-shadow-lg">
+                    {game.title}
+                  </h2>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {developer && (
+                    <span className="text-xs text-white/60">{developer}</span>
                   )}
                   {releaseYear && (
-                    <p className="text-[11px] text-(--color-muted)">{releaseYear}</p>
+                    <span className="text-xs text-white/40">· {releaseYear}</span>
                   )}
-                  {developer && (
-                    <p className="truncate text-[11px] text-(--color-muted)" title={developer}>
-                      {developer}
-                    </p>
-                  )}
-                  {publisher && !developer && (
-                    <p className="truncate text-[11px] text-(--color-muted)" title={publisher}>
-                      {publisher}
-                    </p>
-                  )}
-
-                  {/* Badges */}
-                  <div className="flex flex-wrap gap-1">
-                    {game.steamInstalled && (
-                      <span className="rounded-md bg-emerald-500/80 px-1.5 py-0.5 text-[10px] font-medium text-black">
-                        Installed
-                      </span>
-                    )}
-                    {game.isLuaActive && (
-                      <span className="rounded-md bg-violet-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                        Lua
-                      </span>
-                    )}
-                    {isFav && (
-                      <span className="rounded-md bg-rose-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                        Favorite
-                      </span>
-                    )}
-                    {game.source === "debrid" && game.repacker && (
-                      <span className="rounded-md bg-cyan-500/80 px-1.5 py-0.5 text-[10px] font-medium text-black">
-                        {game.repacker.toUpperCase()}
-                      </span>
-                    )}
-                  </div>
                 </div>
               </div>
-
-              {/* Action row — large buttons */}
-              <div className="flex items-center gap-2.5">
-                {isRunning ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => { handleStop(); }}
-                      tabIndex={0}
-                      onFocus={() => setLeftActionSubIndex(0)}
-                      className={`inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 ${
-                        focusZone === "left-actions" && leftActionSubIndex === 0
-                          ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
-                          : ""
-                      }`}
-                    >
-                      <Square className="h-4 w-4 fill-current" />
-                      Stop
-                    </button>
-                    {gameSession?.pid != null && (
-                      <button
-                        type="button"
-                        onClick={() => { handleReturn(); }}
-                        tabIndex={0}
-                        onFocus={() => setLeftActionSubIndex(1)}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-(--color-surface)/40 ${
-                          focusZone === "left-actions" && leftActionSubIndex === 1
-                            ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
-                            : "border-(--color-border)/60"
-                        }`}
-                        title="Return to game"
-                      >
-                        <Play className="h-4 w-4" />
-                        Return
-                      </button>
-                    )}
-                  </>
-                ) : isLaunching ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent) px-5 py-2.5 text-sm font-semibold text-(--color-accent-text) shadow-lg shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
-                  >
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Launching…
-                  </button>
-                ) : isStopping ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/60 px-5 py-2.5 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
-                  >
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Stopping…
-                  </button>
-                ) : actionInFlight ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-(--color-accent)/70 px-5 py-2.5 text-sm font-semibold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed"
-                  >
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    {actionModel?.label ?? "Play"}…
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (DEBUG_CONSOLE_DETAILS_ACTION) {
-                        console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
-                      }
-                      handlePrimaryAction();
-                    }}
-                    disabled={!actionModel?.enabled}
-                    tabIndex={0}
-                    onFocus={() => setLeftActionSubIndex(0)}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition ${
-                      actionModel?.enabled === false
-                        ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed"
-                        : "bg-(--color-accent) shadow-lg shadow-(--color-accent)/25 hover:brightness-110"
-                    } ${
-                      focusZone === "left-actions" && leftActionSubIndex === 0
-                        ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
-                        : ""
-                    }`}
-                  >
-                    <ActionIcon action={actionModel?.action ?? "unavailable"} />
-                    {actionModel?.label ?? "Play"}
-                  </button>
+              {/* Badges */}
+              <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                {game.steamInstalled && (
+                  <span className="rounded-md bg-emerald-500/80 px-2 py-1 text-[11px] font-semibold text-black shadow-md">
+                    Installed
+                  </span>
                 )}
-                <button
-                  type="button"
-                  onClick={handleFavoriteToggle}
-                  tabIndex={0}
-                  onFocus={() => setLeftActionSubIndex(hasReturn ? 2 : 1)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition hover:bg-(--color-surface)/40 ${
-                    isFav ? "text-rose-400" : "text-(--color-muted)"
-                  } ${
-                    focusZone === "left-actions" && ((hasReturn && leftActionSubIndex === 2) || (!hasReturn && leftActionSubIndex === 1))
-                      ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
-                      : "border-(--color-border)/60"
-                  }`}
-                  title={isFav ? "Remove from Favorites" : "Add to Favorites"}
-                >
-                  <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
-                </button>
-              </div>
-
-              {/* Compact horizontal stats row */}
-              <div className="flex gap-1.5">
-                {[
-                  { icon: Clock, label: "Played", value: playtimeDisplay },
-                  { icon: Clock, label: "Last", value: lastPlayedStr },
-                  { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
-                  {
-                    icon: CheckCircle2,
-                    label: "Status",
-                    value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
-                  },
-                ].map(({ icon: Icon, label, value }) => (
-                  <div
-                    key={label}
-                    className="flex flex-1 items-center gap-1.5 rounded-xl bg-(--color-surface)/40 px-2.5 py-1.5 ring-1 ring-white/[0.04]"
-                  >
-                    <Icon className="h-3 w-3 shrink-0 text-(--color-muted)" />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[9px] font-medium uppercase tracking-wider text-(--color-muted)/60 block">{label}</span>
-                      <span className="text-[11px] font-semibold text-(--color-text) block truncate">{value}</span>
-                    </div>
-                  </div>
-                ))}
+                {game.isLuaActive && (
+                  <span className="rounded-md bg-violet-500/80 px-2 py-1 text-[11px] font-semibold text-white shadow-md">
+                    Lua
+                  </span>
+                )}
+                {isFav && (
+                  <span className="rounded-md bg-rose-500/80 px-2 py-1 text-[11px] font-semibold text-white shadow-md">
+                    Favorite
+                  </span>
+                )}
+                {game.source === "debrid" && game.repacker && (
+                  <span className="rounded-md bg-cyan-500/80 px-2 py-1 text-[11px] font-semibold text-black shadow-md">
+                    {game.repacker.toUpperCase()}
+                  </span>
+                )}
               </div>
             </div>
+          </div>
 
+          {/* ════════════════════════════════════════
+             ACTION BAR — Play + Favorite + Stats
+             ════════════════════════════════════════ */}
+          <div
+            tabIndex={-1}
+            onFocus={() => { setFocusZone("left-actions"); setLeftActionSubIndex(0); }}
+            className={`flex shrink-0 items-center gap-3 border-b border-white/5 px-6 py-3 outline-none ${zoneFocusClass("left-actions")}`}
+          >
+            {isRunning ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { handleStop(); }}
+                  tabIndex={0}
+                  onFocus={() => setLeftActionSubIndex(0)}
+                  className={`inline-flex items-center gap-2 rounded-xl bg-red-500 px-7 py-3 text-base font-bold text-white shadow-lg transition hover:brightness-110 ${
+                    focusZone === "left-actions" && leftActionSubIndex === 0
+                      ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
+                      : ""
+                  }`}
+                >
+                  <Square className="h-5 w-5 fill-current" />
+                  Stop
+                </button>
+                {gameSession?.pid != null && (
+                  <button
+                    type="button"
+                    onClick={() => { handleReturn(); }}
+                    tabIndex={0}
+                    onFocus={() => setLeftActionSubIndex(1)}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-5 py-3 text-base font-medium text-(--color-text) transition hover:bg-(--color-surface)/40 ${
+                      focusZone === "left-actions" && leftActionSubIndex === 1
+                        ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
+                        : "border-(--color-border)/60"
+                    }`}
+                    title="Return to game"
+                  >
+                    <Play className="h-5 w-5" />
+                    Return
+                  </button>
+                )}
+              </>
+            ) : isLaunching ? (
+              <button
+                type="button"
+                disabled
+                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-7 py-3 text-base font-bold text-(--color-accent-text) shadow-xl shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
+              >
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Launching…
+              </button>
+            ) : isStopping ? (
+              <button
+                type="button"
+                disabled
+                className="inline-flex items-center gap-2 rounded-xl bg-red-500/60 px-7 py-3 text-base font-bold text-white opacity-50 cursor-not-allowed"
+              >
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Stopping…
+              </button>
+            ) : actionInFlight ? (
+              <button
+                type="button"
+                disabled
+                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent)/70 px-7 py-3 text-base font-bold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed"
+              >
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                {actionModel?.label ?? "Play"}…
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (DEBUG_CONSOLE_DETAILS_ACTION) {
+                    console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
+                  }
+                  handlePrimaryAction();
+                }}
+                disabled={!actionModel?.enabled}
+                tabIndex={0}
+                onFocus={() => setLeftActionSubIndex(0)}
+                className={`inline-flex items-center gap-2 rounded-xl px-7 py-3 text-base font-bold text-white transition shadow-xl ${
+                  actionModel?.enabled === false
+                    ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed shadow-none"
+                    : "bg-(--color-accent) shadow-(--color-accent)/30 hover:brightness-110"
+                } ${
+                  focusZone === "left-actions" && leftActionSubIndex === 0
+                    ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
+                    : ""
+                }`}
+              >
+                <ActionIcon action={actionModel?.action ?? "unavailable"} className="h-5 w-5" />
+                {actionModel?.label ?? "Play"}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleFavoriteToggle}
+              tabIndex={0}
+              onFocus={() => setLeftActionSubIndex(hasReturn ? 2 : 1)}
+              className={`inline-flex items-center justify-center rounded-xl border px-3.5 py-3 text-base transition hover:bg-(--color-surface)/40 ${
+                isFav ? "text-rose-400" : "text-(--color-muted)"
+              } ${
+                focusZone === "left-actions" && ((hasReturn && leftActionSubIndex === 2) || (!hasReturn && leftActionSubIndex === 1))
+                  ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
+                  : "border-(--color-border)/60"
+              }`}
+              title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+            >
+              <Heart className={`h-5 w-5 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
+            </button>
+
+            {/* Stats pills — pushed right */}
+            <div className="ml-auto flex gap-2">
+              {[
+                { icon: Clock, label: "Played", value: playtimeDisplay },
+                { icon: Clock, label: "Last", value: lastPlayedStr },
+                { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
+                {
+                  icon: CheckCircle2,
+                  label: "Status",
+                  value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
+                },
+              ].map(({ icon: Icon, label, value }) => (
+                <div
+                  key={label}
+                  className="flex items-center gap-1.5 rounded-xl bg-white/[0.04] px-3 py-2 ring-1 ring-white/[0.06]"
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
+                  <div className="min-w-0">
+                    <span className="text-[9px] font-medium uppercase tracking-wider text-(--color-muted)/60 block">{label}</span>
+                    <span className="text-[11px] font-semibold text-(--color-text) block truncate">{value}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ════════════════════════════════════════
+             CONTENT — Left (info scroll) + Right (media + cards)
+             ════════════════════════════════════════ */}
+          <div className="flex min-h-0 flex-1 gap-4 p-5">
             {/* ── Scrollable info section (zone: left-info) ── */}
             <div
               ref={leftPanelRef}
               tabIndex={-1}
               onFocus={() => setFocusZone("left-info")}
               data-focused={focusZone === "left-info" ? "true" : undefined}
-              className={`relative mt-2 flex-1 overflow-y-auto rounded-2xl bg-(--color-surface)/10 scrollbar-thin scrollbar-thumb-(--color-border)/20 outline-none ${zoneFocusClass("left-info")}`}
+              className={`relative w-[42%] shrink-0 overflow-y-auto rounded-2xl bg-white/[0.03] scrollbar-thin scrollbar-thumb-(--color-border)/20 outline-none ring-1 ring-white/[0.04] ${zoneFocusClass("left-info")}`}
             >
-              {/* Top fade edge */}
-              <div className="pointer-events-none sticky top-0 z-10 h-6 bg-gradient-to-b from-(--color-surface)/40 to-transparent" />
-
-              <div className="space-y-3.5 px-3 pb-6">
+              <div className="space-y-3.5 px-4 pb-6 pt-4">
                 {/* About the Game */}
                 {settings.spotlightContent.showAboutGame && aboutTheGame && (
                   <div>
@@ -1334,222 +1328,219 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                   )}
                 </>)}
               </div>
-
-              {/* Bottom fade */}
-              <div className="pointer-events-none sticky bottom-0 z-10 h-6 bg-gradient-to-t from-(--color-surface)/40 to-transparent" />
-            </div>
-          </div>
-
-          {/* ════════════════════════════════════════
-             RIGHT COLUMN — Media Frame → Carousel → Info Cards → Hints
-             ════════════════════════════════════════ */}
-          <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {/* ── Media Player Frame (zone: media-preview) ── */}
-            <div
-              className={`relative w-full overflow-hidden rounded-2xl bg-black/50 shadow-xl shadow-black/30 ring-1 ring-white/[0.06] outline-none ${zoneFocusClass("media-preview")}`}
-              style={{ aspectRatio: "16/9", maxHeight: "clamp(200px, 32vh, 400px)" }}
-              onClick={() => setFocusZone("media-preview")}
-              tabIndex={-1}
-              onFocus={() => setFocusZone("media-preview")}
-            >
-              <ConsoleSelectedPreview
-                key={`preview-${mediaIdentityKey}`}
-                game={game}
-                showTrailerPreview={settings.spotlightContent.showTrailerPreview}
-                trailerData={trailerData}
-                screenshotOverrideUrl={screenshotOverrideUrl}
-                mode={playerMode}
-                autoplay
-                mediaIdentityKey={mediaIdentityKey}
-              />
             </div>
 
-            {/* ── Media Carousel (zone: media-carousel) ── */}
-            {settings.spotlightContent.showScreenshots && mediaItems.length > 0 && (
+            {/* ════════════════════════════════════════
+               RIGHT — Media Frame → Carousel → Info Cards → Hints
+               ════════════════════════════════════════ */}
+            <div className="flex min-w-0 flex-1 flex-col gap-4">
+              {/* ── Media Player Frame (zone: media-preview) ── */}
               <div
-                className={`rounded-xl outline-none ${zoneFocusClass("media-carousel")}`}
-                onClick={() => { setFocusZone("media-carousel"); setCarouselFocusIndex(carouselSelectedIndex); }}
+                className={`relative w-full overflow-hidden rounded-2xl bg-black/50 shadow-xl shadow-black/30 ring-1 ring-white/[0.06] outline-none ${zoneFocusClass("media-preview")}`}
+                style={{ aspectRatio: "16/9", maxHeight: "clamp(200px, 32vh, 400px)" }}
+                onClick={() => setFocusZone("media-preview")}
                 tabIndex={-1}
-                onFocus={() => setFocusZone("media-carousel")}
+                onFocus={() => setFocusZone("media-preview")}
               >
-                <ConsoleMediaGallery
-                  items={mediaItems}
-                  selectedIndex={carouselSelectedIndex}
-                  onSelect={(idx) => setCarouselSelectedIndex(idx)}
-                  focusedIndex={focusZone === "media-carousel" ? carouselFocusIndex : undefined}
+                <ConsoleSelectedPreview
+                  key={`preview-${mediaIdentityKey}`}
+                  game={game}
+                  showTrailerPreview={settings.spotlightContent.showTrailerPreview}
+                  trailerData={trailerData}
+                  screenshotOverrideUrl={screenshotOverrideUrl}
+                  mode={playerMode}
+                  autoplay
+                  mediaIdentityKey={mediaIdentityKey}
                 />
               </div>
-            )}
 
-            {/* ── Two-column row: Achievements | Reviews (zone: info-cards) ── */}
-            {(
-              settings.spotlightContent.showAchievements ||
-              settings.spotlightContent.showReviews
-            ) && (
-              <div
-                className={`grid gap-3 rounded-2xl p-0.5 outline-none ${
-                  settings.spotlightContent.showAchievements && settings.spotlightContent.showReviews
-                    ? "grid-cols-2"
-                    : "grid-cols-1"
-                } ${zoneFocusClass("info-cards")}`}
-                onClick={() => setFocusZone("info-cards")}
-                tabIndex={-1}
-                onFocus={() => setFocusZone("info-cards")}
-              >
-              {/* ═══ Achievements Card ═══ */}
-              {settings.spotlightContent.showAchievements && (
-              <div className={`rounded-2xl bg-(--color-surface)/40 ring-1 ring-white/[0.04] transition-all duration-150 ${
-                focusZone === "info-cards" && infoCardSide === "achievements"
-                  ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
-                  : ""
-              }`}>
-                {achievementsSummary && effectiveTotal > 0 ? (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center justify-between">
+              {/* ── Media Carousel (zone: media-carousel) ── */}
+              {settings.spotlightContent.showScreenshots && mediaItems.length > 0 && (
+                <div
+                  className={`rounded-xl outline-none ${zoneFocusClass("media-carousel")}`}
+                  onClick={() => { setFocusZone("media-carousel"); setCarouselFocusIndex(carouselSelectedIndex); }}
+                  tabIndex={-1}
+                  onFocus={() => setFocusZone("media-carousel")}
+                >
+                  <ConsoleMediaGallery
+                    items={mediaItems}
+                    selectedIndex={carouselSelectedIndex}
+                    onSelect={(idx) => setCarouselSelectedIndex(idx)}
+                    focusedIndex={focusZone === "media-carousel" ? carouselFocusIndex : undefined}
+                  />
+                </div>
+              )}
+
+              {/* ── Two-column row: Achievements | Reviews (zone: info-cards) ── */}
+              {(
+                settings.spotlightContent.showAchievements ||
+                settings.spotlightContent.showReviews
+              ) && (
+                <div
+                  className={`grid gap-3 rounded-2xl p-0.5 outline-none ${
+                    settings.spotlightContent.showAchievements && settings.spotlightContent.showReviews
+                      ? "grid-cols-2"
+                      : "grid-cols-1"
+                  } ${zoneFocusClass("info-cards")}`}
+                  onClick={() => setFocusZone("info-cards")}
+                  tabIndex={-1}
+                  onFocus={() => setFocusZone("info-cards")}
+                >
+                {/* ═══ Achievements Card ═══ */}
+                {settings.spotlightContent.showAchievements && (
+                <div className={`rounded-2xl bg-(--color-surface)/40 ring-1 ring-white/[0.04] transition-all duration-150 ${
+                  focusZone === "info-cards" && infoCardSide === "achievements"
+                    ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
+                    : ""
+                }`}>
+                  {achievementsSummary && effectiveTotal > 0 ? (
+                    <div className="px-3.5 py-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Trophy
+                            className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : "text-(--color-muted)"}`}
+                          />
+                          <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
+                        </div>
+                        <span className={`text-xs font-semibold tabular-nums ${
+                          isPerfected ? "text-amber-400" : "text-(--color-text)"
+                        }`}>
+                          {effectivePercent}%
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              isPerfected
+                                ? "bg-gradient-to-r from-amber-400 to-yellow-300"
+                                : "bg-(--color-accent)"
+                            }`}
+                            style={{
+                              width: `${effectivePercent}%`,
+                              boxShadow: isPerfected ? "0 0 8px rgba(251,191,36,0.35)" : undefined,
+                            }}
+                          />
+                        </div>
+                        <span className={`whitespace-nowrap text-[11px] tabular-nums ${
+                          isPerfected ? "font-semibold text-amber-400" : "font-medium text-(--color-muted)"
+                        }`}>
+                          {effectiveUnlocked}/{effectiveTotal}
+                        </span>
+                      </div>
+
+                      {achievementMiniRows && !isPerfected && (
+                        <div className="mt-2 space-y-1 border-t border-(--color-border)/10 pt-2">
+                          {achievementMiniRows.map((ach, i) => (
+                            <div key={ach.apiName ?? i} className="flex items-center gap-2">
+                              <div className={`h-4 w-4 shrink-0 rounded-full ${ach.unlocked ? "bg-(--color-accent)/20" : "bg-white/5"}`}>
+                              {ach.iconUrl ? (
+                                <img src={ach.iconUrl} alt="" className="h-full w-full rounded-full object-cover" />
+                                ) : (
+                                  <div className={`flex h-full w-full items-center justify-center rounded-full text-[8px] font-bold ${
+                                    ach.unlocked ? "text-(--color-accent)" : "text-white/20"
+                                  }`}>
+                                    {ach.unlocked ? "✓" : "?"}
+                                  </div>
+                                )}
+                              </div>
+                              <span className="min-w-0 flex-1 truncate text-[10px] text-(--color-muted)">
+                                {ach.name ?? `Achievement ${i + 1}`}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {isPerfected && (
+                        <div className="mt-2 flex items-center justify-center gap-1 rounded-lg bg-amber-500/10 py-1">
+                          <Trophy className="h-3 w-3 fill-amber-400 text-amber-400" />
+                          <span className="text-[10px] font-semibold text-amber-400">All unlocked</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : achievementsSummary && achievementsSummary.achievements.length > 0 ? (
+                    <div className="px-3.5 py-3">
                       <div className="flex items-center gap-1.5">
-                        <Trophy
-                          className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : "text-(--color-muted)"}`}
-                        />
+                        <Trophy className="h-3.5 w-3.5 text-(--color-muted)" />
                         <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
                       </div>
-                      <span className={`text-xs font-semibold tabular-nums ${
-                        isPerfected ? "text-amber-400" : "text-(--color-text)"
-                      }`}>
-                        {effectivePercent}%
-                      </span>
+                      <p className="mt-1 text-[11px] text-(--color-muted)">Progress unavailable</p>
                     </div>
-
-                    <div className="mt-2 flex items-center gap-2">
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isPerfected
-                              ? "bg-gradient-to-r from-amber-400 to-yellow-300"
-                              : "bg-(--color-accent)"
-                          }`}
-                          style={{
-                            width: `${effectivePercent}%`,
-                            boxShadow: isPerfected ? "0 0 8px rgba(251,191,36,0.35)" : undefined,
-                          }}
-                        />
+                  ) : (
+                    <div className="px-3.5 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <Trophy className="h-3.5 w-3.5 text-(--color-muted)" />
+                        <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
                       </div>
-                      <span className={`whitespace-nowrap text-[11px] tabular-nums ${
-                        isPerfected ? "font-semibold text-amber-400" : "font-medium text-(--color-muted)"
-                      }`}>
-                        {effectiveUnlocked}/{effectiveTotal}
-                      </span>
+                      <p className="mt-1 text-[11px] text-(--color-muted)">No data</p>
                     </div>
+                  )}
+                </div>
+                )}
 
-                    {achievementMiniRows && !isPerfected && (
-                      <div className="mt-2 space-y-1 border-t border-(--color-border)/10 pt-2">
-                        {achievementMiniRows.map((ach, i) => (
-                          <div key={ach.apiName ?? i} className="flex items-center gap-2">
-                            <div className={`h-4 w-4 shrink-0 rounded-full ${ach.unlocked ? "bg-(--color-accent)/20" : "bg-white/5"}`}>
-                            {ach.iconUrl ? (
-                              <img src={ach.iconUrl} alt="" className="h-full w-full rounded-full object-cover" />
-                              ) : (
-                                <div className={`flex h-full w-full items-center justify-center rounded-full text-[8px] font-bold ${
-                                  ach.unlocked ? "text-(--color-accent)" : "text-white/20"
-                                }`}>
-                                  {ach.unlocked ? "✓" : "?"}
-                                </div>
-                              )}
-                            </div>
-                            <span className="min-w-0 flex-1 truncate text-[10px] text-(--color-muted)">
-                              {ach.name ?? `Achievement ${i + 1}`}
-                            </span>
-                          </div>
-                        ))}
+                {/* ═══ Reviews Card ═══ */}
+                {settings.spotlightContent.showReviews && (
+                <div className={`rounded-2xl ${reviewColors.bg} ${reviewColors.border} ring-1 ring-inset transition-all duration-150 ${
+                  focusZone === "info-cards" && infoCardSide === "reviews"
+                    ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
+                    : ""
+                }`}>
+                  {reviewSummary && reviewSummary.resolved && reviewSummary.total_reviews > 0 ? (
+                    <div className="px-3.5 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <Star className={`h-3.5 w-3.5 ${reviewColors.text}`} />
+                        <span className="text-xs font-semibold text-(--color-text)">Reviews</span>
                       </div>
-                    )}
 
-                    {isPerfected && (
-                      <div className="mt-2 flex items-center justify-center gap-1 rounded-lg bg-amber-500/10 py-1">
-                        <Trophy className="h-3 w-3 fill-amber-400 text-amber-400" />
-                        <span className="text-[10px] font-semibold text-amber-400">All unlocked</span>
+                      <p className={`mt-1.5 text-sm font-bold ${reviewColors.text}`}>
+                        {reviewSummary.review_score_desc}
+                      </p>
+
+                      <p className="mt-0.5 text-[11px] font-medium text-(--color-muted)">
+                        {reviewSummary.positive_percent != null
+                          ? `${Math.round(reviewSummary.positive_percent)}% positive`
+                          : `${reviewSummary.total_positive.toLocaleString()} positive`}
+                      </p>
+
+                      <p className="mt-0.5 text-[10px] text-(--color-muted)/60">
+                        {reviewSummary.total_reviews.toLocaleString()} reviews
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="px-3.5 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <Star className="h-3.5 w-3.5 text-(--color-muted)" />
+                        <span className="text-xs font-semibold text-(--color-text)">Reviews</span>
                       </div>
-                    )}
-                  </div>
-                ) : achievementsSummary && achievementsSummary.achievements.length > 0 ? (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Trophy className="h-3.5 w-3.5 text-(--color-muted)" />
-                      <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
+                      <p className="mt-1.5 text-[11px] text-(--color-muted)">
+                        {reviewIsLoading ? "Loading review data…" : "No review data"}
+                      </p>
                     </div>
-                    <p className="mt-1 text-[11px] text-(--color-muted)">Progress unavailable</p>
-                  </div>
-                ) : (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Trophy className="h-3.5 w-3.5 text-(--color-muted)" />
-                      <span className="text-xs font-semibold text-(--color-text)">Achievements</span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-(--color-muted)">No data</p>
-                  </div>
+                  )}
+                </div>
                 )}
               </div>
               )}
 
-              {/* ═══ Reviews Card ═══ */}
-              {settings.spotlightContent.showReviews && (
-              <div className={`rounded-2xl ${reviewColors.bg} ${reviewColors.border} ring-1 ring-inset transition-all duration-150 ${
-                focusZone === "info-cards" && infoCardSide === "reviews"
-                  ? "ring-2 ring-(--color-accent)/30 shadow-md shadow-(--color-accent)/10 scale-[1.02]"
-                  : ""
-              }`}>
-                {reviewSummary && reviewSummary.resolved && reviewSummary.total_reviews > 0 ? (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Star className={`h-3.5 w-3.5 ${reviewColors.text}`} />
-                      <span className="text-xs font-semibold text-(--color-text)">Reviews</span>
-                    </div>
-
-                    <p className={`mt-1.5 text-sm font-bold ${reviewColors.text}`}>
-                      {reviewSummary.review_score_desc}
-                    </p>
-
-                    <p className="mt-0.5 text-[11px] font-medium text-(--color-muted)">
-                      {reviewSummary.positive_percent != null
-                        ? `${Math.round(reviewSummary.positive_percent)}% positive`
-                        : `${reviewSummary.total_positive.toLocaleString()} positive`}
-                    </p>
-
-                    <p className="mt-0.5 text-[10px] text-(--color-muted)/60">
-                      {reviewSummary.total_reviews.toLocaleString()} reviews
-                    </p>
-                  </div>
-                ) : (
-                  <div className="px-3.5 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <Star className="h-3.5 w-3.5 text-(--color-muted)" />
-                      <span className="text-xs font-semibold text-(--color-text)">Reviews</span>
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-(--color-muted)">
-                      {reviewIsLoading ? "Loading review data…" : "No review data"}
-                    </p>
-                  </div>
-                )}
+              {/* ── Action hints (zone: footer-actions) ── */}
+              <div
+                className={`mt-auto flex justify-end gap-x-4 gap-y-1 rounded-xl px-3 py-2 outline-none ${zoneFocusClass("footer-actions")}`}
+                onClick={() => setFocusZone("footer-actions")}
+                tabIndex={-1}
+                onFocus={() => setFocusZone("footer-actions")}
+              >
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.play}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.select}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.back}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.navigate}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.media}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.options}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.search}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.profile}</HintLabel>
+                <HintLabel focus={focusZone === "footer-actions"}>{hints.page}</HintLabel>
               </div>
-              )}
-            </div>
-            )}
-
-            {/* ── Action hints (zone: footer-actions) ── */}
-            <div
-              className={`mt-auto flex justify-end gap-x-4 gap-y-1 rounded-xl px-3 py-2 outline-none ${zoneFocusClass("footer-actions")}`}
-              onClick={() => setFocusZone("footer-actions")}
-              tabIndex={-1}
-              onFocus={() => setFocusZone("footer-actions")}
-            >
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.play}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.select}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.back}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.navigate}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.media}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.options}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.search}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.profile}</HintLabel>
-              <HintLabel focus={focusZone === "footer-actions"}>{hints.page}</HintLabel>
             </div>
           </div>
         </div>
@@ -1610,7 +1601,7 @@ function HintLabel({ children, focus }: { children: string | null; focus?: boole
 
 /* ── Action icon helper ── */
 function ActionIcon({ action, className }: { action: ConsolePrimaryAction; className?: string }) {
-  const cls = `h-4 w-4 ${className ?? ""}`;
+  const cls = className ?? "h-4 w-4";
   switch (action) {
     case "install": return <Download className={cls} />;
     case "update": return <RefreshCw className={cls} />;
