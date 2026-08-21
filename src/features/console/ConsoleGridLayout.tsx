@@ -158,17 +158,25 @@ export default function ConsoleGridLayout({
     return previewGame.metadata.genres.slice(0, 4);
   }, [previewGame]);
 
-  /* ── Measure actual grid column count from CSS (auto-fill may differ from settings.gridColumns) ── */
+  /* ── Measure actual grid column count from CSS (ResizeObserver for live updates) ── */
   useEffect(() => {
-    if (gridRef.current) {
-      const computed = getComputedStyle(gridRef.current).gridTemplateColumns;
+    const el = gridRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      const computed = getComputedStyle(el).gridTemplateColumns;
       const split = computed.split(/\s+/).filter(Boolean);
       const actual = split.length;
       if (actual > 0 && actual !== (gridColumnsRef?.current ?? 0)) {
         if (gridColumnsRef) gridColumnsRef.current = actual;
         if (DEBUG_CONSOLE_GRID_NAV) console.log(`[CONSOLE_GRID_NAV][COLUMNS] computed="${computed}" actual=${actual}`);
       }
-    }
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   /* ── Register scroll target for right-stick gamepad scrolling ── */

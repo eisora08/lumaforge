@@ -61,6 +61,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   const [settledFocusedIndex, setSettledFocusedIndex] = useState(-1);
   const settledFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const focusedRailRef = useRef(-1);
 
   useEffect(() => {
     return () => { mountedRef.current = false; };
@@ -146,6 +147,14 @@ export default function ConsoleModePage({ onNavigate }: Props) {
 
   const findRailContext = useCallback((game: LibraryGame): { games: LibraryGame[]; currentIndex: number } | null => {
     const id = game.appId || game.id;
+    // Prefer the currently active category rail (user selected from Installed → use Installed's full list)
+    const fr = focusedRailRef.current;
+    const activeRail = fr >= 0 && fr < rails.length ? rails[fr] : null;
+    if (activeRail) {
+      const idx = activeRail.findIndex((g) => (g.appId || g.id) === id);
+      if (idx >= 0) return { games: activeRail, currentIndex: idx };
+    }
+    // Fallback: first rail containing the game
     for (const rail of rails) {
       const idx = rail.findIndex((g) => (g.appId || g.id) === id);
       if (idx >= 0) return { games: rail, currentIndex: idx };
@@ -510,7 +519,6 @@ export default function ConsoleModePage({ onNavigate }: Props) {
   currentFocusedGameRef.current = currentFocusedGame;
 
   /* ── Refs for grid nav (avoid re-registering keyboard listener on every index change) ── */
-  const focusedRailRef = useRef(focusedRail);
   focusedRailRef.current = focusedRail;
   const focusedIndexRef = useRef(focusedIndex);
   focusedIndexRef.current = focusedIndex;
