@@ -3655,6 +3655,25 @@ pub fn library_open_steam_launch_options(_app_id: u64) -> Result<(), String> {
     Err("Steam launch options dialog is only available on Windows".into())
 }
 
+/// Seed the GSE Saves directory for a game so Goldberg has a place to write achievements.json.
+/// Creates %APPDATA%/GSE Saves/<appId>/ and an empty achievements.json if they don't exist.
+/// Called on standalone activation and Goldberg apply.
+#[tauri::command]
+pub fn seed_gse_saves_folder(app_id: String) -> Result<String, String> {
+    let appdata = std::env::var("APPDATA").map_err(|e| format!("APPDATA not set: {e}"))?;
+    let dir = std::path::PathBuf::from(appdata)
+        .join("GSE Saves")
+        .join(&app_id);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create GSE Saves dir for {}: {e}", app_id))?;
+    let json_path = dir.join("achievements.json");
+    if !json_path.exists() {
+        std::fs::write(&json_path, "{}")
+            .map_err(|e| format!("Failed to write achievements.json for {}: {e}", app_id))?;
+    }
+    Ok(dir.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,6 +6,7 @@ import {
 import type { SteamAppMetadata } from "../types/gameMetadata";
 import type { LibraryGame } from "../types/libraryGame";
 import type { LocalExecutableGame } from "../types/localExecutableGame";
+import { isStandalone as isStandaloneById } from "./standaloneStore";
 
 // ---------------------------------------------------------------------------
 // Lua overlay — a flat map of appId → boolean
@@ -111,6 +112,7 @@ export function indexEntryToLibraryGame(
     isPlayable: entry.installed,
     isInstallable: !entry.installed,
     steamInstalled: entry.installed,
+    isStandalone: isStandaloneById(appIdStr),
     hasLua,
     isLuaActive: hasLua,
     isLuaDisabled: false,

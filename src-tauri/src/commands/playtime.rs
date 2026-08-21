@@ -189,35 +189,44 @@ pub fn record_play_session_start(
     let session_started_at = input.started_at;
 
     with_conn(&db, |conn| {
-        // Read existing entry (if any) + its sessions
-        let mut store = read_store_from_db(conn);
-
-        ensure_entry(
-            &mut store,
-            &input.game_key,
-            input.app_id.clone(),
-            &input.provider,
-            &input.title,
-        );
-
-        // Auto-close any stale sessions (endedAt = null) for this game
-        if let Some(entry) = store.games.get_mut(&input.game_key) {
-            for session in entry.sessions.iter_mut() {
-                if session.ended_at.is_none() {
-                    session.ended_at = Some(session_started_at);
-                    session.exit_reason = Some("auto-closed".to_string());
-                    session.duration_seconds =
-                        Some(session_started_at.saturating_sub(session.started_at));
+        // Read only this entry + its sessions (O(1) instead of full store)
+        let mut entry = match db::read_playtime_entry(conn, &input.game_key)? {
+            Some(e) => e,
+            None => PlaytimeEntry {
+                game_key: input.game_key.clone(),
+                app_id: input.app_id.clone(),
+                provider: input.provider.clone(),
+                title: input.title.clone(),
+                playtime_source: Some(if input.provider == "steam" {
+                    "external"
+                } else {
+                    "local"
                 }
-            }
+                .to_string()),
+                external_playtime_seconds: 0,
+                external_source: None,
+                external_imported_at: None,
+                local_playtime_seconds: 0,
+                total_playtime_seconds: 0,
+                last_played_at: None,
+                last_session_seconds: None,
+                sessions: Vec::new(),
+            },
+        };
+
+        // Auto-close any stale sessions (endedAt = null) for this game (single UPDATE)
+        db::auto_close_stale_sessions(conn, &input.game_key, session_started_at as i64)?;
+
+        // Cap sessions at MAX — read fresh count after auto-close
+        let open_count = entry.sessions.iter().filter(|s| s.ended_at.is_none()).count();
+        let total_count = entry.sessions.len();
+        if total_count >= MAX_SESSIONS_PER_GAME {
+            // Remove oldest sessions to make room
+            entry.sessions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+            entry.sessions.truncate(MAX_SESSIONS_PER_GAME - 1);
         }
 
         // Add the new session
-        let entry = store.games.get_mut(&input.game_key).unwrap();
-        while entry.sessions.len() >= MAX_SESSIONS_PER_GAME {
-            entry.sessions.remove(0);
-        }
-
         entry.sessions.push(PlaytimeSession {
             session_id: session_id.clone(),
             started_at: session_started_at,
@@ -227,12 +236,16 @@ pub fn record_play_session_start(
         });
 
         entry.last_played_at = Some(session_started_at);
-        store.updated_at = now_secs();
 
-        // Write entry + all sessions (including auto-closed ones)
-        write_store_to_db(conn, &store)?;
+        // Upsert only this entry + new session (not the full store)
+        db::upsert_playtime_entry(conn, &entry)?;
+        db::upsert_playtime_session(
+            conn,
+            entry.sessions.last().unwrap(),
+            &game_key,
+        )?;
 
-        // Trim old sessions
+        // Trim old sessions for this game only
         db::delete_playtime_sessions_older_than(conn, &game_key, MAX_SESSIONS_PER_GAME)?;
 
         Ok(())
@@ -253,93 +266,66 @@ pub fn record_play_session_end(
     let game_key = input.game_key.clone();
 
     with_conn(&db, |conn| {
-        let mut store = read_store_from_db(conn);
+        // Read only this entry (O(1) instead of full store)
+        let mut entry = db::read_playtime_entry(conn, &game_key)?
+            .ok_or_else(|| format!("No playtime entry for game: {}", game_key))?;
 
-        let has_entry = store
-            .games
-            .get(&game_key)
-            .map(|e| e.sessions.iter().any(|s| s.session_id == input.session_id))
-            .unwrap_or(false);
-
-        if !has_entry {
-            return Err(format!("Session not found: {}", input.session_id));
-        }
+        // Find the session to close
+        let session = entry
+            .sessions
+            .iter_mut()
+            .find(|s| s.session_id == input.session_id)
+            .ok_or_else(|| format!("Session not found: {}", input.session_id))?;
 
         // Guard: prevent duplicate end
-        if store
-            .games
-            .get(&game_key)
-            .and_then(|e| {
-                e.sessions
-                    .iter()
-                    .find(|s| s.session_id == input.session_id)
-            })
-            .and_then(|s| s.ended_at)
-            .is_some()
-        {
-            let entry = store.games.get(&game_key).unwrap().clone();
+        if session.ended_at.is_some() {
             return Ok(entry);
         }
 
-        let duration;
-        let is_external_game;
-        {
-            let entry = store.games.get_mut(&game_key).unwrap();
-            let session = entry
-                .sessions
-                .iter_mut()
-                .find(|s| s.session_id == input.session_id)
-                .unwrap();
+        session.ended_at = Some(input.ended_at);
+        session.exit_reason = Some(input.exit_reason.clone());
 
-            session.ended_at = Some(input.ended_at);
-            session.exit_reason = Some(input.exit_reason.clone());
+        let duration = input.ended_at.saturating_sub(session.started_at);
+        session.duration_seconds = Some(duration);
 
-            duration = input.ended_at.saturating_sub(session.started_at);
-            session.duration_seconds = Some(duration);
-
-            // Set playtime_source if not already set
-            if entry.playtime_source.is_none() {
-                entry.playtime_source = if entry.external_source.is_some() || entry.provider == "steam"
-                {
-                    Some("external".to_string())
-                } else {
-                    Some("local".to_string())
-                };
-            }
-
-            is_external_game = entry.playtime_source.as_deref() == Some("external");
-
-            if duration < 15 {
-                // Too short — close session but don't count toward playtime
-                entry.last_played_at = Some(input.ended_at);
-            } else if is_external_game {
-                // External game: don't persist to local, total = external + current session
-                entry.total_playtime_seconds = entry.external_playtime_seconds + duration;
-                entry.last_played_at = Some(input.ended_at);
-                entry.last_session_seconds = Some(duration);
+        // Set playtime_source if not already set
+        if entry.playtime_source.is_none() {
+            entry.playtime_source = if entry.external_source.is_some() || entry.provider == "steam"
+            {
+                Some("external".to_string())
             } else {
-                // Local game: accumulate normally
-                entry.local_playtime_seconds += duration;
-                entry.total_playtime_seconds =
-                    entry.external_playtime_seconds + entry.local_playtime_seconds;
-                entry.last_played_at = Some(input.ended_at);
-                entry.last_session_seconds = Some(duration);
-            }
+                Some("local".to_string())
+            };
         }
 
-        store.updated_at = now_secs();
+        let is_external_game = entry.playtime_source.as_deref() == Some("external");
 
-        // Upsert the updated session + entry
-        let entry = store.games.get(&game_key).unwrap();
-        let session = entry
-            .sessions
-            .iter()
-            .find(|s| s.session_id == input.session_id)
-            .unwrap();
-        db::upsert_playtime_session(conn, session, &game_key)?;
-        db::upsert_playtime_entry(conn, entry)?;
+        if duration < 15 {
+            // Too short — close session but don't count toward playtime
+            entry.last_played_at = Some(input.ended_at);
+        } else if is_external_game {
+            // External game: don't persist to local, total = external + current session
+            entry.total_playtime_seconds = entry.external_playtime_seconds + duration;
+            entry.last_played_at = Some(input.ended_at);
+            entry.last_session_seconds = Some(duration);
+        } else {
+            // Local game: accumulate normally
+            entry.local_playtime_seconds += duration;
+            entry.total_playtime_seconds =
+                entry.external_playtime_seconds + entry.local_playtime_seconds;
+            entry.last_played_at = Some(input.ended_at);
+            entry.last_session_seconds = Some(duration);
+        }
 
-        Ok(entry.clone())
+        // Upsert only the changed entry + session
+        db::upsert_playtime_entry(conn, &entry)?;
+        db::upsert_playtime_session(
+            conn,
+            entry.sessions.iter().find(|s| s.session_id == input.session_id).unwrap(),
+            &game_key,
+        )?;
+
+        Ok(entry)
     })
 }
 
@@ -351,27 +337,103 @@ pub fn import_external_playtime(
     let title = input.title.clone().unwrap_or_else(|| "Unknown".to_string());
 
     with_conn(&db, |conn| {
-        let mut store = read_store_from_db(conn);
+        // Read only this entry (O(1) instead of full store)
+        let mut entry = match db::read_playtime_entry(conn, &input.game_key)? {
+            Some(mut e) => {
+                update_external(&mut e, input.external_playtime_seconds, &input.external_source);
+                // Seed last_played_at from Steam data when entry has none
+                if e.last_played_at.is_none() {
+                    if let Some(lp) = input.last_played_at_seconds {
+                        if lp > 0 {
+                            e.last_played_at = Some(lp);
+                        }
+                    }
+                }
+                e
+            }
+            None => {
+                let playtime_source = Some(if input.provider == "steam" {
+                    "external"
+                } else {
+                    "local"
+                }
+                .to_string());
+                PlaytimeEntry {
+                    game_key: input.game_key.clone(),
+                    app_id: input.app_id,
+                    provider: input.provider,
+                    title,
+                    playtime_source,
+                    external_playtime_seconds: input.external_playtime_seconds,
+                    external_source: Some(input.external_source),
+                    external_imported_at: Some(now_secs()),
+                    local_playtime_seconds: 0,
+                    total_playtime_seconds: input.external_playtime_seconds,
+                    last_played_at: input.last_played_at_seconds.filter(|&v| v > 0),
+                    last_session_seconds: None,
+                    sessions: Vec::new(),
+                }
+            }
+        };
 
-        ensure_entry(
-            &mut store,
-            &input.game_key,
-            input.app_id,
-            &input.provider,
-            &title,
-        );
-
-        {
-            let entry = store.games.get_mut(&input.game_key).unwrap();
-            update_external(entry, input.external_playtime_seconds, &input.external_source);
-        }
-
-        store.updated_at = now_secs();
-
-        // Upsert only the changed entry (sessions are untouched)
-        let entry = store.games.get(&input.game_key).unwrap().clone();
+        // Upsert only the changed entry (sessions untouched)
         db::upsert_playtime_entry(conn, &entry)?;
 
         Ok(entry)
+    })
+}
+
+/// Batch import external playtime for multiple games in a single transaction.
+#[tauri::command]
+pub fn batch_import_external_playtime(
+    db: State<'_, SqliteCoreDb>,
+    inputs: Vec<ExternalPlaytimeImport>,
+) -> Result<u32, String> {
+    with_conn(&db, |conn| {
+        let mut entries = Vec::with_capacity(inputs.len());
+
+        for input in &inputs {
+            let title = input.title.clone().unwrap_or_else(|| "Unknown".to_string());
+            let entry = match db::read_playtime_entry(conn, &input.game_key)? {
+                Some(mut e) => {
+                    update_external(&mut e, input.external_playtime_seconds, &input.external_source);
+                    if e.last_played_at.is_none() {
+                        if let Some(lp) = input.last_played_at_seconds {
+                            if lp > 0 {
+                                e.last_played_at = Some(lp);
+                            }
+                        }
+                    }
+                    e
+                }
+                None => {
+                    let playtime_source = Some(if input.provider == "steam" {
+                        "external"
+                    } else {
+                        "local"
+                    }
+                    .to_string());
+                    PlaytimeEntry {
+                        game_key: input.game_key.clone(),
+                        app_id: input.app_id.clone(),
+                        provider: input.provider.clone(),
+                        title,
+                        playtime_source,
+                        external_playtime_seconds: input.external_playtime_seconds,
+                        external_source: Some(input.external_source.clone()),
+                        external_imported_at: Some(now_secs()),
+                        local_playtime_seconds: 0,
+                        total_playtime_seconds: input.external_playtime_seconds,
+                        last_played_at: input.last_played_at_seconds.filter(|&v| v > 0),
+                        last_session_seconds: None,
+                        sessions: Vec::new(),
+                    }
+                }
+            };
+            entries.push(entry);
+        }
+
+        let count = db::batch_upsert_playtime_entries(conn, &entries)?;
+        Ok(count)
     })
 }

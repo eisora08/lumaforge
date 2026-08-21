@@ -11,6 +11,7 @@ import type { ProcessCandidate, FindProcessInput } from "../utils/gameProcessDet
 import type { LibraryGame } from "../types/libraryGame";
 import type { ProcessInfo } from "../services/tauri";
 import { setInstalledGameEntry, discoverAndRegister } from "../services/installedGamesRegistry";
+import { showError } from "../components/toast/GameToast";
 
 async function evaluateLauncherAchievements(): Promise<void> {
   try {
@@ -1119,7 +1120,64 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           }
 
           try {
-            if (game.source === "steam" && game.appId) {
+            if (game.source === "steam" && game.isStandalone) {
+              // Standalone mode: launch exe directly (no Steam)
+              let effectiveExePath = game.executablePath?.trim().replace(/^["']|["']$/g, "");
+              if (!effectiveExePath && game.installDir) {
+                // Fallback: discover exe from install dir via Rust
+                try {
+                  const { libraryGetGameFixInfo } = await import("../services/tauri");
+                  const fixInfo = await libraryGetGameFixInfo({
+                    appId: Number(game.appId), name: game.title,
+                    installDir: game.installDir, hasLua: !!game.hasLua, luaCount: game.luaScripts?.length ?? 0,
+                  });
+                  if (fixInfo.exeName) {
+                    effectiveExePath = fixInfo.exeName;
+                    console.debug("[Launch] standalone exe discovered", { gameKey: computedKey, exePath: fixInfo.exeName });
+                  }
+                } catch (err) {
+                  console.warn("[Launch] standalone exe discovery failed", err);
+                }
+              }
+              if (!effectiveExePath) {
+                console.warn("[Launch] standalone mode but no executable found", { gameKey: computedKey });
+                showError("No se encontró el ejecutable. Abrí Configuración > Game Fixes para detectarlo.");
+                setSessions((prev) => { const next = { ...prev }; delete next[computedKey]; return next; });
+                ls.inFlight = false;
+                return;
+              }
+              const workingDir = game.installDir || effectiveExePath.substring(0, effectiveExePath.lastIndexOf("\\"));
+              const result = await launchExecutable(effectiveExePath, undefined, workingDir || undefined);
+              if (ls.cancelled || ls.token !== token) {
+                if (result.pid) { try { await terminateProcess(result.pid); } catch { /* ignore */ } }
+                return;
+              }
+              if (result.pid) {
+                console.debug("[Launch] standalone process spawned", { gameKey: computedKey, pid: result.pid });
+                setSessions((prev) => {
+                  const existing = prev[computedKey];
+                  if (!existing) return prev;
+                  return {
+                    ...prev,
+                    [computedKey]: { ...existing, state: "running", pid: result.pid, softSession: false, trackingConfidence: "high", processName: extractExeName(effectiveExePath), updatedAt: Date.now() },
+                  };
+                });
+                ls.inFlight = false;
+              } else {
+                await scanForProcessAfterLaunch(computedKey, game, token, 0);
+                if (ls.token === token && !ls.cancelled && sessionsRef.current[computedKey]?.state === "launching") {
+                  setSessions((prev) => {
+                    const existing = prev[computedKey];
+                    if (!existing || existing.state !== "launching") return prev;
+                    return {
+                      ...prev,
+                      [computedKey]: { ...existing, state: "running" as ActiveGameState, softSession: true, trackingConfidence: "none", updatedAt: Date.now() },
+                    };
+                  });
+                  ls.inFlight = false;
+                }
+              }
+            } else if (game.source === "steam" && game.appId) {
               await launchSteamApp(Number(game.appId), loadSettings().steamRoot || undefined);
               if (ls.cancelled || ls.token !== token) {
                 ls.inFlight = false;

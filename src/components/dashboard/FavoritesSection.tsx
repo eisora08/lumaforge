@@ -13,7 +13,7 @@ import {
   getIconCandidate,
   resolveCanonicalGameIdentity,
 } from "../../services/dashboardManualGames";
-import { resolvePlaytimeKey, getPlaytimeEntryByGameKey } from "../../services/playtimeService";
+import { resolvePlaytimeKey, getPlaytimeEntryByGameKey, subscribePlaytimeStore } from "../../services/playtimeService";
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import type { AppPage } from "../../types/navigation";
@@ -33,6 +33,11 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
   const { favoriteIds, toggleFavorite } = useFavorites();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
+  const [playtimeVersion, setPlaytimeVersion] = useState(0);
+
+  useEffect(() => {
+    return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+  }, []);
 
   // Build a DashboardDisplayGame directly from a canonical LibraryGame.
   // Replaces manualToDisplayGame for Epic/manual favorites — no intermediary needed.
@@ -106,7 +111,7 @@ export default function FavoritesSection({ snapshot, onNavigate, excludeAppIds, 
     }
 
     return result.slice(0, maxItems ?? 10);
-  }, [snapshot, libraryGames, favoriteIds, excludeAppIds, maxItems]);
+  }, [snapshot, libraryGames, favoriteIds, excludeAppIds, maxItems, playtimeVersion]);
 
   useEffect(() => {
     for (const game of displayGames) {

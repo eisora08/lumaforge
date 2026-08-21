@@ -103,6 +103,8 @@ export type LibraryGame = {
   achievementsSupported?: boolean;
   /** User-defined favorite flag */
   isFavorite?: boolean;
+  /** Standalone mode: launched via Goldberg/GSE without Steam, crack achievements */
+  isStandalone?: boolean;
   /** Debrid-specific install status: "waiting-installer" | "installing" | "needs-path" | "ready" */
   debridStatus?: string;
 };

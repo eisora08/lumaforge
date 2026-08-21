@@ -5,7 +5,7 @@ import { getGameAppInfo, resolveGameMediaPaths, resolveGameMediaPathsBatch, read
 import type { GameMediaPaths, GameAppInfo, SnapshotGameMediaForValidation, ValidatedMediaPaths } from "./tauri";
 import { dedupeLibraryGames, isSidebarInstalledGame } from "./gameCacheService";
 import { isRecentlyNavigated, isInteractionBusy } from "./perfCounters";
-import { getPlaytimeSecondsForAppId, getPlaytimeEntryByAppId, getLastSessionEndForAppId } from "./playtimeService";
+import { getPlaytimeSecondsForAppId, findPlaytimeEntryByAppId, getLastSessionEndForAppId } from "./playtimeService";
 
 const SNAPSHOT_VERSION = 1;
 let cachedSnapshot: StartupSnapshot | null = null;
@@ -581,7 +581,8 @@ async function _processDirtyAppIds(): Promise<void> {
 
           // Update lastPlayed and playtime from playtime store
           // (handles session-end updates that aren't covered by media repair)
-          const ptEntry = getPlaytimeEntryByAppId(appId);
+          // Use findPlaytimeEntryByAppId to find entries under any key (app-, debrid:, manual:)
+          const ptEntry = findPlaytimeEntryByAppId(appId);
           const newPlaytime = ptEntry?.totalPlaytimeSeconds && ptEntry.totalPlaytimeSeconds > 0
             ? Math.round(ptEntry.totalPlaytimeSeconds / 60)
             : null;
@@ -1338,7 +1339,8 @@ export async function buildStartupSnapshotFromCurrentState(
       media,
       lastPlayed: (() => {
         // Prefer playtime store (authoritative lastPlayedAt from sessions)
-        const ptEntry = game.appId ? getPlaytimeEntryByAppId(game.appId) : null;
+        // Use findPlaytimeEntryByAppId to find entries under any key (app-, debrid:, manual:)
+        const ptEntry = game.appId ? findPlaytimeEntryByAppId(game.appId) : null;
         if (ptEntry?.lastPlayedAt) return ptEntry.lastPlayedAt;
         // Fallback: from game fields (seconds from snapshot)
         return game.steamLastPlayedAt != null ? Math.floor(game.steamLastPlayedAt / 1000) : null;

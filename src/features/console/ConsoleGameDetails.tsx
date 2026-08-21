@@ -2,6 +2,7 @@ import { useMemo, useEffect, useCallback, useRef, useState, useSyncExternalStore
 import {
   ArrowLeft, Trophy, Heart, Gamepad2, Play, Square, HardDrive, CheckCircle2,
   Star, Languages, Layers, Download, RefreshCw, Search, FileSearch, Loader2, MoreHorizontal,
+  CircleCheck, CircleDashed, Clock,
 } from "lucide-react";
 import { getLauncherGamePrimaryAction } from "../../utils/launcherGameActions";
 import type { LibraryGame } from "../../types/libraryGame";
@@ -689,6 +690,12 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
     isPerfected,
   } = useConsoleAchievements(appIdStr);
 
+  const gameStatus = useMemo(() => {
+    if (isPerfected) return { label: "Completed", color: "text-emerald-400", Icon: CircleCheck };
+    if (playtimeSeconds > 0) return { label: "In Progress", color: "text-blue-400", Icon: Clock };
+    return { label: "Never Played", color: "text-white/40", Icon: CircleDashed };
+  }, [playtimeSeconds, isPerfected]);
+
   const releaseYear = useMemo(() => {
     if (!game?.metadata?.release_date) return null;
     const m = game.metadata.release_date.match(/^(\d{4})/);
@@ -853,6 +860,10 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         ) : (
           <div className="h-full w-full bg-(--console-bg)" />
         )}
+        {/* Subtle overall dim — pushes hero art back visually */}
+        <div className="absolute inset-0 bg-black/20" />
+        {/* Vignette — cinema spotlight effect, edges darken */}
+        <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.55) 100%)" }} />
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-black/10" />
         <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-transparent to-transparent" />
       </div>
@@ -895,34 +906,34 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
           data-focus-zone="hero"
           tabIndex={-1}
           onFocus={() => setFocusZone("hero")}
-          className={`mx-auto mt-8 w-full max-w-[1500px] cursor-pointer rounded-xl px-6 py-1 outline-none md:mt-12 lg:px-12 ${zoneFocusClass("hero")}`}
+          className={`mx-auto mt-8 w-full max-w-[min(1800px,90vw)] cursor-pointer rounded-xl px-[clamp(24px,4vw,64px)] py-1 outline-none md:mt-12 ${zoneFocusClass("hero")}`}
         >
           {logoSrc ? (
             <img
               src={logoSrc}
               alt={game.title}
-              className="max-h-[120px] w-auto object-contain drop-shadow-[0_8px_30px_rgba(0,0,0,0.8)]"
+              className="max-h-[clamp(100px,10vw,160px)] w-auto object-contain drop-shadow-[0_8px_30px_rgba(0,0,0,0.8)]"
             />
           ) : (
-            <h1 className="text-4xl font-black leading-tight text-white drop-shadow-2xl">{game.title}</h1>
+            <h1 className="text-4xl font-black leading-tight text-white drop-shadow-2xl lg:text-5xl">{game.title}</h1>
           )}
         </div>
 
         <div className="flex-1 lg:max-h-[220px]" />
 
         {/* ═══ Two-column panel ═══ */}
-        <div className="mx-auto mb-6 flex w-full max-w-[1500px] flex-col gap-4 px-6 md:mb-10 lg:flex-row lg:items-stretch lg:px-12">
+        <div className="mx-auto mb-6 flex w-full max-w-[min(1800px,90vw)] flex-col gap-4 px-[clamp(24px,4vw,64px)] md:mb-10 lg:flex-row lg:items-stretch lg:gap-6 lg:mb-[clamp(24px,4vh,56px)]">
 
           {/* ── LEFT: info card mejorada ── */}
-          <div className={`${surfaceBg} flex w-full flex-col rounded-2xl p-5 shadow-2xl shadow-black/60 ring-1 ring-white/[0.08] backdrop-blur-md lg:w-[440px] lg:shrink-0`}>
+          <div className={`${surfaceBg} flex w-full flex-col rounded-2xl p-5 shadow-2xl shadow-black/60 ring-1 ring-white/[0.08] backdrop-blur-md lg:w-[clamp(420px,28vw,600px)] lg:shrink-0 lg:p-[clamp(20px,2vw,32px)]`}>
             {/* Header row: cover + title/meta */}
-            <div className="flex items-start gap-3">
-              <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/10">
+            <div className="flex items-start gap-3 lg:gap-5">
+              <div className="relative h-[clamp(80px,10vw,160px)] shrink-0 overflow-hidden rounded-2xl bg-black/10 ring-1 ring-white/10">
                 {coverSrc ? (
-                  <img src={coverSrc} alt="" className="h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  <img src={coverSrc} alt="" className="h-full w-auto object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-white/5">
-                    <Gamepad2 className="h-6 w-6 text-white/20" />
+                  <div className="flex h-full w-[100px] items-center justify-center bg-white/5">
+                    <Gamepad2 className="h-8 w-8 text-white/20 lg:h-10 lg:w-10" />
                   </div>
                 )}
                 {/* Badge IN-GAME */}
@@ -934,11 +945,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-bold text-(--color-text)">{game.title}</h2>
-                <p className="mt-0.5 truncate text-[11px] text-(--color-muted)/70">
+                <h2 className="truncate text-sm font-bold text-(--color-text) lg:text-lg">{game.title}</h2>
+                <p className="mt-0.5 truncate text-[11px] text-(--color-muted)/70 lg:text-[12px]">
                   {[releaseYear, developer].filter(Boolean).join("  ·  ")}
                 </p>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-(--color-muted)/60">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-(--color-muted)/60 lg:text-[11px]">
                   <span className="inline-flex items-center gap-1"><HardDrive className="h-3 w-3" />{getGameDiskSize(game)}</span>
                   {game.steamInstalled && <span className="rounded bg-emerald-500/80 px-1.5 py-0.5 font-semibold text-black">Installed</span>}
                   {game.isLuaActive && <span className="rounded bg-violet-500/80 px-1.5 py-0.5 font-semibold text-white">Lua</span>}
@@ -967,19 +978,26 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 <span className="text-[10px] text-(--color-muted)/50">Loading reviews…</span>
               )}
               {genres?.map((g) => (
-                <span key={g} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-(--color-muted) ring-1 ring-white/10">{g}</span>
+                <span key={g} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-(--color-muted) ring-1 ring-white/10 lg:text-[11px]">{g}</span>
               ))}
             </div>
 
-            {/* Stats: Time Played / Last Played */}
-            <div className="mt-2 grid grid-cols-2 gap-1.5">
+            {/* Stats: Time Played / Last Played / Status */}
+            <div className="mt-2 grid grid-cols-2 gap-1.5 lg:grid-cols-3">
               <div className="rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
-                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35">Time Played</span>
-                <span className="block truncate text-[12px] font-semibold text-white/85">{playtimeDisplay}</span>
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Time Played</span>
+                <span className="block truncate text-[12px] font-semibold text-white/85 lg:text-[13px]">{playtimeDisplay}</span>
               </div>
               <div className="rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
-                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35">Last Played</span>
-                <span className="block truncate text-[12px] font-semibold text-white/85">{lastPlayedStr}</span>
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Last Played</span>
+                <span className="block truncate text-[12px] font-semibold text-white/85 lg:text-[13px]">{lastPlayedStr}</span>
+              </div>
+              <div className="col-span-2 rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06] lg:col-span-1">
+                <span className="block text-[9px] font-medium uppercase tracking-wider text-white/35 lg:text-[10px]">Status</span>
+                <span className={`inline-flex items-center gap-1 text-[12px] font-semibold lg:text-[13px] ${gameStatus.color}`}>
+                  <gameStatus.Icon className="h-3 w-3" />
+                  {gameStatus.label}
+                </span>
               </div>
             </div>
 
@@ -987,11 +1005,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             {achievementsSummary && effectiveTotal > 0 && (
               <div className="mt-2 rounded-lg bg-black/20 px-2.5 py-1.5 ring-1 ring-white/[0.06]">
                 <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-white/60">
-                    <Trophy className={`h-3 w-3 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-white/60 lg:text-[11px]">
+                    <Trophy className={`h-3.5 w-3.5 ${isPerfected ? "fill-amber-400 text-amber-400" : ""}`} />
                     Achievements
                   </span>
-                  <span className="text-[10px] font-semibold tabular-nums text-white/70">
+                  <span className="text-[10px] font-semibold tabular-nums text-white/70 lg:text-[11px]">
                     {effectiveUnlocked}/{effectiveTotal} ({effectivePercent}%)
                   </span>
                 </div>
@@ -1083,15 +1101,15 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             <div className="mt-3 flex flex-1 flex-col">
               <div
                 data-scroll-container
-                className="max-h-[120px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent pr-1"
+                className="max-h-[120px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent pr-1 lg:max-h-[160px]"
               >
                 {aboutTheGame && (
-                  <p className="text-[11px] leading-relaxed text-(--color-muted)/75">{aboutTheGame}</p>
+                  <p className="text-[11px] leading-relaxed text-(--color-muted)/75 lg:text-[12px]">{aboutTheGame}</p>
                 )}
               </div>
 
               {(languagesLabel || dlcLabel || (publisher && publisher !== developer)) && (
-                <div className="mt-auto space-y-1 border-t border-white/[0.06] pt-2 text-[10px] text-(--color-muted)/60">
+                <div className="mt-auto space-y-1 border-t border-white/[0.06] pt-2 text-[10px] text-(--color-muted)/60 lg:text-[11px]">
                   {publisher && publisher !== developer && (
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="uppercase tracking-wider text-white/35">Pub</span>
@@ -1157,7 +1175,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
 
         {/* ═══ Hints dinámicos ═══ */}
         <div
-          className={`mx-auto mb-4 flex w-full max-w-[1500px] flex-wrap justify-center gap-x-4 gap-y-1 rounded-xl px-6 py-2 outline-none lg:px-12 ${zoneFocusClass("hints")}`}
+          className={`mx-auto mb-4 flex w-full max-w-[min(1800px,90vw)] flex-wrap justify-center gap-x-4 gap-y-1 rounded-xl px-[clamp(24px,4vw,64px)] py-2 outline-none ${zoneFocusClass("hints")}`}
           data-focus-zone="hints"
           onClick={() => setFocusZone("hints")}
           tabIndex={-1}

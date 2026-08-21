@@ -129,6 +129,70 @@ pub fn read_playtime_sessions_for_game(
 // Write
 // ---------------------------------------------------------------------------
 
+/// Read a single entry by game_key (no sessions).
+pub fn read_playtime_entry(conn: &Connection, game_key: &str) -> Result<Option<PlaytimeEntry>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT game_key, app_id, provider, title, playtime_source,
+                    external_playtime_seconds, external_source, external_imported_at,
+                    local_playtime_seconds, total_playtime_seconds,
+                    last_played_at, last_session_seconds
+             FROM playtime_entries
+             WHERE game_key = ?1",
+        )
+        .map_err(|e| format!("Query prepare error: {}", e))?;
+
+    let mut rows = stmt
+        .query_map([game_key], |row| {
+            Ok(PlaytimeEntry {
+                game_key: row.get(0)?,
+                app_id: row.get(1)?,
+                provider: row.get(2)?,
+                title: row.get(3)?,
+                playtime_source: row.get(4)?,
+                external_playtime_seconds: row.get(5)?,
+                external_source: row.get(6)?,
+                external_imported_at: row.get(7)?,
+                local_playtime_seconds: row.get(8)?,
+                total_playtime_seconds: row.get(9)?,
+                last_played_at: row.get(10)?,
+                last_session_seconds: row.get(11)?,
+                sessions: Vec::new(),
+            })
+        })
+        .map_err(|e| format!("Query error: {}", e))?;
+
+    match rows.next() {
+        Some(Ok(mut entry)) => {
+            let sessions = read_playtime_sessions_for_game(conn, &entry.game_key).unwrap_or_default();
+            entry.sessions = sessions;
+            Ok(Some(entry))
+        }
+        Some(Err(e)) => Err(format!("Row error: {}", e)),
+        None => Ok(None),
+    }
+}
+
+/// Auto-close any open sessions (ended_at = NULL) for the given game.
+pub fn auto_close_stale_sessions(
+    conn: &Connection,
+    game_key: &str,
+    closed_at: i64,
+) -> Result<u32, String> {
+    let changed = conn
+        .execute(
+            "UPDATE playtime_sessions
+             SET ended_at = ?1,
+                 exit_reason = 'auto-closed',
+                 duration_seconds = ?1 - started_at
+             WHERE game_key = ?2
+               AND ended_at IS NULL",
+            rusqlite::params![closed_at, game_key],
+        )
+        .map_err(|e| format!("Auto-close sessions error: {}", e))?;
+    Ok(changed as u32)
+}
+
 pub fn upsert_playtime_entry(conn: &Connection, entry: &PlaytimeEntry) -> Result<(), String> {
     conn.execute(
         "INSERT INTO playtime_entries
@@ -196,6 +260,30 @@ pub fn upsert_playtime_session(
     )
     .map_err(|e| format!("Upsert playtime_session error: {}", e))?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Batch write
+// ---------------------------------------------------------------------------
+
+/// Upsert multiple entries in a single transaction.
+pub fn batch_upsert_playtime_entries(
+    conn: &Connection,
+    entries: &[PlaytimeEntry],
+) -> Result<u32, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Failed to start batch transaction: {}", e))?;
+
+    let mut count = 0u32;
+    for entry in entries {
+        upsert_playtime_entry(&tx, entry)?;
+        count += 1;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("Failed to commit batch transaction: {}", e))?;
+    Ok(count)
 }
 
 // ---------------------------------------------------------------------------

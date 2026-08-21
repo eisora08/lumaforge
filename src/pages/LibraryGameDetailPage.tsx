@@ -41,7 +41,7 @@ const ENABLE_VERBOSE_MEDIA_CACHE_LOGS = DEBUG_MEDIA_CACHE;
 const DEBUG_ACTIVITY = false;
 const DEBUG_LUA_DELETE = false;
 const DEBUG_META_TRACE = false;
-if (DEBUG_META_TRACE) (window as any).__DEBUG_META_TRACE = true;
+if (DEBUG_META_TRACE) (window as any).__DEBUG_META_TRACE = false;
 import DebridSourceSelectorModal from "../components/debrid/DebridSourceSelectorModal";
 import { DEBRID_INSTALL_ENABLED, DEBRID_LIBRARY_ENABLED, DEBUG_DEBRID_INSTALL } from "../features/debrid/debridFeatureFlag";
 import type { RepackQueryResult } from "../services/tauri";

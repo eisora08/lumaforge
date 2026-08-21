@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Trophy } from "lucide-react";
 import type { StartupSnapshot, SnapshotGame } from "../../services/startupSnapshotService";
+import type { LibraryGame } from "../../types/libraryGame";
 import { useLibraryGames } from "../../context/LibraryGamesContext";
 import { useSettings } from "../../context/SettingsContext";
 import { resolveProviderMediaPreviewUrl } from "../../services/gameCacheService";
@@ -14,6 +15,7 @@ import {
 import { requestGameData, LoadPriority } from "../../services/gameDataService";
 import AsyncImage from "../common/AsyncImage";
 import { resolveGameMediaUrl } from "../../services/gameCacheService";
+import { subscribePlaytimeStore } from "../../services/playtimeService";
 import type { AppPage } from "../../types/navigation";
 import DashboardHorizontalRail from "./DashboardHorizontalRail";
 
@@ -27,6 +29,7 @@ type Props = {
 function getTopPlayedGames(
   snapshotGames: SnapshotGame[],
   nonSnapshotGames: Array<{ id: string; title: string; libraryId?: string; source?: string }>,
+  libraryGames: LibraryGame[],
   excludeAppIds?: string[],
   maxItems?: number,
 ): DashboardDisplayGame[] {
@@ -34,11 +37,17 @@ function getTopPlayedGames(
   const result: DashboardDisplayGame[] = [];
   const seen = new Set<string>();
 
+  const libGameByAppId = new Map<string, LibraryGame>();
+  for (const lg of libraryGames) {
+    if (lg.appId) libGameByAppId.set(lg.appId, lg);
+  }
+
   // Snapshot games
   for (const sg of snapshotGames) {
     if (!sg.appId || exclude.has(sg.appId) || seen.has(sg.appId)) continue;
     seen.add(sg.appId);
-    result.push(snapshotToDisplayGame(sg as any, new Set()));
+    const libGame = libGameByAppId.get(sg.appId);
+    result.push(snapshotToDisplayGame(sg as any, new Set(), libGame));
   }
 
   // Non-snapshot games (manual + Epic + future)
@@ -69,6 +78,11 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, 
   const { games: libraryGames, setSelectedGame } = useLibraryGames();
   const { settings } = useSettings();
   const [mediaUrlMap, setMediaUrlMap] = useState<Record<string, string | null>>({});
+  const [playtimeVersion, setPlaytimeVersion] = useState(0);
+
+  useEffect(() => {
+    return subscribePlaytimeStore(() => setPlaytimeVersion((v) => v + 1));
+  }, []);
 
   const nonSnapshotGames = useMemo(() => getNonSnapshotGamesForDashboard(libraryGames), [libraryGames]);
 
@@ -78,8 +92,8 @@ export default function TopPlayedSection({ snapshot, onNavigate, excludeAppIds, 
   );
 
   const displayGames = useMemo(
-    () => getTopPlayedGames(snapshotGames, nonSnapshotGames, excludeAppIds, maxItems),
-    [snapshotGames, nonSnapshotGames, excludeAppIds, maxItems],
+    () => getTopPlayedGames(snapshotGames, nonSnapshotGames, libraryGames, excludeAppIds, maxItems),
+    [snapshotGames, nonSnapshotGames, libraryGames, excludeAppIds, maxItems, playtimeVersion],
   );
 
   useEffect(() => {
