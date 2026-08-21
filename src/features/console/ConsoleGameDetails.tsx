@@ -986,11 +986,11 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
         {/* ── Content ── */}
         <div className="relative z-10 flex h-full flex-col">
           {/* ════════════════════════════════════════
-             HERO — Full-width cover art with logo overlay
+             HERO — Full-width cover art + logo + actions overlay
              ════════════════════════════════════════ */}
           <div
             className="relative shrink-0 overflow-hidden"
-            style={{ height: "clamp(220px, 36vh, 400px)" }}
+            style={{ height: "clamp(260px, 38vh, 420px)" }}
           >
             {(heroSrc || coverSrc) ? (
               <img
@@ -1005,193 +1005,194 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
                 <Gamepad2 className="h-16 w-16 text-(--color-muted)/20" />
               </div>
             )}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/30 to-transparent" />
 
-            {/* Logo or Title overlay */}
-            <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-6 pb-5">
-              <div className="flex min-w-0 flex-1 flex-col gap-2">
-                {logoSrc ? (
-                  <img
-                    src={logoSrc}
-                    alt={game.title}
-                    className="max-h-[64px] max-w-[320px] object-contain drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)]"
-                  />
-                ) : (
-                  <h2 className="text-2xl font-bold leading-tight text-white drop-shadow-lg">
-                    {game.title}
-                  </h2>
-                )}
-                <div className="flex flex-wrap items-center gap-2">
-                  {developer && (
-                    <span className="text-xs text-white/60">{developer}</span>
+            {/* ── Bottom overlay: title + actions ── */}
+            <div className="absolute inset-x-0 bottom-0 flex flex-col px-6 pb-4">
+              {/* Title row: logo/name + badges */}
+              <div className="flex items-end justify-between gap-4 mb-3">
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  {logoSrc ? (
+                    <img
+                      src={logoSrc}
+                      alt={game.title}
+                      className="max-h-[56px] max-w-[280px] object-contain drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)]"
+                    />
+                  ) : (
+                    <h2 className="text-xl font-bold leading-tight text-white drop-shadow-lg">
+                      {game.title}
+                    </h2>
                   )}
-                  {releaseYear && (
-                    <span className="text-xs text-white/40">· {releaseYear}</span>
-                  )}
-                </div>
-              </div>
-              {/* Badges */}
-              <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
-                {game.steamInstalled && (
-                  <span className="rounded-md bg-emerald-500/80 px-2 py-1 text-[11px] font-semibold text-black shadow-md">
-                    Installed
-                  </span>
-                )}
-                {game.isLuaActive && (
-                  <span className="rounded-md bg-violet-500/80 px-2 py-1 text-[11px] font-semibold text-white shadow-md">
-                    Lua
-                  </span>
-                )}
-                {isFav && (
-                  <span className="rounded-md bg-rose-500/80 px-2 py-1 text-[11px] font-semibold text-white shadow-md">
-                    Favorite
-                  </span>
-                )}
-                {game.source === "debrid" && game.repacker && (
-                  <span className="rounded-md bg-cyan-500/80 px-2 py-1 text-[11px] font-semibold text-black shadow-md">
-                    {game.repacker.toUpperCase()}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* ════════════════════════════════════════
-             ACTION BAR — Play + Favorite + Stats
-             ════════════════════════════════════════ */}
-          <div
-            tabIndex={-1}
-            onFocus={() => { setFocusZone("left-actions"); setLeftActionSubIndex(0); }}
-            className={`flex shrink-0 items-center gap-3 border-b border-white/5 px-6 py-3 outline-none ${zoneFocusClass("left-actions")}`}
-          >
-            {isRunning ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => { handleStop(); }}
-                  tabIndex={0}
-                  onFocus={() => setLeftActionSubIndex(0)}
-                  className={`inline-flex items-center gap-2 rounded-xl bg-red-500 px-7 py-3 text-base font-bold text-white shadow-lg transition hover:brightness-110 ${
-                    focusZone === "left-actions" && leftActionSubIndex === 0
-                      ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
-                      : ""
-                  }`}
-                >
-                  <Square className="h-5 w-5 fill-current" />
-                  Stop
-                </button>
-                {gameSession?.pid != null && (
-                  <button
-                    type="button"
-                    onClick={() => { handleReturn(); }}
-                    tabIndex={0}
-                    onFocus={() => setLeftActionSubIndex(1)}
-                    className={`inline-flex items-center gap-2 rounded-xl border px-5 py-3 text-base font-medium text-(--color-text) transition hover:bg-(--color-surface)/40 ${
-                      focusZone === "left-actions" && leftActionSubIndex === 1
-                        ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
-                        : "border-(--color-border)/60"
-                    }`}
-                    title="Return to game"
-                  >
-                    <Play className="h-5 w-5" />
-                    Return
-                  </button>
-                )}
-              </>
-            ) : isLaunching ? (
-              <button
-                type="button"
-                disabled
-                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-7 py-3 text-base font-bold text-(--color-accent-text) shadow-xl shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
-              >
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Launching…
-              </button>
-            ) : isStopping ? (
-              <button
-                type="button"
-                disabled
-                className="inline-flex items-center gap-2 rounded-xl bg-red-500/60 px-7 py-3 text-base font-bold text-white opacity-50 cursor-not-allowed"
-              >
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Stopping…
-              </button>
-            ) : actionInFlight ? (
-              <button
-                type="button"
-                disabled
-                className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent)/70 px-7 py-3 text-base font-bold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed"
-              >
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                {actionModel?.label ?? "Play"}…
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  if (DEBUG_CONSOLE_DETAILS_ACTION) {
-                    console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
-                  }
-                  handlePrimaryAction();
-                }}
-                disabled={!actionModel?.enabled}
-                tabIndex={0}
-                onFocus={() => setLeftActionSubIndex(0)}
-                className={`inline-flex items-center gap-2 rounded-xl px-7 py-3 text-base font-bold text-white transition shadow-xl ${
-                  actionModel?.enabled === false
-                    ? "bg-(--color-accent)/50 opacity-50 cursor-not-allowed shadow-none"
-                    : "bg-(--color-accent) shadow-(--color-accent)/30 hover:brightness-110"
-                } ${
-                  focusZone === "left-actions" && leftActionSubIndex === 0
-                    ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
-                    : ""
-                }`}
-              >
-                <ActionIcon action={actionModel?.action ?? "unavailable"} className="h-5 w-5" />
-                {actionModel?.label ?? "Play"}
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={handleFavoriteToggle}
-              tabIndex={0}
-              onFocus={() => setLeftActionSubIndex(hasReturn ? 2 : 1)}
-              className={`inline-flex items-center justify-center rounded-xl border px-3.5 py-3 text-base transition hover:bg-(--color-surface)/40 ${
-                isFav ? "text-rose-400" : "text-(--color-muted)"
-              } ${
-                focusZone === "left-actions" && ((hasReturn && leftActionSubIndex === 2) || (!hasReturn && leftActionSubIndex === 1))
-                  ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
-                  : "border-(--color-border)/60"
-              }`}
-              title={isFav ? "Remove from Favorites" : "Add to Favorites"}
-            >
-              <Heart className={`h-5 w-5 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
-            </button>
-
-            {/* Stats pills — pushed right */}
-            <div className="ml-auto flex gap-2">
-              {[
-                { icon: Clock, label: "Played", value: playtimeDisplay },
-                { icon: Clock, label: "Last", value: lastPlayedStr },
-                { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
-                {
-                  icon: CheckCircle2,
-                  label: "Status",
-                  value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
-                },
-              ].map(({ icon: Icon, label, value }) => (
-                <div
-                  key={label}
-                  className="flex items-center gap-1.5 rounded-xl bg-white/[0.04] px-3 py-2 ring-1 ring-white/[0.06]"
-                >
-                  <Icon className="h-3.5 w-3.5 shrink-0 text-(--color-muted)" />
-                  <div className="min-w-0">
-                    <span className="text-[9px] font-medium uppercase tracking-wider text-(--color-muted)/60 block">{label}</span>
-                    <span className="text-[11px] font-semibold text-(--color-text) block truncate">{value}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {developer && (
+                      <span className="text-xs text-white/60">{developer}</span>
+                    )}
+                    {releaseYear && (
+                      <span className="text-xs text-white/40">· {releaseYear}</span>
+                    )}
                   </div>
                 </div>
-              ))}
+                {/* Badges */}
+                <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                  {game.steamInstalled && (
+                    <span className="rounded-md bg-emerald-500/80 px-2 py-1 text-[11px] font-semibold text-black shadow-md">
+                      Installed
+                    </span>
+                  )}
+                  {game.isLuaActive && (
+                    <span className="rounded-md bg-violet-500/80 px-2 py-1 text-[11px] font-semibold text-white shadow-md">
+                      Lua
+                    </span>
+                  )}
+                  {isFav && (
+                    <span className="rounded-md bg-rose-500/80 px-2 py-1 text-[11px] font-semibold text-white shadow-md">
+                      Favorite
+                    </span>
+                  )}
+                  {game.source === "debrid" && game.repacker && (
+                    <span className="rounded-md bg-cyan-500/80 px-2 py-1 text-[11px] font-semibold text-black shadow-md">
+                      {game.repacker.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Action row: Play + Favorite + Stats — inside hero gradient */}
+              <div
+                tabIndex={-1}
+                onFocus={() => { setFocusZone("left-actions"); setLeftActionSubIndex(0); }}
+                className={`flex items-center gap-2.5 outline-none ${zoneFocusClass("left-actions")}`}
+              >
+                {isRunning ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => { handleStop(); }}
+                      tabIndex={0}
+                      onFocus={() => setLeftActionSubIndex(0)}
+                      className={`inline-flex items-center gap-2 rounded-xl bg-red-500 px-6 py-2.5 text-sm font-bold text-white shadow-lg transition hover:brightness-110 ${
+                        focusZone === "left-actions" && leftActionSubIndex === 0
+                          ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
+                          : ""
+                      }`}
+                    >
+                      <Square className="h-4 w-4 fill-current" />
+                      Stop
+                    </button>
+                    {gameSession?.pid != null && (
+                      <button
+                        type="button"
+                        onClick={() => { handleReturn(); }}
+                        tabIndex={0}
+                        onFocus={() => setLeftActionSubIndex(1)}
+                        className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10 ${
+                          focusZone === "left-actions" && leftActionSubIndex === 1
+                            ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
+                            : "border-white/20"
+                        }`}
+                        title="Return to game"
+                      >
+                        <Play className="h-4 w-4" />
+                        Return
+                      </button>
+                    )}
+                  </>
+                ) : isLaunching ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent) px-6 py-2.5 text-sm font-bold text-(--color-accent-text) shadow-xl shadow-(--color-accent)/25 opacity-50 cursor-not-allowed"
+                  >
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    Launching…
+                  </button>
+                ) : isStopping ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-2 rounded-xl bg-red-500/60 px-6 py-2.5 text-sm font-bold text-white opacity-50 cursor-not-allowed"
+                  >
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    Stopping…
+                  </button>
+                ) : actionInFlight ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-2 rounded-xl bg-(--color-accent)/70 px-6 py-2.5 text-sm font-bold text-(--color-accent-text) shadow-lg opacity-60 cursor-not-allowed"
+                  >
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    {actionModel?.label ?? "Play"}…
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (DEBUG_CONSOLE_DETAILS_ACTION) {
+                        console.log(`[CONSOLE_DETAILS_ACTION][MOUSE_CLICK] appid=${game?.appId} action=${actionModel?.action ?? "none"}`);
+                      }
+                      handlePrimaryAction();
+                    }}
+                    disabled={!actionModel?.enabled}
+                    tabIndex={0}
+                    onFocus={() => setLeftActionSubIndex(0)}
+                    className={`inline-flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white transition shadow-lg ${
+                      actionModel?.enabled === false
+                        ? "bg-white/20 opacity-50 cursor-not-allowed shadow-none"
+                        : "bg-(--color-accent) shadow-(--color-accent)/30 hover:brightness-110"
+                    } ${
+                      focusZone === "left-actions" && leftActionSubIndex === 0
+                        ? "ring-2 ring-(--color-accent)/50 shadow-lg shadow-(--color-accent)/20"
+                        : ""
+                    }`}
+                  >
+                    <ActionIcon action={actionModel?.action ?? "unavailable"} className="h-4 w-4" />
+                    {actionModel?.label ?? "Play"}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleFavoriteToggle}
+                  tabIndex={0}
+                  onFocus={() => setLeftActionSubIndex(hasReturn ? 2 : 1)}
+                  className={`inline-flex items-center justify-center rounded-xl border px-3 py-2.5 text-sm transition hover:bg-white/10 ${
+                    isFav ? "text-rose-400" : "text-white/60"
+                  } ${
+                    focusZone === "left-actions" && ((hasReturn && leftActionSubIndex === 2) || (!hasReturn && leftActionSubIndex === 1))
+                      ? "border-(--color-accent)/50 ring-2 ring-(--color-accent)/40"
+                      : "border-white/20"
+                  }`}
+                  title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+                >
+                  <Heart className={`h-4 w-4 ${isFav ? "fill-rose-400 text-rose-400" : ""}`} />
+                </button>
+
+                {/* Stats pills — pushed right */}
+                <div className="ml-auto flex gap-2">
+                  {[
+                    { icon: Clock, label: "Played", value: playtimeDisplay },
+                    { icon: Clock, label: "Last", value: lastPlayedStr },
+                    { icon: HardDrive, label: "Size", value: getGameDiskSize(game) },
+                    {
+                      icon: CheckCircle2,
+                      label: "Status",
+                      value: isPerfected ? "Completed" : playtimeSeconds > 0 ? "In Progress" : "Not Played",
+                    },
+                  ].map(({ icon: Icon, label, value }) => (
+                    <div
+                      key={label}
+                      className="flex items-center gap-1.5 rounded-lg bg-white/[0.08] px-2.5 py-1.5 ring-1 ring-white/[0.08] backdrop-blur-sm"
+                    >
+                      <Icon className="h-3 w-3 shrink-0 text-white/50" />
+                      <div className="min-w-0">
+                        <span className="text-[8px] font-medium uppercase tracking-wider text-white/40 block">{label}</span>
+                        <span className="text-[10px] font-semibold text-white/90 block truncate">{value}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
