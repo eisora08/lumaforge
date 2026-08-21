@@ -535,8 +535,7 @@ export default function ConsoleGridLayout({
                 {/* Separator */}
                 <div className="border-t border-(--color-border)" />
 
-                {/* Achievement progress bar — hidden for manual games */}
-                {!isManualGame && (
+                {/* Achievement progress bar */}
                 <div>
                   <div className="flex items-center gap-2">
                     <Trophy className="h-4 w-4 text-(--color-muted)" />
@@ -563,10 +562,8 @@ export default function ConsoleGridLayout({
                     <p className="mt-2 text-xs text-(--color-muted)">No achievement data</p>
                   )}
                 </div>
-                )}
 
-                {/* Reviews card — hidden for manual games */}
-                {!isManualGame && (
+                {/* Reviews card */}
                 <div>
                   <div className="flex items-center gap-2">
                     <Star className="h-4 w-4 text-(--color-muted)" />
@@ -588,7 +585,6 @@ export default function ConsoleGridLayout({
                     <p className="mt-2 text-xs text-(--color-muted)">No review data</p>
                   )}
                 </div>
-                )}
 
                 {/* Genre chips */}
                 {tags && (

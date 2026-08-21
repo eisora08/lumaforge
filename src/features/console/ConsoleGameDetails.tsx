@@ -708,7 +708,6 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
   /* ── Derived data ── */
   const heroSrc = mediaBundle?.background?.url ?? getConsoleHeroBackground(game);
   const coverSrc = mediaBundle?.cover?.url ?? getConsoleCardSrc(game, "poster");
-  const isManualGame = game?.source === "manual";
   // Selectable hero/background transition (Settings → Animaciones)
   useSyncExternalStore(subscribeHeroTransition, getHeroTransitionSnapshot, getHeroTransitionSnapshot);
   const heroTransition = getHeroTransitionSnapshot().id;
@@ -1383,7 +1382,7 @@ export default function ConsoleGameDetails({ game, onClose, settings, onSearchOp
             )}
 
             {/* ── Two-column row: Achievements | Reviews (zone: info-cards) ── */}
-            {!isManualGame && (
+            {(
               settings.spotlightContent.showAchievements ||
               settings.spotlightContent.showReviews
             ) && (

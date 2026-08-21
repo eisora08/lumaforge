@@ -1,5 +1,6 @@
 import type { LibraryGame } from "../../types/libraryGame";
 import { getPlaytimeEntryByAppId, getPlaytimeEntryByGameKey, resolvePlaytimeKey } from "../../services/playtimeService";
+import { achievementStore } from "../../services/achievementStore";
 
 export function formatBytes(bytes?: number): string {
   if (!bytes || bytes === 0) return "Unknown";
@@ -35,12 +36,14 @@ export function getGameDiskSize(game: LibraryGame): string {
 }
 
 export function getGameLastPlayedTimestamp(game: LibraryGame): number | null {
-  // Check playtime store first (works for manual + Steam)
-  const byAppId = game.appId ? getPlaytimeEntryByAppId(game.appId)?.lastPlayedAt : null;
-  if (byAppId) return byAppId;
+  // Source-specific key FIRST for manual/debrid (libraryId), not appId
+  // (matches desktop GameHero's manualPlaytime map priority)
   const byKey = getPlaytimeEntryByGameKey(resolvePlaytimeKey(game))?.lastPlayedAt;
   if (byKey) return byKey;
-  // Fallback to game fields
+  // Then canonical app-{appId} for Steam/Lua
+  const byAppId = game.appId ? getPlaytimeEntryByAppId(game.appId)?.lastPlayedAt : null;
+  if (byAppId) return byAppId;
+  // Fallback to snapshot/game fields
   const ts = game.localLastPlayedAt ?? game.steamLastPlayedAt;
   return ts ?? null;
 }
@@ -50,8 +53,18 @@ export function getGameAchievementSummary(game: LibraryGame): {
   total: number;
   percent: number;
 } | null {
-  const unlocked = game.achievementUnlocked;
-  const total = game.achievementTotal;
+  let unlocked = game.achievementUnlocked;
+  let total = game.achievementTotal;
+
+  // Fallback: read from achievement store for games with appId but missing fields
+  if ((typeof unlocked !== "number" || typeof total !== "number" || total <= 0) && game.appId) {
+    const storeSummary = achievementStore.getSummary(game.appId);
+    if (storeSummary && storeSummary.total > 0) {
+      unlocked = storeSummary.unlocked ?? 0;
+      total = storeSummary.total;
+    }
+  }
+
   if (typeof unlocked !== "number" || typeof total !== "number" || total <= 0) return null;
   return {
     unlocked,

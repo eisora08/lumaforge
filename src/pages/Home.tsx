@@ -8,7 +8,7 @@ import CompletedSection from "../components/dashboard/CompletedSection";
 import FavoritesSection from "../components/dashboard/FavoritesSection";
 import RecommendedSection from "../components/dashboard/RecommendedSection";
 import TopPlayedSection from "../components/dashboard/TopPlayedSection";
-import StoreHighlightsSection from "../components/dashboard/StoreHighlightsSection";
+
 import FeaturedPicksSection from "../components/dashboard/FeaturedPicksSection";
 import TopPicksDashboardSection from "../components/dashboard/TopPicksDashboardSection";
 import TrendingRightNowSection from "../components/dashboard/TrendingRightNowSection";
@@ -295,12 +295,6 @@ export default function Home({ onNavigate }: Props) {
               excludeAppIds={[runningAppId].filter(Boolean) as string[]}
               maxItems={getSectionLimit("top-played", sectionLimits, 12)}
             />
-          </SectionWrap>
-        )}
-
-        {isSectionVisible("store-highlights", sectionVisibility) && (
-          <SectionWrap>
-            <StoreHighlightsSection onNavigate={onNavigate} />
           </SectionWrap>
         )}
 
