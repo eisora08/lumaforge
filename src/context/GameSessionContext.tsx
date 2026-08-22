@@ -1004,29 +1004,28 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       ]);
 
       // HUD chip: icon first (compact thumbnail)
-      iconUrl = resolvedIcon ?? resolvedCover ?? resolvedLandscape ?? resolvedBackground;
-      // Overlay hero: background first (full-width cinematic)
-      heroUrl = resolvedBackground ?? resolvedLandscape ?? resolvedCover;
-      // Overlay card (360×160): landscape first (least cropped), then background, then cover
-      imageUrl = resolvedLandscape ?? resolvedBackground ?? resolvedCover;
+      iconUrl = resolvedIcon ?? resolvedLandscape ?? resolvedBackground;
+      // Overlay card (360×160): landscape first (least cropped), background second — NO cover
+      heroUrl = resolvedBackground ?? resolvedLandscape;
+      imageUrl = resolvedLandscape ?? resolvedBackground;
 
-      // Fallback to LibraryGame fields (mapper already resolved these)
-      if (!imageUrl) imageUrl = await resolveUrl(game.imageUrl, "steam");
-      if (!heroUrl) heroUrl = await resolveUrl(game.backgroundPath || game.imageUrl, "steam");
-      if (!iconUrl) iconUrl = await resolveUrl(game.iconPath, "steam");
-
-      // Fallback: manual game with appId — artwork saved to Steam appinfo namespace
-      if (game.appId && (!imageUrl || !heroUrl)) {
+      // Fallback: manual game with appId — local appinfo media (work offline)
+      if (game.appId && (!imageUrl || !heroUrl || !iconUrl)) {
         try {
           const { loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
           const appInfo = await loadGameAppInfoWithMediaFallback(String(game.appId));
           if (appInfo?.media) {
-            if (!imageUrl) imageUrl = await resolveUrl(appInfo.media.coverPath || appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
+            if (!imageUrl) imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
             if (!heroUrl) heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
             if (!iconUrl) iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
           }
         } catch { /* non-critical */ }
       }
+
+      // Last resort: LibraryGame fields (may be HTTP URLs)
+      if (!imageUrl) imageUrl = await resolveUrl(game.imageUrl, "steam");
+      if (!heroUrl) heroUrl = await resolveUrl(game.backgroundPath || game.imageUrl, "steam");
+      if (!iconUrl) iconUrl = await resolveUrl(game.iconPath, "steam");
     } else if (game.source === "epic" && game.providerGameId) {
       // Epic games: resolve each role from override store
       const { readEpicOverrides } = await import("../services/epicOverrideStore");
@@ -1039,9 +1038,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         resolveUrl(overrides?.iconPath, "epic"),
       ]);
 
-      iconUrl = resolvedIcon ?? resolvedCover ?? resolvedLandscape ?? resolvedBackground;
-      heroUrl = resolvedBackground ?? resolvedLandscape ?? resolvedCover;
-      imageUrl = resolvedLandscape ?? resolvedBackground ?? resolvedCover;
+      iconUrl = resolvedIcon ?? resolvedLandscape ?? resolvedBackground;
+      heroUrl = resolvedBackground ?? resolvedLandscape;
+      imageUrl = resolvedLandscape ?? resolvedBackground;
     } else if (game.source === "debrid") {
       // Debrid games: prefer local media (work offline), fall back to Steam CDN.
       const { buildSteamCdnUrl, loadGameAppInfoWithMediaFallback } = await import("../services/gameCacheService");
@@ -1054,7 +1053,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         try {
           const appInfo = await loadGameAppInfoWithMediaFallback(appIdStr);
           if (appInfo?.media) {
-            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath || appInfo.media.coverPath, "steam");
+            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
             heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
             iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
           }
@@ -1077,7 +1076,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
         try {
           const appInfo = await loadGameAppInfoWithMediaFallback(appIdStr);
           if (appInfo?.media) {
-            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath || appInfo.media.coverPath, "steam");
+            imageUrl = await resolveUrl(appInfo.media.landscapePath || appInfo.media.backgroundPath, "steam");
             heroUrl = await resolveUrl(appInfo.media.backgroundPath || appInfo.media.landscapePath, "steam");
             iconUrl = await resolveUrl(appInfo.media.iconPath, "steam");
           }
