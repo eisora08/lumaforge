@@ -19,7 +19,7 @@ import ConsoleSettingsPanelV2 from "./ConsoleSettingsPanelV2";
 import ConsoleSelectedPreview from "./ConsoleSelectedPreview";
 import { extractTrailerData } from "./consoleTrailerData";
 import { setScrollTarget } from "./useConsoleGamepadInput";
-import { deduplicateByStableId, getFavoriteKey, localPathToUrl, isLocalPath } from "../../services/gameCacheService";
+import { getFavoriteKey, localPathToUrl, isLocalPath } from "../../services/gameCacheService";
 import { setAmbientSource, clearAmbientSource, subscribeAmbient, getAmbientSnapshot } from "../../services/ambientBackgroundStore";
 import { useDynamicPalette } from "../../hooks/useDynamicPalette";
 
@@ -46,7 +46,6 @@ type Props = {
   onSettingsPatch: (patch: Partial<ConsoleSettings>) => void;
   allGames?: LibraryGame[];
   onRefreshLibrary?: () => void;
-  gridColumnsRef?: React.MutableRefObject<number>;
   dockFocusedIndex?: number;
 };
 
@@ -59,7 +58,6 @@ export default function ConsoleGridLayout({
   categoryCounts, activeCategory, onSelectCategory,
   settings, onSettingsPatch,
   allGames, onRefreshLibrary,
-  gridColumnsRef,
   dockFocusedIndex: _dockFocusedIndex,
 }: Props) {
   const { favoriteIds } = useFavorites();
@@ -70,7 +68,6 @@ export default function ConsoleGridLayout({
   const gridCardVariant: "landscape" | "poster" = settings.gridCardStyle.useLandscapeCards ? "landscape" : "poster";
   const isFav = focusedGame ? favoriteIds.has(getFavoriteKey(focusedGame) ?? focusedGame.id) : false;
   const currentRail = focusedRail >= 0 && focusedRail < rails.length ? rails[focusedRail] : [];
-  const dedupedRail = useMemo(() => deduplicateByStableId(currentRail), [currentRail]);
 
   /* ── Preview uses settledFocusedGame (debounced) to avoid heavy work during held navigation ── */
   const previewGame = settledFocusedGame ?? focusedGame;
@@ -158,26 +155,6 @@ export default function ConsoleGridLayout({
     return previewGame.metadata.genres.slice(0, 4);
   }, [previewGame]);
 
-  /* ── Measure actual grid column count from CSS (ResizeObserver for live updates) ── */
-  useEffect(() => {
-    const el = gridRef.current;
-    if (!el) return;
-
-    const measure = () => {
-      const computed = getComputedStyle(el).gridTemplateColumns;
-      const split = computed.split(/\s+/).filter(Boolean);
-      const actual = split.length;
-      if (actual > 0 && actual !== (gridColumnsRef?.current ?? 0)) {
-        if (gridColumnsRef) gridColumnsRef.current = actual;
-        if (DEBUG_CONSOLE_GRID_NAV) console.log(`[CONSOLE_GRID_NAV][COLUMNS] computed="${computed}" actual=${actual}`);
-      }
-    };
-
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   /* ── Register scroll target for right-stick gamepad scrolling ── */
   useEffect(() => {
@@ -339,18 +316,19 @@ export default function ConsoleGridLayout({
                paddingRight: "32px",
                paddingTop: "clamp(24px, 3vh, 40px)",
              }}>
-          {dedupedRail.length > 0 ? (
+          {currentRail.length > 0 ? (
             <div
               ref={gridRef}
+              data-console-grid
               className="grid"
               style={{
                 gridTemplateColumns: `repeat(auto-fill, minmax(${settings.gridCardStyle.widthPreset}px, 1fr))`,
                 gap: `${settings.gridGap}px`,
               }}
             >
-              {dedupedRail.map((game, i) => (
+              {currentRail.map((game, i) => (
                 <ConsoleGameCard
-                  key={"grid:" + (game.appId || game.id)}
+                  key={`grid:${i}:${game.appId || game.id}`}
                   game={game}
                   isFocused={focusedIndex === i}
                   onClick={() => onSelectGame(game)}

@@ -42,6 +42,16 @@ const DEBUG_CONSOLE_PLAY = false;
 const DEBUG_CONSOLE_GRID_NAV = false;
 const DEBUG_CONSOLE_ENTRY = false;
 
+function measureGridColumns(gridColumnsRef: React.MutableRefObject<number>): number {
+  const el = document.querySelector<HTMLElement>("[data-console-grid]");
+  if (el) {
+    const computed = getComputedStyle(el).gridTemplateColumns;
+    const count = computed.split(/\s+/).filter(Boolean).length;
+    if (count > 0) gridColumnsRef.current = count;
+  }
+  return Math.max(1, gridColumnsRef.current || 8);
+}
+
 type Props = {
   onNavigate?: (page: AppPage) => void;
 };
@@ -375,7 +385,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
             const r = railsRef.current;
             const rail = fr >= 0 && fr < r.length ? r[fr] : null;
             if (rail && rail.length > 0) {
-              const cols = Math.max(1, gridColumnsRef.current || consoleSettings.gridColumns || 8);
+              const cols = measureGridColumns(gridColumnsRef);
               const next = fi - cols;
               if (next >= 0) {
                 if (DEBUG_CONSOLE_GRID_NAV) console.log(`[CONSOLE_GRID_NAV][MOVE] direction=up from=${fi} to=${next} appid=${rail[next]?.appId}`);
@@ -394,7 +404,7 @@ export default function ConsoleModePage({ onNavigate }: Props) {
             const r = railsRef.current;
             const rail = fr >= 0 && fr < r.length ? r[fr] : null;
             if (rail && rail.length > 0) {
-              const cols = Math.max(1, gridColumnsRef.current || consoleSettings.gridColumns || 8);
+              const cols = measureGridColumns(gridColumnsRef);
               const next = fi + cols;
               const clamped = Math.min(next, rail.length - 1);
               if (clamped !== fi) {
@@ -730,9 +740,8 @@ export default function ConsoleModePage({ onNavigate }: Props) {
     settings: consoleSettings,
     onSettingsPatch: patchConsoleSettings,
     allGames: enrichedGames,
-    gridColumnsRef,
     dockFocusedIndex,
-  }), [enrichedFocusedGame, enrichedSettledGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, gridColumnsRef, dockFocusedIndex]);
+  }), [enrichedFocusedGame, enrichedSettledGame, rails, focusedRail, focusedIndex, handleSelectGame, handleOptionsGame, handleConsolePlay, consoleSettings.layoutMode, toggleLayout, onNavigate, railLengths, handleSelectCategory, consoleSettings, patchConsoleSettings, enrichedGames, dockFocusedIndex]);
 
   const layout = consoleSettings.layoutMode === "spotlight"
     ? <ConsoleSwitchSpotlightLayout {...sharedProps} />
