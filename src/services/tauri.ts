@@ -3773,6 +3773,38 @@ export async function seedGseSavesFolder(appId: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Catalog fixes (Rockstar, Voices38, etc.)
+// ---------------------------------------------------------------------------
+
+export async function libraryApplyCatalogFix(params: {
+  appId: number;
+  name: string;
+  installDir: string;
+  downloadUrl: string;
+  fixType: string;
+  accountName?: string;
+  steamId?: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_apply_catalog_fix", params);
+}
+
+export async function libraryHasCatalogFix(
+  appId: number,
+  installDir: string,
+  fixType: string,
+): Promise<boolean> {
+  return await invoke<boolean>("library_has_catalog_fix", { appId, installDir, fixType });
+}
+
+export async function libraryUnfixCatalogFix(params: {
+  appId: number;
+  installDir: string;
+  fixType: string;
+}): Promise<GameFixResult> {
+  return await invoke<GameFixResult>("library_unfix_catalog_fix", params);
+}
+
+// ---------------------------------------------------------------------------
 // Third-party tools (src-tauri/commands/thirdparty.rs)
 // ---------------------------------------------------------------------------
 

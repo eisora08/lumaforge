@@ -17,6 +17,8 @@ const TOOL_LABELS: Record<string, string> = {
   steamless: "Steamless",
   online_fix: "Online-Fix",
   koaloader: "Koaloader",
+  RockstarFix: "Rockstar Fix",
+  Voices38Fix: "Voices38 Fix",
 };
 
 function label(tool: string): string {

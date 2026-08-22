@@ -800,14 +800,17 @@ async fn fetch_online_fix_me_download_links(
 // Download and extraction helpers
 // ---------------------------------------------------------------------------
 
-async fn download_file(client: &reqwest::Client, url: &str, dest: &Path) -> AnyResult<()> {
+async fn download_file(client: &reqwest::Client, url: &str, dest: &Path, bearer: Option<&str>) -> AnyResult<()> {
     let safe_url = encode_non_ascii_href(url);
-    let resp = client
+    let mut req = client
         .get(&safe_url)
-        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
-        .send()
-        .await
-        .context("Failed to start download")?;
+        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS));
+    if let Some(tok) = bearer {
+        if !tok.is_empty() {
+            req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {tok}"));
+        }
+    }
+    let resp = req.send().await.context("Failed to start download")?;
 
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {} for {}", resp.status(), url);
@@ -817,6 +820,18 @@ async fn download_file(client: &reqwest::Client, url: &str, dest: &Path) -> AnyR
 
     if bytes.is_empty() {
         anyhow::bail!("Downloaded file is empty: {}", url);
+    }
+
+    // Defense-in-depth: reject HTML responses (e.g. auth failures that return 200 + login page)
+    let starts_with_html = bytes.len() > 16
+        && (bytes[..16].eq_ignore_ascii_case(b"<!DOCTYPE html")
+            || bytes[..16].eq_ignore_ascii_case(b"<html"));
+    if starts_with_html {
+        let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(200)]);
+        anyhow::bail!(
+            "Server returned HTML instead of a file archive (likely an auth/redirect issue): {}",
+            snippet
+        );
     }
 
     tokio::fs::write(dest, &bytes).await.context("Failed to write downloaded file")?;
@@ -840,7 +855,7 @@ async fn download_and_extract_rar(
     let rar_path = temp_dir.path().join("download.rar");
 
     eprintln!("[luma-lite] online-fix: downloading RAR from: {}", url);
-    download_file(client, url, &rar_path).await?;
+    download_file(client, url, &rar_path, None).await?;
 
     let metadata = std::fs::metadata(&rar_path)?;
     if metadata.len() < 1024 {
@@ -1009,7 +1024,7 @@ async fn download_and_extract_to_plugins(
     let temp_dir = tempfile::tempdir_in(temp_fix_dir(app_handle))?;
     let zip_path = temp_dir.path().join(&release.zip_name);
 
-    download_file(client, &release.zip_url, &zip_path).await?;
+    download_file(client, &release.zip_url, &zip_path, None).await?;
 
     let _ = app_handle.emit(
         "library://fix-progress",
@@ -2471,11 +2486,21 @@ pub async fn library_install_koaloader(
 
 #[tauri::command]
 pub async fn library_has_steamless_fix(
-    _app_id: u64,
+    app_id: u64,
     install_dir: String,
 ) -> Result<bool, String> {
     let game_path = resolve_game_path_from_install_dir(&install_dir)?;
 
+    // If a fix log exists, only trust it — .bak files may have been created
+    // by other fixes (e.g. Voices38 backs up .exe files too).
+    let log_path = fix_log_path(&game_path, app_id);
+    if log_path.exists() {
+        let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let blocks = parse_fix_blocks(&content);
+        return Ok(blocks.iter().any(|b| b.fix_type == "Steamless"));
+    }
+
+    // No fix log → legacy fallback: scan for .exe.bak files (pre-LumaForge applies)
     let mut bak_files = Vec::new();
     find_bak_files_recursive(&game_path, &mut bak_files);
     Ok(!bak_files.is_empty())
@@ -3241,21 +3266,18 @@ pub async fn library_has_goldberg_fix(
 ) -> Result<bool, String> {
     let game_path = resolve_game_path_from_install_dir(&install_dir)?;
 
+    // If a fix log exists, only trust it — .bak files may have been created
+    // by other fixes (e.g. Voices38 backs up steam_api64.dll too).
     let log_path = fix_log_path(&game_path, app_id);
     if log_path.exists() {
         let content = std::fs::read_to_string(&log_path).unwrap_or_default();
         let blocks = parse_fix_blocks(&content);
-        if blocks.iter().any(|b| {
-            b.fix_type == "Goldberg"
-                || b.files.iter().any(|f| {
-                    let lower = f.to_lowercase();
-                    lower == "steam_api64.dll" || lower == "steam_api.dll"
-                })
-        }) {
-            return Ok(true);
-        }
+        // Only return true when the log explicitly records a Goldberg apply.
+        // Voices38 also lists steam_api64.dll in its files — that is NOT Goldberg.
+        return Ok(blocks.iter().any(|b| b.fix_type == "Goldberg"));
     }
 
+    // No fix log → legacy fallback: scan for .bak files (pre-LumaForge applies)
     let mut bak_files = Vec::new();
     find_goldberg_bak_recursive(&game_path, &mut bak_files);
     Ok(!bak_files.is_empty())
@@ -3631,6 +3653,354 @@ pub async fn library_unfix_online_fix(
         ok: true,
         tool: "online_fix".to_string(),
         message: format!("Removed {removed}/{total} Online-Fix file(s)"),
+        files_installed: Vec::new(),
+        errors: Vec::new(),
+        requires_manual_selection: false,
+        available_files: Vec::new(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Catalog fix commands (Rockstar, Voices38, etc.)
+// ---------------------------------------------------------------------------
+
+/// Patch `configs.user.ini` with the real Steam account name and SteamID64.
+/// Called after extraction for catalog fixes that include this file (e.g. Voices38 cracks).
+fn patch_configs_user_ini(game_path: &Path, account_name: &str, steam_id: &str) {
+    // The INI is not always at the game root — Voices38 cracks place it in
+    // subdirectories like steam_settings/configs.user.ini. Search recursively.
+    let mut ini_files = Vec::new();
+    find_configs_user_ini_recursive(game_path, &mut ini_files);
+    for ini_path in &ini_files {
+        let content = match std::fs::read_to_string(ini_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let patched = content
+            .replace("account_name=voices38", &format!("account_name={account_name}"))
+            .replace("account_steamid=76561197960285355", &format!("account_steamid={steam_id}"));
+        if patched != content {
+            let _ = std::fs::write(ini_path, patched);
+        }
+    }
+}
+
+fn find_configs_user_ini_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                find_configs_user_ini_recursive(&path, results);
+            } else if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.to_lowercase() == "configs.user.ini")
+            {
+                results.push(path);
+            }
+        }
+    }
+}
+
+/// Download a catalog fix archive (ZIP or RAR, no password) and extract to game root.
+/// Returns list of files installed.
+async fn download_and_extract_catalog_archive(
+    client: &reqwest::Client,
+    url: &str,
+    game_path: &Path,
+    app_handle: &tauri::AppHandle,
+) -> AnyResult<Vec<String>> {
+    let temp_dir = tempfile::tempdir_in(temp_fix_dir(app_handle))?;
+
+    let url_lower = url.to_lowercase();
+    let is_rar = url_lower.ends_with(".rar") || url_lower.contains(".rar?");
+
+    let archive_name = if is_rar { "download.rar" } else { "download.zip" };
+    let archive_path = temp_dir.path().join(archive_name);
+
+    download_file(client, url, &archive_path, None).await?;
+
+    let metadata = std::fs::metadata(&archive_path)?;
+    if metadata.len() < 1024 {
+        anyhow::bail!(
+            "Downloaded file is too small ({} bytes) — likely not a valid archive",
+            metadata.len()
+        );
+    }
+
+    let extract_dir = temp_dir.path().join("extracted");
+    std::fs::create_dir_all(&extract_dir)?;
+
+    // Try ZIP first (no external tools needed), then RAR via system extractors.
+    let extracted = {
+        match std::fs::File::open(&archive_path).map(|f| {
+            let mut archive = zip::ZipArchive::new(f)?;
+            archive.extract(&extract_dir).map_err(|e| anyhow::anyhow!("{e}"))
+        }) {
+            Ok(Ok(())) => true,
+            _ => false,
+        }
+    };
+
+    if !extracted {
+        // RAR or ZIP that the crate couldn't handle — use system extractor (no password)
+        if let Some(extractor) = find_rar_extractor().await {
+            let output = match &extractor {
+                RarExtractor::Unar => tokio::process::Command::new("unar")
+                    .args([
+                        "-o",
+                        extract_dir.to_str().unwrap_or_default(),
+                        archive_path.to_str().unwrap_or_default(),
+                    ])
+                    .output()
+                    .await
+                    .context("Failed to run unar")?,
+                RarExtractor::WinRar(exe) => {
+                    tokio::process::Command::new(exe)
+                        .args([
+                            "x",
+                            archive_path.to_str().unwrap_or_default(),
+                            extract_dir.to_str().unwrap_or_default(),
+                        ])
+                        .output()
+                        .await
+                        .context("Failed to run WinRAR")?
+                }
+                RarExtractor::SevenZip(exe) => {
+                    let output_arg = format!("-o{}", extract_dir.to_str().unwrap_or_default());
+                    tokio::process::Command::new(exe)
+                        .args([
+                            "x",
+                            &output_arg,
+                            archive_path.to_str().unwrap_or_default(),
+                            "-y",
+                        ])
+                        .output()
+                        .await
+                        .context("Failed to run 7z")?
+                }
+            };
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                anyhow::bail!("Archive extraction failed:\nstdout: {stdout}\nstderr: {stderr}");
+            }
+        } else {
+            anyhow::bail!(
+                "No extractor found. Install 7-Zip (https://7-zip.org) or WinRAR."
+            );
+        }
+    }
+
+    let mut installed = Vec::new();
+    let effective_src = flatten_extracted_dir(&extract_dir).unwrap_or(extract_dir);
+    copy_dir_recursive_with_base(&effective_src, game_path, game_path, &mut installed)?;
+
+    Ok(installed)
+}
+
+#[tauri::command]
+pub async fn library_apply_catalog_fix(
+    app_id: u64,
+    name: String,
+    install_dir: String,
+    download_url: String,
+    fix_type: String,
+    account_name: Option<String>,
+    steam_id: Option<String>,
+    app_handle: tauri::AppHandle,
+) -> Result<GameFixResult, String> {
+    let game_path = resolve_game_path_from_install_dir(&install_dir)?;
+
+    let client = reqwest::Client::builder()
+        .user_agent(APP_USER_AGENT)
+        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+
+    let tool_name = fix_type.clone();
+
+    let _ = app_handle.emit(
+        "library://fix-progress",
+        serde_json::json!({
+            "appId": app_id,
+            "tool": &tool_name,
+            "progress": 10,
+            "message": format!("Downloading {fix_type}...")
+        }),
+    );
+
+    match download_and_extract_catalog_archive(&client, &download_url, &game_path, &app_handle).await {
+        Ok(installed) => {
+            // Patch configs.user.ini with real Steam account data (Voices38 cracks)
+            if let (Some(ref acct), Some(ref sid)) = (&account_name, &steam_id) {
+                patch_configs_user_ini(&game_path, acct, sid);
+            }
+
+            let _ = write_fix_log(&game_path, app_id, &name, &fix_type, &installed);
+
+            let _ = app_handle.emit(
+                "library://fix-progress",
+                serde_json::json!({
+                    "appId": app_id,
+                    "tool": &tool_name,
+                    "progress": 100,
+                    "message": format!("{fix_type} applied successfully")
+                }),
+            );
+
+            Ok(GameFixResult {
+                ok: true,
+                tool: tool_name,
+                message: format!("{fix_type} applied. {} file(s) installed.", installed.len()),
+                files_installed: installed,
+                errors: Vec::new(),
+                requires_manual_selection: false,
+                available_files: Vec::new(),
+            })
+        }
+        Err(e) => Ok(GameFixResult {
+            ok: false,
+            tool: tool_name,
+            message: format!("Failed to apply {fix_type}: {e}"),
+            files_installed: Vec::new(),
+            errors: vec![format!("{e:#}")],
+            requires_manual_selection: false,
+            available_files: Vec::new(),
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn library_has_catalog_fix(
+    app_id: u64,
+    install_dir: String,
+    fix_type: String,
+) -> Result<bool, String> {
+    let game_path = resolve_game_path_from_install_dir(&install_dir)?;
+
+    let log_path = fix_log_path(&game_path, app_id);
+    if !log_path.exists() {
+        return Ok(false);
+    }
+
+    let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let blocks = parse_fix_blocks(&content);
+    Ok(blocks.iter().any(|b| b.fix_type == fix_type))
+}
+
+#[tauri::command]
+pub async fn library_unfix_catalog_fix(
+    app_id: u64,
+    install_dir: String,
+    fix_type: String,
+    app_handle: tauri::AppHandle,
+) -> Result<GameFixResult, String> {
+    let game_path = resolve_game_path_from_install_dir(&install_dir)?;
+
+    let _ = app_handle.emit(
+        "library://fix-progress",
+        serde_json::json!({
+            "appId": app_id,
+            "tool": &fix_type,
+            "progress": 20,
+            "message": format!("Scanning for {fix_type} files...")
+        }),
+    );
+
+    let log_path = fix_log_path(&game_path, app_id);
+    if !log_path.exists() {
+        return Ok(GameFixResult {
+            ok: false,
+            tool: fix_type.clone(),
+            message: format!("No fix log found. Cannot revert {fix_type}."),
+            files_installed: Vec::new(),
+            errors: Vec::new(),
+            requires_manual_selection: false,
+            available_files: Vec::new(),
+        });
+    }
+
+    let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let blocks = parse_fix_blocks(&content);
+
+    let catalog_files: Vec<String> = blocks
+        .iter()
+        .filter(|b| b.fix_type == fix_type)
+        .flat_map(|b| b.files.clone())
+        .collect();
+
+    if catalog_files.is_empty() {
+        return Ok(GameFixResult {
+            ok: false,
+            tool: fix_type.clone(),
+            message: format!("No {fix_type} entries found in log."),
+            files_installed: Vec::new(),
+            errors: Vec::new(),
+            requires_manual_selection: false,
+            available_files: Vec::new(),
+        });
+    }
+
+    let total = catalog_files.len();
+    let mut removed = 0;
+
+    for file_name in &catalog_files {
+        let file_path = game_path.join(file_name);
+
+        let _ = app_handle.emit(
+            "library://fix-progress",
+            serde_json::json!({
+                "appId": app_id,
+                "tool": &fix_type,
+                "progress": 20 + ((removed as u64 * 60) / total as u64) as u32,
+                "message": format!("Removing {file_name}...")
+            }),
+        );
+
+        if file_path.exists() {
+            let _ = std::fs::remove_file(&file_path);
+        }
+        let bak_path = PathBuf::from(format!("{}.bak", file_path.to_string_lossy()));
+        if bak_path.exists() {
+            let _ = std::fs::rename(&bak_path, &file_path);
+        }
+        removed += 1;
+    }
+
+    clean_empty_dirs_recursive(&game_path);
+
+    let remaining: Vec<&FixBlock> = blocks
+        .iter()
+        .filter(|b| b.fix_type != fix_type)
+        .collect();
+
+    if remaining.is_empty() {
+        let _ = std::fs::remove_file(&log_path);
+    } else {
+        let new_content: String = remaining
+            .iter()
+            .map(|b| b.full_block.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n");
+        let _ = std::fs::write(&log_path, &new_content);
+    }
+
+    let _ = app_handle.emit(
+        "library://fix-progress",
+        serde_json::json!({
+            "appId": app_id,
+            "tool": &fix_type,
+            "progress": 100,
+            "message": format!("Removed {removed}/{total} {fix_type} file(s)")
+        }),
+    );
+
+    Ok(GameFixResult {
+        ok: true,
+        tool: fix_type,
+        message: format!("Removed {removed}/{total} file(s)"),
         files_installed: Vec::new(),
         errors: Vec::new(),
         requires_manual_selection: false,

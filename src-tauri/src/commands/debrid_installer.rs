@@ -163,7 +163,7 @@ async fn gofile_create_guest_token(client: &reqwest::Client) -> Result<String, S
 
 /// Return a usable gofile bearer token: `GOFILE_TOKEN` env override if set, else a
 /// cached guest token (refreshed when the cache is empty or expired).
-async fn gofile_bearer_token(client: &reqwest::Client) -> Result<String, String> {
+pub(crate) async fn gofile_bearer_token(client: &reqwest::Client) -> Result<String, String> {
     if let Ok(env_tok) = std::env::var("GOFILE_TOKEN") {
         let t = env_tok.trim();
         if !t.is_empty() {
@@ -188,9 +188,9 @@ async fn gofile_bearer_token(client: &reqwest::Client) -> Result<String, String>
 /// Result of gofile resolution: the direct download URL plus the bearer token the
 /// download step must send (gofile CDN links return 302 ? HTML without it).
 #[derive(Debug, Clone)]
-struct GofileResolved {
-    url: String,
-    bearer: Option<String>,
+pub(crate) struct GofileResolved {
+    pub(crate) url: String,
+    pub(crate) bearer: Option<String>,
 }
 
 /// Fetch `https://api.gofile.io/contents/{content_id}` with the website-token
@@ -243,7 +243,7 @@ async fn gofile_get_contents(
 /// returned because gofile CDN links require it on download (302 ? HTML otherwise).
 /// Handles both page URLs (`/d/{contentId}`) and direct download URLs (returned
 /// unchanged, but still carrying the bearer token).
-async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> {
+pub(crate) async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> {
     let client = reqwest::Client::builder()
         .user_agent(GOFILE_UA)
         .timeout(std::time::Duration::from_secs(30))
@@ -265,7 +265,8 @@ async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> 
         let mut last_err: Option<String> = None;
 
         // Try each known salt (handles future salt rotation); on 401 refresh the
-        // guest token once and retry before giving up.
+        // guest token once and retry; on 429 sleep and retry once (don't create
+        // new tokens — rate limit is per-IP, not per-token).
         for (idx, salt) in GOFILE_SALTS.iter().enumerate() {
             match gofile_get_contents(&client, &token, salt, &content_id).await {
                 Ok(b) => {
@@ -274,6 +275,15 @@ async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolved, String> 
                 }
                 Err(e) => {
                     last_err = Some(e);
+                    if last_err.as_deref().unwrap_or("").contains("429") {
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        if let Ok(b) =
+                            gofile_get_contents(&client, &token, salt, &content_id).await
+                        {
+                            body = Some(b);
+                            break;
+                        }
+                    }
                     if idx == 0 {
                         // 401 ? likely expired cached token. Refresh once and retry.
                         let refreshed = gofile_create_guest_token(&client).await.ok();

@@ -618,15 +618,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       return sec?.items ?? [];
     } catch { return []; }
   }
-  const [freeRecentGames, setFreeRecentGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-recent"));
-  const [freeTrendingGames, setFreeTrendingGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-trending"));
-  const [freeTopByPlayersGames, setFreeTopByPlayersGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-top-players"));
+  const [freeTrendingScraped, setFreeTrendingScraped] = useState<StoreGame[]>(() => _seedFreeFromCache("free-trending"));
+  const [freeNewReleases, setFreeNewReleases] = useState<StoreGame[]>(() => _seedFreeFromCache("free-new-releases"));
   const [freeLeaderboardGames, setFreeLeaderboardGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-leaderboard"));
   const [freeFeaturedGames, setFreeFeaturedGames] = useState<StoreGame[]>(() => _seedFreeFromCache("free-featured"));
   const [freeHiddenGems, setFreeHiddenGems] = useState<StoreGame[]>(() => _seedFreeFromCache("free-hidden-gems"));
   const [freeMostPlayed, setFreeMostPlayed] = useState<StoreGame[]>(() => _seedFreeFromCache("free-most-played"));
-  const [mostPlayedNow, setMostPlayedNow] = useState<StoreGame[]>(() => _seedFreeFromCache("most-played-now"));
-  const [risingStars, setRisingStars] = useState<StoreGame[]>(() => _seedFreeFromCache("rising-stars"));
   const [freeCatalogLoading, setFreeCatalogLoading] = useState(false);
 
 
@@ -685,56 +682,41 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     return () => { cancelled = true; };
   }, [storeFirstPaintDone, settings.rawgApiKey, settings.igdbClientId, settings.igdbClientSecret]);
 
-  // ── Free catalog data fetch (SteamSpy for recent/trending/top-players, local catalog for leaderboard/featured/hidden-gems/most-played) ──
+  // ── Free catalog data fetch (SteamSpy HTML scraping for trending, Steam featuredcategories for new releases, local SQLite for quality sections) ──
   useEffect(() => {
     if (!storeFirstPaintDone) return;
     let cancelled = false;
     setFreeCatalogLoading(true);
     (async () => {
-      const { getRecentGames, getTrendingGames, getTopByPlayers, getLeaderboard, getFeaturedGames, getHiddenGems, getMostPlayed, getMostPlayedNow, getRisingStars } = await import("../services/freeCatalogService");
+      const { getTrendingFromScraping, getNewReleasesFromSteam, getLeaderboard, getFeaturedGames, getHiddenGems, getMostPlayed } = await import("../services/freeCatalogService");
       try {
-        // Recent = SteamSpy top100in2days (48h window — fresh releases)
-        const recentPromise = getRecentGames(20).catch(() => ({ games: [] as StoreGame[] }));
-        // Trending = SteamSpy top100in2weeks (2-week window — sustained momentum)
-        const trendingPromise = getTrendingGames(20).catch(() => ({ games: [] as StoreGame[] }));
-
-        const [recent, trending, players, leaderboard, featured, hiddenGems, mostPlayed, mpNow, rising] = await Promise.allSettled([
-          recentPromise,
-          trendingPromise,
-          getTopByPlayers(20),
+        const [trending, newReleases, leaderboard, featured, hiddenGems, mostPlayed] = await Promise.allSettled([
+          getTrendingFromScraping(20),
+          getNewReleasesFromSteam(20),
           getLeaderboard(20),
           getFeaturedGames(20),
           getHiddenGems(16),
           getMostPlayed(16),
-          getMostPlayedNow(20),
-          getRisingStars(20),
         ]);
         if (cancelled) return;
 
-        // Dedup: when data is seeded from cache, skip setState if lengths match
-        const newRecent = recent.status === "fulfilled" ? recent.value.games : [];
         const newTrending = trending.status === "fulfilled" ? trending.value.games : [];
-        const newPlayers = players.status === "fulfilled" ? players.value.games : [];
+        const newNewReleases = newReleases.status === "fulfilled" ? newReleases.value.games : [];
         const newLeaderboard = leaderboard.status === "fulfilled" ? leaderboard.value.games : [];
         const newFeatured = featured.status === "fulfilled" ? featured.value.games : [];
         const newHiddenGems = hiddenGems.status === "fulfilled" ? hiddenGems.value.games : [];
         const newMostPlayed = mostPlayed.status === "fulfilled" ? mostPlayed.value.games : [];
-        const newMpNow = mpNow.status === "fulfilled" ? mpNow.value.games : [];
-        const newRising = rising.status === "fulfilled" ? rising.value.games : [];
 
         let changed = false;
-        if (newRecent.length > 0 && newRecent.length !== freeRecentGames.length) { setFreeRecentGames(newRecent); changed = true; }
-        if (newTrending.length > 0 && newTrending.length !== freeTrendingGames.length) { setFreeTrendingGames(newTrending); changed = true; }
-        if (newPlayers.length > 0 && newPlayers.length !== freeTopByPlayersGames.length) { setFreeTopByPlayersGames(newPlayers); changed = true; }
+        if (newTrending.length > 0 && newTrending.length !== freeTrendingScraped.length) { setFreeTrendingScraped(newTrending); changed = true; }
+        if (newNewReleases.length > 0 && newNewReleases.length !== freeNewReleases.length) { setFreeNewReleases(newNewReleases); changed = true; }
         if (newLeaderboard.length > 0 && newLeaderboard.length !== freeLeaderboardGames.length) { setFreeLeaderboardGames(newLeaderboard); changed = true; }
         if (newFeatured.length > 0 && newFeatured.length !== freeFeaturedGames.length) { setFreeFeaturedGames(newFeatured); changed = true; }
         if (newHiddenGems.length > 0 && newHiddenGems.length !== freeHiddenGems.length) { setFreeHiddenGems(newHiddenGems); changed = true; }
         if (newMostPlayed.length > 0 && newMostPlayed.length !== freeMostPlayed.length) { setFreeMostPlayed(newMostPlayed); changed = true; }
-        if (newMpNow.length > 0 && newMpNow.length !== mostPlayedNow.length) { setMostPlayedNow(newMpNow); changed = true; }
-        if (newRising.length > 0 && newRising.length !== risingStars.length) { setRisingStars(newRising); changed = true; }
 
-        const totalGames = newRecent.length + newTrending.length + newPlayers.length + newLeaderboard.length;
-        console.log(`[STORE][FREE_CATALOG] loaded=${totalGames} recent=${newRecent.length} trending=${newTrending.length} players=${newPlayers.length} leaderboard=${newLeaderboard.length} mpNow=${newMpNow.length} rising=${newRising.length} changed=${changed}`);
+        const totalGames = newTrending.length + newNewReleases.length + newLeaderboard.length;
+        console.log(`[STORE][FREE_CATALOG] loaded=${totalGames} trending=${newTrending.length} newReleases=${newNewReleases.length} leaderboard=${newLeaderboard.length} changed=${changed}`);
       } catch (err) {
         console.warn("[STORE][FREE_CATALOG] failed:", err);
       } finally {
@@ -1315,8 +1297,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     Object.keys(storeMetadataByAppId).length > 20 &&
     Object.keys(reviewSummaryByAppId).length > 0 &&
     installedStatusByAppId.size > 0 &&
-    Object.keys(providerOverlayByAppId).length > 0 &&
-    !freeCatalogLoading;
+    Object.keys(providerOverlayByAppId).length > 0;
 
   const featuredGames = useMemo(() => {
     const HERO_MAX = 8;
@@ -1335,8 +1316,8 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }
     }
 
-    // Deterministic day-seeded shuffle: Fisher-Yates with a hash of YYYY-MM-DD
-    function daySeededShuffle<T>(arr: T[], seed: number): T[] {
+    // Hour-seeded shuffle: Fisher-Yates with a hash of YYYY-MM-DD-HH
+    function hourSeededShuffle<T>(arr: T[], seed: number): T[] {
       const out = [...arr];
       let s = seed;
       for (let i = out.length - 1; i > 0; i--) {
@@ -1346,15 +1327,31 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }
       return out;
     }
-    function todaySeed(): number {
+    function currentHourSeed(): number {
       const d = new Date();
-      return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+      return d.getFullYear() * 100000 + (d.getMonth() + 1) * 1000 + d.getDate() * 24 + d.getHours();
     }
 
-    // Collect pool from all available featured/top-picks sections
+    // Collect pool — highQualityPool (scored, 60+ games) as PRIMARY for variety
     const pool: StoreGame[] = [];
 
-    if (enrichedCatalogSections.length > 0) {
+    // Tier 1: highQualityPool scored from 162K catalog (most dynamic)
+    // Already sorted by score desc — take top 60 without filtering score>0
+    // (score can be 0 for games without metadata/reviews yet, but still good hero candidates)
+    if (pool.length === 0) {
+      for (const s of highQualityPool.slice(0, 60)) {
+        pool.push({
+          appId: s.appId,
+          title: s.title,
+          imageUrl: `https://shared.steamstatic.com/store_item_assets/steam/apps/${s.appId}/library_600x900.jpg`,
+          platforms: [] as string[],
+          sources: [] as PackageSource[],
+        });
+      }
+    }
+
+    // Tier 2: enriched catalog sections (IGDB/RAWG/curated)
+    if (pool.length === 0 && enrichedCatalogSections.length > 0) {
       for (const s of enrichedCatalogSections) {
         if (s.sectionId === "featured" || s.sectionId === "top-picks") {
           for (const game of s.games) {
@@ -1370,6 +1367,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }
     }
 
+    // Tier 3: curated baseline (static fallback)
     if (pool.length === 0) {
       for (const s of _curatedBaseline) {
         if (s.sectionId === "featured" || s.sectionId === "top-picks") {
@@ -1386,21 +1384,9 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       }
     }
 
-    if (pool.length === 0) {
-      for (const s of highQualityPool.slice(0, 60)) {
-        pool.push({
-          appId: s.appId,
-          title: s.title,
-          imageUrl: `https://shared.steamstatic.com/store_item_assets/steam/apps/${s.appId}/library_600x900.jpg`,
-          platforms: [] as string[],
-          sources: [] as PackageSource[],
-        });
-      }
-    }
-
     if (pool.length === 0) return [];
 
-    // Dedupe by appId (same game could appear in featured + top-picks)
+    // Dedupe by appId (same game could appear in multiple tiers)
     const seen = new Set<string>();
     const unique = pool.filter((g) => {
       if (!g.appId || seen.has(g.appId)) return false;
@@ -1408,8 +1394,8 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       return true;
     });
 
-    // Shuffle deterministically by day, pick first HERO_MAX
-    const shuffled = daySeededShuffle(unique, todaySeed());
+    // Shuffle deterministically by hour (more variation than daily)
+    const shuffled = hourSeededShuffle(unique, currentHourSeed());
     return shuffled.slice(0, HERO_MAX);
   }, [highQualityPool, catalogFingerprint, enrichedCatalogSections, featuredInputsReady]);
 
@@ -1492,15 +1478,12 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       compiledDiscoveryIndex?.sections.topPicks.length ?? 0,
       highQualityPool.length,
       catalogFingerprint,
-      freeRecentGames.length,
-      freeTrendingGames.length,
-      freeTopByPlayersGames.length,
+      freeTrendingScraped.length,
+      freeNewReleases.length,
       freeLeaderboardGames.length,
       freeFeaturedGames.length,
       freeHiddenGems.length,
       freeMostPlayed.length,
-      mostPlayedNow.length,
-      risingStars.length,
     ].join(":");
     if (_sectionBuildFpRef.current.fp === inputFp && _sectionBuildFpRef.current.sections) {
       return _sectionBuildFpRef.current.sections;
@@ -1576,23 +1559,17 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       sources: [] as PackageSource[],
     }));
 
-    // ── Free catalog sections (SteamSpy: recent (48h), trending (2wk), top-players; local catalog: leaderboard, featured, hidden gems, most played) ──
-    if (freeRecentGames.length > 0) {
-      const items = takeUnique(freeRecentGames, 20);
-      if (items.length > 0) {
-        sections.push({ id: "free-recent", title: "Recent Games", type: "rail", items, source: "catalog" as const });
-      }
-    }
-    if (freeTrendingGames.length > 0) {
-      const items = takeUnique(freeTrendingGames, 20);
+    // ── Free catalog sections (SteamSpy HTML scraping: trending; Steam API: new releases; local SQLite: leaderboard/featured/hidden gems/most played) ──
+    if (freeTrendingScraped.length > 0) {
+      const items = takeUnique(freeTrendingScraped, 20);
       if (items.length > 0) {
         sections.push({ id: "free-trending", title: "Trending Now", type: "rail", items, source: "catalog" as const });
       }
     }
-    if (freeTopByPlayersGames.length > 0) {
-      const items = takeUnique(freeTopByPlayersGames, 20);
+    if (freeNewReleases.length > 0) {
+      const items = takeUnique(freeNewReleases, 20);
       if (items.length > 0) {
-        sections.push({ id: "free-top-players", title: "Top by Players", type: "rail", items, source: "catalog" as const });
+        sections.push({ id: "free-new-releases", title: "New Releases", type: "rail", items, source: "catalog" as const });
       }
     }
     if (freeLeaderboardGames.length > 0) {
@@ -1601,8 +1578,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
         sections.push({ id: "free-leaderboard", title: "Leaderboard", type: "featured", items, source: "catalog" as const });
       }
     }
-
-    // ── Free catalog collection sections (local catalog: featured, hidden gems, most played) ──
     if (freeFeaturedGames.length > 0) {
       const items = takeUnique(freeFeaturedGames, 20);
       if (items.length > 0) {
@@ -1619,18 +1594,6 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       const items = takeUnique(freeMostPlayed, 16);
       if (items.length > 0) {
         sections.push({ id: "free-most-played", title: "Dedicated Fan Bases", type: "rail", items, source: "catalog" as const });
-      }
-    }
-    if (mostPlayedNow.length > 0) {
-      const items = takeUnique(mostPlayedNow, 6);
-      if (items.length > 0) {
-        sections.push({ id: "most-played-now", title: "Most Played Right Now", type: "rail", items, source: "catalog" as const });
-      }
-    }
-    if (risingStars.length > 0) {
-      const items = takeUnique(risingStars, 6);
-      if (items.length > 0) {
-        sections.push({ id: "rising-stars", title: "Rising Stars", type: "rail", items, source: "catalog" as const });
       }
     }
 
@@ -1831,6 +1794,32 @@ export default function Store({ onNavigate }: StoreProps = {}) {
       console.log(`[STORE][DISCOVER_SECTIONS_BUILD] sections=${sections.length} genres=${genreReady} more=${highQualityPool.length}`);
     }
 
+    // ── Per-section data source trace ──
+    {
+      const SOURCE_LABELS: Record<string, string> = {
+        "curated": "hardcoded curated list",
+        "catalog": "SteamSpy HTML scraping / Steam Store API / local SQLite catalog",
+        "personalized": "in-memory scoring (genre overlap + interactions)",
+        "genre": "local SQLite catalog + runtime metadata",
+      };
+      const summary = sections.map((s) => {
+        const api = s.id === "free-trending" ? "steamspy-html (scraping)"
+          : s.id === "free-new-releases" ? "steam-featuredcategories"
+          : s.id === "free-leaderboard" ? "sqlite::queryTopRatedGames"
+          : s.id === "free-featured" ? "sqlite::queryFeaturedGames"
+          : s.id === "free-hidden-gems" ? "sqlite::queryHiddenGems"
+          : s.id === "free-most-played" ? "sqlite::queryCultClassics"
+          : s.id === "top-picks" ? "discoveryIndex::queryIndexTopPicks"
+          : s.id === "for-you" ? "personalized::genreOverlap+interactions"
+          : s.id === "browse-by-genre" ? "sqlite::localGenreGroups + metadata"
+          : s.id === "featured" ? "curated::storeCuratedCatalog (rotated daily)"
+          : s.id === "new-noteworthy" ? "curated::storeCuratedCatalog"
+          : SOURCE_LABELS[s.source] ?? s.source;
+        return `[${s.id}] n=${s.items.length} src=${s.source} api=${api}`;
+      }).join("\n  ");
+      console.log(`[STORE][DISCOVER_SECTION_SOURCES]\n  ${summary}`);
+    }
+
     // ── Dedupe sections by ID (curated takes priority — appears first in array) ──
     const DEPRECATED_SECTION_IDS = new Set(["featured", "new-noteworthy"]);
     const dedupedSections: StoreDiscoverSection[] = [];
@@ -1858,7 +1847,7 @@ export default function Store({ onNavigate }: StoreProps = {}) {
     if (DEBUG_STORE_DISCOVERY) console.log(`[STORE_CATALOG][FINAL_SECTION] curated=true sections=${dedupedSections.length} curatedGames=${curatedCount}`);
     _sectionBuildFpRef.current = { fp: inputFp, sections: dedupedSections };
     return dedupedSections;
-  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections, catalogFeaturedGames, catalogNewNoteworthyGames, freeRecentGames, freeTrendingGames, freeTopByPlayersGames, freeLeaderboardGames, freeFeaturedGames, freeHiddenGems, freeMostPlayed, mostPlayedNow, risingStars]);
+  }, [lumaForgeSections, highQualityPool, storeMetadataByAppId, installedStatusByAppId, interactionScoreByAppId, providerOverlayByAppId, featuredGames, trendingScoreByAppId, genreConfidence, reviewSummaryByAppId, catalogFingerprint, compiledDiscoveryIndex, enrichedCatalogSections, catalogFeaturedGames, catalogNewNoteworthyGames, freeTrendingScraped, freeNewReleases, freeLeaderboardGames, freeFeaturedGames, freeHiddenGems, freeMostPlayed]);
 
   // Backward-compat StoreSectionModel[] for consumers that still need it
   const sectionModels = useMemo<StoreSectionModel[]>(

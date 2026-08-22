@@ -28,6 +28,10 @@ import {
   libraryUnfixOnlineFix,
   libraryOpenSteamLaunchOptions,
   seedGseSavesFolder,
+  libraryApplyCatalogFix,
+  libraryHasCatalogFix,
+  libraryUnfixCatalogFix,
+  scanSteamLoginUsers,
 } from "../../services/tauri";
 import { setFixModalOpen } from "../fixes/FixProgressListener";
 import { useSettings } from "../../context/SettingsContext";
@@ -36,6 +40,11 @@ import { showSuccess, showError } from "../toast/GameToast";
 import { setStandalone as persistStandalone } from "../../services/standaloneStore";
 import { updateConfigForCrack } from "../../services/achievementConfigService";
 import { achievementWatcherService } from "../../services/achievementWatcherService";
+import {
+  fetchFixesCatalog,
+  getFixesForAppId,
+  type FixesCatalogEntry,
+} from "../../services/fixesCatalogService";
 
 // =============================================================================
 // Types
@@ -119,11 +128,18 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
 
   const nativeAppId = game?.appId ? Number(game.appId) : null;
   const fixStatesRef = useRef(fixStates);
+
+  // ── Catalog fix state ───────────────────────────────────────────────────
+  const [catalogFixes, setCatalogFixes] = useState<FixesCatalogEntry[]>([]);
+  const [catalogApplied, setCatalogApplied] = useState<Record<string, boolean>>({});
+  const [catalogStates, setCatalogStates] = useState<Record<string, FixRowState>>({});
+  const catalogBusyRef = useRef(new Set<string>());
   fixStatesRef.current = fixStates;
   const busyRef = useRef(new Set<FixKind>());
   const [showOnlineFixModal, setShowOnlineFixModal] = useState(false);
   const [onlineFixCopied, setOnlineFixCopied] = useState(false);
   const [standaloneBusy, setStandaloneBusy] = useState(false);
+  const steamAccountNameRef = useRef<string | null>(null);
 
   // ── Escape closes ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -143,6 +159,21 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
   }, [open, nativeAppId]);
 
   // ── Resolve hero artwork ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!open || !game) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (settings.steamRoot) {
+          const users = await scanSteamLoginUsers(settings.steamRoot);
+          if (!cancelled && users.length > 0) {
+            steamAccountNameRef.current = users[0].accountName;
+          }
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [open, game, settings.steamRoot]);
   useEffect(() => {
     if (!open || !game?.appId) {
       setHeroUrl(null);
@@ -183,16 +214,29 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
           const kind = (Object.entries(TOOL_EVENT_MAP) as [FixKind, string][]).find(
             ([, v]) => v === tool,
           )?.[0];
-          if (!kind) return;
-
-          setFixStates((prev) => {
-            const s = prev[kind];
-            if (!s.busy) return prev;
-            return {
-              ...prev,
-              [kind]: { ...s, progress: { progress, message } },
-            };
-          });
+          if (kind) {
+            setFixStates((prev) => {
+              const s = prev[kind];
+              if (!s.busy) return prev;
+              return {
+                ...prev,
+                [kind]: { ...s, progress: { progress, message } },
+              };
+            });
+            return;
+          }
+          // Check if it's a catalog fix (RockstarFix, Voices38Fix)
+          if (tool === "RockstarFix" || tool === "Voices38Fix") {
+            setCatalogStates((prev) => {
+              // Find the entry by matching a busy state
+              const entryId = Object.keys(prev).find((id) => prev[id].busy);
+              if (!entryId) return prev;
+              return {
+                ...prev,
+                [entryId]: { ...prev[entryId], progress: { progress, message } },
+              };
+            });
+          }
         },
       );
     }
@@ -245,6 +289,46 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
     refreshNativeState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, game?.id, game?.installDir, nativeAppId]);
+
+  // ── Load catalog fixes for this appId ───────────────────────────────────
+  useEffect(() => {
+    if (!open || !game?.appId || !game?.installDir || nativeAppId == null) {
+      setCatalogFixes([]);
+      setCatalogApplied({});
+      setCatalogStates({});
+      return;
+    }
+    const appId = String(game.appId);
+    const installDir = game.installDir;
+    let cancelled = false;
+
+    async function load() {
+      await fetchFixesCatalog();
+      if (cancelled) return;
+      const fixes = getFixesForAppId(appId).filter((e) => e.type === "fix");
+      if (cancelled) return;
+      setCatalogFixes(fixes);
+      // Check which catalog fixes are already applied
+      const applied: Record<string, boolean> = {};
+      const states: Record<string, FixRowState> = {};
+      const empty: FixRowState = { busy: false, applied: false, progress: null, result: null, resultTimer: null, glowTimer: null, showGlow: false };
+      for (const fix of fixes) {
+        const fixType = fix.provider === "rockstar" ? "RockstarFix" : "Voices38Fix";
+        try {
+          applied[fix.id] = await libraryHasCatalogFix(nativeAppId!, installDir, fixType);
+        } catch {
+          applied[fix.id] = false;
+        }
+        states[fix.id] = { ...empty, applied: applied[fix.id] };
+      }
+      if (!cancelled) {
+        setCatalogApplied(applied);
+        setCatalogStates(states);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [open, game?.appId, game?.installDir, nativeAppId]);
 
   // ── Transition a fix row into busy state ───────────────────────────────────
   const markBusy = useCallback((kind: FixKind) => {
@@ -352,6 +436,100 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
       await refreshNativeState();
     }
   }, [game, nativeAppId, markBusy, markCompleted, refreshNativeState]);
+
+  // ── Catalog fix apply handler ─────────────────────────────────────────────
+  const handleCatalogApply = useCallback(async (entry: FixesCatalogEntry) => {
+    if (!game?.installDir || nativeAppId == null || !Number.isFinite(nativeAppId)) return;
+    if (catalogBusyRef.current.has(entry.id)) return;
+    catalogBusyRef.current.add(entry.id);
+    const appId = nativeAppId;
+    const installDir = game.installDir;
+    const fixType = entry.provider === "rockstar" ? "RockstarFix" : "Voices38Fix";
+    setCatalogStates((prev) => ({
+      ...prev,
+      [entry.id]: { ...prev[entry.id], busy: true, progress: { progress: 0, message: "Starting..." }, result: null, showGlow: false },
+    }));
+    try {
+      const result = await libraryApplyCatalogFix({
+        appId,
+        name: game.title,
+        installDir,
+        downloadUrl: entry.downloadUrl,
+        fixType,
+        accountName: steamAccountNameRef.current ?? undefined,
+        steamId: settings.steamId64 || undefined,
+      });
+      setCatalogStates((prev) => ({
+        ...prev,
+        [entry.id]: { ...prev[entry.id], busy: false, progress: null, result: { ok: result.ok, message: result.message, filesInstalled: result.filesInstalled }, showGlow: result.ok },
+      }));
+      if (result.ok) {
+        setCatalogApplied((prev) => ({ ...prev, [entry.id]: true }));
+      }
+      setTimeout(() => {
+        setCatalogStates((prev) => ({
+          ...prev,
+          [entry.id]: { ...prev[entry.id], result: null, showGlow: false },
+        }));
+      }, 5000);
+    } catch (err) {
+      setCatalogStates((prev) => ({
+        ...prev,
+        [entry.id]: { ...prev[entry.id], busy: false, progress: null, result: { ok: false, message: err instanceof Error ? err.message : String(err) }, showGlow: false },
+      }));
+      setTimeout(() => {
+        setCatalogStates((prev) => ({
+          ...prev,
+          [entry.id]: { ...prev[entry.id], result: null },
+        }));
+      }, 5000);
+    } finally {
+      catalogBusyRef.current.delete(entry.id);
+    }
+  }, [game, nativeAppId]);
+
+  // ── Catalog fix unfix handler ─────────────────────────────────────────────
+  const handleCatalogUnfix = useCallback(async (entry: FixesCatalogEntry) => {
+    if (!game?.installDir || nativeAppId == null || !Number.isFinite(nativeAppId)) return;
+    if (catalogBusyRef.current.has(entry.id)) return;
+    catalogBusyRef.current.add(entry.id);
+    const appId = nativeAppId;
+    const installDir = game.installDir;
+    const fixType = entry.provider === "rockstar" ? "RockstarFix" : "Voices38Fix";
+    setCatalogStates((prev) => ({
+      ...prev,
+      [entry.id]: { ...prev[entry.id], busy: true, progress: { progress: 0, message: "Starting..." }, result: null, showGlow: false },
+    }));
+    try {
+      const result = await libraryUnfixCatalogFix({ appId, installDir, fixType });
+      setCatalogStates((prev) => ({
+        ...prev,
+        [entry.id]: { ...prev[entry.id], busy: false, progress: null, result: { ok: result.ok, message: result.message, filesInstalled: result.filesInstalled }, showGlow: result.ok },
+      }));
+      if (result.ok) {
+        setCatalogApplied((prev) => ({ ...prev, [entry.id]: false }));
+      }
+      setTimeout(() => {
+        setCatalogStates((prev) => ({
+          ...prev,
+          [entry.id]: { ...prev[entry.id], result: null, showGlow: false },
+        }));
+      }, 5000);
+    } catch (err) {
+      setCatalogStates((prev) => ({
+        ...prev,
+        [entry.id]: { ...prev[entry.id], busy: false, progress: null, result: { ok: false, message: err instanceof Error ? err.message : String(err) }, showGlow: false },
+      }));
+      setTimeout(() => {
+        setCatalogStates((prev) => ({
+          ...prev,
+          [entry.id]: { ...prev[entry.id], result: null },
+        }));
+      }, 5000);
+    } finally {
+      catalogBusyRef.current.delete(entry.id);
+    }
+  }, [game, nativeAppId]);
 
   // ── Standalone mode toggle ──────────────────────────────────────────────────
   const canToggleStandalone = !!nativeInstallStatus?.goldbergInstalled && !!nativeInstallStatus?.steamlessInstalled;
@@ -699,6 +877,117 @@ export default function ToolsModal({ open, game, onClose }: ToolsModalProps) {
           ) : (
             <div className="space-y-5">
               {buildRows()}
+
+              {/* ── Catalog fix rows (Rockstar, Voices38, etc.) ────────── */}
+              {catalogFixes.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-white/30">
+                    Available from catalog
+                  </p>
+                  {catalogFixes.map((entry) => {
+                    const state = catalogStates[entry.id];
+                    const isBusy = state?.busy ?? false;
+                    const isApplied = catalogApplied[entry.id] ?? false;
+                    const progress = state?.progress ?? null;
+                    const result = state?.result ?? null;
+                    const showGlow = state?.showGlow ?? false;
+
+                    let rowBorder = "border-white/10";
+                    let rowShadow = "shadow-black/20";
+                    if (showGlow) {
+                      rowBorder = "border-emerald-500/40";
+                      rowShadow = "shadow-emerald-500/15 shadow-lg";
+                    } else if (isApplied) {
+                      rowBorder = "border-emerald-500/20";
+                    }
+
+                    const providerLabel = entry.provider === "rockstar" ? "Rockstar Fix" : "Voices38 Fix";
+                    const pct = progress?.progress ?? 0;
+
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`${GLASS_ROW} ${rowBorder} ${rowShadow} ${showGlow ? "lf-fix-glow-pulse" : ""} ${isApplied && !showGlow ? "opacity-80" : ""}`}
+                      >
+                        {/* Icon chip */}
+                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-colors duration-300 ${
+                          isApplied && !isBusy ? "bg-emerald-500/15 text-emerald-400" : "bg-(--color-accent)/15 text-(--color-accent)"
+                        }`}>
+                          <Zap className="h-4 w-4" />
+                        </span>
+
+                        {/* Main content */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-white">{providerLabel}</span>
+                            <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
+                              Catalog
+                            </span>
+                            {isApplied && !isBusy && (
+                              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 lf-fix-check-pop" />
+                            )}
+                            {isBusy && (
+                              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-(--color-accent)" />
+                            )}
+                            {isBusy && progress && (
+                              <span className="ml-auto text-xs font-semibold tabular-nums text-(--color-accent)">
+                                {pct}%
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-white/40 mt-0.5">
+                            {entry.title}
+                            {entry.fileSizeHuman ? ` · ${entry.fileSizeHuman}` : ""}
+                          </p>
+                          {isBusy && progress && (
+                            <div className="mt-1.5">
+                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                                <div
+                                  className="h-full rounded-full bg-(--color-accent) transition-[width] duration-300 ease-out"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              {progress.message && (
+                                <p className="mt-1 text-[11px] text-white/50 truncate">{progress.message}</p>
+                              )}
+                            </div>
+                          )}
+                          {result && !isBusy && (
+                            <div className="lf-fix-result-slide-in mt-1.5">
+                              <p className={`text-xs ${result.ok ? "text-emerald-400/90" : "text-rose-400/90"}`}>
+                                {result.ok ? "✓" : "✗"}{" "}
+                                {result.filesInstalled && result.filesInstalled.length > 0
+                                  ? result.filesInstalled.slice(0, 2).join(", ") + (result.filesInstalled.length > 2 ? ` +${result.filesInstalled.length - 2}` : "")
+                                  : result.message}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action buttons */}
+                        {!isBusy && isApplied && (
+                          <button
+                            type="button"
+                            onClick={() => handleCatalogUnfix(entry)}
+                            className={`${GLASS_BUTTON} border-red-500/40 text-red-400 hover:bg-red-500/20`}
+                          >
+                            Quitar
+                          </button>
+                        )}
+                        {!isBusy && !isApplied && (
+                          <button
+                            type="button"
+                            onClick={() => handleCatalogApply(entry)}
+                            className={`${GLASS_BUTTON} border-(--color-accent)/50 bg-(--color-accent)/20 text-(--color-accent-text) hover:bg-(--color-accent)/30`}
+                          >
+                            Aplicar
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Standalone Mode toggle */}
               <div className={`${GLASS_ROW} ${isStandalone ? "border-emerald-500/30" : "border-white/10"}`}>
