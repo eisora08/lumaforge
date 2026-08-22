@@ -969,13 +969,21 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     });
 
     // Store media info for overlay events + HUD
-    const { resolveProviderMediaPreviewUrl } = await import("../services/gameCacheService");
 
-    // Helper: resolve a raw path (relative/absolute) to a full URL
-    async function resolveUrl(raw?: string | null): Promise<string | undefined> {
+    // Helper: resolve a raw path (relative/absolute) to a full URL.
+    // Uses resolveGameMediaUrl for relative "media/"/"img/" paths to resolve
+    // against <appData>/games/<provider>/<appId>/ — NOT against appData root.
+    const appIdStr = game.appId ? String(game.appId) : "";
+    const _resolveMediaModule = await import("../services/gameCacheService");
+    async function resolveUrl(raw?: string | null, provider?: string): Promise<string | undefined> {
       if (!raw) return undefined;
       if (raw.startsWith("http") || raw.startsWith("asset://") || raw.startsWith("data:") || raw.startsWith("file://")) return raw;
-      try { return await resolveProviderMediaPreviewUrl(raw) ?? undefined; } catch { return undefined; }
+      try {
+        if ((raw.startsWith("media/") || raw.startsWith("img/")) && appIdStr) {
+          return await _resolveMediaModule.resolveGameMediaUrl(appIdStr, raw, provider || game.source || "steam") ?? undefined;
+        }
+        return await _resolveMediaModule.resolveProviderMediaPreviewUrl(raw) ?? undefined;
+      } catch { return undefined; }
     }
 
     let imageUrl: string | undefined;   // cover-first (backward compat + summary cover)
@@ -989,10 +997,10 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
 
       // Resolve all paths in parallel (4 roles, non-critical on failure)
       const [resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
-        resolveUrl(entry?.coverPath),
-        resolveUrl(entry?.landscapePath),
-        resolveUrl(entry?.backgroundPath),
-        resolveUrl(entry?.iconPath),
+        resolveUrl(entry?.coverPath, "steam"),
+        resolveUrl(entry?.landscapePath, "steam"),
+        resolveUrl(entry?.backgroundPath, "steam"),
+        resolveUrl(entry?.iconPath, "steam"),
       ]);
 
       // HUD chip: icon first (compact thumbnail)
@@ -1025,10 +1033,10 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       const overrides = readEpicOverrides(game.providerGameId);
 
       const [resolvedCover, resolvedLandscape, resolvedBackground, resolvedIcon] = await Promise.all([
-        resolveUrl(overrides?.coverPath),
-        resolveUrl(overrides?.landscapePath),
-        resolveUrl(overrides?.backgroundPath),
-        resolveUrl(overrides?.iconPath),
+        resolveUrl(overrides?.coverPath, "epic"),
+        resolveUrl(overrides?.landscapePath, "epic"),
+        resolveUrl(overrides?.backgroundPath, "epic"),
+        resolveUrl(overrides?.iconPath, "epic"),
       ]);
 
       iconUrl = resolvedIcon ?? resolvedCover ?? resolvedLandscape ?? resolvedBackground;
@@ -1039,19 +1047,18 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
       // The Debrid mapper does not populate imageUrl/metadata, so derive CDN artwork from the
       // linked Steam appId when no local/override artwork exists yet.
       const { buildSteamCdnUrl } = await import("../services/gameCacheService");
-      const appId = game.appId ? String(game.appId) : "";
-      const cdnHero = buildSteamCdnUrl(appId, "hero") ?? undefined;
-      const cdnCapsule = buildSteamCdnUrl(appId, "capsule") ?? undefined;
-      const cdnLogo = buildSteamCdnUrl(appId, "logo") ?? undefined;
+      const cdnHero = appIdStr ? buildSteamCdnUrl(appIdStr, "hero") ?? undefined : undefined;
+      const cdnCapsule = appIdStr ? buildSteamCdnUrl(appIdStr, "capsule") ?? undefined : undefined;
+      const cdnLogo = appIdStr ? buildSteamCdnUrl(appIdStr, "logo") ?? undefined : undefined;
 
       const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || cdnCapsule || cdnHero || undefined;
-      const bestUrl = (await resolveUrl(rawBestUrl)) ?? cdnHero ?? cdnCapsule;
+      const bestUrl = (await resolveUrl(rawBestUrl, "steam")) ?? cdnHero ?? cdnCapsule;
       // Overlay hero: wide hero first (cinematic), then capsule
       heroUrl = bestUrl;
       // Summary cover: capsule first (backward compat), then hero
-      imageUrl = (await resolveUrl(rawBestUrl)) ?? cdnCapsule ?? cdnHero;
+      imageUrl = (await resolveUrl(rawBestUrl, "steam")) ?? cdnCapsule ?? cdnHero;
       // HUD chip: logo first, then any artwork
-      iconUrl = (await resolveUrl(game.iconPath)) ?? cdnLogo ?? bestUrl;
+      iconUrl = (await resolveUrl(game.iconPath, "steam")) ?? cdnLogo ?? bestUrl;
       // Try repack screenshot as hero fallback (more cinematic)
       if (!heroUrl && game.metadata?.screenshots?.[0]) {
         const ssUrl = await resolveUrl(game.metadata.screenshots[0]);
@@ -1063,9 +1070,9 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
     } else {
       // Steam / Local: existing behavior — single imageUrl from game metadata
       const rawBestUrl = game.imageUrl || game.metadata?.background_image || game.metadata?.header_image || game.metadata?.capsule_image_v5 || game.metadata?.library_hero_image || game.metadata?.hero_image || undefined;
-      imageUrl = await resolveUrl(rawBestUrl);
+      imageUrl = await resolveUrl(rawBestUrl, "steam");
       heroUrl = imageUrl;  // For Steam, the single imageUrl serves both roles
-      iconUrl = await resolveUrl(game.iconPath);
+      iconUrl = await resolveUrl(game.iconPath, "steam");
     }
 
     const providerLabel = game.source === "steam" ? "Steam" : game.source === "epic" ? "Epic" : game.source === "debrid" ? "Debrid" : game.source === "local" ? "Local" : game.source === "manual" ? "Manual" : "Unknown";
@@ -1669,7 +1676,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           }
 
           const mediaInfo = sessionMediaRef.current[key];
-          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "epic" ? "Epic" : curSession.source === "local" ? "Local" : curSession.source === "manual" ? "Manual" : "Unknown";
+          const provider = curSession.source === "steam" ? "Steam" : curSession.source === "epic" ? "Epic" : curSession.source === "debrid" ? "Debrid" : curSession.source === "local" ? "Local" : curSession.source === "manual" ? "Manual" : "Unknown";
           setOverlayEvent({
             id: `launch-${key}-${curSession.updatedAt}`,
             type: "launch",
@@ -1735,7 +1742,7 @@ export function GameSessionProvider({ children }: { children: React.ReactNode })
           ? Math.floor((Date.now() - prevSession.launchedAt) / 1000)
           : 0;
         const mediaInfo = sessionMediaRef.current[key];
-        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "epic" ? "Epic" : prevSession.source === "local" ? "Local" : prevSession.source === "manual" ? "Manual" : "Unknown";
+        const provider = prevSession.source === "steam" ? "Steam" : prevSession.source === "epic" ? "Epic" : prevSession.source === "debrid" ? "Debrid" : prevSession.source === "local" ? "Local" : prevSession.source === "manual" ? "Manual" : "Unknown";
         setOverlayEvent({
           id: `end-${key}-${Date.now()}`,
           type: "end",
