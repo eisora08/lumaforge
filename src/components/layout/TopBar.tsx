@@ -269,10 +269,10 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
 
   function handleBellClick() {
     if (showPanel) {
-      console.log("[NOTIFICATIONS][PANEL_CLOSE]");
+      if (DEBUG_WINDOW_CONTROLS) console.log("[NOTIFICATIONS][PANEL_CLOSE]");
     } else {
       const count = luaUpdateCount;
-      console.log(`[NOTIFICATIONS][PANEL_OPEN] updates=${count}`);
+      if (DEBUG_WINDOW_CONTROLS) console.log(`[NOTIFICATIONS][PANEL_OPEN] updates=${count}`);
     }
     setShowPanel((prev) => !prev);
   }

@@ -30,7 +30,7 @@ function cache403(appId: string): void {
 }
 
 // Temporary diagnostic flag for empty cache investigation (appId 1167630)
-const DEBUG_ACH_DIAG = true;
+const DEBUG_ACH_DIAG = false;
 
 export type UnlockEvent = {
   apiName: string;

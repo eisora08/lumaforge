@@ -215,6 +215,7 @@ export function countSqliteRead(n = 1): void { _sqliteReads += n; }
   export function logBootPerfSummary(): void {
   if (_summaryLogged) return;
   _summaryLogged = true;
+  if (!DEBUG_RENDER_SUMMARY) return;
   const elapsed = Date.now() - _bootStart;
   console.log(
     `[PERF][BOOT] invokes=${_invokes} appinfoAttempts=${_appinfoAttempts} ` +

@@ -74,7 +74,7 @@ type SettingsProps = {
 };
 
 export default function Settings({ onSectionChange }: SettingsProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const navSections: {
     key: SettingsSectionId;
@@ -377,6 +377,40 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         onSelect={setTheme}
                       />
                     ))}
+                  </div>
+
+                  {/* Language Selector */}
+                  <div className="mt-6">
+                    <div className="mb-3">
+                      <h3 className="font-medium text-(--color-text)">
+                        {t("settings.language", "Idioma")}
+                      </h3>
+                      <p className="mt-1 text-sm text-(--color-muted)">
+                        {t("settings.languageDescription", "Cambia el idioma de la interfaz.")}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { i18n.changeLanguage("es"); localStorage.setItem("lumaforge-lang", "es"); }}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                          i18n.language === "es"
+                            ? "bg-blue-600 text-white"
+                            : "bg-(--color-surface) text-(--color-muted) hover:text-(--color-text)"
+                        }`}
+                      >
+                        Español
+                      </button>
+                      <button
+                        onClick={() => { i18n.changeLanguage("en"); localStorage.setItem("lumaforge-lang", "en"); }}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                          i18n.language === "en"
+                            ? "bg-blue-600 text-white"
+                            : "bg-(--color-surface) text-(--color-muted) hover:text-(--color-text)"
+                        }`}
+                      >
+                        English
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-6">

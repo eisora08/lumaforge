@@ -1,4 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import { countRender } from "../../services/perfCounters";
 import {
   Download,
@@ -150,6 +151,7 @@ function GameLauncherTileInner({
   onOverlayToggle,
 }: GameLauncherTileProps) {
   countRender("GameLauncherTile");
+  const { t } = useTranslation();
   const { settings } = useSettings();
   const { ref, isVisible } = useInViewport();
   const { onMouseEnter: prefetchEnter, onMouseLeave: prefetchLeave } = useHoverPrefetch(game.appId);
@@ -754,25 +756,25 @@ function GameLauncherTileInner({
           >
             {isRunning ? (
               <MenuItem
-                label="Stop"
+                label={t("context_menu.stop", "Stop")}
                 icon={<X className="h-3.5 w-3.5" />}
                 onClick={() => { setMenuOpen(false); stopSession(gk); }}
               />
             ) : action === "play" ? (
               <MenuItem
-                label="Play"
+                label={t("context_menu.play", "Play")}
                 icon={<Play className="h-3.5 w-3.5" />}
                 onClick={() => { setMenuOpen(false); onPlay(game); }}
               />
             ) : action === "open-steam" ? (
               <MenuItem
-                label="Open in Steam"
+                label={t("context_menu.open_steam", "Open in Steam")}
                 icon={<ExternalLink className="h-3.5 w-3.5" />}
                 onClick={() => { setMenuOpen(false); if (game.appId) openExternalUrl(getSteamStoreUrl(Number(game.appId))); }}
               />
             ) : action === "open-lua-folder" ? (
               <MenuItem
-                label="Lua Folder"
+                label={t("context_menu.lua_folder", "Lua Folder")}
                 icon={<FolderOpen className="h-3.5 w-3.5" />}
                 onClick={() => {
                   setMenuOpen(false);
@@ -785,13 +787,13 @@ function GameLauncherTileInner({
               />
             ) : action === "installing" ? (
               <MenuItem
-                label="Installing"
+                label={t("context_menu.installing", "Installing")}
                 icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 disabled
               />
             ) : action === "select-exe" ? (
               <MenuItem
-                label="Select Executable"
+                label={t("context_menu.select_exe", "Select Executable")}
                 icon={<FileSearch className="h-3.5 w-3.5" />}
                 onClick={() => {
                   setMenuOpen(false);
@@ -816,20 +818,20 @@ function GameLauncherTileInner({
               />
             ) : !hasActiveInstall ? (
               <MenuItem
-                label="Install"
+                label={t("context_menu.install", "Install")}
                 icon={<Download className="h-3.5 w-3.5" />}
                 onClick={() => { setMenuOpen(false); onInstall(game); }}
               />
             ) : (
               <MenuItem
-                label={installJob?.status === "waiting" || installJob?.status === "queued" ? "Waiting for Steamâ€¦" : "Installingâ€¦"}
+                label={installJob?.status === "waiting" || installJob?.status === "queued" ? t("context_menu.waiting_steam", "Waiting for Steam…") : t("context_menu.installing", "Installing…")}
                 icon={<Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 disabled
               />
             )}
             {luaUpdateStatus === "update-available" && game.steamInstalled && (
               <MenuItem
-                label="Update Package"
+                label={t("context_menu.update_package", "Update Package")}
                 icon={<RefreshCw className={`h-3.5 w-3.5 ${updateRunning ? "animate-spin" : ""}`} />
                 }
                 disabled={updateRunning}
@@ -840,19 +842,19 @@ function GameLauncherTileInner({
               />
             )}
             <MenuItem
-              label={favorite ? "Remove from favorites" : "Add to favorites"}
+              label={favorite ? t("context_menu.remove_favorites", "Remove from favorites") : t("context_menu.add_favorites", "Add to favorites")}
               icon={<Heart className={`h-3.5 w-3.5 ${favorite ? "fill-current" : ""}`} />}
               onClick={() => { const fk = getFavoriteKey(game); if (fk) toggleFavorite(fk); setMenuOpen(false); }}
             />
             {game.appId && game.source !== "epic" && game.source !== "debrid" && (
               <MenuItem
-                label="Open in Steam"
+                label={t("context_menu.open_steam", "Open in Steam")}
                 icon={<ExternalLink className="h-3.5 w-3.5" />}
                 onClick={() => { setMenuOpen(false); openExternalUrl(getSteamStoreUrl(Number(game.appId))); }}
               />
             )}
             <MenuItem
-              label="Browse Local Files"
+              label={t("context_menu.browse_files", "Browse Local Files")}
               icon={<FolderOpen className="h-3.5 w-3.5" />}
               onClick={() => {
                 setMenuOpen(false);
@@ -867,7 +869,7 @@ function GameLauncherTileInner({
               }}
             />
             <MenuItem
-              label="Create Shortcut"
+              label={t("context_menu.create_shortcut", "Create Shortcut")}
               icon={<FileText className="h-3.5 w-3.5" />}
               onClick={async () => {
                 setMenuOpen(false);
@@ -936,27 +938,27 @@ function GameLauncherTileInner({
             />
 
             <MenuItem
-              label="Manage"
+              label={t("context_menu.manage", "Manage")}
               icon={<Settings className="h-3.5 w-3.5" />}
               children={[
                 {
-                  label: "Edit Game Details",
+                  label: t("context_menu.edit_details", "Edit Game Details"),
                   icon: <Edit className="h-3.5 w-3.5" />,
                   onClick: () => { setMenuOpen(false); setEditInitialTab("details"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
                 {
-                  label: "Manage Artwork",
+                  label: t("context_menu.manage_art", "Manage Artwork"),
                   icon: <Image className="h-3.5 w-3.5" />,
                   onClick: () => { setMenuOpen(false); setEditInitialTab("media"); setEditDialogOpen(true); onOverlayToggle?.(true); },
                 },
                 {
-                  label: "Game Fixes",
+                  label: t("context_menu.game_fixes", "Game Fixes"),
                   icon: <Wrench className="h-3.5 w-3.5" />,
                   onClick: () => { setMenuOpen(false); setToolsModalOpen(true); onOverlayToggle?.(true); },
                 },
                     ...(game.source === "manual"
                     ? [{
-                        label: "Delete Manual Game",
+                        label: t("context_menu.delete_manual", "Delete Manual Game"),
                         icon: <Trash2 className="h-3.5 w-3.5" />,
                         destructive: true as const,
                         onClick: () => {

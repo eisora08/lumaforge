@@ -76,8 +76,10 @@ function notify(): void {
   }
 }
 
+const DEBUG_BOOT = false;
+
 function logBoot(msg: string): void {
-  console.log(`[BOOT] ${msg}`);
+  if (DEBUG_BOOT) console.log(`[BOOT] ${msg}`);
 }
 
 async function closeSplashscreenAndShowMainOnce(): Promise<void> {
@@ -218,8 +220,8 @@ export async function runBootTasks(): Promise<void> {
                 const snapshotAge = Date.now() - _snapshotLoaded.updatedAt;
                 const isFresh = snapshotAge < 24 * 60 * 60 * 1000;
                 logBoot(`snapshot hydrated from file — games: ${gameCount}, sidebar items: ${sidebarCount}`);
-                console.log(`[BOOT][CACHE] snapshotFresh=${!!isFresh}`);
-                console.log(`[BOOT][CACHE] rebuildNeeded=${!isFresh}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][CACHE] snapshotFresh=${!!isFresh}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][CACHE] rebuildNeeded=${!isFresh}`);
                 // Hydrate media stats
                 let withLandscape = 0, withCover = 0, withIcon = 0, missingMedia = 0;
                 for (const g of _snapshotLoaded.library.games) {
@@ -228,25 +230,25 @@ export async function runBootTasks(): Promise<void> {
                   if (g.media?.iconPath) withIcon++;
                   if (!g.media?.landscapePath && !g.media?.coverPath && !g.media?.backgroundPath && !g.media?.iconPath) missingMedia++;
                 }
-                console.log(`[BOOT][MEDIA] hydrated games=${gameCount}`);
-                console.log(`[BOOT][MEDIA] withLandscape=${withLandscape}`);
-                console.log(`[BOOT][MEDIA] withCover=${withCover}`);
-                console.log(`[BOOT][MEDIA] withIcon=${withIcon}`);
-                console.log(`[BOOT][MEDIA] missingMedia=${missingMedia}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] hydrated games=${gameCount}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] withLandscape=${withLandscape}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] withCover=${withCover}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] withIcon=${withIcon}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][MEDIA] missingMedia=${missingMedia}`);
                 // Hydrate: repair missing media paths from canonical appinfo
                 const { hydrateStartupSnapshotMedia } = await import("./startupSnapshotService");
                 const hydrateResult = await hydrateStartupSnapshotMedia(_snapshotLoaded);
-                console.log(`[BOOT][CACHE] hydrateResult: changed=${hydrateResult.changed} repaired=${hydrateResult.repairedCount} ready=${hydrateResult.readyCount} partial=${hydrateResult.partialCount} missing=${hydrateResult.missingCount} stale=${hydrateResult.staleCount}`);
+                if (DEBUG_BOOT) console.log(`[BOOT][CACHE] hydrateResult: changed=${hydrateResult.changed} repaired=${hydrateResult.repairedCount} ready=${hydrateResult.readyCount} partial=${hydrateResult.partialCount} missing=${hydrateResult.missingCount} stale=${hydrateResult.staleCount}`);
                 // Fingerprint checks (Phase 5)
                 const indexes = _snapshotLoaded.indexes;
                 const hasFingerprints = !!(indexes as any).luaFingerprint || !!(indexes as any).appinfoFingerprint;
-                console.log(`[BOOT][CACHE] luaFingerprintChanged=unknown (no baseline)`);
-                console.log(`[BOOT][CACHE] mediaFingerprintChanged=unknown (no baseline)`);
+                if (DEBUG_BOOT) console.log(`[BOOT][CACHE] luaFingerprintChanged=unknown (no baseline)`);
+                if (DEBUG_BOOT) console.log(`[BOOT][CACHE] mediaFingerprintChanged=unknown (no baseline)`);
                 if (!hasFingerprints) {
-                  console.log(`[BOOT][CACHE] fingerprintBaseline=missing (first boot or old snapshot)`);
+                  if (DEBUG_BOOT) console.log(`[BOOT][CACHE] fingerprintBaseline=missing (first boot or old snapshot)`);
                 }
               } else {
-                console.log(`[BOOT][CACHE] snapshotFresh=false (no snapshot file)`);
+                if (DEBUG_BOOT) console.log(`[BOOT][CACHE] snapshotFresh=false (no snapshot file)`);
               }
             } catch {
               _snapshotLoaded = null;
@@ -355,7 +357,7 @@ export async function runBootTasks(): Promise<void> {
                 if (batchNames.length > 0) {
                   try {
                     await batchUpdateGameNames(batchNames);
-                    console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length}`);
+                    if (DEBUG_BOOT) console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length}`);
                   } catch { /* non-critical */ }
                 }
                 if (enrichedCount > 0) {
@@ -400,7 +402,7 @@ export async function runBootTasks(): Promise<void> {
                 // Use TTL-guarded steam scan to avoid repeated scans on boot re-runs
                 let steamGames: Awaited<ReturnType<typeof scanSteamInstalledGames>> = [];
                 if (!isIntegrationScanOnStartup("steam")) {
-                  console.log("[steam-scan][SKIP] reason=integration-disabled");
+                  if (DEBUG_BOOT) console.log("[steam-scan][SKIP] reason=integration-disabled");
                 } else if (checkSteamScanAllowed()) {
                   steamGames = await scanSteamInstalledGames({
                     steamPath: settings.steamRoot || undefined,
@@ -410,7 +412,7 @@ export async function runBootTasks(): Promise<void> {
                   }).catch(() => []);
                   markSteamScanComplete();
                 } else {
-                  console.log("[steam-scan][SKIP] reason=boot-reconcile-ttl");
+                  if (DEBUG_BOOT) console.log("[steam-scan][SKIP] reason=boot-reconcile-ttl");
                 }
 
                 const [luaScripts, sqliteCache] = await Promise.all([
@@ -524,7 +526,7 @@ export async function runBootTasks(): Promise<void> {
                       logBoot(`[BOOT][SQLITE_EMPTY_FALLBACK] using=snapshot games=${reconciledGames!.length}`);
                       setReconciledGames(reconciledGames!);
                     } else {
-                      console.log(`[BOOT][SQLITE_EMPTY_FALLBACK] using=empty (snapshot also empty)`);
+                      if (DEBUG_BOOT) console.log(`[BOOT][SQLITE_EMPTY_FALLBACK] using=empty (snapshot also empty)`);
                     }
                   }
                 } else {
@@ -536,7 +538,7 @@ export async function runBootTasks(): Promise<void> {
                     if (_cachedGameIndex && _cachedGameIndex.length > 0) {
                       // Reuse Stage 4's cached game index to avoid a second readAllGames() call
                       reconciledGames = _cachedGameIndex.map((e) => indexEntryToLibraryGame(e, luaOverlay));
-                      console.log(`[BOOT][SQLITE_REUSED] source=stage4 target=stage4.5 count=${_cachedGameIndex.length}`);
+                      if (DEBUG_BOOT) console.log(`[BOOT][SQLITE_REUSED] source=stage4 target=stage4.5 count=${_cachedGameIndex.length}`);
                     } else {
                       // Fallback: Stage 4 may have failed — load again directly
                       const { loadSteamGameIndex } = await import("./fullSteamGameIndex");
@@ -578,7 +580,7 @@ export async function runBootTasks(): Promise<void> {
                         }
                         return g;
                       });
-                      console.log(`[BOOT][LUA_IDENTITY] converted lua-only games=${luaOnlyAppIds.size}`);
+                      if (DEBUG_BOOT) console.log(`[BOOT][LUA_IDENTITY] converted lua-only games=${luaOnlyAppIds.size}`);
                     }
                   }
                   // Persist to gameStore so validateStartupCacheHealth shows correct count
@@ -586,7 +588,7 @@ export async function runBootTasks(): Promise<void> {
                   if (reconciledGames) {
                     const { setReconciledGames } = await import("./gameStore");
                     setReconciledGames(reconciledGames);
-                    console.log(`[GAMESTORE][HYDRATE] source=reconciled games=${reconciledGames.length}`);
+                    if (DEBUG_BOOT) console.log(`[GAMESTORE][HYDRATE] source=reconciled games=${reconciledGames.length}`);
                   }
                 }
 
@@ -595,7 +597,7 @@ export async function runBootTasks(): Promise<void> {
                   const runtimeSource = reconciledGames && reconciledGames.length > 0
                     ? (sqliteAppIds.size > 0 ? "reconciled" : "snapshot")
                     : "sqlite";
-                  console.log(`[BOOT][SOURCE_SELECT] runtimeSource=${runtimeSource} snapshot=${_snapshotLoaded?.library?.games?.length ?? 0} lua=${luaAppIds.size} steam=${steamAppIds.size} sqlite=${sqliteAppIds.size}`);
+                  if (DEBUG_BOOT) console.log(`[BOOT][SOURCE_SELECT] runtimeSource=${runtimeSource} snapshot=${_snapshotLoaded?.library?.games?.length ?? 0} lua=${luaAppIds.size} steam=${steamAppIds.size} sqlite=${sqliteAppIds.size}`);
                 }
 
                 // Resolve names for games with placeholder/empty titles and
@@ -623,7 +625,7 @@ export async function runBootTasks(): Promise<void> {
                       }
                       const cachedCount = Object.keys(appinfos).length;
                       if (cachedCount > 0) {
-                        console.log(`[BOOT][APPINFO_CACHE] hit appIds=${appIds.length} cached=${cachedCount}`);
+                        if (DEBUG_BOOT) console.log(`[BOOT][APPINFO_CACHE] hit appIds=${appIds.length} cached=${cachedCount}`);
                       }
                       const missingIds = appIds.filter(id => !appinfos[id]);
                       if (missingIds.length > 0) {
@@ -632,7 +634,7 @@ export async function runBootTasks(): Promise<void> {
                       }
                     } else {
                       appinfos = await readCanonicalAppinfos(appIds).catch(() => ({} as Record<string, any>));
-                      console.log(`[BOOT][APPINFO_CACHE] miss appIds=${appIds.length}`);
+                      if (DEBUG_BOOT) console.log(`[BOOT][APPINFO_CACHE] miss appIds=${appIds.length}`);
                     }
                     // Also resolve metadata — may find names that canonical/store don't have yet
                     const numIds = appIds.map(Number).filter((n) => !isNaN(n));
@@ -691,7 +693,7 @@ export async function runBootTasks(): Promise<void> {
                       try {
                         const { batchUpdateGameNames } = await import("./tauri");
                         await batchUpdateGameNames(batchNames);
-                        console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length} stage=4.5`);
+                        if (DEBUG_BOOT) console.log(`[BOOT][TITLE_BATCH_WRITE] count=${batchNames.length} stage=4.5`);
                       } catch { /* non-critical */ }
                     }
                     setReconciledGames(reconciledGames);
@@ -784,11 +786,11 @@ export async function runBootTasks(): Promise<void> {
                   const withCover = entries.filter((e) => e.hasCover).length;
                   const withIcon = entries.filter((e) => e.hasIcon).length;
                   const missing = entries.filter((e) => !e.hasLandscape && !e.hasCover && !e.hasBackground && !e.hasIcon).length;
-                  console.log(`[MEDIA_INDEX] initialized games=${entries.length}`);
-                  console.log(`[MEDIA_INDEX] withLandscape=${withLandscape}`);
-                  console.log(`[MEDIA_INDEX] withCover=${withCover}`);
-                  console.log(`[MEDIA_INDEX] withIcon=${withIcon}`);
-                  console.log(`[MEDIA_INDEX] missing=${missing}`);
+                  if (DEBUG_BOOT) console.log(`[MEDIA_INDEX] initialized games=${entries.length}`);
+                  if (DEBUG_BOOT) console.log(`[MEDIA_INDEX] withLandscape=${withLandscape}`);
+                  if (DEBUG_BOOT) console.log(`[MEDIA_INDEX] withCover=${withCover}`);
+                  if (DEBUG_BOOT) console.log(`[MEDIA_INDEX] withIcon=${withIcon}`);
+                  if (DEBUG_BOOT) console.log(`[MEDIA_INDEX] missing=${missing}`);
                 }
                 logBoot("media cache seeded from snapshot");
               }
@@ -893,7 +895,7 @@ export async function runBootTasks(): Promise<void> {
                 try {
                   const hash = typeof window !== "undefined" ? window.location.hash : "";
                   if (hash.startsWith("#/store")) {
-                    console.log("[BOOT][MEDIA_HYDRATE_SKIP] reason=store-active");
+                    if (DEBUG_BOOT) console.log("[BOOT][MEDIA_HYDRATE_SKIP] reason=store-active");
                   } else if (_snapshotLoaded) {
                     const { hydrateMediaOnStartup } = await import("./gameCacheService");
                     const appIds = _snapshotLoaded.library.games
@@ -916,7 +918,7 @@ export async function runBootTasks(): Promise<void> {
                     const { validateStartupCacheHealth } = await import("./gameStore");
                     await validateStartupCacheHealth();
                   } else {
-                    console.log("[BOOT][HEALTH_SKIP] reason=store-active");
+                    if (DEBUG_BOOT) console.log("[BOOT][HEALTH_SKIP] reason=store-active");
                   }
                 } catch (err) {
                   console.warn("[BOOT] cache health validation failed:", String(err));
@@ -927,7 +929,7 @@ export async function runBootTasks(): Promise<void> {
                   const appIds = snapshotGames.map((g) => g.appId).filter(Boolean);
                   const uniqueAppIds = new Set(appIds);
                   if (uniqueAppIds.size < appIds.length) {
-                    console.log(`[BOOT][DEDUP_FOUND] snapshot has ${appIds.length - uniqueAppIds.size} duplicate appIds`);
+                    if (DEBUG_BOOT) console.log(`[BOOT][DEDUP_FOUND] snapshot has ${appIds.length - uniqueAppIds.size} duplicate appIds`);
                   }
                 }
               }, 2000);
@@ -978,7 +980,7 @@ export async function runBootTasks(): Promise<void> {
             snapshotGames: _snapshotLoaded?.library.games.length ?? 0,
             snapshotSidebar: _snapshotLoaded?.sidebar.items.length ?? 0,
           };
-          console.log(`[BOOT][PERF_SUMMARY] snapshotGames=${perfSummary.snapshotGames} snapshotSidebar=${perfSummary.snapshotSidebar} elapsedMs=${Date.now() - _bootStart}`);
+          if (DEBUG_BOOT) console.log(`[BOOT][PERF_SUMMARY] snapshotGames=${perfSummary.snapshotGames} snapshotSidebar=${perfSummary.snapshotSidebar} elapsedMs=${Date.now() - _bootStart}`);
 
           _bootStatus = "ready";
           _bootProgress = 100;
@@ -1002,7 +1004,7 @@ export async function runBootTasks(): Promise<void> {
                             const ctx = buildEvalContext(games);
                             const result = evaluateAchievements(ctx);
                             if (result.newlyUnlocked.length > 0) {
-                              console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
+                              if (DEBUG_BOOT) console.log(`[LAUNCHER_ACH][BOOT] unlocked=${result.newlyUnlocked.map(a => a.id).join(",")}`);
                               import("../components/activity/AchievementToast").then(({ showAchievementToasts }) => {
                                 showAchievementToasts(result.newlyUnlocked);
                               });
@@ -1045,7 +1047,7 @@ export async function runBootTasks(): Promise<void> {
                   await importScanner();
                   return;
                 }
-                console.log("[PACKAGE_SCAN][WAIT_FILTER] waiting for installed filter");
+                if (DEBUG_BOOT) console.log("[PACKAGE_SCAN][WAIT_FILTER] waiting for installed filter");
                 const maxWaitMs = 10_000;
                 const pollMs = 500;
                 let waited = 0;
