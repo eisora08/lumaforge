@@ -96,16 +96,16 @@ fn import_repack_catalog_inner(
 ) -> SqliteResult<u32> {
     let tx = conn.unchecked_transaction()?;
 
-    // Drop + recreate
-    tx.execute_batch(
-        "DROP TABLE IF EXISTS repack_catalog;",
-    )?;
+    // Ensure tables exist (no-op if already created by boot init)
     create_repack_tables(&tx)?;
 
-    let mut inserted: u32 = 0;
+    // MERGE: upsert bundled records via INSERT OR REPLACE.
+    // User-imported feeds (Hydra/paste) are preserved — only IDs present in
+    // the artifact get overwritten; all other rows remain untouched.
+    let mut merged: u32 = 0;
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO repack_catalog (
+            "INSERT OR REPLACE INTO repack_catalog (
                 id, title, normalized_title, app_id, repacker, repack_group,
                 installer_type, file_size, install_size,
                 languages_json, selective_json, download_uris_json,
@@ -146,15 +146,20 @@ fn import_repack_catalog_inner(
                 tags_json,
                 artifact.schema_version as i32,
             ])?;
-            inserted += 1;
+            merged += 1;
         }
     }
 
-    // Meta
-    let games_with_app_id = artifact.records.iter().filter(|r| r.app_id > 0).count() as u32;
+    // Meta — record total count across ALL sources (bundled + user-imported)
+    let total_count: u32 = tx.query_row(
+        "SELECT COUNT(*) FROM repack_catalog", [], |r| r.get(0),
+    )?;
+    let games_with_app_id: u32 = tx.query_row(
+        "SELECT COUNT(*) FROM repack_catalog WHERE app_id > 0", [], |r| r.get(0),
+    )?;
     let meta_pairs = [
         ("schema_version", artifact.schema_version.to_string()),
-        ("record_count", inserted.to_string()),
+        ("record_count", total_count.to_string()),
         ("games_with_app_id", games_with_app_id.to_string()),
         ("checksum", checksum.to_string()),
         ("imported_at", chrono_now()),
@@ -167,7 +172,7 @@ fn import_repack_catalog_inner(
     }
 
     tx.commit()?;
-    Ok(inserted)
+    Ok(merged)
 }
 
 // ── Queries ──
@@ -573,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn test_import_replaces_previous() {
+    fn test_import_merges_preserving_existing() {
         let conn = test_conn();
         let first = make_artifact(vec![make_record("fg-1", "Game One", 1, "fitgirl")]);
         import_repack_catalog_inner(&conn, &first, "v1").unwrap();
@@ -584,10 +589,25 @@ mod tests {
             make_record("fg-3", "Game Three", 3, "fitgirl"),
         ]);
         import_repack_catalog_inner(&conn, &second, "v2").unwrap();
-        assert_eq!(get_meta(&conn).unwrap().record_count, 2);
+        // MERGE preserves the old record (fg-1) — total is 3
+        assert_eq!(get_meta(&conn).unwrap().record_count, 3);
 
         let games = query_by_app_id(&conn, 1).unwrap();
-        assert!(games.is_empty(), "old game should be gone after replace");
+        assert_eq!(games.len(), 1, "old record preserved by merge");
+    }
+
+    #[test]
+    fn test_import_upserts_overlapping_ids() {
+        let conn = test_conn();
+        let first = make_artifact(vec![make_record("fg-1", "Old Name", 1, "fitgirl")]);
+        import_repack_catalog_inner(&conn, &first, "v1").unwrap();
+
+        let second = make_artifact(vec![make_record("fg-1", "New Name", 1, "fitgirl")]);
+        import_repack_catalog_inner(&conn, &second, "v2").unwrap();
+
+        let games = query_by_app_id(&conn, 1).unwrap();
+        assert_eq!(games.len(), 1, "only one row after upsert");
+        assert_eq!(games[0].title, "New Name", "overwritten with new data");
     }
 
     // ── Fuzzy search ──

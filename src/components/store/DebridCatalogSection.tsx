@@ -294,7 +294,11 @@ function GameCard({ game, inLibrary, onNavigate }: GameCardProps) {
 
   const configuredProviders: ProviderId[] = getConfiguredProviders(settings.debridProviders);
 
-  const heroUrl = game.appId > 0 ? buildSteamCdnUrl(String(game.appId), "capsule") : null;
+  const heroUrl = game.appId > 0
+    ? buildSteamCdnUrl(String(game.appId), "capsule")
+      || buildSteamCdnUrl(String(game.appId), "header")
+      || buildSteamCdnUrl(String(game.appId), "cover")
+    : null;
 
   // Reset image error when switching games.
   useEffect(() => {

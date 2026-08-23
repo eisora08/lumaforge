@@ -160,7 +160,7 @@ function pickPrimaryPartIndex(fileNames: string[]): number {
   return fileNames.length - 1;
 }
 
-/**
+/** Fire-and-forget native media materialization for an installed Debrid game.
  * Fire-and-forget native media materialization for an installed Debrid game.
  * Once the game has a valid Steam appId, this queues a repair scan that resolves
  * Steam metadata + artwork and downloads missing roles to games/steam/<appId>/media/.
@@ -544,10 +544,6 @@ let effectiveUri: string | undefined;
                   destDir,
                   autoExtract: isPrimary ? autoExtract : false,
                   deleteArchive: isPrimary ? deleteArchive : false,
-                  // Key the resume checkpoint on the STABLE origin URL (job's
-                  // downloadUrl), not the volatile resolved CDN link — a fresh
-                  // resolution on resume must continue the same `.part`, not
-                  // restart. Reusing jobId keeps a single progress bar.
                   sourceKey: downloadUri,
                 });
                 if (!result?.success) break;
@@ -581,9 +577,6 @@ let effectiveUri: string | undefined;
               destDir,
               autoExtract,
               deleteArchive,
-              // Key the resume checkpoint on the STABLE origin URL (job's
-              // downloadUrl), not the volatile resolved CDN link — a fresh gofile
-              // resolution on resume must continue the same `.part`, not restart.
               sourceKey: downloadUri,
             });
           }

@@ -193,6 +193,13 @@ pub(crate) struct GofileResolved {
     pub(crate) bearer: Option<String>,
 }
 
+/// Result of buzzheavier resolution: the direct CDN download URL.
+/// No bearer needed — CDN links are public once obtained via the HTMX endpoint.
+#[derive(Debug, Clone)]
+pub(crate) struct BuzzheavierResolved {
+    pub(crate) url: String,
+}
+
 /// Fetch `https://api.gofile.io/contents/{content_id}` with the website-token
 /// headers for a given salt. Returns the parsed JSON body.
 async fn gofile_get_contents(
@@ -336,6 +343,805 @@ pub(crate) async fn resolve_gofile_url(gofile_url: &str) -> Result<GofileResolve
     }
 }
 
+// ── Buzzheavier ──────────────────────────────────────────────────────────────
+
+/// User-Agent for buzzheavier requests (matches a real Chrome browser).
+const BUZZHEAVIER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+/// Known buzzheavier mirror domains (interchangeable). Order: preferred first.
+const BUZZHEAVIER_DOMAINS: &[&str] = &["bzzhr.co", "buzzheavier.com"];
+
+/// Extract the download URL from a buzzheavier landing page HTML.
+///
+/// The page uses HTMX: the download button has an `hx-get` attribute pointing
+/// to the download endpoint (e.g. `hx-get="https://buzzheavier.com/{id}/download?t=..."`).
+/// We parse this attribute to get the exact URL to hit.
+fn extract_buzzheavier_download_url(html: &str) -> Option<String> {
+    // Strategy 1: Look for hx-get attribute containing "download"
+    // Pattern: hx-get="...download..." or hx-get='...download...'
+    let markers = ["hx-get=\"", "hx-get='"];
+    for marker in markers {
+        if let Some(start) = html.find(marker) {
+            let val_start = start + marker.len();
+            let quote = marker.as_bytes()[marker.len() - 1] as char; // the closing quote
+            if let Some(end) = html[val_start..].find(quote) {
+                let value = &html[val_start..val_start + end];
+                if value.contains("download") {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    // Strategy 2: Look for /download?t= token pattern (legacy fallback)
+    let marker = "/download?t=";
+    if let Some(start) = html.find(marker) {
+        let after = start + marker.len();
+        let rest = &html[after..];
+        let token_len = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .count();
+        if token_len > 0 {
+            // Build the full URL from the token (we'll need the base URL)
+            return Some(format!("{}{}", marker, &rest[..token_len]));
+        }
+    }
+
+    None
+}
+
+/// Derive the base URL from a buzzheavier link (scheme + host).
+fn buzzheavier_base_url(url: &str) -> Option<String> {
+    // Extract scheme + host from the URL, e.g. "https://buzzheavier.com" from
+    // "https://buzzheavier.com/s6m8kmgjzldi/download?t=tok".
+    let lower = url.to_lowercase();
+    let scheme_end = lower.find("://")? + 3; // past "://"
+    let rest = &url[scheme_end..];
+    let host_end = rest.find('/')?;
+    Some(format!("{}{}", &url[..scheme_end], &rest[..host_end]))
+}
+
+/// Resolve a buzzheavier.com URL to a direct CDN download link.
+///
+/// buzzheavier uses HTMX with browser-grade Cloudflare protection:
+/// 1. GET landing page → parse HTML for `<a hx-get="...download...">` attribute
+/// 2. GET the download URL (from hx-get) with `allow_redirects=False`
+/// 3. Read `Location` header (302 redirect to CDN) or `Hx-Redirect` header
+///
+/// Falls back to `bzzhr.co` mirror on failure.
+pub(crate) async fn resolve_buzzheavier_url(bh_url: &str) -> Result<BuzzheavierResolved, String> {
+    // Try each domain (original + mirrors) until one succeeds.
+    let normalized = bh_url.trim_end_matches('/').to_string();
+
+    // Determine which domains to try: the original URL's domain first (if known),
+    // then remaining known domains as mirrors.
+    let original_domain = extract_domain_from_url(&normalized);
+    let mut domains_to_try: Vec<String> = Vec::new();
+    if let Some(ref od) = original_domain {
+        // Always put the original domain first.
+        if BUZZHEAVIER_DOMAINS.contains(&od.as_str()) {
+            domains_to_try.push(od.clone());
+        } else {
+            // Unknown domain — try it first, then all known mirrors.
+            domains_to_try.push(od.clone());
+            for &d in BUZZHEAVIER_DOMAINS {
+                domains_to_try.push(d.to_string());
+            }
+        }
+    } else {
+        // Can't parse domain — try all known mirrors.
+        for &d in BUZZHEAVIER_DOMAINS {
+            domains_to_try.push(d.to_string());
+        }
+    }
+    // Add remaining known mirrors (without duplicates).
+    for &d in BUZZHEAVIER_DOMAINS {
+        if !domains_to_try.iter().any(|x| x == d) {
+            domains_to_try.push(d.to_string());
+        }
+    }
+
+    let mut last_err: Option<String> = None;
+
+    for domain in &domains_to_try {
+        // Build the URL with this domain, preserving scheme + path.
+        let url = replace_domain_in_url(&normalized, domain).unwrap_or_else(|| normalized.clone());
+
+        match resolve_buzzheavier_single(&url).await {
+            Ok(resolved) => return Ok(resolved),
+            Err(e) => {
+                println!("[DEBRID][BUZZHEAVIER] Failed on {}: {}", domain, e);
+                last_err = Some(e);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| "Buzzheavier: all mirrors failed".to_string()))
+}
+
+/// Resolve a single buzzheavier URL (one domain attempt).
+async fn resolve_buzzheavier_single(url: &str) -> Result<BuzzheavierResolved, String> {
+    // Client 1: normal redirects — for the landing page (we want the final HTML after any redirects).
+    // Uses native-tls (Schannel on Windows) to bypass Cloudflare's rustls TLS fingerprint detection.
+    let landing_client = reqwest::Client::builder()
+        .use_native_tls()
+        .user_agent(BUZZHEAVIER_UA)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Buzzheavier HTTP client error: {}", e))?;
+
+    // Client 2: no redirects — for the download endpoint (capture Location header before redirect).
+    let dl_client = reqwest::Client::builder()
+        .use_native_tls()
+        .user_agent(BUZZHEAVIER_UA)
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Buzzheavier HTTP client error (no-redirect): {}", e))?;
+
+    // Step 1: Fetch landing page to extract the hx-get download URL.
+    println!(
+        "[DEBRID][BUZZHEAVIER] Fetching landing page: {}",
+        &url[..url.len().min(80)]
+    );
+    let resp = landing_client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Buzzheavier landing page request failed: {}", e))?;
+
+    let status = resp.status();
+    let landing_html = resp
+        .text()
+        .await
+        .map_err(|e| format!("Buzzheavier landing page read failed: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("Buzzheavier landing page returned HTTP {}", status.as_u16()));
+    }
+
+    // Step 2: Extract the download URL from the hx-get attribute.
+    let base = buzzheavier_base_url(url)
+        .ok_or_else(|| format!("Cannot determine base URL from: {}", url))?;
+
+    let download_url = if let Some(raw_url) = extract_buzzheavier_download_url(&landing_html) {
+        if raw_url.starts_with("http") {
+            // Absolute URL (e.g. full hx-get value with domain).
+            raw_url
+        } else if raw_url.starts_with('/') {
+            // Path-only (e.g. "/download?t=token"). Prepend base.
+            format!("{}{}", base, raw_url)
+        } else {
+            // Relative path (e.g. "download?t=token"). Prepend base + "/".
+            format!("{}/{}", base, raw_url)
+        }
+    } else {
+        // No hx-get found. Try direct /download as last resort.
+        println!("[DEBRID][BUZZHEAVIER] No hx-get download link found in HTML, trying /download directly");
+        format!("{}/download", url)
+    };
+
+    println!(
+        "[DEBRID][BUZZHEAVIER] GET {} (allow_redirects=false)",
+        &download_url[..download_url.len().min(100)]
+    );
+
+    // Step 3: GET download URL with NO redirect following — read Location header.
+    // Send HTMX headers so the server returns the redirect instead of popup HTML.
+    let dl_resp = dl_client
+        .get(&download_url)
+        .header("hx-request", "true")
+        .header("hx-current-url", &download_url)
+        .header("referer", url)
+        .send()
+        .await
+        .map_err(|e| format!("Buzzheavier download request failed: {}", e))?;
+
+    // Primary: Location header (302/301 redirect when allow_redirects=false).
+    if let Some(location) = dl_resp.headers().get(reqwest::header::LOCATION) {
+        let cdn_url = location
+            .to_str()
+            .map_err(|e| format!("Buzzheavier Location header is not valid UTF-8: {}", e))?
+            .to_string();
+
+        if cdn_url.is_empty() {
+            return Err("Buzzheavier: Location header was empty".to_string());
+        }
+
+        // Handle relative Location values (unlikely but defensive).
+        let final_url = if cdn_url.starts_with("http") {
+            cdn_url
+        } else if cdn_url.starts_with('/') {
+            format!("{}{}", base, cdn_url)
+        } else {
+            cdn_url
+        };
+
+        println!(
+            "[DEBRID][BUZZHEAVIER] Resolved to CDN via Location header: {}",
+            &final_url[..final_url.len().min(80)]
+        );
+        return Ok(BuzzheavierResolved { url: final_url });
+    }
+
+    // Fallback: Hx-Redirect header (older HTMX API).
+    if let Some(hx_redirect) = dl_resp.headers().get("hx-redirect") {
+        let cdn_url = hx_redirect
+            .to_str()
+            .map_err(|e| format!("Buzzheavier Hx-Redirect header is not valid UTF-8: {}", e))?
+            .to_string();
+
+        if !cdn_url.is_empty() {
+            let final_url = if cdn_url.starts_with("http") {
+                cdn_url
+            } else if cdn_url.starts_with('/') {
+                format!("{}{}", base, cdn_url)
+            } else {
+                cdn_url
+            };
+
+            println!(
+                "[DEBRID][BUZZHEAVIER] Resolved to CDN via Hx-Redirect: {}",
+                &final_url[..final_url.len().min(80)]
+            );
+            return Ok(BuzzheavierResolved { url: final_url });
+        }
+    }
+
+    // Fallback: response itself is binary (no HTML) — it IS the file.
+    let ct = dl_resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if !ct.contains("text/html") && !ct.is_empty() {
+        println!(
+            "[DEBRID][BUZZHEAVIER] Direct file response (Content-Type: {}), using request URL",
+            ct
+        );
+        return Ok(BuzzheavierResolved {
+            url: download_url,
+        });
+    }
+
+    Err(format!(
+        "Buzzheavier: no Location/Hx-Redirect header, response is HTML ({}). \
+         The Cloudflare challenge may be blocking automated requests.",
+        ct
+    ))
+}
+
+/// Extract the domain (host) from a URL string.
+fn extract_domain_from_url(url: &str) -> Option<String> {
+    let lower = url.to_lowercase();
+    let start = lower.find("://")? + 3;
+    let rest = &url[start..];
+    let end = rest.find('/').unwrap_or(rest.len());
+    Some(rest[..end].to_string())
+}
+
+/// Replace the domain in a URL, preserving scheme and path.
+/// e.g. `("https://buzzheavier.com/file", "bzzhr.co")` → `Some("https://bzzhr.co/file")`
+fn replace_domain_in_url(url: &str, new_domain: &str) -> Option<String> {
+    let lower = url.to_lowercase();
+    let scheme_end = lower.find("://")? + 3; // past "://"
+    let rest = &url[scheme_end..];
+    let host_end = rest.find('/')?;
+    Some(format!("{}{}{}", &url[..scheme_end], new_domain, &rest[host_end..]))
+}
+
+// ── Multi-hoster resolution ──────────────────────────────────────────────────
+
+/// Classifies a download URL by its file hoster domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HosterKind {
+    Gofile,
+    Buzzheavier,
+    Datanodes,
+    FuckingFast,
+    Pixeldrain,
+    VikingFile,
+    /// Unknown hoster — may be a direct CDN link already.
+    Unknown,
+}
+
+/// Classify a URL by its domain to determine which resolver to use.
+fn classify_hoster_url(url: &str) -> HosterKind {
+    let lower = url.to_lowercase();
+    if lower.contains("gofile.io") || lower.contains("gofile.my") {
+        HosterKind::Gofile
+    } else if lower.contains("buzzheavier.com") || lower.contains("bzzhr.co") {
+        HosterKind::Buzzheavier
+    } else if lower.contains("datanodes.to") {
+        HosterKind::Datanodes
+    } else if lower.contains("fuckingfast.co") {
+        HosterKind::FuckingFast
+    } else if lower.contains("pixeldrain.com") {
+        HosterKind::Pixeldrain
+    } else if lower.contains("vikingfile.com") || lower.contains("vik1ngfile.site") {
+        HosterKind::VikingFile
+    } else {
+        HosterKind::Unknown
+    }
+}
+
+const HOSTER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0";
+
+/// Result of a hoster resolution: the direct download URL plus optional metadata.
+#[derive(Debug, Clone)]
+pub(crate) struct HosterResolved {
+    pub(crate) url: String,
+    pub(crate) bearer: Option<String>,
+}
+
+// ── Datanodes ────────────────────────────────────────────────────────────────
+
+/// Resolve a datanodes.to URL to a direct download link via webview.
+///
+/// datanodes is a Vue SPA behind Cloudflare — both the page AND the POST
+/// `/download` endpoint return CF challenge HTML when hit without cookies.
+/// Strategy: navigate the webview to the page (CF solves), then execute a
+/// `fetch()` POST from inside the page context where CF cookies are set.
+async fn resolve_datanodes_url(app_handle: &AppHandle, datanodes_url: &str) -> Result<HosterResolved, String> {
+    // Extract file code from path: https://datanodes.to/{fileCode}[/...]
+    let lower = datanodes_url.to_lowercase();
+    let path_start = lower.find("://").map(|p| p + 3).unwrap_or(0);
+    let rest = &datanodes_url[path_start..];
+    let after_host = rest.find('/').map(|p| p + 1).unwrap_or(0);
+    let path_part = &rest[after_host..];
+    let file_code = path_part.split('/').next().filter(|s| !s.is_empty())
+        .ok_or_else(|| "Invalid datanodes URL: no file code in path".to_string())?;
+
+    println!(
+        "[DEBRID][DATANODES][WEBVIEW] Resolving file code: {}",
+        file_code
+    );
+
+    use tauri::{Manager, WebviewUrl, Url};
+
+    let label = "webview-fetcher";
+    let window = match app_handle.get_webview_window(label) {
+        Some(w) => w,
+        None => {
+            tauri::WebviewWindowBuilder::new(
+                app_handle,
+                label,
+                WebviewUrl::External(Url::parse("about:blank").unwrap()),
+            )
+            .title("Fetch")
+            .inner_size(1.0, 1.0)
+            .skip_taskbar(true)
+            .visible(false)
+            .build()
+            .map_err(|e| format!("Datanodes webview create: {}", e))?
+        }
+    };
+
+    // Step 1: Navigate to the datanodes download page → Cloudflare solves.
+    let target_url = Url::parse(datanodes_url)
+        .map_err(|e| format!("Datanodes invalid URL: {}", e))?;
+    window.navigate(target_url)
+        .map_err(|e| format!("Datanodes webview navigate: {}", e))?;
+
+    // Wait 18s for Cloudflare JS challenge (typically 5-12s).
+    tokio::time::sleep(std::time::Duration::from_secs(18)).await;
+
+    // Step 2: Execute a fetch() POST from inside the page context.
+    // The page already has valid CF cookies — the fetch includes them via credentials:'same-origin'.
+    // The JS stores the JSON response in window.name, which survives navigation to about:blank.
+    let fetch_js = format!(
+        r#"(function(){{
+            var fd = new URLSearchParams();
+            fd.append('op','download2');
+            fd.append('id','{}');
+            fd.append('rand','');
+            fd.append('referer','');
+            fd.append('method_free','Free Download >>');
+            fd.append('method_premium','');
+            fd.append('dl','1');
+            fetch('/download',{{
+                method:'POST',
+                headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+                body:fd.toString(),
+                credentials:'same-origin'
+            }})
+            .then(function(r){{return r.text();}})
+            .then(function(t){{window.name='DN:'+t;}})
+            .catch(function(e){{window.name='DNE:'+String(e);}});
+        }})();"#,
+        file_code.replace('\\', "\\\\").replace('\'', "\\'")
+    );
+
+    let _ = window.eval(&fetch_js);
+
+    // Step 3: Wait for the fetch() POST to complete.
+    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+
+    // Step 4: Read window.name → navigate to about:blank → invoke callback.
+    let about_blank = Url::parse("about:blank").unwrap();
+    let _ = window.navigate(about_blank);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let callback_id = format!("dn_{}", super::hydra_source::url_hash(datanodes_url));
+    let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
+    {
+        let mut map = super::hydra_source::PENDING_FETCHES
+            .lock()
+            .map_err(|e| format!("Datanodes lock: {}", e))?;
+        map.insert(callback_id.clone(), tx);
+    }
+
+    let invoke_js = format!(
+        r#"window.__TAURI_INTERNALS__.invoke('webview_fetch_callback',{{callbackId:'{}',content:window.name||''}});"#,
+        callback_id
+    );
+    let _ = window.eval(&invoke_js);
+
+    let content = tokio::select! {
+        result = &mut rx => {
+            let _ = super::hydra_source::PENDING_FETCHES.lock().map(|mut m| m.remove(&callback_id));
+            result.map_err(|_| "Datanodes webview callback cancelled".to_string())?
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+            let _ = super::hydra_source::PENDING_FETCHES.lock().map(|mut m| m.remove(&callback_id));
+            return Err("Datanodes webview timed out waiting for result".to_string());
+        }
+    };
+
+    println!("[DEBRID][DATANODES][WEBVIEW] Got result: {} chars", content.len());
+
+    // Step 5: Parse the result.
+    if let Some(json_str) = content.strip_prefix("DN:") {
+        if json_str.is_empty() {
+            return Err("Datanodes: empty response from in-page fetch".to_string());
+        }
+        let body: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|_| format!("Datanodes: response is not JSON: {}", &json_str[..json_str.len().min(200)]))?;
+
+        let url = body["url"]
+            .as_str()
+            .map(|u| urlencoding::decode(u).unwrap_or_else(|_| u.into()).to_string())
+            .ok_or_else(|| {
+                let msg = body["message"].as_str().or(body["msg"].as_str()).unwrap_or("unknown error");
+                format!("Datanodes: no URL in response: {}", msg)
+            })?;
+
+        println!("[DEBRID][DATANODES][WEBVIEW] Resolved to direct URL");
+        return Ok(HosterResolved { url, bearer: None });
+    }
+
+    if let Some(err) = content.strip_prefix("DNE:") {
+        return Err(format!("Datanodes JS fetch failed: {}", err));
+    }
+
+    // Fallback: if window.name was empty or didn't have our prefix, try reqwest.
+    println!("[DEBRID][DATANODES][WEBVIEW] No DN: prefix in result, falling back to reqwest");
+    resolve_datanodes_reqwest(&file_code).await
+}
+
+/// Reqwest-only fallback for datanodes (used when webview is unavailable or fails).
+async fn resolve_datanodes_reqwest(file_code: &str) -> Result<HosterResolved, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(HOSTER_UA)
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Datanodes HTTP client error: {}", e))?;
+
+    let body = format!(
+        "op=download2&id={}&rand=&referer=&method_free=Free+Download+%3E%3E%3E&method_premium=&dl=1",
+        urlencoding::encode(file_code)
+    );
+
+    let resp = client
+        .post("https://datanodes.to/download")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("accept", "*/*")
+        .header("origin", "https://datanodes.to")
+        .header("referer", "https://datanodes.to/download")
+        .header("cookie", format!("lang=english; file_code={};", urlencoding::encode(file_code)))
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Datanodes request failed: {}", e))?;
+
+    let status = resp.status();
+    if status.is_redirection() {
+        if let Some(location) = resp.headers().get("location") {
+            let url = location.to_str().unwrap_or("").to_string();
+            if !url.is_empty() {
+                let final_url = urlencoding::decode(&url).unwrap_or_else(|_| (&*url).into()).to_string();
+                println!("[DEBRID][DATANODES] Resolved via redirect (reqwest)");
+                return Ok(HosterResolved { url: final_url, bearer: None });
+            }
+        }
+    }
+    if !status.is_success() {
+        return Err(format!("Datanodes returned HTTP {}", status.as_u16()));
+    }
+
+    let raw = resp.text().await
+        .map_err(|e| format!("Datanodes response read error: {}", e))?;
+    let val: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|_| format!("Datanodes: not JSON: {}", &raw[..raw.len().min(200)]))?;
+    let url = val["url"].as_str()
+        .map(|u| urlencoding::decode(u).unwrap_or_else(|_| u.into()).to_string())
+        .ok_or_else(|| {
+            let msg = val["message"].as_str().or(val["msg"].as_str()).unwrap_or("unknown");
+            format!("Datanodes: no URL: {}", msg)
+        })?;
+
+    println!("[DEBRID][DATANODES] Resolved (reqwest fallback)");
+    Ok(HosterResolved { url, bearer: None })
+}
+
+// ── FuckingFast ───────────────────────────────────────────────────────────────
+
+/// Resolve a fuckingfast.co URL to a direct download link.
+///
+/// fuckingfast uses an HTMX-style page with a `window.open("...fuckingfast.co/dl/...")`
+/// JavaScript call that contains the direct download link. We extract it via regex.
+async fn resolve_fuckingfast_url(ff_url: &str) -> Result<HosterResolved, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(HOSTER_UA)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("FuckingFast HTTP client error: {}", e))?;
+
+    println!(
+        "[DEBRID][FUCKINGFAST] Fetching page: {}",
+        &ff_url[..ff_url.len().min(80)]
+    );
+
+    let resp = client
+        .get(ff_url)
+        .header("referer", "https://fuckingfast.co/")
+        .send()
+        .await
+        .map_err(|e| format!("FuckingFast request failed: {}", e))?;
+
+    let status = resp.status();
+    let html = resp.text().await
+        .map_err(|e| format!("FuckingFast page read error: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("FuckingFast returned HTTP {}", status.as_u16()));
+    }
+
+    let html_lower = html.to_lowercase();
+    if html_lower.contains("rate limit") {
+        return Err("FuckingFast: rate limit exceeded".to_string());
+    }
+    if html.contains("File Not Found Or Deleted") {
+        return Err("FuckingFast: file not found or deleted".to_string());
+    }
+
+    // Extract direct link from window.open("...fuckingfast.co/dl/...")
+    // Pattern: window.open("https://fuckingfast.co/dl/...")
+    let marker = "window.open(\"";
+    if let Some(start) = html.find(marker) {
+        let val_start = start + marker.len();
+        if let Some(end) = html[val_start..].find('"') {
+            let direct_url = &html[val_start..val_start + end];
+            if direct_url.contains("fuckingfast.co/dl/") || direct_url.contains("fuckingfast.co/dl%2F") {
+                println!("[DEBRID][FUCKINGFAST] Extracted direct link");
+                return Ok(HosterResolved {
+                    url: direct_url.to_string(),
+                    bearer: None,
+                });
+            }
+        }
+    }
+
+    // Fallback: try single-quoted variant
+    let marker2 = "window.open('";
+    if let Some(start) = html.find(marker2) {
+        let val_start = start + marker2.len();
+        if let Some(end) = html[val_start..].find('\'') {
+            let direct_url = &html[val_start..val_start + end];
+            if direct_url.contains("fuckingfast.co/dl/") || direct_url.contains("fuckingfast.co/dl%2F") {
+                println!("[DEBRID][FUCKINGFAST] Extracted direct link (single-quoted)");
+                return Ok(HosterResolved {
+                    url: direct_url.to_string(),
+                    bearer: None,
+                });
+            }
+        }
+    }
+
+    Err("FuckingFast: could not extract download link from page".to_string())
+}
+
+// ── Pixeldrain ───────────────────────────────────────────────────────────────
+
+/// Resolve a pixeldrain.com URL to a direct download link.
+///
+/// First tries the bypass CDN (`cdn.pixeldrain.eu.cc`), falls back to the
+/// official API endpoint.
+async fn resolve_pixeldrain_url(pd_url: &str) -> Result<HosterResolved, String> {
+    // Extract ID from path: https://pixeldrain.com/u/{id}
+    let lower = pd_url.to_lowercase();
+    let path_start = lower.find("://").map(|p| p + 3).unwrap_or(0);
+    let rest = &pd_url[path_start..];
+    let after_host = rest.find('/').map(|p| p + 1).unwrap_or(0);
+    let path_part = &rest[after_host..];
+    let mut segments = path_part.split('/').filter(|s| !s.is_empty());
+    let _prefix = segments.next().filter(|s| *s == "u")
+        .ok_or_else(|| "Invalid pixeldrain URL: expected /u/{id}".to_string())?;
+    let id = segments.next()
+        .ok_or_else(|| "Invalid pixeldrain URL: missing ID after /u/".to_string())?;
+
+    // Try bypass CDN first.
+    let bypass_url = format!("https://cdn.pixeldrain.eu.cc/{}", id);
+    println!("[DEBRID][PIXELDRAIN] Trying bypass CDN: {}", bypass_url);
+
+    let client = reqwest::Client::builder()
+        .user_agent(HOSTER_UA)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Pixeldrain HTTP client error: {}", e))?;
+
+    let head = client.head(&bypass_url).send().await;
+    if let Ok(resp) = head {
+        if resp.status().is_success() || resp.status().is_redirection() {
+            println!("[DEBRID][PIXELDRAIN] Bypass CDN available");
+            return Ok(HosterResolved { url: bypass_url, bearer: None });
+        }
+    }
+
+    // Fallback: official API.
+    let api_url = format!("https://pixeldrain.com/api/file/{}?download", id);
+    println!("[DEBRID][PIXELDRAIN] Falling back to API: {}", api_url);
+    Ok(HosterResolved { url: api_url, bearer: None })
+}
+
+/// Resolve a buzzheavier URL using the hidden webview to bypass Cloudflare.
+///
+/// The webview (Chromium) solves the CF JS challenge, then we parse the landing
+/// page HTML for the `hx-get` download path. Finally, reqwest follows the 302
+/// redirect from the download endpoint to get the final CDN URL.
+pub(crate) async fn resolve_buzzheavier_via_webview(
+    app_handle: &AppHandle,
+    bh_url: &str,
+) -> Result<HosterResolved, String> {
+    println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Resolving via webview: {}",
+        &bh_url[..bh_url.len().min(80)]
+    );
+
+    // Step 1: Fetch the landing page HTML via webview (solves Cloudflare JS challenge).
+    let html = super::hydra_source::fetch_url_via_webview_impl(app_handle, bh_url, Some(30)).await
+        .map_err(|e| format!("Webview fetch failed: {}", e))?;
+
+    if html.len() < 50 {
+        return Err("Webview returned empty/short content from buzzheavier".to_string());
+    }
+
+    // Step 2: Parse the hx-get download path from the HTML.
+    let hx_path = extract_buzzheavier_download_url(&html)
+        .ok_or_else(|| {
+            println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Could not extract hx-get from page (len={})", html.len());
+            "Could not extract download link from buzzheavier page".to_string()
+        })?;
+
+    // Step 3: Build the full download URL.
+    let base = buzzheavier_base_url(bh_url)
+        .ok_or("Could not determine buzzheavier base URL")?;
+    let download_url = if hx_path.starts_with("http") {
+        hx_path.clone()
+    } else {
+        format!("{}{}", base, hx_path)
+    };
+
+    println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Download URL: {}",
+        &download_url[..download_url.len().min(100)]
+    );
+
+    // Step 4: GET the download endpoint with HTMX headers + allow_redirects=false.
+    // buzzheavier uses HTMX: the server returns either a `Location` header (302)
+    // or an `Hx-Redirect` header (HTMX-specific) pointing to the CDN URL.
+    // We do NOT follow redirects — we need to read the redirect target URL.
+    let client = reqwest::Client::builder()
+        .user_agent(HOSTER_UA)
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get(&download_url)
+        .header("hx-request", "true")
+        .header("hx-current-url", &download_url)
+        .header("referer", &base)
+        .header("Accept", "*/*")
+        .send()
+        .await
+        .map_err(|e| format!("Buzzheavier download redirect failed: {}", e))?;
+
+    let status = resp.status();
+    println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Download response: HTTP {}", status.as_u16());
+
+    // Priority 1: Read Location header (standard 302/307 redirect).
+    if let Some(location) = resp.headers().get("location") {
+        let url = location.to_str().unwrap_or("").to_string();
+        if !url.is_empty() {
+            let final_url = if url.starts_with("http") {
+                url
+            } else {
+                format!("{}{}", base, url)
+            };
+            println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Resolved via Location header");
+            return Ok(HosterResolved { url: final_url, bearer: None });
+        }
+    }
+
+    // Priority 2: Read Hx-Redirect header (HTMX-specific redirect).
+    if let Some(hx_redirect) = resp.headers().get("hx-redirect") {
+        let url = hx_redirect.to_str().unwrap_or("").to_string();
+        if !url.is_empty() {
+            let final_url = if url.starts_with("http") {
+                url
+            } else {
+                format!("{}{}", base, url)
+            };
+            println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Resolved via Hx-Redirect header");
+            return Ok(HosterResolved { url: final_url, bearer: None });
+        }
+    }
+
+    // Priority 3: Response body might be a direct URL (some endpoints return it as text).
+    let body = resp.text().await.unwrap_or_default();
+    let trimmed = body.trim();
+    if trimmed.starts_with("http") && trimmed.len() < 512 && !trimmed.contains("<html") {
+        println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Got direct URL from response body");
+        return Ok(HosterResolved { url: trimmed.to_string(), bearer: None });
+    }
+
+    // Priority 4: Response body might contain another hx-get link (nested page).
+    if let Some(nested_path) = extract_buzzheavier_download_url(trimmed) {
+        let nested_url = if nested_path.starts_with("http") {
+            nested_path
+        } else {
+            format!("{}{}", base, nested_path)
+        };
+        println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Found nested download URL, retrying...");
+        // Retry with the nested URL.
+        let retry_resp = client
+            .get(&nested_url)
+            .header("hx-request", "true")
+            .header("hx-current-url", &nested_url)
+            .header("referer", &base)
+            .header("Accept", "*/*")
+            .send()
+            .await
+            .map_err(|e| format!("Buzzheavier nested redirect failed: {}", e))?;
+
+        if let Some(loc) = retry_resp.headers().get("location") {
+            let url = loc.to_str().unwrap_or("").to_string();
+            if !url.is_empty() {
+                let final_url = if url.starts_with("http") { url } else { format!("{}{}", base, url) };
+                println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Resolved nested via Location header");
+                return Ok(HosterResolved { url: final_url, bearer: None });
+            }
+        }
+        if let Some(hx) = retry_resp.headers().get("hx-redirect") {
+            let url = hx.to_str().unwrap_or("").to_string();
+            if !url.is_empty() {
+                let final_url = if url.starts_with("http") { url } else { format!("{}{}", base, url) };
+                println!("[DEBRID][BUZZHEAVIER][WEBVIEW] Resolved nested via Hx-Redirect header");
+                return Ok(HosterResolved { url: final_url, bearer: None });
+            }
+        }
+    }
+
+    Err(format!(
+        "Buzzheavier: no se pudo obtener el enlace directo (HTTP {}, {} bytes de respuesta)",
+        status.as_u16(),
+        body.len()
+    ))
+}
+
 // -- Cancellation tracker --
 
 /// Module-level set of cancelled job IDs. Any in-flight `download_file_to_dest`
@@ -471,6 +1277,8 @@ pub async fn download_debrid_package(
     auto_extract: bool,
     delete_archive: bool,
     source_key: Option<String>,
+    _debrid_provider: Option<String>,
+    _debrid_api_key: Option<String>,
 ) -> Result<DebridDownloadResult, String> {
     if job_id.trim().is_empty() {
         return Err("Job ID is empty.".to_string());
@@ -488,20 +1296,77 @@ pub async fn download_debrid_package(
 
     let dest_path = PathBuf::from(&dest_dir);
 
-    // -- Resolve gofile URL (gofile.io / gofile.my) to a direct download link --
-    let is_gofile = {
-        let lower = download_uri.to_lowercase();
-        lower.contains("gofile.io") || lower.contains("gofile.my")
-    };
-    let (effective_uri, gofile_bearer) = if is_gofile {
-        println!(
-            "[DEBRID][GOFILE] Resolving gofile URL: {}",
-            &download_uri[..download_uri.len().min(80)]
-        );
-        let resolved = resolve_gofile_url(&download_uri).await?;
-        (resolved.url, resolved.bearer)
-    } else {
-        (download_uri.clone(), None)
+    // -- Resolve file hoster URLs to direct download links --
+    let hoster = classify_hoster_url(&download_uri);
+    let (effective_uri, gofile_bearer) = match hoster {
+        HosterKind::Gofile => {
+            println!(
+                "[DEBRID][GOFILE] Resolving gofile URL: {}",
+                &download_uri[..download_uri.len().min(80)]
+            );
+            let resolved = resolve_gofile_url(&download_uri).await?;
+            (resolved.url, resolved.bearer)
+        }
+        HosterKind::Buzzheavier => {
+            println!(
+                "[DEBRID][BUZZHEAVIER] Resolving buzzheavier URL: {}",
+                &download_uri[..download_uri.len().min(80)]
+            );
+            // Step 1: Try webview-based resolution (handles Cloudflare JS challenges).
+            match resolve_buzzheavier_via_webview(&app_handle, &download_uri).await {
+                Ok(resolved) => {
+                    println!("[DEBRID][BUZZHEAVIER] Resolved via webview");
+                    (resolved.url, None)
+                }
+                Err(webview_err) => {
+                    println!("[DEBRID][BUZZHEAVIER] Webview resolution failed: {}. Trying reqwest...", webview_err);
+                    // Step 2: Try reqwest (works when CF is not active, e.g. on bzzhr.co mirror).
+                    match resolve_buzzheavier_url(&download_uri).await {
+                        Ok(resolved) => {
+                            println!("[DEBRID][BUZZHEAVIER] Resolved via reqwest");
+                            (resolved.url, None)
+                        }
+                        Err(reqwest_err) => {
+                            // Both methods failed — return a clear error.
+                            return Err(format!(
+                                "No se pudo resolver el enlace de buzzheavier. Cloudflare bloquea la descarga directa. \
+                                 Intenta usar un enlace directo o cambia la fuente del repack. \
+                                 (webview: {}; reqwest: {})",
+                                webview_err, reqwest_err
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        HosterKind::Datanodes => {
+            println!(
+                "[DEBRID][DATANODES] Resolving datanodes URL: {}",
+                &download_uri[..download_uri.len().min(80)]
+            );
+            let resolved = resolve_datanodes_url(&app_handle, &download_uri).await?;
+            (resolved.url, None)
+        }
+        HosterKind::FuckingFast => {
+            println!(
+                "[DEBRID][FUCKINGFAST] Resolving fuckingfast URL: {}",
+                &download_uri[..download_uri.len().min(80)]
+            );
+            let resolved = resolve_fuckingfast_url(&download_uri).await?;
+            (resolved.url, None)
+        }
+        HosterKind::Pixeldrain => {
+            println!(
+                "[DEBRID][PIXELDRAIN] Resolving pixeldrain URL: {}",
+                &download_uri[..download_uri.len().min(80)]
+            );
+            let resolved = resolve_pixeldrain_url(&download_uri).await?;
+            (resolved.url, None)
+        }
+        HosterKind::VikingFile | HosterKind::Unknown => {
+            // Unknown hoster or VikingFile — pass through (may be a direct CDN link already).
+            (download_uri.clone(), None)
+        }
     };
 
     // -- Checkpoint identity --
@@ -3931,5 +4796,246 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("setup.exe"), b"MZ").unwrap();
         assert!(!has_repack_utility(dir.path()));
+    }
+
+    // ── Buzzheavier tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn buzzheavier_hx_get_extracted_from_button() {
+        // Modern buzzheavier: hx-get attribute on the download button.
+        let html = r#"
+            <div hx-get="/download?t=a1b2c3d4e5f6" hx-trigger="click"
+                 hx-headers='{"hx-request":"true"}'>Download</div>
+        "#;
+        assert_eq!(
+            super::extract_buzzheavier_download_url(html),
+            Some("/download?t=a1b2c3d4e5f6".to_string())
+        );
+    }
+
+    #[test]
+    fn buzzheavier_hx_get_absolute_url() {
+        // Full absolute URL in hx-get.
+        let html = r#"hx-get="https://buzzheavier.com/s6m8kmgjzldi/download?t=tok123""#;
+        assert_eq!(
+            super::extract_buzzheavier_download_url(html),
+            Some("https://buzzheavier.com/s6m8kmgjzldi/download?t=tok123".to_string())
+        );
+    }
+
+    #[test]
+    fn buzzheavier_hx_get_single_quote() {
+        let html = "hx-get='/download?t=abc_def'";
+        assert_eq!(
+            super::extract_buzzheavier_download_url(html),
+            Some("/download?t=abc_def".to_string())
+        );
+    }
+
+    #[test]
+    fn buzzheavier_hx_get_skips_non_download() {
+        // hx-get for a different purpose (not download).
+        let html = r#"hx-get="/api/status" hx-trigger="load""#;
+        assert_eq!(super::extract_buzzheavier_download_url(html), None);
+    }
+
+    #[test]
+    fn buzzheavier_token_fallback_legacy() {
+        // Legacy format: /download?t= without hx-get.
+        let html = r#"href="/download?t=abc-123_def-456""#;
+        assert_eq!(
+            super::extract_buzzheavier_download_url(html),
+            Some("/download?t=abc-123_def-456".to_string())
+        );
+    }
+
+    #[test]
+    fn buzzheavier_no_download_returns_none() {
+        let html = "<html><body>No download here</body></html>";
+        assert_eq!(super::extract_buzzheavier_download_url(html), None);
+    }
+
+    #[test]
+    fn buzzheavier_domain_detection() {
+        let urls = [
+            ("https://buzzheavier.com/s6m8kmgjzldi", true),
+            ("https://www.buzzheavier.com/abc", true),
+            ("https://bzzhr.co/s6m8kmgjzldi", true),
+            ("https://gofile.io/d/abc", false),
+            ("https://example.com/file", false),
+        ];
+        for (url, expected) in urls {
+            let lower = url.to_lowercase();
+            let is_bh = lower.contains("buzzheavier.com") || lower.contains("bzzhr.co");
+            assert_eq!(is_bh, expected, "URL: {}", url);
+        }
+    }
+
+    #[test]
+    fn buzzheavier_extract_domain_from_url() {
+        assert_eq!(
+            super::extract_domain_from_url("https://buzzheavier.com/s6m8kmgjzldi"),
+            Some("buzzheavier.com".to_string())
+        );
+        assert_eq!(
+            super::extract_domain_from_url("https://bzzhr.co/abc"),
+            Some("bzzhr.co".to_string())
+        );
+        assert_eq!(
+            super::extract_domain_from_url("https://buzzheavier.com/abc/download?t=tok"),
+            Some("buzzheavier.com".to_string())
+        );
+    }
+
+    #[test]
+    fn buzzheavier_replace_domain_preserves_scheme_and_path() {
+        assert_eq!(
+            super::replace_domain_in_url("https://buzzheavier.com/6vts2foqxklr", "bzzhr.co"),
+            Some("https://bzzhr.co/6vts2foqxklr".to_string())
+        );
+        assert_eq!(
+            super::replace_domain_in_url("https://bzzhr.co/abc/download?t=tok", "buzzheavier.com"),
+            Some("https://buzzheavier.com/abc/download?t=tok".to_string())
+        );
+    }
+
+    #[test]
+    fn buzzheavier_base_url_extracts_correctly() {
+        assert_eq!(
+            super::buzzheavier_base_url("https://buzzheavier.com/s6m8kmgjzldi"),
+            Some("https://buzzheavier.com".to_string())
+        );
+        assert_eq!(
+            super::buzzheavier_base_url("https://bzzhr.co/s6m8kmgjzldi/download?t=tok"),
+            Some("https://bzzhr.co".to_string())
+        );
+    }
+
+    // ── Hoster classification + resolver tests ──
+
+    #[test]
+    fn classify_hoster_url_gofile() {
+        assert_eq!(super::classify_hoster_url("https://gofile.io/d/abc123"), super::HosterKind::Gofile);
+        assert_eq!(super::classify_hoster_url("https://www.gofile.my/d/xyz"), super::HosterKind::Gofile);
+    }
+
+    #[test]
+    fn classify_hoster_url_buzzheavier() {
+        assert_eq!(super::classify_hoster_url("https://buzzheavier.com/s6m8kmgjzldi"), super::HosterKind::Buzzheavier);
+        assert_eq!(super::classify_hoster_url("https://bzzhr.co/file123"), super::HosterKind::Buzzheavier);
+    }
+
+    #[test]
+    fn classify_hoster_url_datanodes() {
+        assert_eq!(super::classify_hoster_url("https://datanodes.to/abc123"), super::HosterKind::Datanodes);
+        assert_eq!(super::classify_hoster_url("https://www.datanodes.to/download/xyz"), super::HosterKind::Datanodes);
+    }
+
+    #[test]
+    fn classify_hoster_url_fuckingfast() {
+        assert_eq!(super::classify_hoster_url("https://fuckingfast.co/dl/abc123"), super::HosterKind::FuckingFast);
+    }
+
+    #[test]
+    fn classify_hoster_url_pixeldrain() {
+        assert_eq!(super::classify_hoster_url("https://pixeldrain.com/u/abc123"), super::HosterKind::Pixeldrain);
+    }
+
+    #[test]
+    fn classify_hoster_url_vikingfile() {
+        assert_eq!(super::classify_hoster_url("https://vikingfile.com/dl/abc"), super::HosterKind::VikingFile);
+        assert_eq!(super::classify_hoster_url("https://vik1ngfile.site/dl/abc"), super::HosterKind::VikingFile);
+    }
+
+    #[test]
+    fn classify_hoster_url_unknown_passthrough() {
+        assert_eq!(super::classify_hoster_url("https://cdn.steampowered.com/file/game.zip"), super::HosterKind::Unknown);
+        assert_eq!(super::classify_hoster_url("https://shared.akamai.steamstatic.com/hero.jpg"), super::HosterKind::Unknown);
+        assert_eq!(super::classify_hoster_url("magnet:?xt=urn:btih:abc"), super::HosterKind::Unknown);
+    }
+
+    #[test]
+    fn extract_datanodes_file_code_from_path() {
+        // Verify the URL parsing logic in resolve_datanodes_url without network
+        let url = "https://datanodes.to/abc123/download";
+        let lower = url.to_lowercase();
+        let path_start = lower.find("://").map(|p| p + 3).unwrap_or(0);
+        let rest = &url[path_start..];
+        let after_host = rest.find('/').map(|p| p + 1).unwrap_or(0);
+        let path_part = &rest[after_host..];
+        let file_code = path_part.split('/').next().filter(|s| !s.is_empty()).unwrap();
+        assert_eq!(file_code, "abc123");
+    }
+
+    #[test]
+    fn extract_pixeldrain_id_from_path() {
+        let url = "https://pixeldrain.com/u/abc123";
+        let lower = url.to_lowercase();
+        let path_start = lower.find("://").map(|p| p + 3).unwrap_or(0);
+        let rest = &url[path_start..];
+        let after_host = rest.find('/').map(|p| p + 1).unwrap_or(0);
+        let path_part = &rest[after_host..];
+        let mut segments = path_part.split('/').filter(|s| !s.is_empty());
+        let _prefix = segments.next().filter(|s| *s == "u").unwrap();
+        let id = segments.next().unwrap();
+        assert_eq!(id, "abc123");
+    }
+
+    #[test]
+    fn extract_pixeldrain_id_rejects_non_u_prefix() {
+        let url = "https://pixeldrain.com/x/abc123";
+        let lower = url.to_lowercase();
+        let path_start = lower.find("://").map(|p| p + 3).unwrap_or(0);
+        let rest = &url[path_start..];
+        let after_host = rest.find('/').map(|p| p + 1).unwrap_or(0);
+        let path_part = &rest[after_host..];
+        let mut segments = path_part.split('/').filter(|s| !s.is_empty());
+        let prefix = segments.next().filter(|s| *s == "u");
+        assert!(prefix.is_none(), "should reject non-/u/ prefix");
+    }
+
+    #[test]
+    fn fuckingfast_extract_from_html_double_quoted() {
+        // Simulate the extraction logic from resolve_fuckingfast_url
+        let html = r#"window.open("https://fuckingfast.co/dl/abc123/file.zip")"#;
+        let marker = "window.open(\"";
+        if let Some(start) = html.find(marker) {
+            let val_start = start + marker.len();
+            if let Some(end) = html[val_start..].find('"') {
+                let direct_url = &html[val_start..val_start + end];
+                assert!(direct_url.contains("fuckingfast.co/dl/"));
+                assert_eq!(direct_url, "https://fuckingfast.co/dl/abc123/file.zip");
+                return;
+            }
+        }
+        panic!("should have extracted URL");
+    }
+
+    #[test]
+    fn fuckingfast_extract_from_html_single_quoted() {
+        let html = "window.open('https://fuckingfast.co/dl/abc123/file.zip')";
+        let marker = "window.open('";
+        if let Some(start) = html.find(marker) {
+            let val_start = start + marker.len();
+            if let Some(end) = html[val_start..].find('\'') {
+                let direct_url = &html[val_start..val_start + end];
+                assert!(direct_url.contains("fuckingfast.co/dl/"));
+                assert_eq!(direct_url, "https://fuckingfast.co/dl/abc123/file.zip");
+                return;
+            }
+        }
+        panic!("should have extracted URL");
+    }
+
+    #[test]
+    fn fuckingfast_extract_rate_limit_detection() {
+        let html = "Rate limit exceeded. Please wait.";
+        assert!(html.to_lowercase().contains("rate limit"));
+    }
+
+    #[test]
+    fn fuckingfast_extract_file_not_found() {
+        let html = "File Not Found Or Deleted";
+        assert!(html.contains("File Not Found Or Deleted"));
     }
 }

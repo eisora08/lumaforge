@@ -852,7 +852,7 @@ pub fn clear_hydra_cache(app_handle: AppHandle) -> Result<(), String> {
 // ── Webview-based fetch (Cloudflare challenge bypass) ──
 
 /// Pending webview fetch callbacks, keyed by callback ID.
-static PENDING_FETCHES: LazyLock<Mutex<HashMap<String, oneshot::Sender<String>>>> =
+pub(crate) static PENDING_FETCHES: LazyLock<Mutex<HashMap<String, oneshot::Sender<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Mutex to serialize webview-based fetches (single hidden webview).
@@ -899,7 +899,7 @@ pub async fn fetch_url_via_webview(
 /// Fix: wait 15s on the FIRST attempt before doing the about:blank bounce.
 /// Subsequent retries (after navigating back to target) use shorter waits.
 /// window.name survives all navigations including cross-origin about:blank.
-async fn fetch_url_via_webview_impl(
+pub(crate) async fn fetch_url_via_webview_impl(
     app_handle: &AppHandle,
     url: &str,
     _timeout_secs: Option<u64>,
@@ -1006,7 +1006,7 @@ async fn fetch_url_via_webview_impl(
 }
 
 /// Deterministic hash of a URL string (for callback ID prefixes).
-fn url_hash(url: &str) -> String {
+pub(crate) fn url_hash(url: &str) -> String {
     let mut h: u64 = 0;
     for b in url.bytes() {
         h = h.wrapping_mul(31).wrapping_add(b as u64);
