@@ -174,8 +174,8 @@ export default function Settings({ onSectionChange }: SettingsProps) {
   return (
     <>
       {/* Sidebar nav — vertical, 260px wide, scrollable */}
-      <nav className="w-[260px] shrink-0 border-r border-(--surface-active-border) p-3">
-        <div className="flex flex-col gap-0.5">
+      <nav className="flex w-[260px] shrink-0 flex-col border-r border-(--surface-active-border) p-3">
+        <div className="flex flex-1 flex-col gap-0.5">
           {navSections.map((section) => (
             <button
               key={section.key}
@@ -193,8 +193,8 @@ export default function Settings({ onSectionChange }: SettingsProps) {
           ))}
         </div>
 
-        {/* Reset button at bottom of sidebar */}
-        <div className="mt-4 border-t border-(--surface-active-border) pt-3">
+        {/* Reset button pinned to bottom of sidebar */}
+        <div className="mt-auto flex flex-col items-stretch border-t border-(--surface-active-border) pt-3">
           <button
             type="button"
             onClick={resetSettings}
@@ -1198,7 +1198,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
 
                 <SettingsSection
                   title="Data & Services"
-                  description="External services used by LumaForge. LumaForge is not affiliated with or endorsed by any of these services."
+                  description="External services and tools used by LumaForge. LumaForge is not affiliated with or endorsed by any of these services."
                 >
                   <div className="space-y-3">
                     {[
@@ -1206,49 +1206,114 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                         name: "Steam",
                         description: "Game library metadata, Steam app IDs, store links, achievements, and playtime tracking.",
                         url: "https://store.steampowered.com/",
-                        configured: !!settings.steamRoot,
+                        badge: "configured" as const,
+                        show: !!settings.steamRoot,
                       },
                       {
                         name: "SteamGridDB",
                         description: "Community artwork provider for covers, heroes, logos, and icons.",
                         url: "https://www.steamgriddb.com/",
-                        configured: settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey,
+                        badge: "configured" as const,
+                        show: settings.steamGridDbArtworkEnabled && !!settings.steamGridDbApiKey,
                       },
                       {
                         name: "IGDB / Twitch",
                         description: "Game metadata provider using Twitch OAuth credentials.",
                         url: "https://www.igdb.com/",
-                        configured: !!settings.igdbClientId && !!settings.igdbClientSecret,
+                        badge: "configured" as const,
+                        show: !!settings.igdbClientId && !!settings.igdbClientSecret,
                       },
                       {
                         name: "RAWG",
                         description: "Optional game metadata and background artwork provider.",
                         url: "https://rawg.io/",
-                        configured: !!settings.rawgApiKey,
-                      },
-                      {
-                        name: "Google Custom Search",
-                        description: "Optional in-app image search for manual artwork selection.",
-                        url: "https://developers.google.com/custom-search",
-                        configured: !!settings.googleSearchApiKey && !!settings.googleSearchCx,
-                      },
-                      {
-                        name: "Bing Search",
-                        description: "Optional alternative in-app image search source.",
-                        url: "https://www.microsoft.com/bing/apis/bing-web-search-api",
-                        configured: !!settings.bingSearchApiKey,
+                        badge: "configured" as const,
+                        show: !!settings.rawgApiKey,
                       },
                       {
                         name: "Hubcap",
                         description: "Package and provider source for game downloads.",
                         url: "https://hubcapmanifest.com/",
-                        configured: !!(settings.providers?.hubcapdb?.apiKey),
+                        badge: "configured" as const,
+                        show: !!(settings.providers?.hubcapdb?.apiKey),
+                      },
+                      {
+                        name: "Epic Games Store",
+                        description: "Epic Games library detection and launcher integration.",
+                        url: "https://store.epicgames.com/",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "Ryuu",
+                        description: "Third-party game launcher and library manager.",
+                        url: "https://ryuu.de/",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "TorBox",
+                        description: "Debrid service for torrent and direct download acceleration.",
+                        url: "https://torbox.app/",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "Real-Debrid",
+                        description: "Debrid service for unrestricted downloads and torrent caching.",
+                        url: "https://real-debrid.com/",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "AllDebrid",
+                        description: "Debrid service for fast, unrestricted file hosting downloads.",
+                        url: "https://alldebrid.com/",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "Premiumize",
+                        description: "Debrid service combining VPN, cloud storage, and download acceleration.",
+                        url: "https://premiumize.me/",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "SmokeAPI",
+                        description: "Steam API proxy for offline and cracked games.",
+                        url: "https://github.com/acidicoala/SmokeAPI",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "Steamless",
+                        description: "SteamStub DRM unpacker for game executables.",
+                        url: "https://github.com/atom0s/Steamless",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "Goldberg (GSE)",
+                        description: "Offline Steam emulator with achievements support.",
+                        url: "https://github.com/Detanup01/gbe_fork",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "Online-Fix",
+                        description: "Multiplayer and co-op patches for local and LAN play.",
+                        url: "https://online-fix.me/",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "Koaloader",
+                        description: "Plugin loader for game directories. Auto-installed when needed.",
+                        url: "https://github.com/acidicoala/Koaloader",
+                        badge: "external" as const,
+                      },
+                      {
+                        name: "OpenSteamTool",
+                        description: "Steam library management and game modification tool.",
+                        url: "https://github.com/OpenSteam001/OpenSteamTool",
+                        badge: "external" as const,
                       },
                       {
                         name: "GitHub",
-                        description: "Project source code and issue tracking.",
+                        description: "LumaForge project source code and issue tracking.",
                         url: "https://github.com/nicegoodthings/lumaforge",
-                        configured: true,
+                        badge: "always" as const,
                       },
                     ].map((service) => (
                       <div
@@ -1260,13 +1325,17 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                             <p className="text-sm font-medium text-(--color-text)">
                               {service.name}
                             </p>
-                            {service.configured ? (
+                            {service.badge === "configured" && service.show ? (
                               <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
                                 Configured
                               </span>
-                            ) : (
+                            ) : service.badge === "configured" ? (
                               <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
                                 Optional
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-(--color-muted)">
+                                External
                               </span>
                             )}
                           </div>
