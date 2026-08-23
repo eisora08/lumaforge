@@ -3819,6 +3819,8 @@ export type ThirdPartyToolInfo = {
   latestVersion: string | null;
   updateAvailable: boolean;
   installPath: string | null;
+  /** Only present for tools with `install_to_steam_root` (e.g. OpenSteamTool). */
+  enabled?: boolean;
 };
 
 export type ThirdPartyToolResult = {
@@ -3833,20 +3835,24 @@ export async function listThirdPartyTools(): Promise<ThirdPartyToolInfo[]> {
   return await invoke<ThirdPartyToolInfo[]>("list_thirdparty_tools");
 }
 
-export async function installThirdPartyTool(toolId: string): Promise<ThirdPartyToolResult> {
-  return await invoke<ThirdPartyToolResult>("install_thirdparty_tool", { toolId });
+export async function installThirdPartyTool(toolId: string, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("install_thirdparty_tool", { toolId, steamRoot });
 }
 
-export async function uninstallThirdPartyTool(toolId: string): Promise<ThirdPartyToolResult> {
-  return await invoke<ThirdPartyToolResult>("uninstall_thirdparty_tool", { toolId });
+export async function uninstallThirdPartyTool(toolId: string, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("uninstall_thirdparty_tool", { toolId, steamRoot });
 }
 
 export async function checkThirdPartyUpdates(): Promise<ThirdPartyToolInfo[]> {
   return await invoke<ThirdPartyToolInfo[]>("check_thirdparty_updates");
 }
 
-export async function updateThirdPartyTool(toolId: string): Promise<ThirdPartyToolResult> {
-  return await invoke<ThirdPartyToolResult>("update_thirdparty_tool", { toolId });
+export async function updateThirdPartyTool(toolId: string, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("update_thirdparty_tool", { toolId, steamRoot });
+}
+
+export async function setThirdPartyToolEnabled(toolId: string, enabled: boolean, steamRoot?: string): Promise<ThirdPartyToolResult> {
+  return await invoke<ThirdPartyToolResult>("set_thirdparty_tool_enabled", { toolId, enabled, steamRoot });
 }
 
 export async function openThirdPartyFolder(): Promise<void> {

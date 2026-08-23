@@ -9,6 +9,7 @@ import {
   Rocket,
   X,
   HardDrive,
+  Code,
 } from "lucide-react";
 
 import {
@@ -17,10 +18,12 @@ import {
   uninstallThirdPartyTool,
   checkThirdPartyUpdates,
   updateThirdPartyTool,
+  setThirdPartyToolEnabled,
   openThirdPartyFolder,
   ThirdPartyToolInfo,
 } from "../../services/tauri";
 import { showSuccess, showError } from "../toast/GameToast";
+import { useSettings } from "../../context/SettingsContext";
 
 function toolIcon(id: string): React.ReactNode {
   switch (id) {
@@ -30,16 +33,19 @@ function toolIcon(id: string): React.ReactNode {
       return <Rocket className="h-5 w-5" />;
     case "goldberg_fork":
       return <HardDrive className="h-5 w-5" />;
+    case "opensteamtool":
+      return <Code className="h-5 w-5" />;
     default:
       return <HardDrive className="h-5 w-5" />;
   }
 }
 
 export default function ThirdPartyToolsSection() {
+  const { settings } = useSettings();
   const [tools, setTools] = useState<ThirdPartyToolInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [workingId, setWorkingId] = useState<string | null>(null);
-  const [workingAction, setWorkingAction] = useState<"install" | "uninstall" | "update">("install");
+  const [workingAction, setWorkingAction] = useState<"install" | "uninstall" | "update" | "toggle">("install");
   const [checkingUpdates, setCheckingUpdates] = useState(false);
 
   const load = useCallback(async () => {
@@ -62,7 +68,8 @@ export default function ThirdPartyToolsSection() {
     setWorkingId(toolId);
     setWorkingAction("install");
     try {
-      const res = await installThirdPartyTool(toolId);
+      const steamRoot = settings.steamRoot || undefined;
+      const res = await installThirdPartyTool(toolId, steamRoot);
       if (res.ok) showSuccess(res.message || "Instalada correctamente.");
       else showError(res.message || "Falló la instalación.");
     } catch (err) {
@@ -71,13 +78,14 @@ export default function ThirdPartyToolsSection() {
       setWorkingId(null);
       load();
     }
-  }, [load]);
+  }, [load, settings.steamRoot]);
 
   const handleUninstall = useCallback(async (toolId: string) => {
     setWorkingId(toolId);
     setWorkingAction("uninstall");
     try {
-      const res = await uninstallThirdPartyTool(toolId);
+      const steamRoot = settings.steamRoot || undefined;
+      const res = await uninstallThirdPartyTool(toolId, steamRoot);
       if (res.ok) showSuccess(res.message || "Desinstalada correctamente.");
       else showError(res.message || "Falló la desinstalación.");
     } catch (err) {
@@ -86,7 +94,23 @@ export default function ThirdPartyToolsSection() {
       setWorkingId(null);
       load();
     }
-  }, [load]);
+  }, [load, settings.steamRoot]);
+
+  const handleToggle = useCallback(async (toolId: string, currentEnabled: boolean) => {
+    setWorkingId(toolId);
+    setWorkingAction("toggle");
+    try {
+      const steamRoot = settings.steamRoot || undefined;
+      const res = await setThirdPartyToolEnabled(toolId, !currentEnabled, steamRoot);
+      if (res.ok) showSuccess(res.message || "Estado actualizado.");
+      else showError(res.message || "Error al cambiar estado.");
+    } catch (err) {
+      showError(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setWorkingId(null);
+      load();
+    }
+  }, [load, settings.steamRoot]);
 
   const handleUpdateAll = useCallback(async () => {
     setCheckingUpdates(true);
@@ -99,10 +123,11 @@ export default function ThirdPartyToolsSection() {
         return;
       }
       let updated = 0;
+      const steamRoot = settings.steamRoot || undefined;
       for (const t of outdated) {
         setWorkingId(t.id);
         setWorkingAction("update");
-        const res = await updateThirdPartyTool(t.id);
+        const res = await updateThirdPartyTool(t.id, steamRoot);
         if (res.ok) updated++;
       }
       showSuccess(`${updated} de ${outdated.length} herramienta(s) actualizada(s).`);
@@ -113,7 +138,7 @@ export default function ThirdPartyToolsSection() {
       setCheckingUpdates(false);
       load();
     }
-  }, [load]);
+  }, [load, settings.steamRoot]);
 
   const handleOpenFolder = useCallback(async () => {
     try {
@@ -135,7 +160,7 @@ export default function ThirdPartyToolsSection() {
             Herramientas de terceros
           </h3>
           <p className="mt-1 text-xs text-(--color-muted)">
-            Utilidades para juegos (SmokeAPI, Steamless, Goldberg, Koaloader). Se descargan desde sus repositorios oficiales de GitHub.
+            Utilidades para juegos (SmokeAPI, Steamless, Goldberg, OpenSteamTool). Se descargan desde sus repositorios oficiales de GitHub.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -180,6 +205,7 @@ export default function ThirdPartyToolsSection() {
         ) : (
           tools.map((tool) => {
             const isWorking = workingId === tool.id;
+            const hasToggle = tool.enabled !== undefined;
             return (
               <div
                 key={tool.id}
@@ -214,7 +240,70 @@ export default function ThirdPartyToolsSection() {
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
-                  {tool.installed ? (
+                  {hasToggle && tool.installed ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleToggle(tool.id, tool.enabled ?? true)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                          tool.enabled
+                            ? "bg-(--color-accent)"
+                            : "bg-white/10"
+                        } disabled:opacity-50`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            tool.enabled ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        />
+                        {isWorking && workingAction === "toggle" && (
+                          <Loader2 className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 animate-spin text-(--color-accent)" />
+                        )}
+                      </button>
+                      {tool.updateAvailable && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            setWorkingId(tool.id);
+                            setWorkingAction("update");
+                            const steamRoot = settings.steamRoot || undefined;
+                            updateThirdPartyTool(tool.id, steamRoot).then((res) => {
+                              if (res.ok) showSuccess(res.message || "Actualizada.");
+                              else showError(res.message || "Falló la actualización.");
+                            }).catch((err) =>
+                              showError(err instanceof Error ? err.message : String(err))
+                            ).finally(() => {
+                              setWorkingId(null);
+                              load();
+                            });
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg bg-(--color-accent)/10 px-3 py-1.5 text-xs font-medium text-(--color-accent) transition hover:bg-(--color-accent)/20 disabled:opacity-50"
+                        >
+                          {isWorking && workingAction === "update" ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                          Actualizar
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleUninstall(tool.id)}
+                        className="flex items-center gap-1.5 rounded-lg border border-(--surface-active-border) px-3 py-1.5 text-xs font-medium text-(--color-muted) transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+                      >
+                        {isWorking && workingAction === "uninstall" ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <X className="h-3.5 w-3.5" />
+                        )}
+                        Desinstalar
+                      </button>
+                    </>
+                  ) : tool.installed ? (
                     <>
                       {tool.updateAvailable && (
                         <button
@@ -223,7 +312,8 @@ export default function ThirdPartyToolsSection() {
                           onClick={() => {
                             setWorkingId(tool.id);
                             setWorkingAction("update");
-                            updateThirdPartyTool(tool.id).then((res) => {
+                            const steamRoot = settings.steamRoot || undefined;
+                            updateThirdPartyTool(tool.id, steamRoot).then((res) => {
                               if (res.ok) showSuccess(res.message || "Actualizada.");
                               else showError(res.message || "Falló la actualización.");
                             }).catch((err) =>

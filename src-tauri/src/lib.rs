@@ -652,6 +652,7 @@ pub fn run() {
             commands::thirdparty::uninstall_thirdparty_tool,
             commands::thirdparty::check_thirdparty_updates,
             commands::thirdparty::update_thirdparty_tool,
+            commands::thirdparty::set_thirdparty_tool_enabled,
             commands::thirdparty::open_thirdparty_folder,
             commands::game_fix::library_get_game_fix_info,
             commands::game_fix::library_apply_online_fix,

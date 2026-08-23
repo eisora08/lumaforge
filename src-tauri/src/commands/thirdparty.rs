@@ -40,9 +40,20 @@ struct ToolDef {
     /// (e.g. Detanup01/gbe_fork publishes `emu-win-release.7z` next to the
     /// emulator). When `None`, the selection falls back to `.zip` → `.7z`.
     preferred_asset: Option<&'static str>,
+    /// Substring match for asset name (case-insensitive). When set, assets
+    /// whose name contains this substring are preferred before the `.zip`
+    /// fallback. Used by tools like OpenSteamTool where the version is in
+    /// the asset name (e.g. `OpenSteamTool-1.4.8-Release.zip`).
+    preferred_asset_contains: Option<&'static str>,
     /// Additional repos to download and extract into the same tool directory.
     /// Used by goldberg_fork which needs gbe_fork_tools for generate_emu_config.exe.
     extra_repos: Option<&'static [ExtraRepo]>,
+    /// When true, after downloading to thirdparty/<id>/, copy specific DLLs
+    /// to the Steam root directory. Used by OpenSteamTool.
+    install_to_steam_root: bool,
+    /// DLL filenames to copy to Steam root (only when install_to_steam_root).
+    /// No .bak is created during install to avoid conflicts on updates.
+    steam_dll_names: &'static [&'static str],
 }
 
 const TOOL_DEFS: &[ToolDef] = &[
@@ -53,7 +64,10 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_owner: "acidicoala",
         github_repo: "SmokeAPI",
         preferred_asset: None,
+        preferred_asset_contains: None,
         extra_repos: None,
+        install_to_steam_root: false,
+        steam_dll_names: &[],
     },
     ToolDef {
         id: "steamless",
@@ -62,7 +76,10 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_owner: "atom0s",
         github_repo: "Steamless",
         preferred_asset: None,
+        preferred_asset_contains: None,
         extra_repos: None,
+        install_to_steam_root: false,
+        steam_dll_names: &[],
     },
     ToolDef {
         id: "goldberg_fork",
@@ -71,11 +88,26 @@ const TOOL_DEFS: &[ToolDef] = &[
         github_owner: "Detanup01",
         github_repo: "gbe_fork",
         preferred_asset: Some("emu-win-release.7z"),
+        preferred_asset_contains: None,
         extra_repos: Some(&[ExtraRepo {
             owner: "Detanup01",
             repo: "gbe_fork_tools",
-            preferred_asset: None, // selects .zip, excludes linux
+            preferred_asset: None,
         }]),
+        install_to_steam_root: false,
+        steam_dll_names: &[],
+    },
+    ToolDef {
+        id: "opensteamtool",
+        name: "OpenSteamTool",
+        description: "Open-source Steam unlocker with Lua scripting",
+        github_owner: "OpenSteam001",
+        github_repo: "OpenSteamTool",
+        preferred_asset: None,
+        preferred_asset_contains: Some("Release"),
+        extra_repos: None,
+        install_to_steam_root: true,
+        steam_dll_names: &["dwmapi.dll", "xinput1_4.dll", "OpenSteamTool.dll"],
     },
 ];
 
@@ -96,6 +128,9 @@ pub struct ThirdPartyToolInfo {
     pub latest_version: Option<String>,
     pub update_available: bool,
     pub install_path: Option<String>,
+    /// Whether the tool is enabled (only for tools with `install_to_steam_root`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +180,15 @@ struct ThirdPartyState {
 struct ToolStateEntry {
     version: String,
     installed_at: String,
+    /// Whether the tool is currently enabled (only meaningful for tools with
+    /// `install_to_steam_root`, e.g. OpenSteamTool). When disabled, DLLs are
+    /// renamed to `.bak`. Defaults to `true` for backward compatibility.
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn load_state(app_handle: &tauri::AppHandle) -> ThirdPartyState {
@@ -216,6 +260,7 @@ async fn get_latest_github_release(
     owner: &str,
     repo: &str,
     preferred_asset: Option<&str>,
+    preferred_asset_contains: Option<&str>,
 ) -> Result<ReleaseInfo, String> {
     let cache_key = format!("{owner}/{repo}");
 
@@ -272,14 +317,26 @@ async fn get_latest_github_release(
         .as_array()
         .ok_or_else(|| "No assets in release".to_string())?;
 
-    // Asset selection priority: exact `preferred_asset` name match (for repos
-    // that publish several archives, e.g. Detanup01/gbe_fork) → Windows .zip
-    // (prefer non-linux) → any .zip → .7z.
+    // Asset selection priority: exact `preferred_asset` name match → substring
+    // `preferred_asset_contains` match → Windows .zip (prefer non-linux) →
+    // any .zip → .7z.
+    let contains_lower = preferred_asset_contains.map(|s| s.to_lowercase());
     let zip_asset = assets
         .iter()
         .find(|a| {
             preferred_asset.is_some()
                 && a["name"].as_str().is_some_and(|n| n == preferred_asset.unwrap())
+        })
+        .or_else(|| {
+            // Substring match (case-insensitive) for repos where the version
+            // is in the asset name (e.g. OpenSteamTool-1.4.8-Release.zip)
+            assets.iter().find(|a| {
+                contains_lower.as_ref().is_some_and(|needle| {
+                    a["name"]
+                        .as_str()
+                        .is_some_and(|n| n.to_lowercase().contains(needle.as_str()))
+                })
+            })
         })
         .or_else(|| {
             // Prefer Windows/non-linux .zip when multiple .zip files exist
@@ -347,8 +404,9 @@ async fn get_github_release_tag(
     owner: &str,
     repo: &str,
     preferred_asset: Option<&str>,
+    preferred_asset_contains: Option<&str>,
 ) -> Result<String, String> {
-    let release = get_latest_github_release(client, owner, repo, preferred_asset).await?;
+    let release = get_latest_github_release(client, owner, repo, preferred_asset, preferred_asset_contains).await?;
     Ok(release.tag_name)
 }
 
@@ -501,7 +559,7 @@ pub async fn list_thirdparty_tools(
         let mut installed_version = state.tools.get(def.id).map(|e| e.version.clone());
 
         let latest_version =
-            get_github_release_tag(&client, def.github_owner, def.github_repo, def.preferred_asset)
+            get_github_release_tag(&client, def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
                 .await
                 .ok();
 
@@ -515,6 +573,7 @@ pub async fn list_thirdparty_tools(
                         installed_at: chrono::Local::now()
                             .format("%Y-%m-%dT%H:%M:%S")
                             .to_string(),
+                        enabled: true,
                     },
                 );
                 installed_version = Some(ver.clone());
@@ -528,6 +587,12 @@ pub async fn list_thirdparty_tools(
             (_, None) => false,
         };
 
+        let enabled = if def.install_to_steam_root {
+            state.tools.get(def.id).map(|e| e.enabled).or(Some(true))
+        } else {
+            None
+        };
+
         tools.push(ThirdPartyToolInfo {
             id: def.id.to_string(),
             name: def.name.to_string(),
@@ -539,6 +604,7 @@ pub async fn list_thirdparty_tools(
             latest_version,
             update_available,
             install_path: tool_dir.map(|p| p.to_string_lossy().to_string()),
+            enabled,
         });
     }
 
@@ -552,6 +618,7 @@ pub async fn list_thirdparty_tools(
 #[tauri::command]
 pub async fn install_thirdparty_tool(
     tool_id: String,
+    steam_root: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<ThirdPartyToolResult, String> {
     let def = TOOL_DEFS
@@ -576,7 +643,7 @@ pub async fn install_thirdparty_tool(
                 .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
             let version =
-                get_latest_github_release(&client, def.github_owner, def.github_repo, def.preferred_asset)
+                get_latest_github_release(&client, def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
                     .await
                     .map(|r| r.tag_name)
                     .unwrap_or_else(|_| "detected".to_string());
@@ -588,6 +655,7 @@ pub async fn install_thirdparty_tool(
                     installed_at: chrono::Local::now()
                         .format("%Y-%m-%dT%H:%M:%S")
                         .to_string(),
+                    enabled: true,
                 },
             );
             save_state(&app_handle, &state);
@@ -617,7 +685,7 @@ pub async fn install_thirdparty_tool(
     );
 
     let release =
-        get_latest_github_release(&client, def.github_owner, def.github_repo, def.preferred_asset)
+        get_latest_github_release(&client, def.github_owner, def.github_repo, def.preferred_asset, def.preferred_asset_contains)
             .await
             .map_err(|e| format!("Failed to fetch release: {e}"))?;
 
@@ -686,7 +754,7 @@ pub async fn install_thirdparty_tool(
                 }),
             );
 
-            match get_latest_github_release(&client, extra.owner, extra.repo, extra.preferred_asset).await {
+            match get_latest_github_release(&client, extra.owner, extra.repo, extra.preferred_asset, None).await {
                 Ok(extra_release) => {
                     let extra_zip_path = temp_dir.path().join(&extra_release.zip_name);
                     if let Err(e) = download_file(&client, &extra_release.zip_url, &extra_zip_path).await {
@@ -753,9 +821,53 @@ pub async fn install_thirdparty_tool(
         ToolStateEntry {
             version: release.tag_name.clone(),
             installed_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+            enabled: true,
         },
     );
     save_state(&app_handle, &state);
+
+    // Post-install: copy DLLs to Steam root for tools with install_to_steam_root
+    if def.install_to_steam_root {
+        if let Some(ref root) = steam_root {
+            let steam_path = PathBuf::from(root);
+            let mut copy_errors = Vec::new();
+            for dll_name in def.steam_dll_names {
+                let src = target_dir.join(dll_name);
+                let dest = steam_path.join(dll_name);
+                if src.exists() {
+                    // Overwrite directly — no .bak during install (avoids
+                    // conflicts on updates).
+                    if let Err(e) = std::fs::copy(&src, &dest) {
+                        copy_errors.push(format!("{dll_name}: {e}"));
+                    } else {
+                        all_installed.push(dll_name.to_string());
+                    }
+                } else {
+                    copy_errors.push(format!("{dll_name} not found in extracted files"));
+                }
+            }
+            // Create config/lua/ directory if it doesn't exist
+            let lua_dir = steam_path.join("config").join("lua");
+            if !lua_dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(&lua_dir) {
+                    copy_errors.push(format!("Failed to create config/lua: {e}"));
+                }
+            }
+            if !copy_errors.is_empty() {
+                eprintln!("[THIRDPARTY] {} Steam root copy errors: {:?}", def.name, copy_errors);
+            }
+            // Return with errors if all DLL copies failed
+            if copy_errors.len() == def.steam_dll_names.len() {
+                return Ok(ThirdPartyToolResult {
+                    ok: false,
+                    tool: tool_id,
+                    message: format!("Failed to copy DLLs to Steam root: {}", copy_errors.join(", ")),
+                    files_installed: all_installed,
+                    errors: copy_errors,
+                });
+            }
+        }
+    }
 
     let _ = app_handle.emit(
         "thirdparty://progress",
@@ -783,6 +895,7 @@ pub async fn install_thirdparty_tool(
 #[tauri::command]
 pub async fn uninstall_thirdparty_tool(
     tool_id: String,
+    steam_root: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<ThirdPartyToolResult, String> {
     let def = TOOL_DEFS
@@ -792,7 +905,7 @@ pub async fn uninstall_thirdparty_tool(
 
     let target_dir = thirdparty_dir(&app_handle)?.join(def.id);
 
-    if !is_dir_populated(&target_dir) {
+    if !is_dir_populated(&target_dir) && !def.install_to_steam_root {
         return Ok(ThirdPartyToolResult {
             ok: true,
             tool: tool_id,
@@ -811,7 +924,42 @@ pub async fn uninstall_thirdparty_tool(
         }),
     );
 
-    remove_dir_recursive(&target_dir).map_err(|e| format!("Failed to remove {}: {e}", def.name))?;
+    let mut errors = Vec::new();
+
+    // Clean Steam root DLLs for tools with install_to_steam_root
+    if def.install_to_steam_root {
+        if let Some(ref root) = steam_root {
+            let steam_path = PathBuf::from(root);
+            for dll_name in def.steam_dll_names {
+                // Remove both the DLL and any .bak
+                let dll = steam_path.join(dll_name);
+                let bak = steam_path.join(format!("{dll_name}.bak"));
+                if dll.exists() {
+                    if let Err(e) = std::fs::remove_file(&dll) {
+                        errors.push(format!("Failed to remove {}: {e}", dll_name));
+                    }
+                }
+                if bak.exists() {
+                    let _ = std::fs::remove_file(&bak);
+                }
+            }
+            // Remove config/lua/ if empty
+            let lua_dir = steam_path.join("config").join("lua");
+            if lua_dir.exists() {
+                let is_empty = std::fs::read_dir(&lua_dir)
+                    .ok()
+                    .map(|mut entries| entries.next().is_none())
+                    .unwrap_or(false);
+                if is_empty {
+                    let _ = std::fs::remove_dir(&lua_dir);
+                }
+            }
+        }
+    }
+
+    if target_dir.exists() {
+        remove_dir_recursive(&target_dir).map_err(|e| format!("Failed to remove {}: {e}", def.name))?;
+    }
 
     // Remove from state
     let mut state = load_state(&app_handle);
@@ -847,6 +995,7 @@ pub async fn check_thirdparty_updates(
 #[tauri::command]
 pub async fn update_thirdparty_tool(
     tool_id: String,
+    steam_root: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<ThirdPartyToolResult, String> {
     let def = TOOL_DEFS
@@ -870,7 +1019,111 @@ pub async fn update_thirdparty_tool(
             .map_err(|e| format!("Failed to remove old files: {e}"))?;
     }
 
-    install_thirdparty_tool(tool_id, app_handle).await
+    install_thirdparty_tool(tool_id, steam_root, app_handle).await
+}
+
+#[tauri::command]
+pub async fn set_thirdparty_tool_enabled(
+    tool_id: String,
+    enabled: bool,
+    steam_root: Option<String>,
+    app_handle: tauri::AppHandle,
+) -> Result<ThirdPartyToolResult, String> {
+    let def = TOOL_DEFS
+        .iter()
+        .find(|d| d.id == tool_id)
+        .ok_or_else(|| format!("Unknown tool: {tool_id}"))?;
+
+    if !def.install_to_steam_root || def.steam_dll_names.is_empty() {
+        return Err(format!("{} does not support enable/disable.", def.name));
+    }
+
+    let steam_path = steam_root
+        .as_ref()
+        .map(PathBuf::from)
+        .ok_or_else(|| "Steam root path is required for enable/disable.".to_string())?;
+
+    let mut state = load_state(&app_handle);
+    let mut errors = Vec::new();
+    let mut toggled = Vec::new();
+
+    for dll_name in def.steam_dll_names {
+        let dll = steam_path.join(dll_name);
+        let bak = steam_path.join(format!("{dll_name}.bak"));
+
+        if enabled {
+            // Enable: rename .bak → original
+            if bak.exists() {
+                if dll.exists() {
+                    let _ = std::fs::remove_file(&dll); // remove stale original
+                }
+                if let Err(e) = std::fs::rename(&bak, &dll) {
+                    errors.push(format!("{dll_name}: {e}"));
+                } else {
+                    toggled.push(dll_name.to_string());
+                }
+            } else if dll.exists() {
+                // Already enabled (DLL present, no .bak)
+                toggled.push(dll_name.to_string());
+            } else {
+                errors.push(format!("{dll_name} not found (neither DLL nor .bak)"));
+            }
+        } else {
+            // Disable: rename DLL → .bak
+            if dll.exists() {
+                if bak.exists() {
+                    let _ = std::fs::remove_file(&bak);
+                }
+                if let Err(e) = std::fs::rename(&dll, &bak) {
+                    errors.push(format!("{dll_name}: {e}"));
+                } else {
+                    toggled.push(format!("{dll_name}.bak"));
+                }
+            } else if bak.exists() {
+                // Already disabled
+                toggled.push(format!("{dll_name}.bak"));
+            } else {
+                errors.push(format!("{dll_name} not found (neither DLL nor .bak)"));
+            }
+        }
+    }
+
+    // Update state
+    if let Some(entry) = state.tools.get_mut(&tool_id) {
+        entry.enabled = enabled;
+    } else {
+        state.tools.insert(
+            tool_id.clone(),
+            ToolStateEntry {
+                version: "detected".to_string(),
+                installed_at: chrono::Local::now()
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string(),
+                enabled,
+            },
+        );
+    }
+    save_state(&app_handle, &state);
+
+    let status = if enabled { "enabled" } else { "disabled" };
+    let ok = errors.is_empty() || !toggled.is_empty();
+
+    Ok(ThirdPartyToolResult {
+        ok,
+        tool: tool_id,
+        message: if errors.is_empty() {
+            format!("{} {} successfully.", def.name, status)
+        } else {
+            format!(
+                "{} {} with errors: {}",
+                def.name,
+                status,
+                errors.join(", ")
+            )
+        },
+        files_installed: toggled,
+        errors,
+    })
 }
 
 #[tauri::command]
