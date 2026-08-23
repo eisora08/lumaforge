@@ -267,11 +267,9 @@ pub fn run() {
                 if let Some(main) = app.get_webview_window("main") {
                     match cfg.startup_window_mode.as_str() {
                         "fullscreen" => {
-                            let _ = main.show();
                             let _ = main.set_fullscreen(true);
                         }
                         "maximized" => {
-                            let _ = main.show();
                             let _ = main.maximize();
                         }
                         _ => {

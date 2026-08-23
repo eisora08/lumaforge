@@ -480,7 +480,7 @@ function App() {
         />
       )}
       {/* Splash screen overlay — covers half-loaded UI during boot */}
-      <SplashScreen />
+      <SplashScreen wizardActive={showWizard} />
 
       {/* First-run wizard — shows on fresh install */}
       {showWizard && (

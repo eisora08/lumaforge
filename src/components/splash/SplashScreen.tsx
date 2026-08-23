@@ -11,7 +11,11 @@ const STATUS_CYCLE: string[] = [
   "Starting LumaForge...",
 ];
 
-export default function SplashScreen() {
+type SplashScreenProps = {
+  wizardActive?: boolean;
+};
+
+export default function SplashScreen({ wizardActive = false }: SplashScreenProps) {
   const [visible, setVisible] = useState(true);
   const [statusText, setStatusText] = useState(STATUS_CYCLE[0]);
   const [progress, setProgress] = useState(0);
@@ -32,17 +36,20 @@ export default function SplashScreen() {
     return () => clearInterval(interval);
   }, [visible]);
 
-  // Close splash: fade overlay + invoke Tauri command (once)
+  // Close splash: fade overlay + optionally invoke Tauri command (once)
   function closeSplash() {
     if (hasClosedSplashRef.current) return;
     hasClosedSplashRef.current = true;
 
-    console.log("[Boot] closing splash overlay");
+    console.log("[Boot] closing splash overlay", wizardActive ? "(wizard active — skipping close command)" : "");
     setFadeOut(true);
 
-    invoke("close_splashscreen_and_show_main").catch((err: unknown) => {
-      console.warn("[Boot] close splash command failed:", String(err));
-    });
+    // When wizard is active, don't invoke the close command — the wizard will handle it on completion
+    if (!wizardActive) {
+      invoke("close_splashscreen_and_show_main").catch((err: unknown) => {
+        console.warn("[Boot] close splash command failed:", String(err));
+      });
+    }
 
     setTimeout(() => {
       setVisible(false);

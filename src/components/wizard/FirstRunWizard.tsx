@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import WizardProgress from "./WizardProgress";
 import WizardWelcome from "./WizardWelcome";
 import WizardAppearance from "./WizardAppearance";
@@ -37,7 +38,10 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
 
   const handleComplete = useCallback(() => {
     setVisible(false);
-    setTimeout(onComplete, 400);
+    setTimeout(() => {
+      invoke("close_splashscreen_and_show_main").catch(() => {});
+      onComplete();
+    }, 400);
   }, [onComplete]);
 
   // Close on Escape
