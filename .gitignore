@@ -27,6 +27,8 @@ pnpm-debug.log*
 
 # OpenCode (AI tool — dev artifacts, not project code)
 .opencode/
+opencode.json
+AGENTS.md
 
 # OS / Editor
 .DS_Store
