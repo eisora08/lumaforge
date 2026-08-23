@@ -5,6 +5,9 @@ node_modules/
 dist/
 build/
 
+# Offline builder outputs (generated files, not source code)
+tools/**/output/
+
 # Tauri / Rust
 src-tauri/target/
 target/
