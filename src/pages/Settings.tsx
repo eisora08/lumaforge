@@ -1141,6 +1141,22 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     />
                   </div>
                 </SettingsSection>
+
+                <SettingsSection
+                  title="Maintenance"
+                  description="Re-run setup or reset configuration."
+                >
+                  <button
+                    onClick={() => {
+                      try { localStorage.removeItem("lumaforge-wizard-completed"); } catch {}
+                      window.location.reload();
+                    }}
+                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-(--color-text) transition hover:bg-white/8"
+                  >
+                    <RotateCcw className="h-4 w-4 text-(--color-muted)" />
+                    Run Setup Wizard
+                  </button>
+                </SettingsSection>
               </>
             )}
 

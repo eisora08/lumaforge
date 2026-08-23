@@ -52,6 +52,7 @@ import { pushToHistory } from "./services/navigationHistory";
 import { readStartupConfig } from "./services/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { checkForUpdate } from "./services/appUpdateStore";
+import FirstRunWizard from "./components/wizard/FirstRunWizard";
 
 const ACTIVE_PAGE_KEY = "lumaforge-active-page-v1";
 const KNOWN_PAGES: Set<AppPage> = new Set([
@@ -168,6 +169,13 @@ function App() {
   const prevPageRef = useRef(activePage);
   const activePageRef = useRef(activePage);
   const { settings } = useSettings();
+  const [showWizard, setShowWizard] = useState(() => {
+    try {
+      return localStorage.getItem("lumaforge-wizard-completed") !== "true";
+    } catch {
+      return true;
+    }
+  });
 
   // Start boot coordinator once on mount
   useEffect(() => {
@@ -473,6 +481,16 @@ function App() {
       )}
       {/* Splash screen overlay — covers half-loaded UI during boot */}
       <SplashScreen />
+
+      {/* First-run wizard — shows on fresh install */}
+      {showWizard && (
+        <FirstRunWizard
+          onComplete={() => {
+            try { localStorage.setItem("lumaforge-wizard-completed", "true"); } catch {}
+            setShowWizard(false);
+          }}
+        />
+      )}
       <LibraryLoadProgressCard />
 
       {/* Settings overlay — renders on top of everything */}
