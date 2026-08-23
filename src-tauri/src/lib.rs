@@ -141,7 +141,8 @@ pub fn run() {
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::all()
-                        & !tauri_plugin_window_state::StateFlags::SIZE,
+                        & !tauri_plugin_window_state::StateFlags::SIZE
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
                 )
                 .build(),
         )
