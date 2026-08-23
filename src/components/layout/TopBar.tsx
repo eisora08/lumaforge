@@ -119,10 +119,32 @@ export default function TopBar({ activePage, onNavigate, storeTabs, activeStoreT
       const maximized = await win.isMaximized();
       if (!mountedRef.current) return;
       if (maximized !== isMaximizedRef.current) {
+        const wasMaximized = isMaximizedRef.current;
         isMaximizedRef.current = maximized;
         setIsMaximized(maximized);
         if (DEBUG_WINDOW_CONTROLS) {
           console.log(`[WINDOW_CONTROLS][STATE] isMaximized=${maximized} updateReason=${reason}`);
+        }
+        // Re-apply proportional size when unmaximizing
+        // The window-state plugin's internal "normal rect" is stale (captures
+        // initial 1280x800 at init), so unmaximize restores wrong size.
+        if (wasMaximized && !maximized) {
+          try {
+            const { getCurrentWindow, primaryMonitor } = await import("@tauri-apps/api/window");
+            const { LogicalSize } = await import("@tauri-apps/api/dpi");
+            const monitor = await primaryMonitor();
+            if (monitor) {
+              const scale = monitor.scaleFactor;
+              const phys = monitor.size;
+              const logicalW = phys.width / scale;
+              const logicalH = phys.height / scale;
+              const tauriWin = getCurrentWindow();
+              await tauriWin.setSize(new LogicalSize(Math.round(logicalW * 0.55), Math.round(logicalH * 0.75)));
+              await tauriWin.center();
+            }
+          } catch {
+            // noop — best effort
+          }
         }
       }
     } catch (err) {

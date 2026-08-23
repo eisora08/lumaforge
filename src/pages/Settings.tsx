@@ -1193,7 +1193,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                     <div className="flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() => openExternalUrl("https://github.com/nicegoodthings/lumaforge")}
+                        onClick={() => openExternalUrl("https://github.com/anomalyco/LumaForge")}
                         className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
                       >
                         <Code className="h-4 w-4" />
@@ -1202,7 +1202,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => openExternalUrl("https://github.com/nicegoodthings/lumaforge/blob/main/LICENSE")}
+                        onClick={() => openExternalUrl("https://github.com/anomalyco/LumaForge/blob/main/LICENSE")}
                         className="inline-flex items-center gap-2 rounded-xl border border-(--surface-active-border) bg-white/5 px-4 py-2 text-sm text-(--color-text) transition hover:bg-white/10"
                       >
                         <ExternalLink className="h-4 w-4" />
@@ -1328,7 +1328,7 @@ export default function Settings({ onSectionChange }: SettingsProps) {
                       {
                         name: "GitHub",
                         description: "LumaForge project source code and issue tracking.",
-                        url: "https://github.com/nicegoodthings/lumaforge",
+                        url: "https://github.com/anomalyco/LumaForge",
                         badge: "always" as const,
                       },
                     ].map((service) => (

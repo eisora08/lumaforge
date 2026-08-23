@@ -58,7 +58,7 @@ export default function AppUpdateIcon() {
   }, []);
 
   // Don't render when no update available and not checking
-  if (!snap.updateAvailable && !snap.checking && !snap.error) return null;
+  if (!snap.updateAvailable && !snap.error) return null;
 
   const versionLabel = snap.updateVersion ? `v${snap.updateVersion}` : "";
   const currentLabel = snap.currentVersion ? `v${snap.currentVersion}` : "";
